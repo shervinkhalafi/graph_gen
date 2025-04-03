@@ -1,13 +1,18 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.linalg import expm
-from scipy.sparse.linalg import eigsh
-from scipy.sparse.linalg import eigsh
-from tqdm import tqdm
-from accelerate import Accelerator
 import os
 import argparse
-from utils import *
+from scipy.sparse.linalg import eigsh
+import numpy as np
+import matplotlib.pyplot as plt
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+
+from src.data.sbm import AdjacencyMatrixDataset, add_digress_noise, add_gaussian_noise, add_rotation_noise, generate_sbm_adjacency, random_skew_symmetric_matrix
+from src.models.attention import MultiLayerAttention
+from src.models.gnn import GNN, NodeVarGNN
+
+
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
@@ -24,6 +29,13 @@ def parse_args(input_args=None):
         type=str,
         default='Gaussian',
         help="noise type, can be 'Gaussian', 'Rotation', or 'Digress'",
+    )
+
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default='MultiLayerAttention',
+        help="model type, can be 'MultiLayerAttention', 'GNN, or 'NodeVarGNN'",
     )
 
     parser.add_argument(
@@ -60,7 +72,7 @@ def parse_args(input_args=None):
         default=400,
         help="number of epochs",
     )
-     
+
     parser.add_argument(
         "--num_samples_per_epoch",
         type=int,
@@ -103,32 +115,30 @@ def main(args):
     dataset = AdjacencyMatrixDataset(A, num_samples_per_epoch=args.num_samples_per_epoch)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-    # h is the hidden dimension of the attention layer
-    # the top k eigenvectors are used as denoising.
-    h = 20
-    k = 20
-
-
-    skew = random_skew_symmetric_matrix(k)
-
-
     noise_type = args.noise_type
     eps = args.eps
     num_heads = args.num_heads
     num_layers = args.num_layers
+    model_type = args.model_type
 
 
-    model = MultiLayerAttention(k, num_heads = num_heads, d_k = k, d_v = k, num_layers = num_layers, bias = True)
-
+    k = 20  # the top k eigenvectors are used as denoising.
+    skew = random_skew_symmetric_matrix(k)
+    if model_type == 'MultiLayerAttention':
+        h = 20  # h is the hidden dimension of the attention layer
+        model = MultiLayerAttention(k, num_heads = num_heads, d_k = k, d_v = k, num_layers = num_layers, bias = True)
+    elif model_type == 'GNN':
+        t = 4   # powers of the graph filter
+        model = GNN(num_layers=num_layers, num_terms=t, feature_dim=k)
+    elif model_type == 'NodeVarGNN':
+        t = 4   # powers of the graph filter
+        model = NodeVarGNN(num_layers=num_layers, num_terms=t, feature_dim=k)
 
     criterion = nn.MSELoss()  # Mean Squared Error as the loss function
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     # Training loop
-
-
     n_epochs = args.num_epochs
-
 
     loss_hist = np.zeros(n_epochs)
     for epoch in range(n_epochs):
@@ -138,38 +148,38 @@ def main(args):
             # inputs = batch.unsqueeze(dim = 1)
             inputs = batch
 
-            
-        
-            
             #add noise by rotating the eigenvectors
             if noise_type == 'Rotation':
                 noisy_inputs, Vs, l_noisy = add_rotation_noise(inputs, eps, skew)
-                    
+
             elif noise_type == 'Gaussian': 
                 noisy_inputs, Vs, l_noisy = add_gaussian_noise(inputs, eps)
-                    
+
             elif noise_type == 'Digress':
                 noisy_inputs, Vs, l_noisy = add_digress_noise(inputs, eps)
 
                 
             optimizer.zero_grad()  # Zero the gradients
-            
+
             # Forward pass
             #the last layer's attention scores are used as the denoised adjacency matrix
-            outputs = model(Vs)[1][-1]
+            if model_type == 'MultiLayerAttention':
+                outputs = model(Vs)[1][-1]
+            elif model_type == 'GNN':
+                outputs = model(noisy_inputs)
+            elif model_type == 'NodeVarGNN':
+                outputs = model(noisy_inputs)
             loss = criterion(outputs, inputs)
-            
+
             # Backward pass
             loss.backward()
-            
+
             # Update model parameters
             optimizer.step()
-            
-            running_loss += loss.item()
-        
-        loss_hist[epoch] = running_loss / len(dataloader)
 
-        
+            running_loss += loss.item()
+
+        loss_hist[epoch] = running_loss / len(dataloader)
 
     # Optionally, evaluate the model on a test set
     model.eval()  # Set model to evaluation mode
@@ -188,12 +198,15 @@ def main(args):
     elif noise_type == 'Gaussian':
         A_noisy, V_noisy, l_noisy = add_gaussian_noise(A, eps)
 
-        
     elif noise_type == 'Digress':
         A_noisy, V_noisy, l_noisy = add_digress_noise(A, eps)
 
-
-    A_denoised = model(torch.unsqueeze(torch.FloatTensor(V_noisy), 0))[1][-1]
+    if model_type == 'MultiLayerAttention':
+        A_denoised = model(torch.unsqueeze(torch.FloatTensor(V_noisy), 0))[1][-1]
+    elif model_type == 'GNN':
+        A_denoised = model(torch.unsqueeze(torch.FloatTensor(A_noisy), 0))
+    elif model_type == 'NodeVarGNN':
+        A_denoised = model(torch.unsqueeze(torch.FloatTensor(A_noisy), 0))
     A_denoised = np.array(A_denoised.detach())
 
 
@@ -247,7 +260,12 @@ def main(args):
     for i in range(12):
         axs.flatten()[i].axis('off')
 
-    title = noise_type + ' Noise, eps = ' + str(eps) + ', Transformer Denoiser, num_layers = ' + str(num_layers) + ', num_heads = ' + str(num_heads)
+    if model_type == 'MultiLayerAttention':
+        title = noise_type + ' Noise, eps = ' + str(eps) + ', Transformer Denoiser, num_layers = ' + str(num_layers) + ', num_heads = ' + str(num_heads)
+    elif model_type == 'GNN':
+        title = noise_type + ' Noise, eps = ' + str(eps) + ', GNN, num_layers = ' + str(num_layers)
+    elif model_type == 'NodeVarGNN':
+        title = noise_type + ' Noise, eps = ' + str(eps) + ', NodeVarGNN, num_layers = ' + str(num_layers)
     fig.suptitle(title, fontsize=16)
 
     fig.tight_layout()
