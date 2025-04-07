@@ -140,7 +140,24 @@ def main(args):
     # Training loop
     n_epochs = args.num_epochs
 
+    k_val = 4
+    l, V = eigsh(A, k=k_val, which='LM', maxiter=10000) 
+
+    if noise_type == 'Rotation':
+        A_noisy_fixed, V_noisy_fixed, l_noisy_fixed = add_rotation_noise(torch.tensor(A, dtype=torch.float32).unsqueeze(0), eps, skew)
+        A_noisy_fixed = A_noisy_fixed.squeeze(0)    
+        V_noisy_fixed = V_noisy_fixed.squeeze(0)
+        l_noisy_fixed = l_noisy_fixed.squeeze(0)
+
+    elif noise_type == 'Gaussian':
+        A_noisy_fixed, V_noisy_fixed, l_noisy_fixed = add_gaussian_noise(A, eps)
+
+    elif noise_type == 'Digress':
+        A_noisy_fixed, V_noisy_fixed, l_noisy_fixed = add_digress_noise(A, eps)
+
     loss_hist = np.zeros(n_epochs)
+    eigval_error_hist = np.zeros(n_epochs)
+    subspace_distance_hist = np.zeros(n_epochs)
     for epoch in range(n_epochs):
         model.train()  # Set model to training mode
         running_loss = 0.0
@@ -181,7 +198,30 @@ def main(args):
 
         loss_hist[epoch] = running_loss / len(dataloader)
 
-    # Optionally, evaluate the model on a test set
+        model.eval()
+
+        with torch.no_grad():
+            if model_type == 'MultiLayerAttention':
+                A_denoised = model(torch.unsqueeze(torch.FloatTensor(V_noisy_fixed), 0))[1][-1]
+            elif model_type == 'GNN':
+                A_denoised = model(torch.unsqueeze(torch.FloatTensor(A_noisy_fixed), 0))
+            elif model_type == 'NodeVarGNN':
+                A_denoised = model(torch.unsqueeze(torch.FloatTensor(A_noisy_fixed), 0))
+
+            A_denoised = np.array(A_denoised.detach())
+
+        l_denoised, V_denoised = eigsh(A_denoised[0], k=k_val, which='LM', maxiter=10000)
+
+        eigval_error = np.linalg.norm(l_denoised - l) / np.linalg.norm(l)
+        Proj_true = V @ V.T
+        Proj_denoised = V_denoised @ V_denoised.T
+        subspace_distance = np.linalg.norm(Proj_true - Proj_denoised, 'fro')
+
+        eigval_error_hist[epoch] = eigval_error
+        subspace_distance_hist[epoch] = subspace_distance
+
+        model.train()
+
     model.eval()  # Set model to evaluation mode
 
     # print(loss_hist)
@@ -215,7 +255,7 @@ def main(args):
 
     A_denoised_eigvalsonly = V_noisy @ np.diag(l_denoised) @ V_noisy.T
 
-    fig, axs = plt.subplots(3, 4, figsize=(10, 5))
+    fig, axs = plt.subplots(3, 5, figsize=(12, 5))
     axs
 
     axs[0,0].imshow(A)
@@ -254,11 +294,20 @@ def main(args):
     axs[2,3].imshow(np.diag(l_denoised))
     axs[2,3].set_title('Denoised Eigenvalues')  
 
+    axs[0,4].plot(np.log(loss_hist))
+    axs[0,4].set_title('Training loss (log)') 
+
+    axs[1,4].plot(np.log(eigval_error_hist))
+    axs[1,4].set_title('Eigenvalue error (log)')
+
+    axs[2,4].plot(np.log(subspace_distance_hist))
+    axs[2,4].set_title('Subspace distance (log)')
 
     axs.flatten()
 
-    for i in range(12):
-        axs.flatten()[i].axis('off')
+    for i in range(2):
+        for j in range(4):
+            axs[i, j].axis('off')
 
     if model_type == 'MultiLayerAttention':
         title = noise_type + ' Noise, eps = ' + str(eps) + ', Transformer Denoiser, num_layers = ' + str(num_layers) + ', num_heads = ' + str(num_heads)

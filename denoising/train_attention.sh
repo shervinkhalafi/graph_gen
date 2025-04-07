@@ -1,23 +1,22 @@
 #!/bin/bash
 
-for noise_type in "Gaussian" "Rotation" "Digress"; do
+for noise_type in "Digress" "Gaussian" "Rotation"; do
 
-    for eps in 0.1 0.2 0.3 0.4 0.5; do
+    for eps in 0.3; do
 
         #for num_heads in 4 8 16 32; do
 
-            #for num_layers in 1 2 3 4; do
+            # for num_layers in 2 4 8; do
 
-                # Run with custom parameters
                 python main.py \
                     --seed 42 \
                     --model_type 'MultiLayerAttention' \
                     --noise_type $noise_type \
                     --eps $eps \
-                    --num_heads 4 \
-                    --num_layers 4 \
+                    --num_heads 8 \
+                    --num_layers 8 \
                     --block_sizes "[10, 5, 3, 2]" \
-                    --num_epochs 400 \
+                    --num_epochs 1000 \
                     --num_samples_per_epoch 128 \
                     --batch_size 32
             #done
