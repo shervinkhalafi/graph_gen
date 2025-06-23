@@ -1,0 +1,38 @@
+# PyTorch Lightning trainer configuration
+
+_target_: pytorch_lightning.Trainer
+
+# Training parameters
+max_epochs: 200
+accelerator: "auto"
+devices: "auto"
+precision: 32
+
+# Checkpointing
+enable_checkpointing: true
+default_root_dir: ${paths.output_dir}
+
+# Logging
+log_every_n_steps: 50
+enable_progress_bar: true
+
+# Validation
+check_val_every_n_epoch: 1
+val_check_interval: 1.0
+
+# Early stopping and model checkpointing will be added via callbacks
+
+# Gradient clipping
+gradient_clip_val: 1.0
+gradient_clip_algorithm: "norm"
+
+# Reproducibility
+deterministic: false
+benchmark: true
+
+# Debugging options (set to true for debugging)
+fast_dev_run: false
+overfit_batches: 0
+limit_train_batches: 1.0
+limit_val_batches: 1.0
+limit_test_batches: 1.0

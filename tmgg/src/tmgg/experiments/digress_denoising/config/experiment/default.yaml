@@ -1,0 +1,27 @@
+# @package _global_
+
+# Digress-based transformer denoising experiment configuration
+defaults:
+  - /model: digress_transformer
+  - /data: sbm_default
+  - /trainer: default
+  - _self_
+
+experiment_name: "digress_denoising"
+seed: 42
+
+# Logging
+wandb:
+  project: "tmgg-digress-denoising"
+  name: "digress_${model.n_layers}L_${model.hidden_dims.n_head}H"
+  tags: ["digress", "transformer", "denoising", "sbm"]
+
+# Evaluation
+evaluation:
+  noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
+  visualization_epochs: 10
+
+# Paths
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results

@@ -1,0 +1,27 @@
+# @package _global_
+
+# GNN-based denoising experiment configuration
+defaults:
+  - /model: standard_gnn
+  - /data: sbm_default
+  - /trainer: default
+  - _self_
+
+experiment_name: "gnn_denoising"
+seed: 42
+
+# Logging
+wandb:
+  project: "tmgg-gnn-denoising"
+  name: "gnn_${model.model_type}_${model.num_layers}L"
+  tags: ["gnn", "denoising", "sbm"]
+
+# Evaluation
+evaluation:
+  noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
+  visualization_epochs: 10
+
+# Paths
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results

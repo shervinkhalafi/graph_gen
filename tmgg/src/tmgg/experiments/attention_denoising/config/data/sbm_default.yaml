@@ -1,0 +1,29 @@
+# Stochastic Block Model data configuration
+
+_target_: tmgg.experiments.attention_denoising.src.data_module.SBMDataModule
+
+# Graph parameters
+num_nodes: 20
+p_intra: 1.0  # Probability of intra-block edges
+q_inter: 0.0  # Probability of inter-block edges
+
+# Block size generation
+min_blocks: 2
+max_blocks: 4
+min_block_size: 2
+max_block_size: 15
+
+# Dataset splits
+num_train_partitions: 10
+num_test_partitions: 10
+num_samples_per_partition: 1000
+
+# Data loader parameters
+batch_size: 100
+num_workers: 4
+pin_memory: true
+
+# Noise configuration
+noise_types: ["digress", "gaussian", "rotation"]
+default_noise_type: "digress"
+noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]

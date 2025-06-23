@@ -1,0 +1,4 @@
+# file: /home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/src/tmgg/experiment_utils/metrics.py
+# hypothesis_version: 6.135.14
+
+[0.0, 1e-07, 10000, 'LM', 'bce', 'cpu', 'eigenvalue_error', 'fro', 'frobenius_error', 'mae', 'mse', 'noise_levels', 'relative_frobenius', 'subspace_distance']

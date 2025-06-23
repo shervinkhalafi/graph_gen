@@ -1,0 +1,23 @@
+# Standard GNN model configuration
+
+_target_: tmgg.experiments.gnn_denoising.src.lightning_module.GNNDenoisingLightningModule
+
+# Model architecture
+model_type: "GNN"  # "GNN", "NodeVarGNN", "GNNSymmetric"
+num_layers: 1
+num_terms: 4
+feature_dim_in: 20
+feature_dim_out: 20
+
+# Training
+learning_rate: 0.001
+loss_type: "MSE"  # "MSE" or "BCE"
+
+# Scheduler configuration
+scheduler_config:
+  type: "cosine"  # "cosine", "step", or null
+  T_0: 20
+  T_mult: 2
+
+# Evaluation noise levels
+noise_levels: [0.1, 0.2, 0.3, 0.4, 0.5]
