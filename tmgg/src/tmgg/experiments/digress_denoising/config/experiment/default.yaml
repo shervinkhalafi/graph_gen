@@ -18,7 +18,6 @@ wandb:
 
 # Evaluation
 evaluation:
-  noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
   visualization_epochs: 10
 
 # Paths

@@ -1,5 +1,5 @@
 import math
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, NamedTuple
 
 import torch
 import torch.nn as nn
@@ -11,8 +11,37 @@ from torch import Tensor
 
 from . import diffusion_utils
 from ..base import DenoisingModel, EmbeddingModel
-from ..transformer import GraphFeatures
 from .layers import Xtoy, Etoy, masked_softmax
+
+
+class GraphFeatures(NamedTuple):
+    """Container for node, edge, and global graph features."""
+
+    X: torch.Tensor  # Node features (batch_size, n_nodes, dx)
+    E: torch.Tensor  # Edge features (batch_size, n_nodes, n_nodes, de)
+    y: torch.Tensor  # Global features (batch_size, dy)
+
+    def mask(self, node_mask: torch.Tensor) -> "GraphFeatures":
+        """Apply node mask to zero out features for masked nodes.
+
+        Parameters
+        ----------
+        node_mask : torch.Tensor
+            Boolean mask of shape (batch_size, n_nodes)
+
+        Returns
+        -------
+        GraphFeatures
+            New GraphFeatures with masked values
+        """
+        bs, n = node_mask.size()
+        mask_diag = node_mask.unsqueeze(-1) * node_mask.unsqueeze(-2)
+        mask_diag = mask_diag * (~torch.eye(n, device=node_mask.device, dtype=torch.bool).unsqueeze(0))
+        
+        X_masked = self.X * node_mask.unsqueeze(-1)
+        E_masked = self.E * mask_diag.unsqueeze(-1)
+        
+        return GraphFeatures(X=X_masked, E=E_masked, y=self.y)
 
 
 class XEyTransformerLayer(nn.Module):

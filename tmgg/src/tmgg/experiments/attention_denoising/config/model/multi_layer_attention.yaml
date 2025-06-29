@@ -1,6 +1,6 @@
 # Multi-layer attention model configuration
 
-_target_: tmgg.experiments.attention_denoising.src.lightning_module.AttentionDenoisingLightningModule
+_target_: tmgg.experiments.attention_denoising.lightning_module.AttentionDenoisingLightningModule
 
 # Model architecture
 d_model: 20
@@ -15,11 +15,12 @@ bias: true
 learning_rate: 0.001
 loss_type: "MSE"  # "MSE" or "BCE"
 
+# Noise configuration (from data module)
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+
 # Scheduler configuration
 scheduler_config:
   type: "cosine"  # "cosine", "step", or null
   T_0: 20
   T_mult: 2
-
-# Evaluation noise levels
-noise_levels: [0.1, 0.2, 0.3, 0.4, 0.5]

@@ -6,6 +6,7 @@ experimental data modules, which expect a list of uniformly-sized adjacency matr
 from typing import List
 import torch
 import numpy as np
+from torch._C import dtype
 
 from .ggg_data.dense.anu_graphs.anudataset import ANUDataset
 from .ggg_data.dense.classical import CassicalGraphs
@@ -50,7 +51,8 @@ class GraphCollection:
             else m
             for m in adj_matrices
         ]
-
+        dtypes = [x.dtype for x in padded_matrices]
+        assert all(x == torch.float for x in dtypes), f"padded_matrices.dtypes={dtypes}"
         return padded_matrices
 
 

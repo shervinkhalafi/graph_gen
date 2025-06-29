@@ -13,7 +13,7 @@ dependencies = [
     "numpy>=1.21.0",
     "scipy>=1.7.0",
     "matplotlib>=3.5.0",
-    "wandb>=0.15.0",
+    "wandb>=0.20.1",
     "tqdm>=4.64.0",
     "networkx>=3.5",
 ]
@@ -36,6 +36,7 @@ managed = true
 dev-dependencies = [
     "pytest>=8.4.1",
     "hypothesis>=6.0.0",
+    "pdbpp>=0.11.6",
 ]
 
 [tool.hatch.metadata]

@@ -100,8 +100,13 @@ def factor_pairs(N):
 
 
 class StarGraph(BaseNxSet):
-    def __init__(self, N_nodes=3, repeat=1):
+    def __init__(self, N_nodes=None, N_arms=None, repeat=1):
         super().__init__()
+        # Support both N_nodes and N_arms for compatibility
+        if N_arms is not None:
+            N_nodes = N_arms
+        if N_nodes is None:
+            N_nodes = 3
         if isinstance(N_nodes, int):
             N_nodes = [N_nodes]
         self.N_nodes = N_nodes

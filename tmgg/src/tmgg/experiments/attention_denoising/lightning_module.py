@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import wandb
 import numpy as np
 
@@ -12,6 +12,7 @@ from tmgg.experiment_utils import (
     compute_reconstruction_metrics,
     compute_batch_metrics,
     create_wandb_visualization,
+    create_graph_denoising_wandb_image,
     add_gaussian_noise,
     add_rotation_noise,
     add_digress_noise,
@@ -30,9 +31,10 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
                  dropout: float = 0.0,
                  bias: bool = True,
                  learning_rate: float = 0.001,
-                 noise_levels: list = None,
                  loss_type: str = "MSE",
-                 scheduler_config: Optional[Dict[str, Any]] = None):
+                 scheduler_config: Optional[Dict[str, Any]] = None,
+                 noise_levels: Optional[List[float]] = None,
+                 noise_type: str = "Digress"):
         """
         Initialize the Lightning module.
         
@@ -45,9 +47,10 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
             dropout: Dropout probability
             bias: Whether to use bias in linear layers
             learning_rate: Learning rate for optimizer
-            noise_levels: List of noise levels for evaluation
             loss_type: Loss function type ("MSE" or "BCE")
             scheduler_config: Optional scheduler configuration
+            noise_levels: List of noise levels to sample from during training
+            noise_type: Type of noise to use ("Gaussian", "Rotation", "Digress")
         """
         super().__init__()
         self.save_hyperparameters()
@@ -73,8 +76,9 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         
         # Store configuration
         self.learning_rate = learning_rate
-        self.noise_levels = noise_levels or [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
         self.scheduler_config = scheduler_config
+        self.noise_levels = noise_levels or [0.01, 0.05, 0.1, 0.2, 0.3]
+        self.noise_type = noise_type
         
         # Metrics tracking
         self.train_metrics = []
@@ -107,8 +111,16 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         # Sample random noise level for this batch
         eps = np.random.choice(self.noise_levels)
         
-        # Add noise (using digress noise as default)
-        batch_noisy, V_noisy, _ = add_digress_noise(batch, eps)
+        # Get the appropriate noise function
+        noise_fn_map = {
+            'Gaussian': add_gaussian_noise,
+            'Rotation': add_rotation_noise,
+            'Digress': add_digress_noise,
+        }
+        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
+        
+        # Add noise
+        batch_noisy, V_noisy, _ = noise_fn(batch, eps)
         
         # Forward pass using noisy eigenvectors
         output = self.forward(V_noisy)
@@ -135,7 +147,17 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         """
         # Use fixed noise level for validation
         eps = 0.2
-        batch_noisy, V_noisy, _ = add_digress_noise(batch, eps)
+        
+        # Get the appropriate noise function
+        noise_fn_map = {
+            'Gaussian': add_gaussian_noise,
+            'Rotation': add_rotation_noise,
+            'Digress': add_digress_noise,
+        }
+        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
+        
+        # Add noise
+        batch_noisy, V_noisy, _ = noise_fn(batch, eps)
         
         # Forward pass
         output = self.forward(V_noisy)
@@ -166,9 +188,17 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         """
         metrics_by_noise = {}
         
+        # Get the appropriate noise function
+        noise_fn_map = {
+            'Gaussian': add_gaussian_noise,
+            'Rotation': add_rotation_noise,
+            'Digress': add_digress_noise,
+        }
+        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
+        
         # Test across multiple noise levels
         for eps in self.noise_levels:
-            batch_noisy, V_noisy, _ = add_digress_noise(batch, eps)
+            batch_noisy, V_noisy, _ = noise_fn(batch, eps)
             output = self.forward(V_noisy)
             
             # Compute metrics for this noise level
@@ -197,22 +227,75 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         Args:
             stage: Stage name ("val" or "test")
         """
-        if not isinstance(self.logger, pl.loggers.WandbLogger):
+        if not isinstance(self.logger, pl.loggers.WandbLogger) or self.trainer.sanity_checking:
             return
-            
-        # Get a sample from validation/test set
-        # This is a simplified approach - in practice you'd want to use actual data
-        sample_size = 20
-        A_sample = torch.randn(sample_size, sample_size)  # Placeholder
+
+        # Get a sample from the appropriate dataloader
+        if stage == "val":
+            dataloader = self.trainer.datamodule.val_dataloader()
+        elif stage == "test":
+            dataloader = self.trainer.datamodule.test_dataloader()
+        else:
+            return  # Should not happen
+
+        try:
+            # Get a single batch and take the first sample for visualization
+            batch = next(iter(dataloader))
+            A_sample = batch[0]
+        except StopIteration:
+            # Dataloader might be empty
+            return
         
         try:
-            wandb_images = create_wandb_visualization(
-                A_sample, self.model, add_digress_noise, 
-                self.noise_levels, stage, self.device
-            )
+            # Use the new flexible visualization
+            noise_levels = self.trainer.datamodule.noise_levels
+            noise_type = getattr(self.trainer.datamodule, 'noise_type', 'Digress')
+            
+            # Get the appropriate noise function
+            noise_fn_map = {
+                'Gaussian': add_gaussian_noise,
+                'Rotation': add_rotation_noise,
+                'Digress': add_digress_noise,
+            }
+            noise_fn = noise_fn_map.get(noise_type, add_digress_noise)
+            
+            # Create denoise function that properly handles the model output
+            def denoise_fn(A_noisy):
+                with torch.no_grad():
+                    self.eval()
+                    A_input = A_noisy.to(self.device)
+                    if A_input.ndim == 2:
+                        A_input = A_input.unsqueeze(0)
+                    output = self.forward(A_input)
+                    return output.squeeze(0)
+            
+            # Log visualization for each noise level
+            wandb_images = {}
+            for eps in noise_levels[:3]:  # Limit to first 3 noise levels for space
+                wandb_image = create_graph_denoising_wandb_image(
+                    A_clean=A_sample,
+                    noise_fn=noise_fn,
+                    denoise_fn=denoise_fn,
+                    noise_level=eps,
+                    noise_type=noise_type,
+                    title_prefix="Attention - "
+                )
+                wandb_images[f"{stage}_denoising_eps_{eps}"] = wandb_image
+            
             self.logger.experiment.log(wandb_images)
+            
+            # Also use the legacy multi-noise visualization if desired
+            legacy_images = create_wandb_visualization(
+                A_sample, self, noise_fn, 
+                noise_levels, stage, self.device
+            )
+            self.logger.experiment.log(legacy_images)
         except Exception as e:
-            self.logger.experiment.log({f"{stage}_visualization_error": str(e)})
+            # Use a different key pattern to avoid wandb type confusion
+            # Also provide more context about the error
+            import traceback
+            error_msg = f"Visualization failed: {str(e)}\nTraceback: {traceback.format_exc()}"
+            self.logger.experiment.log({f"{stage}_viz_error_msg": error_msg})
     
     def configure_optimizers(self):
         """Configure optimizers and learning rate schedulers."""

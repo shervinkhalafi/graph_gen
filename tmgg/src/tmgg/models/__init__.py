@@ -3,33 +3,32 @@
 from .base import DenoisingModel
 from .attention import MultiHeadAttention, MultiLayerAttention
 from .gnn import (
-    GaussianEmbedding, 
+    GaussianEmbedding,
     EigenEmbedding,
     GraphConvolutionLayer,
     NodeVarGraphConvolutionLayer,
     GNN,
     NodeVarGNN,
-    GNNSymmetric
+    GNNSymmetric,
 )
 from .hybrid import SequentialDenoisingModel, create_sequential_model
-from .transformer import GraphTransformer
 from .layers import Xtoy, Etoy, masked_softmax
 
 __all__ = [
     "DenoisingModel",
-    "MultiHeadAttention", 
+    "MultiHeadAttention",
     "MultiLayerAttention",
     "GaussianEmbedding",
-    "EigenEmbedding", 
+    "EigenEmbedding",
     "GraphConvolutionLayer",
     "NodeVarGraphConvolutionLayer",
     "GNN",
-    "NodeVarGNN", 
+    "NodeVarGNN",
     "GNNSymmetric",
     "SequentialDenoisingModel",
     "create_sequential_model",
-    "GraphTransformer",
     "Xtoy",
     "Etoy",
     "masked_softmax",
 ]
+

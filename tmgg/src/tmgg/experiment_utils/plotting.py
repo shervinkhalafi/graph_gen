@@ -3,8 +3,130 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable, Union
 import wandb
+
+
+def plot_graph_denoising_comparison(
+    A_clean: Union[np.ndarray, torch.Tensor],
+    noise_fn: Callable[[Union[np.ndarray, torch.Tensor], float], Tuple[Union[np.ndarray, torch.Tensor], Any, Any]],
+    denoise_fn: Callable[[Union[np.ndarray, torch.Tensor]], Union[np.ndarray, torch.Tensor]],
+    noise_level: float,
+    noise_type: str = "Unknown",
+    title_prefix: str = "",
+    cmap: str = 'viridis',
+    figsize: Tuple[int, int] = (15, 5),
+    save_path: Optional[str] = None,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None
+) -> plt.Figure:
+    """
+    General-purpose visualization for graph denoising experiments.
+    
+    This function creates a 3-panel visualization showing:
+    1. Clean graph (top)
+    2. Noisy graph (middle) 
+    3. Denoised graph (bottom)
+    
+    Args:
+        A_clean: Clean adjacency matrix (numpy array or torch tensor)
+        noise_fn: Function that adds noise. Should accept (matrix, noise_level) and 
+                 return (noisy_matrix, noise_info1, noise_info2)
+        denoise_fn: Function that denoises. Should accept noisy matrix and return denoised matrix
+        noise_level: Noise level parameter (e.g., epsilon)
+        noise_type: Name of the noise type for labeling
+        title_prefix: Optional prefix for the plot title
+        cmap: Colormap to use for visualization
+        figsize: Figure size as (width, height)
+        save_path: Optional path to save the plot
+        vmin: Minimum value for color scale (if None, auto-determined)
+        vmax: Maximum value for color scale (if None, auto-determined)
+        
+    Returns:
+        Matplotlib figure object
+        
+    Example:
+        ```python
+        # For GNN experiments
+        fig = plot_graph_denoising_comparison(
+            A_clean=clean_adjacency,
+            noise_fn=add_gaussian_noise,
+            denoise_fn=lambda A: model(A.unsqueeze(0)).squeeze(0),
+            noise_level=0.1,
+            noise_type="Gaussian"
+        )
+        
+        # For DiGress experiments with edge flipping
+        fig = plot_graph_denoising_comparison(
+            A_clean=clean_adjacency,
+            noise_fn=add_digress_noise,
+            denoise_fn=lambda A: digress_model.denoise(A),
+            noise_level=0.3,
+            noise_type="Edge Flipping (DiGress)"
+        )
+        ```
+    """
+    # Convert to numpy if needed
+    if isinstance(A_clean, torch.Tensor):
+        A_clean_np = A_clean.detach().cpu().numpy()
+    else:
+        A_clean_np = A_clean
+        
+    # Add noise
+    A_noisy, _, _ = noise_fn(A_clean, noise_level)
+    if isinstance(A_noisy, torch.Tensor):
+        A_noisy_np = A_noisy.detach().cpu().numpy()
+    else:
+        A_noisy_np = A_noisy
+        
+    # Denoise
+    A_denoised = denoise_fn(A_noisy)
+    if isinstance(A_denoised, torch.Tensor):
+        A_denoised_np = A_denoised.detach().cpu().numpy()
+    else:
+        A_denoised_np = A_denoised
+        
+    # Handle batch dimensions if present
+    while A_clean_np.ndim > 2:
+        A_clean_np = A_clean_np[0]
+    while A_noisy_np.ndim > 2:
+        A_noisy_np = A_noisy_np[0]
+    while A_denoised_np.ndim > 2:
+        A_denoised_np = A_denoised_np[0]
+        
+    # Create figure with 3 subplots arranged horizontally
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    
+    # Determine color scale if not provided
+    if vmin is None:
+        vmin = min(A_clean_np.min(), A_noisy_np.min(), A_denoised_np.min())
+    if vmax is None:
+        vmax = max(A_clean_np.max(), A_noisy_np.max(), A_denoised_np.max())
+    
+    # Plot clean graph (left)
+    im1 = axes[0].imshow(A_clean_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect='equal')
+    axes[0].set_title(f'{title_prefix}Clean Graph' if title_prefix else 'Clean Graph', fontsize=12)
+    axes[0].axis('off')
+    plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+    
+    # Plot noisy graph (middle)
+    im2 = axes[1].imshow(A_noisy_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect='equal')
+    axes[1].set_title(f'Noisy Graph ({noise_type}, ε={noise_level})', fontsize=12)
+    axes[1].axis('off')
+    plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+    
+    # Plot denoised graph (right)
+    im3 = axes[2].imshow(A_denoised_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect='equal')
+    axes[2].set_title('Denoised Graph', fontsize=12)
+    axes[2].axis('off')
+    plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    return fig
 
 
 def plot_training_curves(train_losses: List[float], 
@@ -207,7 +329,7 @@ def create_multi_noise_visualization(A_original: torch.Tensor,
                 A_noisy_input = A_noisy
                 
             # Get reconstruction handling different model outputs
-            model_output = model(A_noisy_input.double())
+            model_output = model(A_noisy_input)
             
             # Handle different model return types
             if isinstance(model_output, tuple):
@@ -234,6 +356,48 @@ def create_multi_noise_visualization(A_original: torch.Tensor,
     
     plt.tight_layout()
     return fig
+
+
+def create_graph_denoising_wandb_image(
+    A_clean: Union[np.ndarray, torch.Tensor],
+    noise_fn: Callable[[Union[np.ndarray, torch.Tensor], float], Tuple[Union[np.ndarray, torch.Tensor], Any, Any]],
+    denoise_fn: Callable[[Union[np.ndarray, torch.Tensor]], Union[np.ndarray, torch.Tensor]],
+    noise_level: float,
+    noise_type: str = "Unknown",
+    title_prefix: str = "",
+    cmap: str = 'viridis'
+) -> wandb.Image:
+    """
+    Create a wandb Image for graph denoising visualization.
+    
+    This is a wandb-compatible wrapper around plot_graph_denoising_comparison.
+    
+    Args:
+        A_clean: Clean adjacency matrix
+        noise_fn: Function that adds noise
+        denoise_fn: Function that denoises
+        noise_level: Noise level parameter
+        noise_type: Name of the noise type
+        title_prefix: Optional prefix for the plot title
+        cmap: Colormap to use
+        
+    Returns:
+        wandb.Image object
+    """
+    fig = plot_graph_denoising_comparison(
+        A_clean=A_clean,
+        noise_fn=noise_fn,
+        denoise_fn=denoise_fn,
+        noise_level=noise_level,
+        noise_type=noise_type,
+        title_prefix=title_prefix,
+        cmap=cmap
+    )
+    
+    wandb_image = wandb.Image(fig)
+    plt.close(fig)  # Clean up to avoid memory issues
+    
+    return wandb_image
 
 
 def create_wandb_visualization(A_original: torch.Tensor,

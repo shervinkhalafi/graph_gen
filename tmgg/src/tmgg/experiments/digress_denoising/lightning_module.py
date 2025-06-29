@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from tmgg.models.digress.transformer_model import GraphTransformer
 from tmgg.experiment_utils import (
@@ -25,9 +25,10 @@ class DigressDenoisingLightningModule(pl.LightningModule):
         hidden_dims: Optional[Dict[str, int]] = None,
         output_dims: Optional[Dict[str, int]] = None,
         learning_rate: float = 0.001,
-        noise_levels: Optional[list] = None,
         loss_type: str = "MSE",
         scheduler_config: Optional[Dict[str, Any]] = None,
+        noise_levels: Optional[List[float]] = None,
+        noise_type: str = "Digress",
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -52,12 +53,15 @@ class DigressDenoisingLightningModule(pl.LightningModule):
             self.criterion = nn.BCELoss()
         else:
             raise ValueError(f"Unknown loss type: {loss_type}")
+        
+        self.noise_levels = noise_levels or [0.01, 0.05, 0.1, 0.2, 0.3]
+        self.noise_type = noise_type
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
-        eps = torch.rand(1).item() * 0.5
+        eps = self.noise_levels[torch.randint(len(self.noise_levels), (1,)).item()]
         batch_noisy, V_noisy, _ = add_digress_noise(batch, eps)
 
         model_input = V_noisy if self.hparams.use_eigenvectors else batch_noisy
@@ -91,7 +95,7 @@ class DigressDenoisingLightningModule(pl.LightningModule):
         self, batch: torch.Tensor, batch_idx: int
     ) -> Dict[str, torch.Tensor]:
         metrics_by_noise = {}
-        for eps in self.hparams.noise_levels:
+        for eps in self.noise_levels:
             batch_noisy, V_noisy, _ = add_digress_noise(batch, eps)
             model_input = V_noisy if self.hparams.use_eigenvectors else batch_noisy
             output = self.forward(model_input)
@@ -105,7 +109,7 @@ class DigressDenoisingLightningModule(pl.LightningModule):
         return metrics_by_noise
 
     def on_validation_epoch_end(self) -> None:
-        if self.current_epoch > 0 and self.current_epoch % self.trainer.datamodule.hparams.get("visualization_epochs", 10) == 0:
+        if self.current_epoch > 0 and self.current_epoch % 10 == 0:
             self._log_visualizations("val")
 
     def on_test_epoch_end(self) -> None:
@@ -115,21 +119,34 @@ class DigressDenoisingLightningModule(pl.LightningModule):
         if not isinstance(self.logger, pl.loggers.WandbLogger):
             return
 
-        datamodule = self.trainer.datamodule
-        A_sample = datamodule.get_sample_adjacency_matrix(stage).to(self.device)
+        # Get a sample from the appropriate dataloader
+        if stage == "val":
+            dataloader = self.trainer.datamodule.val_dataloader()
+        elif stage == "test":
+            dataloader = self.trainer.datamodule.test_dataloader()
+        else:
+            return  # Should not happen
+
+        try:
+            # Get a single batch and take the first sample for visualization
+            batch = next(iter(dataloader))
+            A_sample = batch[0]
+        except StopIteration:
+            # Dataloader might be empty
+            return
 
         try:
             wandb_images = create_wandb_visualization(
                 A_sample,
                 self,
                 add_digress_noise,
-                self.hparams.noise_levels,
+                self.noise_levels,
                 stage,
                 self.device,
             )
             self.logger.experiment.log(wandb_images)
         except Exception as e:
-            self.logger.experiment.log({f"{stage}_visualization_error": str(e)})
+            self.logger.experiment.log({f"{stage}_viz_error_msg": str(e)})
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)

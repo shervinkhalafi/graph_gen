@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import wandb
 import numpy as np
 
@@ -37,9 +37,10 @@ class HybridDenoisingLightningModule(pl.LightningModule):
                  transformer_bias: bool = True,
                  # Training configuration
                  learning_rate: float = 0.005,
-                 noise_levels: list = None,
                  loss_type: str = "BCE",
-                 scheduler_config: Optional[Dict[str, Any]] = None):
+                 scheduler_config: Optional[Dict[str, Any]] = None,
+                 noise_levels: Optional[List[float]] = None,
+                 noise_type: str = "Digress"):
         """
         Initialize the Lightning module.
         
@@ -56,7 +57,6 @@ class HybridDenoisingLightningModule(pl.LightningModule):
             transformer_dropout: Transformer dropout rate
             transformer_bias: Whether to use bias in transformer
             learning_rate: Learning rate for optimizer
-            noise_levels: List of noise levels for evaluation
             loss_type: Loss function type ("MSE" or "BCE")
             scheduler_config: Optional scheduler configuration
         """
@@ -96,9 +96,10 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         
         # Store configuration
         self.learning_rate = learning_rate
-        self.noise_levels = noise_levels or [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
         self.scheduler_config = scheduler_config
         self.use_transformer = use_transformer
+        self.noise_levels = noise_levels or [0.01, 0.05, 0.1, 0.2, 0.3]
+        self.noise_type = noise_type
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -126,8 +127,16 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         # Sample random noise level for this batch
         eps = np.random.choice(self.noise_levels)
         
-        # Add noise (using digress noise as default)
-        batch_noisy, _, _ = add_digress_noise(batch, eps)
+        # Get the appropriate noise function
+        noise_fn_map = {
+            'Gaussian': add_gaussian_noise,
+            'Rotation': add_rotation_noise,
+            'Digress': add_digress_noise,
+        }
+        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
+        
+        # Add noise
+        batch_noisy, _, _ = noise_fn(batch, eps)
         
         # Ensure double precision if needed
         batch_noisy = batch_noisy.double()
@@ -158,7 +167,17 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         """
         # Use fixed noise level for validation
         eps = 0.2
-        batch_noisy, _, _ = add_digress_noise(batch, eps)
+        
+        # Get the appropriate noise function
+        noise_fn_map = {
+            'Gaussian': add_gaussian_noise,
+            'Rotation': add_rotation_noise,
+            'Digress': add_digress_noise,
+        }
+        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
+        
+        # Add noise
+        batch_noisy, _, _ = noise_fn(batch, eps)
         
         # Ensure double precision if needed
         batch_noisy = batch_noisy.double()
@@ -193,9 +212,17 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         """
         metrics_by_noise = {}
         
+        # Get the appropriate noise function
+        noise_fn_map = {
+            'Gaussian': add_gaussian_noise,
+            'Rotation': add_rotation_noise,
+            'Digress': add_digress_noise,
+        }
+        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
+        
         # Test across multiple noise levels
         for eps in self.noise_levels:
-            batch_noisy, _, _ = add_digress_noise(batch, eps)
+            batch_noisy, _, _ = noise_fn(batch, eps)
             
             # Ensure double precision if needed
             batch_noisy = batch_noisy.double()
@@ -229,22 +256,41 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         Args:
             stage: Stage name ("val" or "test")
         """
-        if not isinstance(self.logger, pl.loggers.WandbLogger):
+        if not isinstance(self.logger, pl.loggers.WandbLogger) or self.trainer.sanity_checking:
             return
-            
-        # Get a sample from validation/test set
-        # This is a simplified approach - in practice you'd want to use actual data
-        sample_size = 20
-        A_sample = torch.randn(sample_size, sample_size)  # Placeholder
+
+        # Get a sample from the appropriate dataloader
+        if stage == "val":
+            dataloader = self.trainer.datamodule.val_dataloader()
+        elif stage == "test":
+            dataloader = self.trainer.datamodule.test_dataloader()
+        else:
+            return  # Should not happen
+
+        try:
+            # Get a single batch and take the first sample for visualization
+            batch = next(iter(dataloader))
+            A_sample = batch[0]
+        except StopIteration:
+            # Dataloader might be empty
+            return
         
         try:
+            # Get the appropriate noise function
+            noise_fn_map = {
+                'Gaussian': add_gaussian_noise,
+                'Rotation': add_rotation_noise,
+                'Digress': add_digress_noise,
+            }
+            noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
+            
             wandb_images = create_wandb_visualization(
-                A_sample, self, add_digress_noise, 
+                A_sample, self, noise_fn, 
                 self.noise_levels, stage, self.device
             )
             self.logger.experiment.log(wandb_images)
         except Exception as e:
-            self.logger.experiment.log({f"{stage}_visualization_error": str(e)})
+            self.logger.experiment.log({f"{stage}_viz_error_msg": str(e)})
     
     def configure_optimizers(self):
         """Configure optimizers and learning rate schedulers."""

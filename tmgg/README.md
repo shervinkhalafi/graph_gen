@@ -127,7 +127,7 @@ pytest --cov=tmgg --cov-report=html
 Create `config/model/custom_attention.yaml`:
 
 ```yaml
-_target_: tmgg.experiments.attention_denoising.src.lightning_module.AttentionDenoisingLightningModule
+_target_: tmgg.experiments.attention_denoising.lightning_module.AttentionDenoisingLightningModule
 
 d_model: 32
 num_heads: 4

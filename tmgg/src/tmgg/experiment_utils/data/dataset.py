@@ -78,6 +78,7 @@ class GraphDataset(Dataset):
                 :, permuted_indices
             ]
 
+        assert adjacency_matrix.dtype == torch.float
         if self.return_original_idx:
             return adjacency_matrix, matrix_idx
         else:
@@ -87,4 +88,3 @@ class GraphDataset(Dataset):
 # Backward compatibility aliases
 AdjacencyMatrixDataset = GraphDataset
 PermutedAdjacencyDataset = GraphDataset
-

@@ -15,8 +15,11 @@ from .metrics import (
     compute_eigenvalue_error,
     compute_subspace_distance,
     compute_reconstruction_metrics,
+    compute_batch_metrics,
 )
 from .plotting import (
+    plot_graph_denoising_comparison,
+    create_graph_denoising_wandb_image,
     plot_training_curves,
     plot_denoising_results,
     plot_noise_level_comparison,
@@ -28,7 +31,7 @@ from .plotting import (
 __all__ = [
     # Data utilities
     "generate_sbm_adjacency",
-    "generate_block_sizes", 
+    "generate_block_sizes",
     "add_gaussian_noise",
     "add_rotation_noise",
     "add_digress_noise",
@@ -38,9 +41,12 @@ __all__ = [
     "GraphDataset",
     # Metrics
     "compute_eigenvalue_error",
-    "compute_subspace_distance", 
+    "compute_subspace_distance",
     "compute_reconstruction_metrics",
+    "compute_batch_metrics",
     # Plotting
+    "plot_graph_denoising_comparison",
+    "create_graph_denoising_wandb_image",
     "plot_training_curves",
     "plot_denoising_results",
     "plot_noise_level_comparison",
@@ -48,3 +54,4 @@ __all__ = [
     "plot_eigenvalue_denoising",
     "create_wandb_visualization",
 ]
+
