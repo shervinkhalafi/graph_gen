@@ -110,6 +110,38 @@ def main(config: DictConfig) -> Dict[str, Any]:
 
     # Initialize model
     model = hydra.utils.instantiate(config.model)
+    
+    # Run sanity check if requested
+    if config.get("sanity_check", False):
+        from tmgg.experiment_utils import run_experiment_sanity_check
+        
+        print("\n" + "="*70)
+        print("SANITY CHECK MODE - Validating experimental setup")
+        print("="*70)
+        
+        # Setup data module (ensure prepare_data is called first)
+        data_module.prepare_data()
+        data_module.setup("fit")
+        
+        # Get data loader and other components
+        train_loader = data_module.train_dataloader()
+        
+        # Run sanity checks
+        sanity_results = run_experiment_sanity_check(
+            model=model,
+            noise_generator=model.noise_generator,
+            data_loader=train_loader,
+            criterion=model.criterion,
+            device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+            save_plots=True,
+            output_dir=Path(config.paths.output_dir) / "sanity_check_plots"
+        )
+        
+        if not sanity_results['passed']:
+            raise RuntimeError("Sanity check failed! See output above for details.")
+        
+        print("\nSanity check passed! Exiting without training.")
+        return {"sanity_check": "passed"}
 
     # Create callbacks and logger
     callbacks = create_callbacks(config)

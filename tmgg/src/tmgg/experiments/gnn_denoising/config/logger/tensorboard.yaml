@@ -1,0 +1,9 @@
+# @package _global_
+
+logger:
+  - tensorboard:
+      save_dir: ${paths.output_dir}/tensorboard
+      name: ${experiment_name}
+      version: null  # Auto-versioning
+      log_graph: false  # Whether to log model graph
+      default_hp_metric: false  # Whether to use default hp metric

@@ -9,6 +9,7 @@ This is a graph denoising research project comparing attention-based transformer
 ## Architecture
 
 ### Current Structure (denoising/)
+
 - `main.py`: Primary training script with command-line argument parsing
 - `src/data/sbm.py`: SBM data generation and noise addition functions
 - `src/models/attention.py`: Multi-head attention transformer implementations  
@@ -17,7 +18,9 @@ This is a graph denoising research project comparing attention-based transformer
 - `train_attention.sh` and `train_gnn.sh`: Experiment runner scripts
 
 ### Target Structure (tmgg/)
+
 The goal is to reorganize experiments into a clean Hydra + PyTorch Lightning structure:
+
 - Individual experiment submodules with installable Hydra entrypoints
 - Shared `experiment_utils` for plotting and statistical tests
 - Shared `models` for algorithmic architectures
@@ -26,6 +29,7 @@ The goal is to reorganize experiments into a clean Hydra + PyTorch Lightning str
 ## Development Commands
 
 ### Running Experiments
+
 ```bash
 # From denoising/ directory
 python main.py --model_type MultiLayerAttention --noise_type Gaussian --eps 0.1 --num_heads 8 --num_layers 8
@@ -37,6 +41,7 @@ python main.py --model_type GNN --noise_type Digress --eps 0.3 --num_layers 1
 ```
 
 ### Key Arguments
+
 - `--model_type`: 'MultiLayerAttention', 'GNN', or 'NodeVarGNN'
 - `--noise_type`: 'Gaussian', 'Rotation', or 'Digress'  
 - `--eps`: Noise level (float)
@@ -45,7 +50,9 @@ python main.py --model_type GNN --noise_type Digress --eps 0.3 --num_layers 1
 - `--batch_size`: Training batch size
 
 ### Dependencies
+
 Core dependencies (inferred from imports):
+
 - PyTorch (neural networks)
 - SciPy (sparse eigenvalue computations via `eigsh`)
 - NumPy (matrix operations)
@@ -57,6 +64,7 @@ Core dependencies (inferred from imports):
 ## Code Architecture Details
 
 ### Models (`src/models/`)
+
 - **MultiHeadAttention**: Standard transformer attention with configurable heads/dimensions
 - **MultiLayerAttention**: Stacked attention layers for adjacency matrix denoising
 - **GNN**: Traditional graph neural network with message passing
@@ -64,11 +72,13 @@ Core dependencies (inferred from imports):
 - **SequentialDenoisingModel**: Hybrid approach combining GNN embeddings with transformer denoising
 
 ### Data Generation (`src/data/sbm.py`)
+
 - `generate_sbm_adjacency()`: Creates stochastic block model graphs
 - Noise functions: `add_gaussian_noise()`, `add_rotation_noise()`, `add_digress_noise()`
 - `AdjacencyMatrixDataset`: PyTorch dataset wrapper for batch processing
 
 ### Evaluation Metrics
+
 - Eigenvalue error computation using `scipy.sparse.linalg.eigsh`
 - Subspace distance calculations for denoising quality assessment
 - Visualization of results across different noise levels and model types
@@ -91,8 +101,11 @@ Core dependencies (inferred from imports):
 ## Development Priorities
 
 When working on the tmgg/ reorganization:
+
 1. Maintain existing experiment functionality during migration
 2. Implement proper Hydra configuration management
 3. Add PyTorch Lightning training loop abstractions
 4. Create shared utility modules for common functions
 5. Establish proper package structure with installable entrypoints
+6. when fixing failing tests, preserve both test intent and original functoinality, don't attempt shortcuts just to silence a test
+

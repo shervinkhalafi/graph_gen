@@ -1,0 +1,31 @@
+# Exact match for new_denoiser.ipynb data configuration
+# Uses RANDOM partitions like the notebook with exact same parameters
+
+_target_: tmgg.experiment_utils.data.GraphDataModule
+
+dataset_name: sbm
+dataset_config:
+  # Random partitions like notebook - exact parameters
+  num_nodes: 20
+  min_blocks: 2
+  max_blocks: 4
+  min_block_size: 2
+  max_block_size: 15
+  p_intra: 1.0  # High probability for connections within blocks
+  q_inter: 0.0  # Low probability for connections between blocks
+  
+  # Dataset splits - exact match to notebook
+  num_train_partitions: 10
+  num_test_partitions: 10
+
+# Training data parameters - match notebook exactly
+num_samples_per_graph: 1000  # num_samples in notebook
+batch_size: 100             # train_batch_size in notebook
+
+# Data loader parameters
+num_workers: 4
+pin_memory: true
+
+# Noise configuration - match notebook noise_levels exactly
+noise_type: "digress"
+noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]

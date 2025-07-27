@@ -1,0 +1,28 @@
+# @package _global_
+# Exact replication of new_denoiser.ipynb
+
+defaults:
+  - /model: notebook-match
+  - /data: notebook-match
+  - /trainer: default
+  - /logger: tensorboard
+  - _self_
+
+experiment_name: "hybrid_denoising_notebook_match"
+seed: 42
+sanity_check: false
+
+# Training configuration - match notebook
+trainer:
+  max_epochs: 200
+
+# WandB config - match notebook
+wandb:
+  project: "graph-denoising"
+  name: "training_run"
+  tags: ["hybrid", "notebook-replication"]
+
+# Paths
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results

@@ -120,6 +120,9 @@ class TestNoiseGeneration:
         assert torch.allclose(A_noisy, expected)
         
         # Test intermediate noise level
+        # Note: This test requires a specific seed to ensure at least some elements are flipped
+        # due to the probabilistic nature of the noise. Seed 0 works reliably for 5x5 matrix with p=0.2
+        torch.manual_seed(0)
         A = np.eye(5)
         p = 0.2
         A_noisy, V, l = add_digress_noise(A, p)

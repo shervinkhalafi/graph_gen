@@ -1,0 +1,26 @@
+# Exact match for denoising/main.py attention configuration
+# CRITICAL FIX: Original uses d_k=k=20, d_v=k=20, NOT d_model//num_heads
+
+_target_: tmgg.experiments.attention_denoising.lightning_module.AttentionDenoisingLightningModule
+
+# Model architecture - EXACT MATCH to original k=20, d_k=k, d_v=k
+d_model: 20
+num_heads: 8
+num_layers: 8
+d_k: 20  # CRITICAL: Original uses k=20, not d_model//num_heads=2.5
+d_v: 20  # CRITICAL: Original uses k=20, not d_model//num_heads=2.5
+dropout: 0.0
+bias: true
+
+# Training configuration - EXACT MATCH
+learning_rate: 0.001
+loss_type: "MSE"
+
+# Noise configuration (from data module)
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+rotation_k: 20  # Number of eigenvectors for rotation noise
+seed: ${seed}  # Random seed for reproducible noise generation
+
+# No scheduler in original implementation
+scheduler_config: null

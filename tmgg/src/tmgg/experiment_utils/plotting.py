@@ -400,6 +400,43 @@ def create_graph_denoising_wandb_image(
     return wandb_image
 
 
+def create_graph_denoising_figure(
+    A_clean: Union[np.ndarray, torch.Tensor],
+    noise_fn: Callable[[Union[np.ndarray, torch.Tensor], float], Tuple[Union[np.ndarray, torch.Tensor], Any, Any]],
+    denoise_fn: Callable[[Union[np.ndarray, torch.Tensor]], Union[np.ndarray, torch.Tensor]],
+    noise_level: float,
+    noise_type: str = "Unknown",
+    title_prefix: str = "",
+    cmap: str = 'viridis'
+) -> plt.Figure:
+    """
+    Create a matplotlib figure for graph denoising visualization.
+    
+    This is a logger-agnostic version that returns a matplotlib figure.
+    
+    Args:
+        A_clean: Clean adjacency matrix
+        noise_fn: Function that adds noise
+        denoise_fn: Function that denoises
+        noise_level: Noise level parameter
+        noise_type: Name of the noise type
+        title_prefix: Optional prefix for the plot title
+        cmap: Colormap to use
+        
+    Returns:
+        matplotlib.figure.Figure object
+    """
+    return plot_graph_denoising_comparison(
+        A_clean=A_clean,
+        noise_fn=noise_fn,
+        denoise_fn=denoise_fn,
+        noise_level=noise_level,
+        noise_type=noise_type,
+        title_prefix=title_prefix,
+        cmap=cmap
+    )
+
+
 def create_wandb_visualization(A_original: torch.Tensor,
                               model: torch.nn.Module,
                               noise_function,

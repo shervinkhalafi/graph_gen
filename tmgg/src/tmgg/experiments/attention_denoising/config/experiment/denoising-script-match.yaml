@@ -1,0 +1,22 @@
+# @package _global_
+# Exact replication of denoising/train_attention.sh
+
+defaults:
+  - /model: denoising-script-match
+  - /data: denoising-script-match  
+  - /trainer: default
+  - /logger: tensorboard
+  - _self_
+
+experiment_name: "attention_denoising_script_match"
+seed: 42
+sanity_check: false
+
+# Training configuration - match original
+trainer:
+  max_epochs: 1000
+
+# Paths
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results

@@ -13,6 +13,13 @@ from .noise import (
     add_rotation_noise,
     random_skew_symmetric_matrix,
 )
+from .noise_generators import (
+    NoiseGenerator,
+    GaussianNoiseGenerator,
+    DigressNoiseGenerator,
+    RotationNoiseGenerator,
+    create_noise_generator,
+)
 from .sbm import generate_block_sizes, generate_sbm_adjacency
 
 __all__ = [
@@ -31,6 +38,12 @@ __all__ = [
     "add_gaussian_noise",
     "add_rotation_noise",
     "random_skew_symmetric_matrix",
+    # Noise generators
+    "NoiseGenerator",
+    "GaussianNoiseGenerator",
+    "DigressNoiseGenerator",
+    "RotationNoiseGenerator",
+    "create_noise_generator",
     # SBM functions
     "generate_block_sizes",
     "generate_sbm_adjacency",

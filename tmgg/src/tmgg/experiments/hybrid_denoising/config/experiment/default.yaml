@@ -9,6 +9,7 @@ defaults:
 
 experiment_name: "hybrid_denoising"
 seed: 42
+sanity_check: false
 
 # Logging
 wandb:

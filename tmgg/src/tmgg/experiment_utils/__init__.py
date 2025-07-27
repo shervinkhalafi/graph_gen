@@ -10,6 +10,11 @@ from .data import (
     AdjacencyMatrixDataset,
     PermutedAdjacencyDataset,
     GraphDataset,
+    NoiseGenerator,
+    GaussianNoiseGenerator,
+    DigressNoiseGenerator,
+    RotationNoiseGenerator,
+    create_noise_generator,
 )
 from .metrics import (
     compute_eigenvalue_error,
@@ -20,12 +25,21 @@ from .metrics import (
 from .plotting import (
     plot_graph_denoising_comparison,
     create_graph_denoising_wandb_image,
+    create_graph_denoising_figure,
     plot_training_curves,
     plot_denoising_results,
     plot_noise_level_comparison,
     plot_eigenvalue_comparison,
     plot_eigenvalue_denoising,
     create_wandb_visualization,
+)
+from .sanity_check import (
+    SanityCheckResult,
+    check_noise_generator,
+    check_model_forward_pass,
+    check_data_loader,
+    check_loss_computation,
+    run_experiment_sanity_check,
 )
 
 __all__ = [
@@ -39,6 +53,12 @@ __all__ = [
     "AdjacencyMatrixDataset",
     "PermutedAdjacencyDataset",
     "GraphDataset",
+    # Noise generators
+    "NoiseGenerator",
+    "GaussianNoiseGenerator", 
+    "DigressNoiseGenerator",
+    "RotationNoiseGenerator",
+    "create_noise_generator",
     # Metrics
     "compute_eigenvalue_error",
     "compute_subspace_distance",
@@ -47,11 +67,19 @@ __all__ = [
     # Plotting
     "plot_graph_denoising_comparison",
     "create_graph_denoising_wandb_image",
+    "create_graph_denoising_figure",
     "plot_training_curves",
     "plot_denoising_results",
     "plot_noise_level_comparison",
     "plot_eigenvalue_comparison",
     "plot_eigenvalue_denoising",
     "create_wandb_visualization",
+    # Sanity checks
+    "SanityCheckResult",
+    "check_noise_generator",
+    "check_model_forward_pass",
+    "check_data_loader",
+    "check_loss_computation",
+    "run_experiment_sanity_check",
 ]
 

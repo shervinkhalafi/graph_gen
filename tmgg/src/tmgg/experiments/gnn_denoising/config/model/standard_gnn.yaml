@@ -16,6 +16,8 @@ loss_type: "MSE"  # "MSE" or "BCE"
 # Noise configuration (from data module)
 noise_type: ${data.noise_type}
 noise_levels: ${data.noise_levels}
+rotation_k: 20  # Number of eigenvectors for rotation noise
+seed: ${seed}  # Random seed for reproducible noise generation
 
 # Scheduler configuration
 scheduler_config:

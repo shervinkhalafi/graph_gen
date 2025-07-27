@@ -1,0 +1,10 @@
+# @package _global_
+
+logger:
+  - wandb:
+      project: tmgg-attention-denoising
+      name: ${experiment_name}
+      tags: ["attention", "denoising"]
+      save_dir: ${paths.output_dir}
+      entity: null  # Your wandb entity/team
+      log_model: false  # Whether to log model checkpoints to wandb

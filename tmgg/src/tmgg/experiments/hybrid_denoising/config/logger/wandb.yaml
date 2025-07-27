@@ -1,0 +1,10 @@
+# @package _global_
+
+logger:
+  - wandb:
+      project: tmgg-hybrid-denoising
+      name: ${experiment_name}
+      tags: ["hybrid", "denoising"]
+      save_dir: ${paths.output_dir}
+      entity: null  # Your wandb entity/team
+      log_model: false  # Whether to log model checkpoints to wandb

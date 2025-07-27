@@ -3,7 +3,7 @@ name = "tmgg"
 version = "0.1.0"
 description = "Graph denoising experiments with Hydra and PyTorch Lightning"
 authors = [{ name = "Igor Krawczuk", email = "igor@adaptyvbio.com" }]
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 readme = "README.md"
 dependencies = [
     "torch>=1.12.0",

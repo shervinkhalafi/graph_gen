@@ -75,13 +75,19 @@ class GraphDataModule(pl.LightningDataModule):
         """Download or prepare data. Called only once per node."""
         if self.dataset_name == "sbm":
             sbm_params = self.dataset_config
-            self.all_partitions = generate_block_sizes(
-                sbm_params["num_nodes"],
-                min_blocks=sbm_params.get("min_blocks", 2),
-                max_blocks=sbm_params.get("max_blocks", 4),
-                min_size=sbm_params.get("min_block_size", 2),
-                max_size=sbm_params.get("max_block_size", 15),
-            )
+            
+            # Check if explicit block_sizes provided (for denoising script replication)
+            if "block_sizes" in sbm_params:
+                self.all_partitions = [sbm_params["block_sizes"]]
+            else:
+                # Use random partitions (for notebook replication)
+                self.all_partitions = generate_block_sizes(
+                    sbm_params["num_nodes"],
+                    min_blocks=sbm_params.get("min_blocks", 2),
+                    max_blocks=sbm_params.get("max_blocks", 4),
+                    min_size=sbm_params.get("min_block_size", 2),
+                    max_size=sbm_params.get("max_block_size", 15),
+                )
         elif self.dataset_name in DATASET_WRAPPERS:
             # Instantiating the wrapper might trigger downloads
             _ = DATASET_WRAPPERS[self.dataset_name](**self.dataset_config)
@@ -99,10 +105,20 @@ class GraphDataModule(pl.LightningDataModule):
         sbm_params = self.dataset_config
         p_intra = sbm_params.get("p_intra", 1.0)
         q_inter = sbm_params.get("q_inter", 0.0)
-        num_train_partitions = sbm_params.get("num_train_partitions", 10)
-        num_test_partitions = sbm_params.get("num_test_partitions", 10)
+        
+        # Handle fixed block sizes (for denoising script replication)
+        if "block_sizes" in sbm_params:
+            # Use the single fixed partition for both train and test
+            num_train_partitions = 1
+            num_test_partitions = 1
+            # For fixed block sizes, we only need 1 partition total since train/test share it
+            total_needed = 1
+        else:
+            # Use random partitions (for notebook replication)
+            num_train_partitions = sbm_params.get("num_train_partitions", 10)
+            num_test_partitions = sbm_params.get("num_test_partitions", 10)
+            total_needed = num_train_partitions + num_test_partitions
 
-        total_needed = num_train_partitions + num_test_partitions
         if len(self.all_partitions) < total_needed:
             raise ValueError(
                 f"Not enough valid SBM partitions ({len(self.all_partitions)}) for "
@@ -111,13 +127,24 @@ class GraphDataModule(pl.LightningDataModule):
 
         if stage == "fit" or stage is None:
             if self.train_adjacency_matrices is None:
-                train_partitions = random.sample(
-                    self.all_partitions, num_train_partitions
-                )
+                if "block_sizes" in sbm_params:
+                    # For fixed block sizes, use the same partition
+                    train_partitions = self.all_partitions
+                else:
+                    # For random partitions, sample different ones
+                    train_partitions = random.sample(
+                        self.all_partitions, num_train_partitions
+                    )
                 self.train_partitions = train_partitions  # Save for test set exclusion
-                remaining_partitions = [
-                    p for p in self.all_partitions if p not in train_partitions
-                ]
+                
+                if "block_sizes" in sbm_params:
+                    # For fixed block sizes, use the same partition for test too
+                    remaining_partitions = self.all_partitions
+                else:
+                    # For random partitions, use different ones for test
+                    remaining_partitions = [
+                        p for p in self.all_partitions if p not in train_partitions
+                    ]
 
                 num_val_partitions = min(5, len(remaining_partitions) // 2)
                 val_partitions = random.sample(remaining_partitions, num_val_partitions)

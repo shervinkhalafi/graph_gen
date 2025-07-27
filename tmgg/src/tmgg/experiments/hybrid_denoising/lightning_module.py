@@ -15,6 +15,7 @@ from tmgg.experiment_utils import (
     add_gaussian_noise,
     add_rotation_noise,
     add_digress_noise,
+    create_noise_generator,
 )
 
 
@@ -40,7 +41,9 @@ class HybridDenoisingLightningModule(pl.LightningModule):
                  loss_type: str = "BCE",
                  scheduler_config: Optional[Dict[str, Any]] = None,
                  noise_levels: Optional[List[float]] = None,
-                 noise_type: str = "Digress"):
+                 noise_type: str = "Digress",
+                 rotation_k: int = 20,
+                 seed: Optional[int] = None):
         """
         Initialize the Lightning module.
         
@@ -59,6 +62,10 @@ class HybridDenoisingLightningModule(pl.LightningModule):
             learning_rate: Learning rate for optimizer
             loss_type: Loss function type ("MSE" or "BCE")
             scheduler_config: Optional scheduler configuration
+            noise_levels: List of noise levels for evaluation
+            noise_type: Type of noise to apply ("gaussian", "digress", "rotation")
+            rotation_k: Dimension for rotation noise skew matrix
+            seed: Random seed for reproducible noise generation
         """
         super().__init__()
         self.save_hyperparameters()
@@ -101,6 +108,13 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         self.noise_levels = noise_levels or [0.01, 0.05, 0.1, 0.2, 0.3]
         self.noise_type = noise_type
         
+        # Create noise generator
+        self.noise_generator = create_noise_generator(
+            noise_type=noise_type,
+            rotation_k=rotation_k,
+            seed=seed
+        )
+        
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the hybrid model.
@@ -127,16 +141,8 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         # Sample random noise level for this batch
         eps = np.random.choice(self.noise_levels)
         
-        # Get the appropriate noise function
-        noise_fn_map = {
-            'Gaussian': add_gaussian_noise,
-            'Rotation': add_rotation_noise,
-            'Digress': add_digress_noise,
-        }
-        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
-        
-        # Add noise
-        batch_noisy, _, _ = noise_fn(batch, eps)
+        # Add noise using noise generator
+        batch_noisy, _, _ = self.noise_generator.add_noise(batch, eps)
         
         # Ensure double precision if needed
         batch_noisy = batch_noisy.double()
@@ -168,16 +174,8 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         # Use fixed noise level for validation
         eps = 0.2
         
-        # Get the appropriate noise function
-        noise_fn_map = {
-            'Gaussian': add_gaussian_noise,
-            'Rotation': add_rotation_noise,
-            'Digress': add_digress_noise,
-        }
-        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
-        
-        # Add noise
-        batch_noisy, _, _ = noise_fn(batch, eps)
+        # Add noise using noise generator
+        batch_noisy, _, _ = self.noise_generator.add_noise(batch, eps)
         
         # Ensure double precision if needed
         batch_noisy = batch_noisy.double()
@@ -212,17 +210,9 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         """
         metrics_by_noise = {}
         
-        # Get the appropriate noise function
-        noise_fn_map = {
-            'Gaussian': add_gaussian_noise,
-            'Rotation': add_rotation_noise,
-            'Digress': add_digress_noise,
-        }
-        noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
-        
         # Test across multiple noise levels
         for eps in self.noise_levels:
-            batch_noisy, _, _ = noise_fn(batch, eps)
+            batch_noisy, _, _ = self.noise_generator.add_noise(batch, eps)
             
             # Ensure double precision if needed
             batch_noisy = batch_noisy.double()
@@ -276,16 +266,8 @@ class HybridDenoisingLightningModule(pl.LightningModule):
             return
         
         try:
-            # Get the appropriate noise function
-            noise_fn_map = {
-                'Gaussian': add_gaussian_noise,
-                'Rotation': add_rotation_noise,
-                'Digress': add_digress_noise,
-            }
-            noise_fn = noise_fn_map.get(self.noise_type, add_digress_noise)
-            
             wandb_images = create_wandb_visualization(
-                A_sample, self, noise_fn, 
+                A_sample, self, self.noise_generator.add_noise, 
                 self.noise_levels, stage, self.device
             )
             self.logger.experiment.log(wandb_images)

@@ -5,12 +5,15 @@ defaults:
   - /model: multi_layer_attention
   - /data: sbm_default
   - /trainer: default
+  - /logger: tensorboard  # Default to TensorBoard logging
   - _self_
 
 experiment_name: "attention_denoising"
 seed: 42
+sanity_check: false
 
-# Logging
+# Legacy logging configuration (kept for backward compatibility)
+# Override with logger configs or remove if not using wandb
 wandb:
   project: "tmgg-attention-denoising"
   name: "attention_${model.num_layers}L_${model.num_heads}H"
