@@ -15,6 +15,7 @@ from .data import (
     DigressNoiseGenerator,
     RotationNoiseGenerator,
     create_noise_generator,
+    compute_eigendecomposition,
 )
 from .metrics import (
     compute_eigenvalue_error,
@@ -53,6 +54,7 @@ __all__ = [
     "AdjacencyMatrixDataset",
     "PermutedAdjacencyDataset",
     "GraphDataset",
+    "compute_eigendecomposition",
     # Noise generators
     "NoiseGenerator",
     "GaussianNoiseGenerator", 

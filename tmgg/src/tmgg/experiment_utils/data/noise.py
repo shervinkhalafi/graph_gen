@@ -24,7 +24,7 @@ def random_skew_symmetric_matrix(n: int) -> np.ndarray:
 
 def add_rotation_noise(
     A: Union[torch.Tensor, np.ndarray], eps: float, skew: np.ndarray
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """
     Add rotation noise to adjacency matrix by rotating eigenvectors.
 
@@ -34,7 +34,7 @@ def add_rotation_noise(
         skew: Skew-symmetric matrix for rotation
 
     Returns:
-        Tuple of (noisy_adjacency, rotated_eigenvectors, eigenvalues)
+        Noisy adjacency matrix
     """
     # Convert to tensor if needed
     if isinstance(A, np.ndarray):
@@ -71,12 +71,12 @@ def add_rotation_noise(
             torch.matmul(V_rot, l_diag), torch.transpose(V_rot, 1, 2)
         )
 
-    return torch.real(A_noisy), torch.real(V_rot), torch.real(l)
+    return torch.real(A_noisy)
 
 
 def add_gaussian_noise(
     A: Union[torch.Tensor, np.ndarray], eps: float
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """
     Add Gaussian noise to adjacency matrix.
 
@@ -85,7 +85,7 @@ def add_gaussian_noise(
         eps: Noise level
 
     Returns:
-        Tuple of (noisy_adjacency, eigenvectors, eigenvalues)
+        Noisy adjacency matrix
     """
     # Convert to tensor if needed
     if isinstance(A, np.ndarray):
@@ -94,15 +94,14 @@ def add_gaussian_noise(
         A = A.float()
 
     A_noisy = A + eps * torch.randn_like(A)
-    l, V = torch.linalg.eigh(A_noisy)
-    return A_noisy, V, l
+    return A_noisy
 
 
 def add_digress_noise(
     A: Union[torch.Tensor, np.ndarray],
     p: float,
     rng: Optional[np.random.Generator] = None,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """
     Add noise to an adjacency matrix by flipping edges with probability p.
 
@@ -112,7 +111,7 @@ def add_digress_noise(
         rng: Random number generator (optional)
 
     Returns:
-        Tuple of (noisy_adjacency, eigenvectors, eigenvalues)
+        Noisy adjacency matrix
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -151,6 +150,4 @@ def add_digress_noise(
     # Flip the elements where the mask is True (using XOR operation)
     A_noisy = torch.where(flip_mask, 1 - A, A)
 
-    l, V = torch.linalg.eigh(A_noisy)
-
-    return A_noisy, V, l
+    return A_noisy

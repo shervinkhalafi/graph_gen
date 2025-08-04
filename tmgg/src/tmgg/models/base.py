@@ -23,6 +23,73 @@ class BaseModel(nn.Module, ABC):
 class DenoisingModel(BaseModel):
     """Abstract base class for graph denoising models."""
     
+    def __init__(self, domain: str = "standard"):
+        """
+        Initialize denoising model.
+        
+        Args:
+            domain: Domain for adjacency matrix processing
+                   - "standard": Direct adjacency matrix processing
+                   - "inv-sigmoid": Apply logistic transformation before processing
+        """
+        super().__init__()
+        if domain not in ["standard", "inv-sigmoid"]:
+            raise ValueError(f"Invalid domain '{domain}'. Must be 'standard' or 'inv-sigmoid'")
+        self.domain = domain
+    
+    def _apply_domain_transform(self, A: torch.Tensor) -> torch.Tensor:
+        """
+        Apply domain transformation to adjacency matrix.
+        
+        Args:
+            A: Input adjacency matrix
+            
+        Returns:
+            Transformed adjacency matrix
+        """
+        if self.domain == "inv-sigmoid":
+            # Apply logistic transformation: logit(A) = log(A / (1 - A))
+            # Clamp values to avoid numerical issues
+            A_clamped = torch.clamp(A, 1e-7, 1-1e-7)
+            return torch.logit(A_clamped)
+        else:
+            return A
+    
+    def _apply_output_transform(self, output: torch.Tensor) -> torch.Tensor:
+        """
+        Apply output transformation based on domain and training mode.
+        
+        Args:
+            output: Raw model output (logits)
+            
+        Returns:
+            Transformed output
+        """
+        if self.domain == "inv-sigmoid" and not self.training:
+            # Convert logits back to probabilities during evaluation
+            return torch.sigmoid(output)
+        else:
+            # Return raw logits for training or standard domain
+            return output
+    
+    def _apply_target_transform(self, target: torch.Tensor) -> torch.Tensor:
+        """
+        Apply target transformation to match output domain during training.
+        
+        Args:
+            target: Target tensor (adjacency matrix in probability space)
+            
+        Returns:
+            Transformed target tensor
+        """
+        if self.domain == "inv-sigmoid" and self.training:
+            # Convert target to logit space for training with inv-sigmoid domain
+            target_clamped = torch.clamp(target, 1e-7, 1-1e-7)
+            return torch.logit(target_clamped)
+        else:
+            # Return original target for standard domain or evaluation
+            return target
+    
     @abstractmethod
     def forward(self, x: torch.Tensor) -> Union[torch.Tensor, tuple]:
         """
@@ -32,7 +99,7 @@ class DenoisingModel(BaseModel):
             x: Input tensor (typically noisy adjacency matrix or embeddings)
             
         Returns:
-            Denoised output tensor or tuple of tensors
+            Denoised output tensor or tuple of tensors (raw logits)
         """
         pass
 

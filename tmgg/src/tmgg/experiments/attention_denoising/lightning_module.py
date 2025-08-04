@@ -18,6 +18,7 @@ from tmgg.experiment_utils import (
     add_rotation_noise,
     add_digress_noise,
     create_noise_generator,
+    compute_eigendecomposition,
 )
 from tmgg.experiment_utils.logging import log_figure
 
@@ -39,7 +40,8 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
                  noise_levels: Optional[List[float]] = None,
                  noise_type: str = "Digress",
                  rotation_k: int = 20,
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None,
+                 domain: str = "standard"):
         """
         Initialize the Lightning module.
         
@@ -58,6 +60,7 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
             noise_type: Type of noise to use ("Gaussian", "Rotation", "Digress")
             rotation_k: Dimension for rotation noise skew matrix (number of eigenvectors)
             seed: Random seed for reproducible noise generation
+            domain: Domain for adjacency matrix processing ("standard" or "inv-sigmoid")
         """
         super().__init__()
         self.save_hyperparameters()
@@ -70,7 +73,8 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
             d_k=d_k,
             d_v=d_v,
             dropout=dropout,
-            bias=bias
+            bias=bias,
+            domain=domain
         )
         
         # Loss function
@@ -103,13 +107,13 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         Forward pass through the attention model.
         
         Args:
-            x: Input tensor (eigenvectors)
+            x: Input adjacency matrix
             
         Returns:
-            Attention scores from the last layer
+            Reconstructed adjacency matrix
         """
-        _, attention_scores = self.model(x)
-        return attention_scores[-1]  # Return attention scores from last layer
+        # Model returns reconstructed adjacency matrix directly
+        return self.model(x)
     
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """
@@ -126,13 +130,16 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         eps = np.random.choice(self.noise_levels)
         
         # Add noise using noise generator
-        batch_noisy, V_noisy, _ = self.noise_generator.add_noise(batch, eps)
+        batch_noisy = self.noise_generator.add_noise(batch, eps)
         
-        # Forward pass using noisy eigenvectors
-        output = self.forward(V_noisy)
+        # Forward pass using noisy adjacency matrix
+        output = self.forward(batch_noisy)
         
-        # Compute loss
-        loss = self.criterion(output, batch)
+        # Transform target to match output domain and compute loss
+        # Note: During training with inv-sigmoid domain, the model returns raw logits
+        # and _apply_target_transform converts the target to logit space for consistent loss computation
+        target = self.model._apply_target_transform(batch)
+        loss = self.criterion(output, target)
         
         # Log metrics
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -155,15 +162,24 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         eps = 0.2
         
         # Add noise using noise generator
-        batch_noisy, V_noisy, _ = self.noise_generator.add_noise(batch, eps)
+        batch_noisy = self.noise_generator.add_noise(batch, eps)
         
         # Forward pass
-        output = self.forward(V_noisy)
+        output = self.forward(batch_noisy)
         
-        # Compute loss
-        val_loss = self.criterion(output, batch)
+        # For loss computation, ensure both output and target are in the same domain as training
+        # This is crucial for comparable loss values between training and validation
+        if self.model.domain == "inv-sigmoid":
+            # During validation, the model returns probabilities (sigmoid applied)
+            # but we need to compute loss in logit space to match training loss scale
+            output_for_loss = torch.logit(torch.clamp(output, 1e-7, 1-1e-7))
+            target_for_loss = torch.logit(torch.clamp(batch, 1e-7, 1-1e-7))
+            val_loss = self.criterion(output_for_loss, target_for_loss)
+        else:
+            # Standard domain: use output and target as-is
+            val_loss = self.criterion(output, batch)
         
-        # Compute reconstruction metrics
+        # Compute reconstruction metrics (output already has appropriate transformations applied in forward)
         batch_metrics = compute_batch_metrics(batch, output)
         
         # Log metrics
@@ -188,11 +204,25 @@ class AttentionDenoisingLightningModule(pl.LightningModule):
         
         # Test across multiple noise levels
         for eps in self.noise_levels:
-            batch_noisy, V_noisy, _ = self.noise_generator.add_noise(batch, eps)
-            output = self.forward(V_noisy)
+            batch_noisy = self.noise_generator.add_noise(batch, eps)
+            output = self.forward(batch_noisy)
             
-            # Compute metrics for this noise level
+            # Compute loss in the same domain as training for comparable values
+            if self.model.domain == "inv-sigmoid":
+                # Convert output back to logit space for comparable loss computation
+                output_for_loss = torch.logit(torch.clamp(output, 1e-7, 1-1e-7))
+                target_for_loss = torch.logit(torch.clamp(batch, 1e-7, 1-1e-7))
+                test_loss = self.criterion(output_for_loss, target_for_loss)
+            else:
+                # Standard domain: use output and target as-is
+                test_loss = self.criterion(output, batch)
+            
+            # Compute metrics for this noise level (output already has appropriate transformations applied in forward)
             batch_metrics = compute_batch_metrics(batch, output)
+            
+            # Log loss and metrics
+            metrics_by_noise[f'test_loss_eps_{eps}'] = test_loss
+            self.log(f'test_loss_eps_{eps}', test_loss, on_step=False, on_epoch=True)
             
             for metric_name, value in batch_metrics.items():
                 key = f'test_{metric_name}_eps_{eps}'

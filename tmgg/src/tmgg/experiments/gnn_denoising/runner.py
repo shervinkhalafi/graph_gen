@@ -218,7 +218,7 @@ def evaluate_across_noise_levels(
     with torch.no_grad():
         for eps in noise_levels:
             # Add noise
-            A_noisy, _, _ = add_digress_noise(sample_A, eps)
+            A_noisy = add_digress_noise(sample_A, eps)
 
             # Predict
             if A_noisy.ndim == 2:

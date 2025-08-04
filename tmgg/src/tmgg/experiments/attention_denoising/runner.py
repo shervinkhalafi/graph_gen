@@ -180,11 +180,16 @@ def main(config: DictConfig) -> Dict[str, Any]:
 
         # Log final results
         if logger:
-            loggers_list = logger if isinstance(logger, list) else [logger]
-            for lg in loggers_list:
-                for metric_name, values in final_results.items():
-                    for i, eps in enumerate(noise_levels):
-                        lg.experiment.log({f"final_{metric_name}_eps_{eps}": values[i]})
+            from tmgg.experiment_utils.logging import log_metrics
+            
+            # Build all metrics first for efficient logging
+            final_metrics = {}
+            for metric_name, values in final_results.items():
+                for i, eps in enumerate(noise_levels):
+                    final_metrics[f"final_{metric_name}_eps_{eps}"] = values[i]
+            
+            # Log all metrics at once
+            log_metrics(logger, final_metrics, step=trainer.global_step)
 
     # Cleanup wandb if used
     if logger:
@@ -217,7 +222,7 @@ def evaluate_across_noise_levels(
     Returns:
         Dictionary with evaluation results
     """
-    from tmgg.experiment_utils import add_digress_noise, compute_reconstruction_metrics
+    from tmgg.experiment_utils import add_digress_noise, compute_reconstruction_metrics, compute_eigendecomposition
 
     model.eval()
     results = {"mse": [], "eigenvalue_error": [], "subspace_distance": []}
@@ -228,7 +233,8 @@ def evaluate_across_noise_levels(
     with torch.no_grad():
         for eps in noise_levels:
             # Add noise
-            A_noisy, V_noisy, _ = add_digress_noise(sample_A, eps)
+            A_noisy = add_digress_noise(sample_A, eps)
+            _, V_noisy = compute_eigendecomposition(A_noisy)
 
             # Predict
             if A_noisy.ndim == 2:

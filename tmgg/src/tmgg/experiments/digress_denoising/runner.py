@@ -129,7 +129,7 @@ def evaluate_across_noise_levels(
     noise_levels: list,
 ) -> Dict[str, list]:
     """Evaluate model across different noise levels."""
-    from tmgg.experiment_utils import add_digress_noise, compute_reconstruction_metrics
+    from tmgg.experiment_utils import add_digress_noise, compute_reconstruction_metrics, compute_eigendecomposition
 
     model.eval()
     results = {"mse": [], "eigenvalue_error": [], "subspace_distance": []}
@@ -137,8 +137,12 @@ def evaluate_across_noise_levels(
 
     with torch.no_grad():
         for eps in noise_levels:
-            A_noisy, V_noisy, _ = add_digress_noise(sample_A, eps)
-            model_input = V_noisy if model.hparams.use_eigenvectors else A_noisy
+            A_noisy = add_digress_noise(sample_A, eps)
+            if model.hparams.use_eigenvectors:
+                _, V_noisy = compute_eigendecomposition(A_noisy)
+                model_input = V_noisy
+            else:
+                model_input = A_noisy
 
             if model_input.ndim == 2:
                 model_input = model_input.unsqueeze(0)

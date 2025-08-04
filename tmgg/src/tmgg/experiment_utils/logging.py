@@ -175,3 +175,72 @@ def log_figures(
     """
     for tag, figure in figures.items():
         log_figure(loggers, tag, figure, global_step=global_step, close=close)
+
+
+def log_metrics(
+    logger: Union[Logger, List[Logger]],
+    metrics: Dict[str, float],
+    step: Optional[int] = None
+) -> None:
+    """
+    Log scalar metrics to any PyTorch Lightning logger with consistent API.
+    
+    This function provides a unified interface for logging metrics across
+    different logger types (TensorBoard, W&B, CSV, etc.), handling the
+    different APIs transparently.
+    
+    Args:
+        logger: Single logger or list of loggers
+        metrics: Dictionary mapping metric names to scalar values
+        step: Optional global step (required for TensorBoard, optional for others)
+        
+    Example:
+        ```python
+        # Log a single metric
+        log_metrics(logger, {"loss": 0.5}, step=100)
+        
+        # Log multiple metrics at once
+        metrics = {
+            "train_loss": 0.5,
+            "val_loss": 0.6,
+            "accuracy": 0.92
+        }
+        log_metrics(logger, metrics, step=trainer.global_step)
+        ```
+    """
+    if logger is None:
+        return
+        
+    # Ensure logger is a list
+    if not isinstance(logger, list):
+        loggers = [logger]
+    else:
+        loggers = logger
+    
+    # Filter out None loggers
+    loggers = [lg for lg in loggers if lg is not None]
+    
+    for lg in loggers:
+        try:
+            if isinstance(lg, TensorBoardLogger):
+                # TensorBoard logs scalars one at a time
+                for key, value in metrics.items():
+                    lg.experiment.add_scalar(key, value, global_step=step or 0)
+                    
+            elif isinstance(lg, WandbLogger):
+                # W&B can log all metrics at once
+                lg.experiment.log(metrics)
+                
+            elif isinstance(lg, CSVLogger):
+                # CSV logger typically logs through trainer.log()
+                # Could implement direct file writing here if needed
+                pass
+                
+            # Add other logger types as needed
+            # elif isinstance(lg, MLFlowLogger):
+            #     for key, value in metrics.items():
+            #         lg.experiment.log_metric(key, value, step=step)
+                
+        except Exception as e:
+            # Log errors but don't fail the entire logging process
+            print(f"Failed to log metrics to {type(lg).__name__}: {str(e)}")

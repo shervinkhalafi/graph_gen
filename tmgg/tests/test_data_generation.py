@@ -14,6 +14,7 @@ from tmgg.experiment_utils import (
     AdjacencyMatrixDataset,
     PermutedAdjacencyDataset,
     GraphDataset,
+    compute_eigendecomposition,
 )
 
 
@@ -68,7 +69,8 @@ class TestNoiseGeneration:
         A = np.eye(5)
         eps = 0.1
         
-        A_noisy, V, l = add_gaussian_noise(A, eps)
+        A_noisy = add_gaussian_noise(A, eps)
+        l, V = compute_eigendecomposition(A_noisy)
         
         assert A_noisy.shape == A.shape
         assert isinstance(A_noisy, torch.Tensor)
@@ -79,7 +81,7 @@ class TestNoiseGeneration:
         
         # Test noise level effect
         eps_large = 1.0
-        A_noisy_large, _, _ = add_gaussian_noise(A, eps_large)
+        A_noisy_large = add_gaussian_noise(A, eps_large)
         
         # Larger noise should cause more deviation
         deviation_small = torch.norm(A_noisy - torch.tensor(A, dtype=torch.float32))
@@ -92,7 +94,8 @@ class TestNoiseGeneration:
         A = torch.eye(5).unsqueeze(0).repeat(batch_size, 1, 1)
         eps = 0.1
         
-        A_noisy, V, l = add_gaussian_noise(A, eps)
+        A_noisy = add_gaussian_noise(A, eps)
+        l, V = compute_eigendecomposition(A_noisy)
         
         assert A_noisy.shape == (batch_size, 5, 5)
         assert V.shape == (batch_size, 5, 5)
@@ -106,14 +109,16 @@ class TestNoiseGeneration:
         A = np.ones((5, 5))
         p = 0.0  # No flipping
         
-        A_noisy, V, l = add_digress_noise(A, p)
+        A_noisy = add_digress_noise(A, p)
+        l, V = compute_eigendecomposition(A_noisy)
         
         assert torch.allclose(A_noisy, torch.ones(5, 5))
         
         # Test with some flipping
         A = np.zeros((5, 5))
         p = 1.0  # Flip all edges (not diagonal)
-        A_noisy, V, l = add_digress_noise(A, p)
+        A_noisy = add_digress_noise(A, p)
+        l, V = compute_eigendecomposition(A_noisy)
         
         # Should flip all off-diagonal elements to 1, diagonal stays 0
         expected = torch.ones(5, 5) - torch.eye(5)
@@ -125,7 +130,8 @@ class TestNoiseGeneration:
         torch.manual_seed(0)
         A = np.eye(5)
         p = 0.2
-        A_noisy, V, l = add_digress_noise(A, p)
+        A_noisy = add_digress_noise(A, p)
+        l, V = compute_eigendecomposition(A_noisy)
         
         # Check that some elements are flipped
         diff_count = torch.sum(A_noisy != torch.tensor(A, dtype=torch.float32))
@@ -178,14 +184,16 @@ class TestNoiseGeneration:
         eps = 0.1
         skew = random_skew_symmetric_matrix(5)
         
-        A_noisy, V_rot, l = add_rotation_noise(A, eps, skew)
+        A_noisy = add_rotation_noise(A, eps, skew)
+        l, V_rot = compute_eigendecomposition(A_noisy)
+        l_original, _ = compute_eigendecomposition(A)
         
         assert A_noisy.shape == A.shape
         assert V_rot.shape == (1, 5, 5)
         assert l.shape == (1, 5)
         
-        # Check that eigenvalues are preserved
-        assert torch.allclose(l, torch.ones(1, 5), atol=1e-5)
+        # Check that eigenvalues are preserved (rotation doesn't change eigenvalues)
+        assert torch.allclose(l, l_original, atol=1e-5)
         
         # Check reconstruction
         l_diag = torch.diag_embed(l)
@@ -198,27 +206,29 @@ class TestNoiseGeneration:
         eps = 0.5
         skew = random_skew_symmetric_matrix(5)
         
-        A_noisy, V_rot, l = add_rotation_noise(A, eps, skew)
+        A_noisy = add_rotation_noise(A, eps, skew)
+        l, V_rot = compute_eigendecomposition(A_noisy)
+        l_original, _ = compute_eigendecomposition(A)
         
         # Check eigenvectors are still orthonormal
         VTV = torch.matmul(V_rot.transpose(-2, -1), V_rot)
         assert torch.allclose(VTV, torch.eye(5), atol=1e-5)
         
-        # Check eigenvalues are preserved
-        assert torch.allclose(l.sort().values, torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0]]))
+        # Check eigenvalues are preserved (rotation doesn't change eigenvalues)
+        assert torch.allclose(l.sort().values, l_original.sort().values, atol=1e-5)
     
     def test_noise_functions_with_numpy_input(self):
         """Test that noise functions handle numpy arrays properly."""
         A_np = np.eye(5)
         
         # Test each noise function
-        A_gauss, _, _ = add_gaussian_noise(A_np, 0.1)
+        A_gauss = add_gaussian_noise(A_np, 0.1)
         assert isinstance(A_gauss, torch.Tensor)
         
-        A_digress, _, _ = add_digress_noise(A_np, 0.1)
+        A_digress = add_digress_noise(A_np, 0.1)
         assert isinstance(A_digress, torch.Tensor)
         
-        A_rot, _, _ = add_rotation_noise(A_np, 0.1, random_skew_symmetric_matrix(5))
+        A_rot = add_rotation_noise(A_np, 0.1, random_skew_symmetric_matrix(5))
         assert isinstance(A_rot, torch.Tensor)
 
 

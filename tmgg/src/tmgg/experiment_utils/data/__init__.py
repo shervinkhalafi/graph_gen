@@ -21,6 +21,11 @@ from .noise_generators import (
     create_noise_generator,
 )
 from .sbm import generate_block_sizes, generate_sbm_adjacency
+from .eigendecomposition import (
+    compute_eigendecomposition,
+    compute_top_k_eigendecomposition,
+    compute_spectral_distance,
+)
 
 __all__ = [
     # Data Module
@@ -47,4 +52,8 @@ __all__ = [
     # SBM functions
     "generate_block_sizes",
     "generate_sbm_adjacency",
+    # Eigendecomposition functions
+    "compute_eigendecomposition",
+    "compute_top_k_eigendecomposition",
+    "compute_spectral_distance",
 ]

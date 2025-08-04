@@ -23,7 +23,7 @@ class NoiseGenerator(ABC):
     @abstractmethod
     def add_noise(
         self, A: torch.Tensor, eps: float
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
         Add noise to an adjacency matrix.
         
@@ -32,7 +32,7 @@ class NoiseGenerator(ABC):
             eps: Noise level/intensity
             
         Returns:
-            Tuple of (noisy_adjacency, eigenvectors, eigenvalues)
+            Noisy adjacency matrix
         """
         pass
     
@@ -48,7 +48,7 @@ class GaussianNoiseGenerator(NoiseGenerator):
     
     def add_noise(
         self, A: torch.Tensor, eps: float
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """Add Gaussian noise to adjacency matrix."""
         return add_gaussian_noise(A, eps)
     
@@ -62,7 +62,7 @@ class DigressNoiseGenerator(NoiseGenerator):
     
     def add_noise(
         self, A: torch.Tensor, eps: float
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """Add digress noise by flipping edges with probability eps."""
         return add_digress_noise(A, eps)
     
@@ -103,7 +103,7 @@ class RotationNoiseGenerator(NoiseGenerator):
     
     def add_noise(
         self, A: torch.Tensor, eps: float
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """Add rotation noise by rotating eigenvectors."""
         return add_rotation_noise(A, eps, self.skew)
     

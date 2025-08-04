@@ -281,7 +281,7 @@ class GNN(DenoisingModel):
     """Standard Graph Neural Network for adjacency matrix reconstruction."""
     
     def __init__(self, num_layers: int, num_terms: int = 3, 
-                 feature_dim_in: int = 10, feature_dim_out: int = 10):
+                 feature_dim_in: int = 10, feature_dim_out: int = 10, domain: str = "standard"):
         """
         Initialize GNN.
         
@@ -290,8 +290,9 @@ class GNN(DenoisingModel):
             num_terms: Number of terms in polynomial filters
             feature_dim_in: Input feature dimension
             feature_dim_out: Output feature dimension
+            domain: Domain for adjacency matrix processing ("standard" or "inv-sigmoid")
         """
-        super(GNN, self).__init__()
+        super(GNN, self).__init__(domain=domain)
         
         self.num_layers = num_layers
         self.num_terms = num_terms
@@ -317,7 +318,10 @@ class GNN(DenoisingModel):
         Returns:
             Tuple of (X_embeddings, Y_embeddings)
         """
-        Z = self.embedding_layer(A)
+        # Apply domain transformation to input
+        A_transformed = self._apply_domain_transform(A)
+        
+        Z = self.embedding_layer(A_transformed)
         # Take only the first feature_dim_in columns from eigenvectors
         # But ensure we don't exceed the available columns
         actual_feature_dim = min(Z.shape[2], self.feature_dim_in)
@@ -329,7 +333,7 @@ class GNN(DenoisingModel):
                                 device=Z.device, dtype=Z.dtype)
             Z = torch.cat([Z, padding], dim=2)
         for layer in self.layers:
-            Z = layer(A, Z)
+            Z = layer(A_transformed, Z)
         X = self.out_x(Z)
         Y = self.out_y(Z)
         return X, Y
@@ -341,6 +345,7 @@ class GNN(DenoisingModel):
             "num_terms": self.num_terms,
             "feature_dim_in": self.feature_dim_in,
             "feature_dim_out": self.feature_dim_out,
+            "domain": self.domain,
         }
 
 
@@ -348,8 +353,8 @@ class GNNSymmetric(DenoisingModel):
     """Symmetric GNN using same embedding for both X and Y."""
     
     def __init__(self, num_layers: int, num_terms: int = 3, 
-                 feature_dim_in: int = 10, feature_dim_out: int = 10):
-        super(GNNSymmetric, self).__init__()
+                 feature_dim_in: int = 10, feature_dim_out: int = 10, domain: str = "standard"):
+        super(GNNSymmetric, self).__init__(domain=domain)
         
         self.num_layers = num_layers
         self.num_terms = num_terms
@@ -374,7 +379,10 @@ class GNNSymmetric(DenoisingModel):
         Returns:
             Tuple of (reconstructed_adjacency, X_embeddings)
         """
-        Z = self.embedding_layer(A)
+        # Apply domain transformation to input
+        A_transformed = self._apply_domain_transform(A)
+        
+        Z = self.embedding_layer(A_transformed)
         # Take only the first feature_dim_in columns from eigenvectors
         # But ensure we don't exceed the available columns
         actual_feature_dim = min(Z.shape[2], self.feature_dim_in)
@@ -386,11 +394,13 @@ class GNNSymmetric(DenoisingModel):
                                 device=Z.device, dtype=Z.dtype)
             Z = torch.cat([Z, padding], dim=2)
         for layer in self.layers:
-            Z = layer(A, Z)
+            Z = layer(A_transformed, Z)
         X = self.out_x(Z)
 
         outer = torch.bmm(X, X.transpose(1, 2))
-        return torch.sigmoid(outer), X
+        # Apply output transformation based on domain and training mode
+        outer_transformed = self._apply_output_transform(outer)
+        return outer_transformed, X
     
     def get_config(self) -> Dict[str, Any]:
         """Get model configuration."""
@@ -399,13 +409,14 @@ class GNNSymmetric(DenoisingModel):
             "num_terms": self.num_terms,
             "feature_dim_in": self.feature_dim_in,
             "feature_dim_out": self.feature_dim_out,
+            "domain": self.domain,
         }
 
 
 class NodeVarGNN(DenoisingModel):
     """Node-variant Graph Neural Network."""
     
-    def __init__(self, num_layers: int, num_terms: int = 3, feature_dim: int = 10):
+    def __init__(self, num_layers: int, num_terms: int = 3, feature_dim: int = 10, domain: str = "standard"):
         """
         Initialize Node-variant GNN.
         
@@ -413,8 +424,9 @@ class NodeVarGNN(DenoisingModel):
             num_layers: Number of layers
             num_terms: Number of polynomial terms
             feature_dim: Feature dimension
+            domain: Domain for adjacency matrix processing ("standard" or "inv-sigmoid")
         """
-        super(NodeVarGNN, self).__init__()
+        super(NodeVarGNN, self).__init__(domain=domain)
         
         self.num_layers = num_layers
         self.num_terms = num_terms
@@ -439,7 +451,10 @@ class NodeVarGNN(DenoisingModel):
         Returns:
             Reconstructed adjacency matrix
         """
-        Z = self.embedding_layer(A)
+        # Apply domain transformation to input
+        A_transformed = self._apply_domain_transform(A)
+        
+        Z = self.embedding_layer(A_transformed)
         # Take only the first feature_dim columns from eigenvectors
         # But ensure we don't exceed the available columns
         actual_feature_dim = min(Z.shape[2], self.feature_dim)
@@ -460,11 +475,12 @@ class NodeVarGNN(DenoisingModel):
                 ))
                 
         for layer in self.layers:
-            Z = layer(A, Z)
+            Z = layer(A_transformed, Z)
         X = self.out_x(Z)
         Y = self.out_y(Z)
         outer = torch.bmm(X, Y.transpose(1, 2))
-        return torch.sigmoid(outer)
+        # Apply output transformation based on domain and training mode
+        return self._apply_output_transform(outer)
     
     def get_config(self) -> Dict[str, Any]:
         """Get model configuration."""
@@ -472,4 +488,5 @@ class NodeVarGNN(DenoisingModel):
             "num_layers": self.num_layers,
             "num_terms": self.num_terms,
             "feature_dim": self.feature_dim,
+            "domain": self.domain,
         }

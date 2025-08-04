@@ -127,7 +127,7 @@ class MultiLayerAttention(DenoisingModel):
     
     def __init__(self, d_model: int, num_heads: int, num_layers: int, 
                  d_k: Optional[int] = None, d_v: Optional[int] = None, 
-                 dropout: float = 0.0, bias: bool = False):
+                 dropout: float = 0.0, bias: bool = False, domain: str = "standard"):
         """
         Initialize the Multi-Layer Attention module.
         
@@ -139,8 +139,9 @@ class MultiLayerAttention(DenoisingModel):
             d_v: Dimension of values (default: d_model // num_heads)
             dropout: Dropout probability
             bias: Whether to use bias in linear layers
+            domain: Domain for adjacency matrix processing ("standard" or "inv-sigmoid")
         """
-        super().__init__()
+        super().__init__(domain=domain)
         
         self.d_model = d_model
         self.num_heads = num_heads
@@ -157,26 +158,34 @@ class MultiLayerAttention(DenoisingModel):
             for _ in range(num_layers)
         ])
         
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, list]:
+    def forward(self, A: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Forward pass through all attention layers.
         
         Args:
-            x: Input tensor
+            A: Input adjacency matrix
             mask: Optional attention mask
             
         Returns:
-            Tuple of (final_output, list_of_attention_scores)
+            Reconstructed adjacency matrix (raw logits)
         """
-        # Keep track of attention scores from each layer
-        attention_scores = []
+        from ..experiment_utils.data.eigendecomposition import compute_eigendecomposition
+        
+        # Apply domain transformation to input
+        A_transformed = self._apply_domain_transform(A)
+        
+        # Compute eigendecomposition 
+        _, V = compute_eigendecomposition(A_transformed)
+        
+        # Use eigenvectors as input to attention layers
+        x = V
         
         # Pass through each attention layer sequentially
         for layer in self.layers:
-            x, scores = layer(x, mask=mask)
-            attention_scores.append(scores)
+            x, _ = layer(x, mask=mask)
             
-        return x, attention_scores
+        # Apply output transformation based on domain and training mode
+        return self._apply_output_transform(x)
     
     def get_config(self) -> Dict[str, Any]:
         """Get model configuration."""
@@ -188,4 +197,5 @@ class MultiLayerAttention(DenoisingModel):
             "d_v": self.d_v,
             "dropout": self.dropout,
             "bias": self.bias,
+            "domain": self.domain,
         }

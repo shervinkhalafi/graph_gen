@@ -40,6 +40,9 @@ class GraphDataset(Dataset):
 
         # Convert all matrices to torch tensors
         self.adjacency_matrices = []
+        assert len(adjacency_matrices) > 0, (
+            f"{adjacency_matrices=} {num_samples=} {apply_permutation=} {return_original_idx=}"
+        )
         for mat in adjacency_matrices:
             if isinstance(mat, np.ndarray):
                 mat = torch.tensor(mat, dtype=torch.float32)

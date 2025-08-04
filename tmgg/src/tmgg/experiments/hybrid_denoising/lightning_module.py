@@ -16,6 +16,7 @@ from tmgg.experiment_utils import (
     add_rotation_noise,
     add_digress_noise,
     create_noise_generator,
+    compute_eigendecomposition,
 )
 
 
@@ -142,7 +143,7 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         eps = np.random.choice(self.noise_levels)
         
         # Add noise using noise generator
-        batch_noisy, _, _ = self.noise_generator.add_noise(batch, eps)
+        batch_noisy = self.noise_generator.add_noise(batch, eps)
         
         # Ensure double precision if needed
         batch_noisy = batch_noisy.double()
@@ -151,8 +152,9 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         # Forward pass using noisy adjacency matrix
         output = self.forward(batch_noisy)
         
-        # Compute loss
-        loss = self.criterion(output, batch)
+        # Transform target to match output domain and compute loss
+        target = self.model._apply_target_transform(batch)
+        loss = self.criterion(output, target)
         
         # Log metrics
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -175,7 +177,7 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         eps = 0.2
         
         # Add noise using noise generator
-        batch_noisy, _, _ = self.noise_generator.add_noise(batch, eps)
+        batch_noisy = self.noise_generator.add_noise(batch, eps)
         
         # Ensure double precision if needed
         batch_noisy = batch_noisy.double()
@@ -184,8 +186,15 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         # Forward pass
         output = self.forward(batch_noisy)
         
-        # Compute loss
-        val_loss = self.criterion(output, batch)
+        # For loss computation, ensure both output and target are in the same domain as training
+        if self.model.domain == "inv-sigmoid":
+            # Convert output back to logit space for comparable loss computation
+            output_for_loss = torch.logit(torch.clamp(output, 1e-7, 1-1e-7))
+            target_for_loss = torch.logit(torch.clamp(batch, 1e-7, 1-1e-7))
+            val_loss = self.criterion(output_for_loss, target_for_loss)
+        else:
+            # Standard domain: use output and target as-is
+            val_loss = self.criterion(output, batch)
         
         # Compute reconstruction metrics
         batch_metrics = compute_batch_metrics(batch, output)
@@ -212,7 +221,7 @@ class HybridDenoisingLightningModule(pl.LightningModule):
         
         # Test across multiple noise levels
         for eps in self.noise_levels:
-            batch_noisy, _, _ = self.noise_generator.add_noise(batch, eps)
+            batch_noisy = self.noise_generator.add_noise(batch, eps)
             
             # Ensure double precision if needed
             batch_noisy = batch_noisy.double()
@@ -220,8 +229,22 @@ class HybridDenoisingLightningModule(pl.LightningModule):
             
             output = self.forward(batch_noisy)
             
+            # Compute loss in the same domain as training for comparable values
+            if self.model.domain == "inv-sigmoid":
+                # Convert output back to logit space for comparable loss computation
+                output_for_loss = torch.logit(torch.clamp(output, 1e-7, 1-1e-7))
+                target_for_loss = torch.logit(torch.clamp(batch, 1e-7, 1-1e-7))
+                test_loss = self.criterion(output_for_loss, target_for_loss)
+            else:
+                # Standard domain: use output and target as-is
+                test_loss = self.criterion(output, batch)
+            
             # Compute metrics for this noise level
             batch_metrics = compute_batch_metrics(batch, output)
+            
+            # Log loss and metrics
+            metrics_by_noise[f'test_loss_eps_{eps}'] = test_loss
+            self.log(f'test_loss_eps_{eps}', test_loss, on_step=False, on_epoch=True)
             
             for metric_name, value in batch_metrics.items():
                 key = f'test_{metric_name}_eps_{eps}'

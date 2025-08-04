@@ -9,7 +9,7 @@ from .gnn import GNN
 from .attention import MultiLayerAttention
 
 
-class SequentialDenoisingModel(BaseModel):
+class SequentialDenoisingModel(DenoisingModel):
     """
     Sequential model combining GNN embeddings with attention-based denoising.
     
@@ -20,15 +20,17 @@ class SequentialDenoisingModel(BaseModel):
     
     def __init__(self, 
                  embedding_model: EmbeddingModel,
-                 denoising_model: Optional[DenoisingModel] = None):
+                 denoising_model: Optional[DenoisingModel] = None,
+                 domain: str = "standard"):
         """
         Initialize the sequential denoising model.
         
         Args:
             embedding_model: GNN model for generating embeddings
             denoising_model: Optional transformer model for denoising embeddings
+            domain: Domain for adjacency matrix processing ("standard" or "inv-sigmoid")
         """
-        super().__init__()
+        super().__init__(domain=domain)
         self.embedding_model = embedding_model
         self.denoising_model = denoising_model
         
@@ -42,10 +44,13 @@ class SequentialDenoisingModel(BaseModel):
         Returns:
             Reconstructed adjacency matrix
         """
+        # Apply domain transformation to input
+        x_transformed = self._apply_domain_transform(x)
+        
         # Generate embeddings using GNN
         if hasattr(self.embedding_model, 'forward') and callable(getattr(self.embedding_model, 'forward')):
             # For GNN models that return (X, Y) embeddings
-            X, Y = self.embedding_model(x)
+            X, Y = self.embedding_model(x_transformed)
         else:
             raise ValueError("Embedding model must return (X, Y) embeddings")
         
@@ -65,8 +70,9 @@ class SequentialDenoisingModel(BaseModel):
         X_pred = Z_pred[:, :, :feature_dim]
         Y_pred = Z_pred[:, :, feature_dim:]
         
-        # Reconstruct adjacency matrix
-        return self._reconstruct_adjacency_from_embeddings(X_pred, Y_pred)
+        # Reconstruct adjacency matrix and apply output transformation
+        A_recon = self._reconstruct_adjacency_from_embeddings(X_pred, Y_pred)
+        return self._apply_output_transform(A_recon)
     
     def _reconstruct_adjacency_from_embeddings(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
         """
@@ -79,8 +85,10 @@ class SequentialDenoisingModel(BaseModel):
         Returns:
             Reconstructed adjacency matrix
         """
-        # Compute outer product and apply sigmoid
-        A_recon = torch.sigmoid(torch.bmm(X, Y.transpose(1, 2)))
+        # Compute outer product and apply output transformation based on domain and training mode
+        A_recon = torch.bmm(X, Y.transpose(1, 2))
+        # Note: This method doesn't have access to domain/training info, so return raw logits
+        # The calling model should handle the transformation
         return A_recon
     
     def get_config(self) -> Dict[str, Any]:
@@ -88,7 +96,8 @@ class SequentialDenoisingModel(BaseModel):
         config = {
             "model_type": "SequentialDenoisingModel",
             "embedding_model": self.embedding_model.get_config() if hasattr(self.embedding_model, 'get_config') else str(type(self.embedding_model)),
-            "has_denoising": self.denoising_model is not None
+            "has_denoising": self.denoising_model is not None,
+            "domain": self.domain
         }
         if self.denoising_model is not None and hasattr(self.denoising_model, 'get_config'):
             config["denoising_model"] = self.denoising_model.get_config()

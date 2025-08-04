@@ -10,6 +10,7 @@ from tmgg.experiment_utils import (
     compute_batch_metrics,
     create_wandb_visualization,
     add_digress_noise,
+    compute_eigendecomposition,
 )
 
 
@@ -62,12 +63,18 @@ class DigressDenoisingLightningModule(pl.LightningModule):
 
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         eps = self.noise_levels[torch.randint(len(self.noise_levels), (1,)).item()]
-        batch_noisy, V_noisy, _ = add_digress_noise(batch, eps)
+        batch_noisy = add_digress_noise(batch, eps)
 
-        model_input = V_noisy if self.hparams.use_eigenvectors else batch_noisy
+        if self.hparams.use_eigenvectors:
+            _, V_noisy = compute_eigendecomposition(batch_noisy)
+            model_input = V_noisy
+        else:
+            model_input = batch_noisy
         output = self.forward(model_input)
 
-        loss = self.criterion(output, batch)
+        # Transform target to match output domain and compute loss
+        target = self.model._apply_target_transform(batch)
+        loss = self.criterion(output, target)
 
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log("train_noise_level", eps, on_step=False, on_epoch=True)
@@ -77,12 +84,24 @@ class DigressDenoisingLightningModule(pl.LightningModule):
         self, batch: torch.Tensor, batch_idx: int
     ) -> Dict[str, torch.Tensor]:
         eps = 0.2
-        batch_noisy, V_noisy, _ = add_digress_noise(batch, eps)
+        batch_noisy = add_digress_noise(batch, eps)
 
-        model_input = V_noisy if self.hparams.use_eigenvectors else batch_noisy
+        if self.hparams.use_eigenvectors:
+            _, V_noisy = compute_eigendecomposition(batch_noisy)
+            model_input = V_noisy
+        else:
+            model_input = batch_noisy
         output = self.forward(model_input)
 
-        val_loss = self.criterion(output, batch)
+        # For loss computation, ensure both output and target are in the same domain as training
+        if self.model.domain == "inv-sigmoid":
+            # Convert output back to logit space for comparable loss computation
+            output_for_loss = torch.logit(torch.clamp(output, 1e-7, 1-1e-7))
+            target_for_loss = torch.logit(torch.clamp(batch, 1e-7, 1-1e-7))
+            val_loss = self.criterion(output_for_loss, target_for_loss)
+        else:
+            # Standard domain: use output and target as-is
+            val_loss = self.criterion(output, batch)
         batch_metrics = compute_batch_metrics(batch, output)
 
         self.log("val_loss", val_loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -96,11 +115,31 @@ class DigressDenoisingLightningModule(pl.LightningModule):
     ) -> Dict[str, torch.Tensor]:
         metrics_by_noise = {}
         for eps in self.noise_levels:
-            batch_noisy, V_noisy, _ = add_digress_noise(batch, eps)
-            model_input = V_noisy if self.hparams.use_eigenvectors else batch_noisy
+            batch_noisy = add_digress_noise(batch, eps)
+            if self.hparams.use_eigenvectors:
+                _, V_noisy = compute_eigendecomposition(batch_noisy)
+                model_input = V_noisy
+            else:
+                model_input = batch_noisy
             output = self.forward(model_input)
 
+            # Compute loss in the same domain as training for comparable values
+            if self.model.domain == "inv-sigmoid":
+                # Convert output back to logit space for comparable loss computation
+                output_for_loss = torch.logit(torch.clamp(output, 1e-7, 1-1e-7))
+                target_for_loss = torch.logit(torch.clamp(batch, 1e-7, 1-1e-7))
+                test_loss = self.criterion(output_for_loss, target_for_loss)
+            else:
+                # Standard domain: use output and target as-is
+                test_loss = self.criterion(output, batch)
+
+            # Compute metrics for this noise level
             batch_metrics = compute_batch_metrics(batch, output)
+            
+            # Log loss and metrics
+            metrics_by_noise[f"test_loss_eps_{eps}"] = test_loss
+            self.log(f"test_loss_eps_{eps}", test_loss, on_step=False, on_epoch=True)
+            
             for metric_name, value in batch_metrics.items():
                 key = f"test_{metric_name}_eps_{eps}"
                 metrics_by_noise[key] = value

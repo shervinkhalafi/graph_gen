@@ -146,7 +146,7 @@ class GraphDataModule(pl.LightningDataModule):
                         p for p in self.all_partitions if p not in train_partitions
                     ]
 
-                num_val_partitions = min(5, len(remaining_partitions) // 2)
+                num_val_partitions = min(5, max(1, len(remaining_partitions) // 2))
                 val_partitions = random.sample(remaining_partitions, num_val_partitions)
 
                 self.train_adjacency_matrices = [
@@ -165,10 +165,15 @@ class GraphDataModule(pl.LightningDataModule):
         if stage == "test" or stage is None:
             if self.test_adjacency_matrices is None:
                 train_partitions = getattr(self, "train_partitions", [])
-                test_partitions = random.sample(
-                    [p for p in self.all_partitions if p not in train_partitions],
-                    num_test_partitions,
-                )
+                if "block_sizes" in sbm_params:
+                    # For fixed block sizes, reuse the same partition for test
+                    test_partitions = self.all_partitions
+                else:
+                    # For random partitions, exclude train partitions
+                    test_partitions = random.sample(
+                        [p for p in self.all_partitions if p not in train_partitions],
+                        num_test_partitions,
+                    )
                 self.test_adjacency_matrices = [
                     torch.tensor(
                         generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
