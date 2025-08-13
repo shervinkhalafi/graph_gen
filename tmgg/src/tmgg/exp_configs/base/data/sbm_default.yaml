@@ -1,0 +1,27 @@
+# Stochastic Block Model data configuration
+
+defaults:
+  - base_dataloader
+  - _self_
+
+dataset_name: sbm
+dataset_config:
+  # Graph parameters
+  num_nodes: 20
+  p_intra: 1.0  # Probability of intra-block edges
+  q_inter: 0.0  # Probability of inter-block edges
+
+  # Block size generation
+  min_blocks: 2
+  max_blocks: 4
+  min_block_size: 2
+  max_block_size: 15
+
+  # Dataset splits
+  num_train_partitions: 10
+  num_test_partitions: 10
+
+num_samples_per_graph: 1000
+
+# Noise configuration
+noise_type: "digress"  # Options: "digress", "gaussian", "rotation"

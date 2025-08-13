@@ -1,0 +1,11 @@
+# @package _global_
+
+# Example configuration for logging to S3
+# Requires AWS credentials to be configured (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+logger:
+  - tensorboard:
+      save_dir: s3://your-bucket/experiments/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+      name: ${experiment_name}
+      version: null
+      log_graph: false
+      default_hp_metric: false

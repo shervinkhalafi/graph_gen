@@ -1,0 +1,24 @@
+# Exact match for denoising/main.py GNN configuration
+# Original: model = GNN(num_layers=1, num_terms=t=4, feature_dim=k=20)
+
+_target_: tmgg.experiments.gnn_denoising.lightning_module.GNNDenoisingLightningModule
+
+# Model architecture - EXACT MATCH
+model_type: "GNN"
+num_layers: 1
+num_terms: 4  # t=4 in original
+feature_dim_in: 20  # k=20 in original (top k eigenvectors)
+feature_dim_out: 20
+
+# Training configuration - EXACT MATCH
+learning_rate: 0.001
+loss_type: "MSE"
+
+# Noise configuration (from data module)
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+rotation_k: 20  # Number of eigenvectors for rotation noise
+seed: ${seed}  # Random seed for reproducible noise generation
+
+# No scheduler in original implementation
+scheduler_config: null

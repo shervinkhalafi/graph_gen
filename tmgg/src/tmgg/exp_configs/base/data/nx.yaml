@@ -1,0 +1,18 @@
+# @package data
+_target_: tmgg.experiment_utils.data.GraphDataModule
+dataset_name: nx
+dataset_config:
+  clsname: nx_roc # Ring of Cliques - one of: nx_star, nx_circ_ladder, nx_lollipop, nx_roc, nx_combo, nx_triangle, nx_square
+  num_cliques: 4
+  clique_sizes: 5
+  repeat: 100
+
+# Data module settings
+num_samples_per_graph: 1000
+batch_size: 32
+num_workers: 4
+pin_memory: true
+val_split: 0.2
+test_split: 0.2
+noise_levels: [0.01, 0.05, 0.1, 0.2, 0.3]
+noise_type: "Digress"

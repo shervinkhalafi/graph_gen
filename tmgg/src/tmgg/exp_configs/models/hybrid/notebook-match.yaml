@@ -1,0 +1,37 @@
+# Exact match for new_denoiser.ipynb hybrid configuration
+# Original notebook setup:
+# model_embedding = GNN(num_layers=2, num_terms=2, feature_dim_in=20, feature_dim_out=5)
+# model_denoiser = MultiLayerAttention(2*5=10, num_heads=4, d_k=10, d_v=10, num_layers=4)
+
+_target_: tmgg.experiments.hybrid_denoising.lightning_module.HybridDenoisingLightningModule
+
+# GNN configuration - EXACT MATCH
+gnn_num_layers: 2
+gnn_num_terms: 2
+gnn_feature_dim_in: 20
+gnn_feature_dim_out: 5
+
+# Transformer configuration - EXACT MATCH  
+use_transformer: true
+transformer_num_layers: 4
+transformer_num_heads: 4
+transformer_d_k: 10
+transformer_d_v: 10
+transformer_dropout: 0.0
+transformer_bias: true
+
+# Training configuration - EXACT MATCH
+learning_rate: 0.005
+loss_type: "BCE"
+
+# Noise configuration (from data module)
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+rotation_k: 20  # Number of eigenvectors for rotation noise
+seed: ${seed}  # Random seed for reproducible noise generation
+
+# Scheduler configuration - EXACT MATCH to notebook
+scheduler_config:
+  type: "cosine"
+  T_0: 20
+  T_mult: 2

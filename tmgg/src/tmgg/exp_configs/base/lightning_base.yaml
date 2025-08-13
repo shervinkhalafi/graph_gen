@@ -1,0 +1,26 @@
+# Base configuration for all Lightning modules
+# Contains parameters actually used by DenoisingLightningModule base class
+
+# Training parameters
+learning_rate: 0.001
+loss_type: "MSE"  # "MSE" or "BCE"
+
+# Noise configuration (references data module values)
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+rotation_k: 20  # Number of eigenvectors for rotation noise
+seed: ${seed}  # Random seed for reproducible noise generation
+
+# Learning rate scheduler configuration
+scheduler_config:
+  type: "cosine"  # "cosine", "step", or null
+  T_0: 20
+  T_mult: 2
+  # For step scheduler:
+  # step_size: 50
+  # gamma: 0.1
+
+# Common model parameters (passed to _make_model but shared across models)
+dropout: 0.0
+bias: true
+domain: "standard"  # "standard" or "inv-sigmoid"

@@ -1,0 +1,42 @@
+# Base configuration for attention denoising experiments
+
+defaults:
+  - models/attention/multi_layer_attention@model
+  - base/data/sbm_default@data
+  - base/trainer/default@trainer
+  - base/logger/tensorboard@logger
+  - _self_
+
+# Experiment identification
+experiment_name: "attention_denoising"
+seed: 42
+sanity_check: false
+
+# Override model parameters with data config values
+model:
+  noise_type: ${data.noise_type}
+  noise_levels: ${data.noise_levels}
+  seed: ${seed}
+
+# Logging configuration
+wandb:
+  project: "tmgg-attention-denoising"
+  name: "attention_${model.num_layers}L_${model.num_heads}H"
+  tags: ["attention", "denoising", "sbm"]
+
+# Evaluation settings
+evaluation:
+  visualization_epochs: 10
+
+# Paths
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ./multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

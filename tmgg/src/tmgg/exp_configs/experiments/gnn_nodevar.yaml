@@ -1,0 +1,12 @@
+# Example experiment override: Use NodeVarGNN instead of standard GNN
+# @package _global_
+
+defaults:
+  - /base_config_gnn
+  - override /models/gnn/nodevar_gnn@model
+  - _self_
+
+# Update experiment tracking
+wandb:
+  name: "gnn_nodevar_${model.num_layers}L"
+  tags: ["gnn", "nodevar", "denoising", "sbm"]

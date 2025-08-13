@@ -1,0 +1,9 @@
+.aider*
+.naider/
+outputs/*
+.hypothesis/
+.idea/
+*.outputs
+*.pyc
+*.pyi
+*.pyd

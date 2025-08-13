@@ -1,0 +1,24 @@
+# Standard GNN model configuration
+
+_target_: tmgg.experiments.gnn_denoising.lightning_module.GNNDenoisingLightningModule
+
+# Model-specific architecture parameters
+model_type: "GNN"  # "GNN", "NodeVarGNN", "GNNSymmetric"
+num_layers: 1
+num_terms: 4
+feature_dim_in: 20
+feature_dim_out: 20
+
+# Common parameters
+learning_rate: 0.001
+loss_type: "MSE"
+scheduler_config:
+  type: "cosine"
+  T_0: 20
+  T_mult: 2
+rotation_k: 20
+
+# These will be overridden by data config
+noise_type: "digress"
+noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
+seed: 42

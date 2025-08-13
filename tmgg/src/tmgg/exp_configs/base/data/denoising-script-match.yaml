@@ -1,0 +1,25 @@
+# Exact match for denoising script data configuration
+# Uses FIXED block sizes [10,5,3,2] as in original train_attention.sh and train_gnn.sh
+
+defaults:
+  - base_dataloader
+  - _self_
+
+dataset_name: sbm
+dataset_config:
+  # FIXED block sizes to match denoising scripts exactly
+  block_sizes: [10, 5, 3, 2]  # Override random generation
+  num_nodes: 20  # sum([10,5,3,2])
+  p_intra: 1.0  # High probability for connections within blocks
+  q_inter: 0.0  # Low probability for connections between blocks
+  # Single partition for fixed block sizes  
+  num_train_partitions: 1
+  num_test_partitions: 1
+
+# Training data parameters - match denoising scripts exactly
+num_samples_per_graph: 128  # num_samples_per_epoch from original
+batch_size: 32  # Override base_dataloader default
+
+# Noise configuration - single level as in original scripts
+noise_type: "digress"  # Will be overridden by command line
+noise_levels: [0.3]     # Single level, will be overridden by command line

@@ -1,0 +1,4 @@
+# file: /home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/src/tmgg/models/transformer.py
+# hypothesis_version: 6.135.14
+
+[1e-05, 0.1, 0.5, 128, 2048, 'E', 'GraphFeatures', 'X', 'de', 'dim_ffE', 'dim_ffX', 'dx', 'dy', 'hidden_dims', 'hidden_mlp_dims', 'input_dims', 'n_head', 'n_layers', 'output_dims', 'y']
