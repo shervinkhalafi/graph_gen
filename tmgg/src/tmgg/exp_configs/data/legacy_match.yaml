@@ -1,3 +1,4 @@
+# @package data
 # Legacy script exact match configuration  
 # Replicates parameters from ../denoising/train_attention.sh and train_gnn.sh
 

@@ -1,3 +1,4 @@
+# @package data
 # Exact match for denoising script data configuration
 # Uses FIXED block sizes [10,5,3,2] as in original train_attention.sh and train_gnn.sh
 

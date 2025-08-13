@@ -1,3 +1,4 @@
+# @package data
 # Base dataloader configuration - common parameters that can be inherited
 # Use this as a base for specific dataset configurations
 

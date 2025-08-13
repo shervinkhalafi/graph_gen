@@ -1,4 +1,5 @@
 import pytorch_lightning as pl
+import torch
 from pytorch_lightning.loggers import Logger
 
 from tmgg.experiment_utils.data.data_module import GraphDataModule
@@ -64,12 +65,13 @@ def final_eval(
     logger: Logger,
     trainer: pl.Trainer,
     best_model_path: str,
+    eval_noise_levels: list[float] | None = None,
 ):
     # hack to get class method
     best_model = model.__class__.load_from_checkpoint(best_model_path)
 
     # Perform final evaluation across noise levels
-    noise_levels = data_module.noise_levels
+    noise_levels = eval_noise_levels if eval_noise_levels is not None else data_module.noise_levels
     final_results = evaluate_across_noise_levels(best_model, data_module, noise_levels)
 
     # Log final results

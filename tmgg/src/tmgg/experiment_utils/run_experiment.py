@@ -63,7 +63,8 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
 
     # Load best model for final evaluation
     if best_model_path:
-        final_eval(model, data_module, logger, trainer)
+        eval_noise_levels = config.get("evaluation", {}).get("noise_levels", None)
+        final_eval(model, data_module, logger, trainer, best_model_path, eval_noise_levels)
 
     return {
         "best_model_path": best_model_path,
