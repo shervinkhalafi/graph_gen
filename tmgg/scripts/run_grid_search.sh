@@ -87,17 +87,59 @@ function run_model_experiments() {
     echo "Completed $model experiments"
 }
 
+# Function to restart from attention/rotation/0.05/0.0001
+function run_experiments_from_restart1() {
+    echo ""
+    echo "======================================"
+    echo "RESTARTING from attention/rotation/0.05/0.0001"
+    echo "======================================"
+    
+    # Start from attention/rotation/0.05/0.0001
+    # Complete attention model first
+    for noise_level in 0.05 0.1 0.2 0.3 0.4; do
+        for lr in 0.0001 0.001 0.01; do
+            # Skip everything before rotation/0.05/0.0001
+            if [[ "$noise_level" == "0.05" && "$lr" == "0.0001" ]]; then
+                # Start from this exact point
+                run_experiment "attention" "rotation" "$noise_level" "$lr"
+                echo "---"
+            elif [[ "$noise_level" != "0.05" || "$lr" != "0.0001" ]]; then
+                # Continue with remaining combinations
+                run_experiment "attention" "rotation" "$noise_level" "$lr"
+                echo "---"
+            fi
+        done
+    done
+    
+    # Continue with digress for attention
+    for noise_level in ${NOISE_LEVELS[@]}; do
+        for lr in ${LEARNING_RATES[@]}; do
+            run_experiment "attention" "digress" "$noise_level" "$lr"
+            echo "---"
+        done
+    done
+    
+    echo "Completed attention experiments"
+    
+    # Run all GNN experiments
+    run_model_experiments "gnn"
+    
+    # Run all Hybrid experiments
+    run_model_experiments "hybrid"
+}
+
 # Main execution
 function main() {
     # Parse command line arguments
     if [[ "$#" -eq 0 ]]; then
-        echo "Usage: $0 [attention|gnn|hybrid|all] [--parallel]"
+        echo "Usage: $0 [attention|gnn|hybrid|all|restart1] [--parallel]"
         echo ""
         echo "Options:"
         echo "  attention    Run only attention experiments"
         echo "  gnn         Run only GNN experiments"
         echo "  hybrid      Run only hybrid experiments"
         echo "  all         Run all experiments"
+        echo "  restart1    Restart from attention/rotation/lr0.0001/eps0.05"
         echo "  --parallel  Run experiments in parallel (use with caution)"
         exit 1
     fi
@@ -130,6 +172,9 @@ function main() {
                 run_model_experiments "gnn"
                 run_model_experiments "hybrid"
             fi
+            ;;
+        "restart1")
+            run_experiments_from_restart1
             ;;
         *)
             echo "Unknown option: $models_to_run"

@@ -10,3 +10,4 @@ wheels/
 .venv
 .hypothesis/*
 outputs/*
+wandb/*

@@ -31,6 +31,7 @@ tmgg-attention = "tmgg.experiments.attention_denoising.runner:main"
 tmgg-digress = "tmgg.experiments.digress_denoising.runner:main"
 tmgg-gnn = "tmgg.experiments.gnn_denoising.runner:main"
 tmgg-hybrid = "tmgg.experiments.hybrid_denoising.runner:main"
+tmgg-grid-search = "tmgg.experiments.grid_search_runner:main"
 
 [build-system]
 requires = ["hatchling"]
