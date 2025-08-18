@@ -86,3 +86,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             hidden_dims=hidden_dims,
             output_dims=output_dims,
         )
+
+    def get_model_name(self) -> str:
+        """Get the name of the model for visualization purposes."""
+        return "Digress"

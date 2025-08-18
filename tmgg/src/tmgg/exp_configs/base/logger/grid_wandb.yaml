@@ -1,0 +1,12 @@
+# @package logger
+
+- wandb:
+    project: "tmgg-grid-search-4k"
+    name: "${model_name}_${data.noise_type}_lr${learning_rate}_eps${noise_level}"
+    tags: ["grid_search", "4k_params", "${model_name}", "${data.noise_type}", "lr_${learning_rate}", "eps_${noise_level}"]
+    group: "${model_name}_${data.noise_type}"
+    save_dir: ${paths.output_dir}
+    entity: null  # Set to your wandb entity/team if needed
+    log_model: false  # Don't upload models to save space
+    offline: false  # Set to true for offline mode
+    notes: "Grid search with ~4k params across architectures"

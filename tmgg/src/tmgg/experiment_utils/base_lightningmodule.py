@@ -102,6 +102,87 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         """
         pass
 
+    def get_model_name(self) -> str:
+        """Get the name of the model for visualization purposes.
+        
+        Returns:
+            Model name to use in plot titles and logging.
+        """
+        return "Base"
+
+    def log_parameter_count(self) -> None:
+        """Log the parameter count of the model in a formatted way."""
+        if not hasattr(self.model, 'parameter_count'):
+            # Fallback for models without parameter_count method
+            total_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            print(f"\n{'='*50}")
+            print(f"Model: {self.get_model_name()}")
+            print(f"Total Trainable Parameters: {total_params:,}")
+            print(f"{'='*50}\n")
+            
+            # Log to logger if available
+            if self.logger:
+                self.logger.log_hyperparams({"total_parameters": total_params})
+            return
+        
+        # Get hierarchical parameter counts
+        param_counts = self.model.parameter_count()
+        
+        # Format and print parameter counts
+        def format_counts(counts: Dict[str, Any], indent: int = 0) -> List[str]:
+            """Recursively format parameter counts."""
+            lines = []
+            prefix = "  " * indent
+            
+            # Skip printing "self" and "total" at sub-levels, just show them at top level
+            for key, value in counts.items():
+                if key == "total" and indent == 0:
+                    continue  # Will be printed separately at the top
+                elif key == "self":
+                    if value > 0:
+                        lines.append(f"{prefix}├─ {key}: {value:,}")
+                elif isinstance(value, dict):
+                    if "total" in value:
+                        lines.append(f"{prefix}├─ {key}: {value['total']:,}")
+                        # Recursively format sub-counts if they exist
+                        sub_items = {k: v for k, v in value.items() if k != 'total'}
+                        if sub_items:
+                            sub_lines = format_counts(sub_items, indent + 1)
+                            lines.extend(sub_lines)
+                    else:
+                        lines.append(f"{prefix}├─ {key}:")
+                        sub_lines = format_counts(value, indent + 1)
+                        lines.extend(sub_lines)
+                else:
+                    lines.append(f"{prefix}├─ {key}: {value:,}")
+            
+            return lines
+        
+        # Print formatted output
+        print(f"\n{'='*60}")
+        print(f"Model Parameter Count: {self.get_model_name()}")
+        print(f"{'='*60}")
+        print(f"Total Trainable Parameters: {param_counts['total']:,}")
+        print("-" * 60)
+        
+        formatted_lines = format_counts(param_counts)
+        for line in formatted_lines:
+            print(line)
+        
+        print(f"{'='*60}\n")
+        
+        # Log to logger if available
+        if self.logger:
+            self.logger.log_hyperparams({
+                "total_parameters": param_counts['total'],
+                "parameter_breakdown": param_counts
+            })
+
+    def on_fit_start(self) -> None:
+        """Called at the beginning of training."""
+        # Log parameter count at the start of training
+        self.log_parameter_count()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the attention model.
@@ -282,7 +363,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                     denoise_fn=denoise_fn,
                     noise_level=eps,
                     noise_type=noise_type,
-                    title_prefix="Attention - ",
+                    title_prefix=f"{self.get_model_name()} - ",
                 )
                 plot_name = f"{stage}_denoising_{noise_type}_eps_{eps:.3f}"
                 log_figure(

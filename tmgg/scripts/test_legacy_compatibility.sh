@@ -8,8 +8,8 @@ echo ""
 echo "Testing attention denoising with minimal parameters..."
 uv run tmgg-attention \
     data=legacy_match \
-    '+data.noise_type=digress' \
-    '+data.noise_levels=[0.3]' \
+    'data.noise_type=digress' \
+    'data.noise_levels=[0.3]' \
     'model.noise_type=digress' \
     'model.noise_levels=[0.3]' \
     model.num_heads=8 \
@@ -32,8 +32,8 @@ echo ""
 echo "Testing GNN denoising with minimal parameters..."
 uv run tmgg-gnn \
     data=legacy_match \
-    '+data.noise_type=digress' \
-    '+data.noise_levels=[0.3]' \
+    'data.noise_type=digress' \
+    'data.noise_levels=[0.3]' \
     'model.noise_type=digress' \
     'model.noise_levels=[0.3]' \
     model.num_layers=1 \

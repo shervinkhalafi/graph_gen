@@ -1,0 +1,28 @@
+# Attention model with ~4000 parameters
+# Total: 3,980 parameters
+
+_target_: tmgg.experiments.attention_denoising.lightning_module.AttentionDenoisingLightningModule
+
+# Architecture for ~4k parameters
+d_model: 20  # Must match num_nodes in data config
+num_heads: 5
+num_layers: 3
+d_k: null  # Will default to d_model // num_heads = 4
+d_v: null  # Will default to d_model // num_heads = 4
+
+# Common parameters
+dropout: 0.0
+bias: true
+learning_rate: 0.001  # Will be overridden in grid search
+loss_type: "MSE"
+scheduler_config:
+  type: "cosine"
+  T_0: 20
+  T_mult: 2
+rotation_k: 20
+domain: "standard"
+
+# These will be overridden by data config
+noise_type: "gaussian"
+noise_levels: [0.05, 0.1, 0.2, 0.3, 0.4]
+seed: 42

@@ -120,3 +120,7 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         # Create hybrid model
         model = create_sequential_model(gnn_config, transformer_config)
         return model
+
+    def get_model_name(self) -> str:
+        """Get the name of the model for visualization purposes."""
+        return "Hybrid"

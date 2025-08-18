@@ -94,6 +94,10 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
             raise ValueError(f"Unknown model type: {model_type}")
         return model
 
+    def get_model_name(self) -> str:
+        """Get the name of the model for visualization purposes."""
+        return "GNN"
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the GNN model.

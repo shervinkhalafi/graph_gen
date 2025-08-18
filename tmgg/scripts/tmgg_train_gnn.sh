@@ -12,8 +12,8 @@ for noise_type in "gaussian" "rotation" "digress"; do
     
     uv run tmgg-gnn \
         data=legacy_match \
-        "+data.noise_type=$noise_type" \
-        '+data.noise_levels=[0.3]' \
+        "data.noise_type=$noise_type" \
+        'data.noise_levels=[0.3]' \
         "model.noise_type=$noise_type" \
         'model.noise_levels=[0.3]' \
         model.num_layers=1 \

@@ -20,6 +20,44 @@ class BaseModel(nn.Module, ABC):
         """
         pass
 
+    def parameter_count(self) -> Dict[str, Any]:
+        """
+        Count trainable parameters in this module and its children.
+        
+        Returns a hierarchical dictionary with:
+        - "total": Total trainable parameters in this module and all children
+        - "self": Parameters directly owned by this module (not in children)
+        - Child module counts with their names as keys
+        
+        Returns:
+            Dictionary with parameter counts
+        """
+        counts: Dict[str, Any] = {"total": 0, "self": 0}
+        
+        # Count parameters directly owned by this module (not in children)
+        for name, param in self.named_parameters(recurse=False):
+            if param.requires_grad:
+                counts["self"] += param.numel()
+        
+        # Recursively count child modules
+        for name, module in self.named_children():
+            if hasattr(module, 'parameter_count') and callable(getattr(module, 'parameter_count')):
+                # Child has parameter_count method - use it for recursive counting
+                child_counts = module.parameter_count()
+                counts[name] = child_counts
+                counts["total"] += child_counts["total"]
+            else:
+                # Standard PyTorch module - count its parameters
+                child_total = sum(p.numel() for p in module.parameters() if p.requires_grad)
+                if child_total > 0:
+                    counts[name] = {"total": child_total}
+                    counts["total"] += child_total
+        
+        # Add self parameters to total
+        counts["total"] += counts["self"]
+        
+        return counts
+
 
 class DenoisingModel(BaseModel):  # pyright: ignore[reportImplicitAbstractClass]
     """Abstract base class for graph denoising models."""

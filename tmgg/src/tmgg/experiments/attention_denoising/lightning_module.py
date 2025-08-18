@@ -91,3 +91,7 @@ class AttentionDenoisingLightningModule(DenoisingLightningModule):
             bias=bias,
             domain=domain,
         )
+
+    def get_model_name(self) -> str:
+        """Get the name of the model for visualization purposes."""
+        return "Attention"
