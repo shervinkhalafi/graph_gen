@@ -1,0 +1,14 @@
+# NodeVar GNN model configuration
+# Extends base lightning configuration
+
+defaults:
+  - /base/lightning_base
+
+_target_: tmgg.experiments.gnn_denoising.lightning_module.GNNDenoisingLightningModule
+
+# Model-specific architecture parameters
+model_type: "NodeVarGNN"
+num_layers: 1
+num_terms: 4
+feature_dim_in: 20  # NodeVarGNN uses single feature_dim internally
+feature_dim_out: 20

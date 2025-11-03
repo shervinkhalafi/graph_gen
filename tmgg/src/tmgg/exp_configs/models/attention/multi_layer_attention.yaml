@@ -1,0 +1,27 @@
+# Multi-layer attention model configuration
+
+_target_: tmgg.experiments.attention_denoising.lightning_module.AttentionDenoisingLightningModule
+
+# Model-specific architecture parameters
+d_model: 20
+num_heads: 8
+num_layers: 8
+d_k: null  # Will default to d_model // num_heads
+d_v: null  # Will default to d_model // num_heads
+
+# Common parameters from base (explicitly included)
+dropout: 0.0
+bias: true
+learning_rate: 0.001
+loss_type: "MSE"
+scheduler_config:
+  type: "cosine"
+  T_0: 20
+  T_mult: 2
+rotation_k: 20
+domain: "standard"
+
+# These will be overridden by data config
+noise_type: "digress"
+noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
+seed: 42

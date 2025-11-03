@@ -1,0 +1,20 @@
+# Example experiment override: Large attention model
+# @package _global_
+
+defaults:
+  - /base_config_attention
+  - _self_
+
+# Override model parameters for a larger architecture
+model:
+  num_layers: 16  # Increase from default 8
+  num_heads: 16   # Increase from default 8
+  d_model: 40     # Increase from default 20
+
+# Adjust training parameters for larger model
+trainer:
+  max_epochs: 500  # Increase from default 200
+
+# Update experiment name for tracking
+wandb:
+  name: "attention_large_${model.num_layers}L_${model.num_heads}H"

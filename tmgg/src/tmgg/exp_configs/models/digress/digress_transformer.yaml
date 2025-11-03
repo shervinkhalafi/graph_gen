@@ -1,0 +1,34 @@
+# Digress GraphTransformer model configuration
+
+_target_: tmgg.experiments.digress_denoising.lightning_module.DigressDenoisingLightningModule
+
+# Common parameters
+learning_rate: 0.001
+loss_type: "MSE"
+scheduler_config:
+  type: "cosine"
+  T_0: 20
+  T_mult: 2
+
+# These will be overridden by data config  
+noise_type: "digress"
+noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
+seed: 42
+
+# Model-specific architecture parameters
+use_eigenvectors: false
+node_feature_dim: 20 # Used if use_eigenvectors is true
+n_layers: 4
+hidden_mlp_dims:
+  X: 256
+  E: 64
+  y: 256
+hidden_dims:
+  dx: 128
+  de: 32
+  dy: 128
+  n_head: 4
+output_dims:
+  X: 0
+  E: 1
+  y: 0

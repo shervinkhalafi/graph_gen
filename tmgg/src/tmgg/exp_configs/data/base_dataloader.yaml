@@ -1,0 +1,17 @@
+# @package data
+# Base dataloader configuration - common parameters that can be inherited
+# Use this as a base for specific dataset configurations
+
+_target_: tmgg.experiment_utils.data.GraphDataModule
+
+# Common data loader parameters
+num_workers: 4
+pin_memory: true
+batch_size: 100
+
+# Default validation and test splits for non-SBM datasets
+val_split: 0.2
+test_split: 0.2
+
+# Default noise configuration
+noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]

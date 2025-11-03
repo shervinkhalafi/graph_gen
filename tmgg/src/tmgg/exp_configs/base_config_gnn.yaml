@@ -1,0 +1,43 @@
+# Base configuration for GNN denoising experiments
+
+defaults:
+  - models/gnn/standard_gnn@model
+  - data: sbm_default
+  - base/trainer/default@trainer
+  - base/logger/tensorboard@logger
+  - _self_
+
+# Experiment identification
+experiment_name: "gnn_denoising"
+seed: 42
+sanity_check: false
+
+# Override model parameters with data config values
+model:
+  noise_type: ${data.noise_type}
+  noise_levels: ${data.noise_levels}
+  seed: ${seed}
+
+# Logging configuration
+wandb:
+  project: "tmgg-gnn-denoising"
+  name: "gnn_${model.model_type}_${model.num_layers}L"
+  tags: ["gnn", "denoising", "sbm"]
+
+# Evaluation settings
+evaluation:
+  visualization_epochs: 10
+  # noise_levels: [0.01, 0.05, 0.1, 0.2]  # Optional: override noise levels for final evaluation
+
+# Paths
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ./multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

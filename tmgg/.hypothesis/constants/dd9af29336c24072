@@ -1,0 +1,4 @@
+# file: /home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/src/tmgg/models/hybrid.py
+# hypothesis_version: 6.135.14
+
+[0.0, 'bias', 'd_k', 'd_v', 'denoising_model', 'dropout', 'embedding_model', 'feature_dim_in', 'feature_dim_out', 'forward', 'get_config', 'has_denoising', 'model_type', 'num_heads', 'num_layers', 'num_terms']

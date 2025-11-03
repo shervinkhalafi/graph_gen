@@ -1,0 +1,30 @@
+# @package data
+# Legacy script exact match configuration  
+# Replicates parameters from ../denoising/train_attention.sh and train_gnn.sh
+
+_target_: tmgg.experiment_utils.data.GraphDataModule
+
+dataset_name: sbm
+dataset_config:
+  # FIXED block sizes to match legacy scripts exactly
+  block_sizes: [10, 5, 3, 2]  # Hardcoded in legacy main.py
+  num_nodes: 20  # sum([10,5,3,2])
+  p_intra: 1.0  # High probability for connections within blocks
+  q_inter: 0.0  # Low probability for connections between blocks
+  # Single partition for fixed block sizes  
+  num_train_partitions: 1
+  num_test_partitions: 1
+
+# Legacy training parameters - exact match
+num_samples_per_graph: 128  # matches --num_samples_per_epoch from legacy
+batch_size: 32  # matches --batch_size from legacy
+
+# Common data loader parameters (from base_dataloader)
+num_workers: 4
+pin_memory: true
+val_split: 0.2
+test_split: 0.2
+
+# Noise configuration (can be overridden via command line)
+noise_type: "digress"  # Will be overridden by command line
+noise_levels: [0.3]     # matches --eps from legacy scripts

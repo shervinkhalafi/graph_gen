@@ -1,0 +1,35 @@
+# Rotation noise data configuration for grid search
+
+defaults:
+  - base_dataloader
+  - _self_
+
+dataset_name: sbm
+dataset_config:
+  # Graph parameters
+  num_nodes: 20
+  p_intra: 0.7  # Probability of intra-block edges
+  q_inter: 0.05  # Probability of inter-block edges
+  
+  # Block configuration
+  block_sizes: [5, 5, 5, 5]
+  
+  # Dataset splits
+  num_train_partitions: 10
+  num_test_partitions: 10
+
+# DataModule parameters
+num_samples_per_graph: 2000
+
+# Noise configuration
+noise_type: "rotation"
+noise_levels: [0.05, 0.1, 0.2, 0.3, 0.4]  # Grid search levels
+
+# Data split
+val_split: 0.15
+test_split: 0.15
+
+# DataLoader parameters
+batch_size: 32
+num_workers: 4
+pin_memory: true

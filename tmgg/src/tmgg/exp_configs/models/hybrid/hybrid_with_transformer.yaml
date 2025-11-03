@@ -1,0 +1,33 @@
+# Hybrid GNN+Transformer model configuration
+
+_target_: tmgg.experiments.hybrid_denoising.lightning_module.HybridDenoisingLightningModule
+
+# Model-specific architecture parameters
+# GNN configuration
+gnn_num_layers: 2
+gnn_num_terms: 2
+gnn_feature_dim_in: 20
+gnn_feature_dim_out: 5
+
+# Transformer configuration
+use_transformer: true
+transformer_num_layers: 4
+transformer_num_heads: 4
+transformer_d_k: 10
+transformer_d_v: 10
+transformer_dropout: 0.0
+transformer_bias: true
+
+# Model-specific training configuration
+learning_rate: 0.005
+loss_type: "BCE"
+scheduler_config:
+  type: "cosine"
+  T_0: 20
+  T_mult: 2
+rotation_k: 20
+
+# These will be overridden by data config
+noise_type: "digress"
+noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
+seed: 42

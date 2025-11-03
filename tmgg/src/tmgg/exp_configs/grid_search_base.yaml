@@ -1,0 +1,69 @@
+# Base configuration for grid search experiments
+# Use with Hydra multirun to sweep hyperparameters
+
+defaults:
+  - model: grid_attention_4k  # Default model, will be overridden
+  - data: grid_gaussian  # Default data config, will be overridden
+  - base/trainer/default@trainer
+  - base/logger/grid_wandb@logger
+  - _self_
+
+# Experiment identification
+experiment_name: "grid_search_4k_params"
+seed: 42
+sanity_check: false
+
+# Override model parameters with data config values
+model:
+  noise_type: ${data.noise_type}
+  noise_levels: ${data.noise_levels}
+  seed: ${seed}
+  learning_rate: ${learning_rate}  # Will be swept in grid search
+
+# Training configuration
+trainer:
+  max_epochs: 200
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 10
+  gradient_clip_val: 1.0
+  enable_checkpointing: true
+  enable_model_summary: true
+  enable_progress_bar: true
+  deterministic: true
+  
+  # Early stopping
+  callbacks:
+    - _target_: pytorch_lightning.callbacks.EarlyStopping
+      monitor: "val/loss"
+      patience: 20
+      mode: "min"
+      verbose: false
+    - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+      monitor: "val/loss"
+      mode: "min"
+      save_top_k: 3
+      save_last: true
+      filename: "${experiment_name}-epoch={epoch:02d}-val_loss={val/loss:.4f}"
+
+# Evaluation settings
+evaluation:
+  visualization_epochs: 50  # Less frequent for grid search
+  final_eval_noise_levels: ${data.noise_levels}
+
+# Paths
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results
+
+# Grid search parameters (to be swept)
+learning_rate: 0.001  # Will be overridden
+noise_level: 0.1      # Will be overridden
+model_name: "unknown" # Will be set based on model choice
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ./outputs/grid_search/${model_name}/${data.noise_type}/lr${learning_rate}/eps${noise_level}
+  sweep:
+    dir: ./outputs/grid_search/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${model_name}_${data.noise_type}_lr${learning_rate}_eps${noise_level}
