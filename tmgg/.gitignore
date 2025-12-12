@@ -19,3 +19,5 @@ reports/
 
 # debug scripts
 scripts/debug_*.py
+wandb_export_dataframes.tar.xz
+wandb_export_full.tar.xz

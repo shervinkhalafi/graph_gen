@@ -238,17 +238,24 @@ def sync_tensorboard_to_s3(loggers: List[Logger]) -> None:
     for logger in loggers:
         if isinstance(logger, TensorBoardLogger) and hasattr(logger, "_s3_sync_path"):
             s3_path = logger._s3_sync_path
-            local_path = logger.log_dir
+            local_path = Path(logger.log_dir)
 
-            if not Path(local_path).exists():
+            if not local_path.exists():
                 loguru.warning(f"TensorBoard log dir not found: {local_path}")
                 continue
 
             loguru.info(f"Syncing TensorBoard logs to S3: {local_path} -> {s3_path}")
             try:
                 fs = fsspec.filesystem("s3")
-                fs.put(local_path, s3_path, recursive=True)
-                loguru.info(f"TensorBoard S3 sync complete: {s3_path}")
+                # Upload files individually (fs.put recursive has bugs with some backends)
+                uploaded = 0
+                for local_file in local_path.rglob("*"):
+                    if local_file.is_file():
+                        rel_path = local_file.relative_to(local_path)
+                        s3_file = f"{s3_path}/{rel_path}"
+                        fs.put_file(str(local_file), s3_file)
+                        uploaded += 1
+                loguru.info(f"TensorBoard S3 sync complete: {uploaded} files -> {s3_path}")
             except Exception as e:
                 loguru.error(f"Failed to sync TensorBoard to S3: {e}")
 

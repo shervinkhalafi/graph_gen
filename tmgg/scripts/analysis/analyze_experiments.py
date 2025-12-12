@@ -425,7 +425,7 @@ def plot_hyperparameter_comparison(
 @click.option(
     "--group-by",
     multiple=True,
-    default=["model_type", "data_dataset_name"],
+    default=["model_type", "data_graph_type", "data_noise_levels"],
     help="Columns to group by when selecting best runs",
 )
 def main(input_dir: Path, output_dir: Path, metric: str, group_by: tuple[str, ...]) -> None:

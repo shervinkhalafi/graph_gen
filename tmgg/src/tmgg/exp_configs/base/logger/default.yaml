@@ -5,7 +5,7 @@
 
 logger:
   - tensorboard:
-      save_dir: s3://${oc.env:TMGG_S3_BUCKET}/${oc.env:TMGG_S3_PREFIX,""}tensorboard/${experiment_name}/${now:%Y-%m-%d_%H-%M-%S}
+      save_dir: s3://${oc.env:TMGG_S3_BUCKET}/${oc.env:TMGG_S3_PREFIX,""}/tensorboard/${experiment_name}/${now:%Y-%m-%d_%H-%M-%S}
       name: ${experiment_name}
       version: null
       log_graph: false

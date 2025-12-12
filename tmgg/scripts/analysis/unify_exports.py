@@ -53,13 +53,23 @@ def extract_config_fields(config: dict[str, Any]) -> dict[str, Any]:
     # Data config
     data = config.get("data", {})
     if isinstance(data, dict):
-        flat["data_dataset_name"] = data.get("dataset_name")
+        # Old configs use dataset_name, new configs use graph_type
+        dataset_name = data.get("dataset_name")
+        graph_type = data.get("graph_type")
+        # Unified field: prefer graph_type (newer), fall back to dataset_name (older)
+        flat["data_graph_type"] = graph_type or dataset_name
+        # Keep original fields for debugging
+        flat["data_dataset_name"] = dataset_name
+        flat["data_graph_type_raw"] = graph_type
+
         flat["data_noise_type"] = data.get("noise_type")
         flat["data_noise_levels"] = str(data.get("noise_levels", []))
         flat["data_batch_size"] = data.get("batch_size")
+        # Number of nodes: SingleGraphDataModule uses 'n', GraphDataModule uses dataset_config.num_nodes
+        flat["data_num_nodes"] = data.get("n")
         dataset_config = data.get("dataset_config", {})
         if isinstance(dataset_config, dict):
-            flat["data_num_nodes"] = dataset_config.get("num_nodes")
+            flat["data_num_nodes"] = flat["data_num_nodes"] or dataset_config.get("num_nodes")
 
     # Top-level config
     flat["learning_rate"] = config.get("learning_rate") or config.get("model", {}).get("learning_rate")
