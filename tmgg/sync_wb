@@ -1,0 +1,15 @@
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.001/eps0.4/tensorboard/attention_gaussian_lr0.001_eps0.4/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.001/eps0.3/tensorboard/attention_gaussian_lr0.001_eps0.3/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.001/eps0.2/tensorboard/attention_gaussian_lr0.001_eps0.2/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.001/eps0.05/tensorboard/attention_gaussian_lr0.001_eps0.05/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.001/eps0.1/tensorboard/attention_gaussian_lr0.001_eps0.1/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.0001/eps0.4/tensorboard/attention_gaussian_lr0.0001_eps0.4/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.0001/eps0.3/tensorboard/attention_gaussian_lr0.0001_eps0.3/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.0001/eps0.2/tensorboard/attention_gaussian_lr0.0001_eps0.2/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.0001/eps0.05/tensorboard/attention_gaussian_lr0.0001_eps0.05/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.0001/eps0.05/tensorboard/attention_gaussian_lr0.0001_eps0.05/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.0001/eps0.1/tensorboard/attention_gaussian_lr0.0001_eps0.1/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.01/eps0.3/tensorboard/attention_gaussian_lr0.01_eps0.3/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.01/eps0.2/tensorboard/attention_gaussian_lr0.01_eps0.2/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.01/eps0.05/tensorboard/attention_gaussian_lr0.01_eps0.05/
+wandb sync -p tmgg-grid-search-4k outputs/grid_search/attention/gaussian/lr0.01/eps0.1/tensorboard/attention_gaussian_lr0.01_eps0.1/

@@ -1,0 +1,29 @@
+# MLP baseline denoiser
+# flatten -> MLP -> reshape
+# Ignores graph structure but should learn if training works
+
+_target_: tmgg.experiments.baselines.BaselineLightningModule
+
+model_type: mlp
+
+# Maximum nodes (determines flatten dimension)
+max_nodes: 200
+
+# MLP architecture
+hidden_dim: 256
+num_layers: 2
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+
+# Loss
+loss_type: ${loss_type}

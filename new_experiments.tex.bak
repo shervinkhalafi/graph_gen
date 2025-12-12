@@ -1,0 +1,148 @@
+%! TEX root = main.tex
+\section{Experimental Design}
+\label{sec:experimental_design}
+
+This appendix details the experimental protocol for comparing denoising architectures on graph diffusion tasks.
+
+\subsection{Architectures}
+
+We compare six denoising architectures.
+All models take as input the top-$k$ eigenvectors $\tilde{V} \in \mathbb{R}^{n \times k}$ of the noisy adjacency matrix, where $k \in \{2,4,8,16, 32, 64\}$ is a hyperparameter we sweep over (capped by graph size).
+
+\paragraph{Linear PE.} Predict the denoised adjacency as
+\begin{equation}
+  \hat{A} = \tilde{V} W \tilde{V}^\top + \mathbf{1} b^\top + b \mathbf{1}^\top
+\end{equation}
+where $W \in \mathbb{R}^{k \times k}$ is a learnable weight matrix and $b \in \mathbb{R}^n$ is a learnable bias vector. The bias terms capture node-specific degree corrections.
+
+\paragraph{Graph Filter Bank (Linear).} Parameterize the weight matrix as a spectral polynomial:
+\begin{equation}
+  W = \sum_{\ell=0}^{K-1} \tilde{\Lambda}^\ell H^{(\ell)}
+\end{equation}
+where $\tilde{\Lambda} = \mathrm{diag}(\tilde{\lambda}_1, \ldots, \tilde{\lambda}_k)$ contains the noisy eigenvalues and $H^{(\ell)} \in \mathbb{R}^{d_h \times d_h}$ are learnable coefficient matrices.
+We sweep polynomial degree $K \in \{3, 5, 8\}$ and hidden dimension $d_h \in \{64, 128\}$. The output is $\hat{A} = \tilde{V} W \tilde{V}^\top$.
+
+\paragraph{Linear PE + Nonlinearity.} Apply an elementwise nonlinearity to the linear PE output:
+\begin{equation}
+  \hat{A} = \sigma(\tilde{V} W \tilde{V}^\top)
+\end{equation}
+where $\sigma$ is either sigmoid (to produce edge probabilities directly) or ReLU followed by a final sigmoid. The weight matrix $W \in \mathbb{R}^{k \times k}$ is parameterized as in the linear PE model.
+
+\paragraph{Graph Filter Bank + Nonlinearity.} Combine the spectral polynomial parameterization with a nonlinearity:
+\begin{equation}
+  \hat{A} = \sigma\bigl(\tilde{V} W(\tilde{\Lambda}) \tilde{V}^\top\bigr)
+\end{equation}
+where $W(\tilde{\Lambda}) = \sum_{\ell=0}^{K-1} \tilde{\Lambda}^\ell H^{(\ell)}$ as above. We use sigmoid for the final output; optionally, an elementwise ReLU precedes the sigmoid to introduce additional nonlinearity.
+
+\paragraph{Self-Attention.} Use asymmetric query/key projections with scaled dot-product attention:
+\begin{equation}
+  \hat{A} = \sigma\Bigl(\frac{(\tilde{V} W_Q)(\tilde{V} W_K)^\top}{\sqrt{d_k}}\Bigr)
+\end{equation}
+where $W_Q, W_K \in \mathbb{R}^{k \times d_k}$ are learnable projection matrices. We sweep the key dimension $d_k \in \{32, 64, 128\}$. The $1/\sqrt{d_k}$ scaling stabilizes gradients following standard practice.
+
+\paragraph{DiGress.} The graph transformer architecture of~\cite{vignac2023digressdiscretedenoisingdiffusion}, which serves as the primary baseline. We use the default hyperparameters from the original implementation.
+
+\subsection{Training Protocols}
+
+\paragraph{Single-Graph Setting.} Train on a single graph $G$ drawn from distribution $p(G)$.
+At each training step, sample fresh noise $\mathcal{E}$ to obtain $\tilde{A} = A + \mathcal{E}$.
+Evaluate on a single held-out graph $G'$ from the same distribution for val and test to test generalization to unseen graph structure.
+
+\paragraph{Multi-Graph Setting.} Train on a dataset $\{G_1, \ldots, G_N\}$ with standard train/validation/test splits. This tests generalization to both new noise realizations and new graph instances.
+
+\paragraph{Optimization.} We train all models using AdamW with learning rate  and weight decay chosen from the cartesian product of $\eta \in \{1e-5,5e-5,1e-4,5e-4,1e-3\}$ and $\lambda\in\{1e-1,1e-2,1e-3\}$.
+Learning rate follows a cosine schedule with $T_{warmup}=100$.
+Batch size is $16$ graphs (or noise samples in single-graph setting).
+Weights are initialized using the default pytorch initialization.
+
+\paragraph{Convergence.} Models are trained for $100$ epochs with early stopping based on validation loss (patience = $10$ epochs).
+For single-graph experiments, we use $1e5$ training steps with validation every $1e3$ steps.
+
+\subsection{Hyperparameter Selection}
+
+Hyperparameters are selected via grid search over a validation set.
+For each architecture, we tune learning rate and weight decay. The selection criterion is the validation loss, which is cross entropy. 
+Final results are reported using the best hyperparameter configuration on held-out test data.
+
+\subsection{Noise Models}
+
+\paragraph{DiGress Noise (Primary).} For flip probability $p$, each edge is independently flipped:
+\begin{equation}
+  \mathbb{E}[\mathcal{E}_{ij}] = p(1 - 2A_{ij})
+\end{equation}
+This is the discrete diffusion noise used in~\cite{vignac2023digressdiscretedenoisingdiffusion}.
+
+\paragraph{Gaussian Noise (Secondary).} Add i.i.d.\ $\mathcal{N}(0, \sigma^2)$ noise to the upper triangle of $A$, then symmetrize. Threshold the output for binary adjacency reconstruction.
+
+\subsection{Loss Functions}
+
+\paragraph{Mean Squared Error.} $\mathcal{L}_{\text{MSE}} = \|\hat{A} - A\|_F^2$.
+
+\paragraph{Cross-Entropy.} Following DiGress, always predict the clean graph and use the $Q$-operator formulation for sampling:
+\begin{equation}
+  \mathcal{L}_{\text{CE}} = -\sum_{i < j} \bigl[ A_{ij} \log \hat{A}_{ij} + (1 - A_{ij}) \log(1 - \hat{A}_{ij}) \bigr]
+\end{equation}
+
+\subsection{Datasets}
+
+\paragraph{Synthetic Graphs.} 
+
+%TODO align with the overall design
+\begin{enumerate}
+  \item Stochastic block models (SBM) with $n \in \{50, 100, 200\}$ nodes and $k \in \{2, 3, 5\}$ communities.
+    Intra-community edge probability $p_{\text{in}} \in \{0.5, 0.7, 0.9\}$ and inter-community probability $p_{\text{out}} \in \{0.01, 0.05, 0.1\}$.
+  \item  Erd\H{o}s--R\'enyi graphs with edge probability $p \in \{0.1, 0.2, 0.3\}$
+  \item random $d$-regular graphs with $d \in \{3, 5, 10\}$ 
+  \item Lancichinetti-Fortunato-Radicchi planted clique models TODO fill in maron2020provablypowerfulgraphnetworks
+  \item tree graphs
+  \item Ring Of CLick graphs
+\end{enumerate}
+Communities are approximately balanced where applicable.
+\paragraph{Dataset Splits.} For multi-graph experiments, we generate $1e3$ graphs per configuration, split into $70/10/20$ train/validation/test.
+For single-graph experiments, we use $1e3$ noise realizations for training the same split.
+
+\paragraph{Benchmark Datasets.} 
+
+For realistic graphs, we use the following datasets from pytorch geometric
+
+\begin{enumerate}
+  \item QM9
+  \item ENZYMES (TUDataset)
+  \item PROTEINS (TUDataset)
+\end{enumerate}
+
+
+
+\subsection{Evaluation Metrics}
+
+\paragraph{Reconstruction Loss.} Report MSE or cross-entropy on held-out test graphs with fresh noise samples.
+
+\paragraph{Eigenvector Subspace Recovery.} Let $V_k$ and $\hat{V}_k$ denote the top-$k$ eigenvectors of the clean and reconstructed adjacency matrices. Measure subspace alignment via
+\begin{equation}
+  d_{\text{sub}}(V_k, \hat{V}_k) = \|V_k V_k^\top - \hat{V}_k \hat{V}_k^\top\|_F
+\end{equation}
+This verifies whether the denoiser recovers the principal eigenspace rather than merely fitting edge probabilities.
+
+\subsection{Statistical Analysis}
+
+All experiments are repeated with $5$ independent random seeds.
+We report mean and standard deviation across runs. For architecture comparisons, we use  Wilcoxon signed-rank test with significance level $\alpha = 0.05$.
+When comparing multiple architectures, we apply Holm-Bonferroni correction for multiple comparisons.
+
+\subsection{Reproducibility}
+
+Random seeds 1, 2, 3, 4,5 are used for all stochastic components: weight initialization, data shuffling, noise sampling, and train/test splits.
+Eigenvector sign ambiguity is resolved by enforcing the first nonzero entry of each eigenvector to be positive. Code is available at \todo{repository URL will be added later}.
+
+\subsection{Compute Resources}
+
+Experiments are conducted on \todo{GPU type, e.g., NVIDIA A100 40GB}. Training time per model ranges from \todo{X minutes} (Linear PE) to \todo{Y hours} (DiGress) depending on graph size and architecture complexity. Total compute budget for all experiments is approximately \todo{N} GPU-hours.
+
+\subsection{Implementation Details}
+
+All models are implemented in \todo{PyTorch / JAX}. Graph operations use \todo{PyTorch Geometric / DGL / custom}. Eigendecomposition is computed using \todo{torch.linalg.eigh / scipy.linalg.eigh / Lanczos iteration}, with the top-$k$ eigenvectors extracted in $O(n^2 k)$ time for dense matrices. For large graphs, we use \todo{sparse solvers / randomized SVD}. DiGress baseline uses the official implementation from \todo{GitHub URL}.
+
+\subsection{Full Diffusion Experiments (Planned)}
+
+In a subsequent phase, we will integrate improved denoisers into the full generative pipeline. Evaluation will include standard graph generation metrics: validity, uniqueness, novelty, and distributional similarity (e.g., MMD on degree and clustering coefficient distributions).
+

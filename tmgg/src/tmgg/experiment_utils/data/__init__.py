@@ -1,6 +1,7 @@
 """Public API for data utilities."""
 
 from .data_module import GraphDataModule
+from .single_graph_data_module import SingleGraphDataModule
 from .dataset import AdjacencyMatrixDataset, GraphDataset, PermutedAdjacencyDataset
 from .dataset_wrappers import (
     ANUDatasetWrapper,
@@ -29,8 +30,9 @@ from .eigendecomposition import (
 )
 
 __all__ = [
-    # Data Module
+    # Data Modules
     "GraphDataModule",
+    "SingleGraphDataModule",
     # Datasets
     "GraphDataset",
     "AdjacencyMatrixDataset",

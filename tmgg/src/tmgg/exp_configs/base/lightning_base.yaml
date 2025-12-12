@@ -10,17 +10,18 @@ noise_type: ${data.noise_type}
 noise_levels: ${data.noise_levels}
 rotation_k: 20  # Number of eigenvectors for rotation noise
 seed: ${seed}  # Random seed for reproducible noise generation
+fixed_noise_seed: null  # Set to int for constant noise (sanity check mode)
 
 # Learning rate scheduler configuration
+# Uses fraction-based cosine_warmup by default - automatically adjusts to batch_size and epochs
+# Available types: "cosine_warmup" (recommended), "cosine", "step", or null
 scheduler_config:
-  type: "cosine"  # "cosine", "step", or null
-  T_0: 20
-  T_mult: 2
-  # For step scheduler:
-  # step_size: 50
-  # gamma: 0.1
+  type: "cosine_warmup"
+  warmup_fraction: 0.02    # 2% of training for linear warmup
+  decay_fraction: 0.8      # LR reaches 0 at 80% of training, stays at 0 after
+  # Legacy cosine (CosineAnnealingWarmRestarts): type: "cosine", T_0: 20, T_mult: 2
+  # Step scheduler: type: "step", step_size: 50, gamma: 0.1
 
 # Common model parameters (passed to _make_model but shared across models)
 dropout: 0.0
 bias: true
-domain: "standard"  # "standard" or "inv-sigmoid"

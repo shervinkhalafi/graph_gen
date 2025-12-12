@@ -1,3 +1,4 @@
+import math
 from typing import Optional, Tuple
 
 import torch
@@ -55,8 +56,10 @@ class MultiHeadAttention(nn.Module):
         # Layer normalization for the output
         self.layer_norm = nn.LayerNorm(d_model)
 
-        # Scaling factor for dot product attention
-        self.scale = 1
+        # Scaling factor for dot product attention (Vaswani et al. 2017)
+        # Prevents softmax saturation when d_k is large: scores have variance ~d_k,
+        # so dividing by sqrt(d_k) normalizes variance to ~1
+        self.scale = 1.0 / math.sqrt(self.d_k)
 
         # Linear layer to combine attention scores from different heads
         self.score_combination = nn.Linear(num_heads, 1, bias=False)

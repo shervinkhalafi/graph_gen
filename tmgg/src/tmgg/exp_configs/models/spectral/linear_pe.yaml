@@ -1,0 +1,33 @@
+# Linear Positional Encoding denoiser
+# Â = V W V^T + 1 b^T + b 1^T
+
+_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+
+model_type: linear_pe
+
+# Number of eigenvectors (k in R^{n×k})
+# Sweep: {2, 4, 8, 16, 32, 64}
+k: 16
+
+# Maximum nodes for bias term
+max_nodes: 200
+
+# Whether to use node-specific bias
+use_bias: true
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
+
+# Loss
+loss_type: ${loss_type}

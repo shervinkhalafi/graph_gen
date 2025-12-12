@@ -1,0 +1,30 @@
+# ENZYMES benchmark dataset from PyTorch Geometric (TUDataset)
+# Protein tertiary structures - adjacency only (node features ignored)
+
+_target_: tmgg.experiment_utils.data.data_module.GraphDataModule
+
+dataset_name: enzymes
+
+dataset_config:
+  # Root directory for PyG datasets (default: ~/.pyg_data)
+  root: null
+  # Maximum graphs to load (null = all)
+  max_graphs: null
+  seed: 42
+
+# Samples per graph (permutations)
+num_samples_per_graph: 100
+
+# Batch size
+batch_size: 16
+
+# Data loading
+num_workers: 4
+pin_memory: true
+
+# Train/val/test split
+val_split: 0.1
+test_split: 0.2
+
+# Noise levels for evaluation
+noise_levels: ${noise_levels}

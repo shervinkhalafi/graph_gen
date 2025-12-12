@@ -1,0 +1,71 @@
+# @package _global_
+# Stage 3: Dataset Diversity
+#
+# Budget: 400 GPU-hours (future work, beyond 200h budget)
+# Goal: Validate across all graph families
+#
+# Uses same optimizer settings as stage1_poc for fair comparison
+
+defaults:
+  - override /data: sbm_single_graph
+
+# Stage identifier
+stage: stage3_diversity
+
+# Optimizer settings (matches stage1_poc)
+learning_rate: 1e-2
+weight_decay: 0.0
+optimizer_type: adam
+scheduler_config:
+  type: none
+
+# Model settings
+model:
+  k: 50
+
+# Default noise levels (overridden in sweep)
+noise_levels: [0.1]
+eval_noise_levels: [0.1]
+
+# --- Sweep metadata (used by coordinator when sweep=true) ---
+_sweep_config:
+  architectures:
+    - models/spectral/filter_bank
+    - models/spectral/self_attention
+    - models/digress/digress_sbm_small
+    - models/digress/digress_sbm_small_highlr
+  datasets:
+    # SBM variations
+    - data/sbm_default
+    - data/sbm_n100
+    - data/sbm_n200
+    # Erdős-Rényi
+    - data/er_spectral
+    # d-regular graphs
+    - data/regular_spectral
+    # Trees
+    - data/tree_spectral
+    # LFR benchmark (planted community)
+    - data/lfr_spectral
+    # Ring of cliques
+    - data/ring_of_cliques
+  hyperparameter_space:
+    learning_rate: [1e-3, 1e-2]
+    model.k: [50, 100, 200]  # Match dataset sizes
+    noise_levels:
+      - [0.01]
+      - [0.05]
+      - [0.1]
+      - [0.2]
+      - [0.3]
+  num_trials: 8
+  seeds: [1, 2, 3, 4, 5]
+  timeout_seconds: 1800
+  gpu_type: standard
+
+# Trigger condition (from tex):
+# Run if Stage 2 shows strong generalization (<3% error on multi-graph)
+# and matches DiGress performance
+trigger_conditions:
+  stage2_multi_graph_error_threshold: 0.03
+  stage2_digress_comparison: "match_or_exceed"

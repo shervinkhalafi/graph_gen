@@ -4,12 +4,11 @@ import pytest
 import torch
 
 from tmgg.models import GNN, GNNSymmetric
+from tmgg.models.gnn import NodeVarGNN
 from tmgg.models.layers import (
     EigenEmbedding,
     GaussianEmbedding,
-    GNNSymmetric,
     GraphConvolutionLayer,
-    NodeVarGNN,
 )
 
 
@@ -69,7 +68,10 @@ class TestGNNModels:
         assert Y.shape == (batch_size, num_nodes, feature_dim_out)
 
     def test_gnn_symmetric_forward(self):
-        """Test symmetric GNN forward pass."""
+        """Test symmetric GNN forward pass.
+
+        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        """
         batch_size = 2
         num_nodes = 5
         num_layers = 2
@@ -78,14 +80,20 @@ class TestGNNModels:
         model = GNNSymmetric(num_layers=num_layers, feature_dim_out=feature_dim_out)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        A_recon, X = model(A)
+        logits, X = model(A)
 
-        assert A_recon.shape == (batch_size, num_nodes, num_nodes)
+        assert logits.shape == (batch_size, num_nodes, num_nodes)
         assert X.shape == (batch_size, num_nodes, feature_dim_out)
-        assert torch.all(A_recon >= 0) and torch.all(A_recon <= 1)  # Sigmoid output
+
+        # predict() applies sigmoid to get probabilities in [0, 1]
+        probs = model.predict(logits)
+        assert torch.all(probs >= 0) and torch.all(probs <= 1)
 
     def test_nodevar_gnn_forward(self):
-        """Test NodeVarGNN forward pass."""
+        """Test NodeVarGNN forward pass.
+
+        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        """
         batch_size = 2
         num_nodes = 5
         num_layers = 1
@@ -94,10 +102,13 @@ class TestGNNModels:
         model = NodeVarGNN(num_layers=num_layers, feature_dim=feature_dim)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        A_recon = model(A)
+        logits = model(A)
 
-        assert A_recon.shape == (batch_size, num_nodes, num_nodes)
-        assert torch.all(A_recon >= 0) and torch.all(A_recon <= 1)  # Sigmoid output
+        assert logits.shape == (batch_size, num_nodes, num_nodes)
+
+        # predict() applies sigmoid to get probabilities in [0, 1]
+        probs = model.predict(logits)
+        assert torch.all(probs >= 0) and torch.all(probs <= 1)
 
     def test_gnn_get_config(self):
         """Test GNN configuration retrieval."""

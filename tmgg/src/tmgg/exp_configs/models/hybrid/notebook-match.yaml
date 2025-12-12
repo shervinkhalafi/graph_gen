@@ -30,8 +30,9 @@ noise_levels: ${data.noise_levels}
 rotation_k: 20  # Number of eigenvectors for rotation noise
 seed: ${seed}  # Random seed for reproducible noise generation
 
-# Scheduler configuration - EXACT MATCH to notebook
+# Scheduler configuration (updated to fraction-based)
+# Original notebook used: type: "cosine", T_0: 20, T_mult: 2
 scheduler_config:
-  type: "cosine"
-  T_0: 20
-  T_mult: 2
+  type: "cosine_warmup"
+  warmup_fraction: 0.02
+  decay_fraction: 0.8

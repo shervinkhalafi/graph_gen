@@ -146,9 +146,9 @@ class TestNoiseGeneration:
         # Create symmetric matrix
         A = np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1]], dtype=float)
         p = 0.3
-        
-        A_noisy, _, _ = add_digress_noise(A, p)
-        
+
+        A_noisy = add_digress_noise(A, p)
+
         # Check symmetry is preserved
         assert torch.allclose(A_noisy, A_noisy.T)
         
@@ -167,7 +167,7 @@ class TestNoiseGeneration:
             A = (A + A.T) / 2
             A = (A > 0.5).astype(float)
             
-            A_noisy, _, _ = add_digress_noise(A, p)
+            A_noisy = add_digress_noise(A, p)
             
             # Check that all values are either 0 or 1
             unique_values = torch.unique(A_noisy)

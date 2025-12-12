@@ -1,3 +1,4 @@
 from .attention import MultiLayerAttention
+from tmgg.models.layers import MultiHeadAttention
 
-__all__ = ["MultiLayerAttention"]
+__all__ = ["MultiHeadAttention", "MultiLayerAttention"]

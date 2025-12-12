@@ -8,6 +8,14 @@ wheels/
 
 # venv
 .venv
-.hypothesis/*
-outputs/*
-wandb/*
+.hypothesis/
+
+# experiment outputs
+outputs/
+wandb/
+wandb_export/
+analysis_output/
+reports/
+
+# debug scripts
+scripts/debug_*.py

@@ -18,6 +18,7 @@ from .data import (
     compute_eigendecomposition,
 )
 from .metrics import (
+    compute_accuracy,
     compute_eigenvalue_error,
     compute_subspace_distance,
     compute_reconstruction_metrics,
@@ -42,6 +43,8 @@ from .sanity_check import (
     check_loss_computation,
     run_experiment_sanity_check,
 )
+from .debug_callback import DebugCallback
+from .checkpoint_utils import load_checkpoint_with_fallback
 
 __all__ = [
     # Data utilities
@@ -62,6 +65,7 @@ __all__ = [
     "RotationNoiseGenerator",
     "create_noise_generator",
     # Metrics
+    "compute_accuracy",
     "compute_eigenvalue_error",
     "compute_subspace_distance",
     "compute_reconstruction_metrics",
@@ -83,5 +87,9 @@ __all__ = [
     "check_data_loader",
     "check_loss_computation",
     "run_experiment_sanity_check",
+    # Debug callback
+    "DebugCallback",
+    # Checkpoint utilities
+    "load_checkpoint_with_fallback",
 ]
 

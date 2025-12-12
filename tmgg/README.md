@@ -1,221 +1,221 @@
 # TMGG: Graph Denoising Research Framework
 
-A research framework for graph denoising using attention mechanisms, graph neural networks, and hybrid architectures on Stochastic Block Model (SBM) graphs.
+A research framework for graph denoising using attention mechanisms, graph neural networks, and hybrid architectures. Supports multiple noise models, reproducible experiments via Hydra configs, and cloud execution.
 
 ## Installation
 
 ```bash
 git clone <repository-url>
 cd tmgg
-uv venv
-source .venv/bin/activate
-uv pip install -e .
+uv sync
 ```
 
-For development:
+For development with test dependencies:
+
 ```bash
-uv pip install -e ".[test]"
+uv sync --all-extras
 ```
 
 ## Quick Start
 
-### Running Experiments
+Run your first experiment:
 
 ```bash
 # Attention-based denoising
-python -m tmgg.experiments.attention_denoising.runner
+uv run tmgg-attention
 
-# GNN-based denoising  
-python -m tmgg.experiments.gnn_denoising.runner
+# GNN-based denoising with custom training steps
+uv run tmgg-gnn trainer.max_steps=50000
 
-# Digress transformer denoising
-python -m tmgg.experiments.digress_denoising.runner
+# Spectral denoising with specific eigenvector count
+uv run tmgg-spectral model.k=50
 
-# Hybrid GNN+Transformer denoising
-python -m tmgg.experiments.hybrid_denoising.runner
+# Run with Weights & Biases logging
+uv run tmgg-attention logger=wandb
 ```
 
-### Sanity Checks
+Note: Training is configured in **steps**, not epochs (see [Configuration](docs/configuration.md)).
+
+## Environment Variables
+
+All environment variables are **optional for local runs**. They configure cloud execution, storage backends, and logging integrations.
+
+### Path Discovery (Modal)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TMGG_PATH` | No | Path to tmgg package root (directory containing `src/tmgg/`). Auto-discovered if `modal/` and `tmgg/` are siblings. Only set for non-standard directory layouts. |
+
+**Auto-discovery**: In the standard repo layout where `modal/` and `tmgg/` are siblings, path discovery works automatically:
+```
+my_project/
+├── modal/      # tmgg_modal package
+└── tmgg/       # tmgg package (auto-discovered)
+```
+
+### S3-Compatible Storage
+
+Used for checkpoint persistence and metrics storage. Required only when using `S3Storage` backend.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TMGG_S3_BUCKET` | Yes* | — | S3 bucket name |
+| `TMGG_S3_ENDPOINT` | No | AWS default | Custom endpoint URL (for MinIO, Tigris, etc.) |
+| `TMGG_S3_ACCESS_KEY` | Yes* | — | AWS access key ID |
+| `TMGG_S3_SECRET_KEY` | Yes* | — | AWS secret access key |
+| `TMGG_S3_REGION` | No | `us-east-1` | AWS region |
+
+*Required only when using S3Storage backend.
 
 ```bash
-# Run experiment validation without full training
-python -m tmgg.experiments.attention_denoising.runner sanity_check=true
-
-# Fast development run (1 batch)
-python -m tmgg.experiments.gnn_denoising.runner trainer.fast_dev_run=true
+export TMGG_S3_BUCKET="my-experiments"
+export TMGG_S3_ACCESS_KEY="AKIA..."
+export TMGG_S3_SECRET_KEY="..."
 ```
 
-### Configuration Overrides
+### Tigris Storage (Modal-native)
 
-All experiments use Hydra for configuration management:
+S3-compatible storage optimized for Modal. Used by `tmgg_modal` package. Configure as Modal secrets.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TMGG_TIGRIS_BUCKET` | Yes* | — | Tigris bucket name |
+| `TMGG_TIGRIS_ENDPOINT` | No | `https://fly.storage.tigris.dev` | Tigris endpoint |
+| `TMGG_TIGRIS_ACCESS_KEY` | Yes* | — | Tigris access key |
+| `TMGG_TIGRIS_SECRET_KEY` | Yes* | — | Tigris secret key |
+
+*Required only when using TigrisStorage with Modal.
 
 ```bash
-# Change model architecture
-python -m tmgg.experiments.attention_denoising.runner model.num_layers=16 model.num_heads=16
-
-# Change training parameters
-python -m tmgg.experiments.gnn_denoising.runner trainer.max_epochs=500 model.learning_rate=0.01
-
-# Change data parameters
-python -m tmgg.experiments.hybrid_denoising.runner data.batch_size=64 data.num_nodes=50
-
-# Run hyperparameter sweep
-python -m tmgg.experiments.attention_denoising.runner --multirun model.num_layers=4,8,16 model.learning_rate=0.001,0.005,0.01
+modal secret create tigris-credentials \
+  TMGG_TIGRIS_BUCKET=my-bucket \
+  TMGG_TIGRIS_ACCESS_KEY=... \
+  TMGG_TIGRIS_SECRET_KEY=...
 ```
+
+### Logging
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `WANDB_API_KEY` | No | — | Weights & Biases API key. Required only when using `logger=wandb`. |
+
+```bash
+export WANDB_API_KEY="your-api-key"
+uv run tmgg-attention logger=wandb
+```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `tmgg-attention` | Attention-based denoising |
+| `tmgg-gnn` | GNN-based denoising |
+| `tmgg-hybrid` | GNN + Transformer hybrid |
+| `tmgg-digress` | DiGress transformer model |
+| `tmgg-spectral` | Spectral positional encoding models |
+| `tmgg-stage1` | Stage 1: Proof of concept (4.4 GPU-hours) |
+| `tmgg-stage1-sanity` | Stage 1 Sanity: Constant noise memorization |
+| `tmgg-stage1-5` | Stage 1.5: Cross-dataset validation |
+| `tmgg-stage2` to `tmgg-stage5` | Later stage experiments |
+| `tmgg-grid-search` | Hyperparameter grid search |
+| `tmgg-wandb-export` | Export W&B metrics to CSV |
+| `tmgg-tb-export` | Export TensorBoard metrics |
+
+All commands support Hydra overrides:
+
+```bash
+# Override model parameters
+uv run tmgg-attention model.num_layers=16 model.num_heads=8
+
+# Override training steps and learning rate
+uv run tmgg-gnn trainer.max_steps=50000 model.learning_rate=0.001
+
+# Hyperparameter sweep
+uv run tmgg-attention --multirun model.num_layers=4,8,16
+```
+
+## Project Structure
+
+```
+tmgg/
+├── src/tmgg/
+│   ├── models/              # Neural network architectures
+│   │   ├── attention/       # Transformer attention models
+│   │   ├── gnn/             # Graph neural networks
+│   │   ├── hybrid/          # GNN + Transformer combinations
+│   │   ├── layers/          # Shared layers (GCN, MHA, Eigen)
+│   │   └── spectral_denoisers/
+│   ├── experiments/         # Experiment runners
+│   │   ├── attention_denoising/
+│   │   ├── gnn_denoising/
+│   │   ├── hybrid_denoising/
+│   │   ├── digress_denoising/
+│   │   ├── spectral_denoising/
+│   │   └── stages/          # Multi-stage experiments
+│   ├── experiment_utils/    # Shared infrastructure
+│   │   ├── data/            # Data loading and generation
+│   │   ├── cloud/           # Cloud execution (Modal)
+│   │   ├── base_lightningmodule.py
+│   │   ├── run_experiment.py
+│   │   ├── metrics.py
+│   │   └── plotting.py
+│   └── exp_configs/         # Hydra configuration files
+│       ├── base_config_*.yaml
+│       ├── models/
+│       ├── data/
+│       └── stages/
+├── tests/                   # Test suite
+└── docs/                    # Detailed documentation
+```
+
+## Documentation
+
+For detailed documentation, see the [docs/](docs/) folder:
+
+- [Architecture](docs/architecture.md) - System design and module organization
+- [Configuration](docs/configuration.md) - Hydra config system and common overrides
+- [Models](docs/models.md) - Model architectures and parameters
+- [Data](docs/data.md) - Data pipeline, datasets, and noise types
+- [Experiments](docs/experiments.md) - Running experiments and interpreting results
+- [Cloud](docs/cloud.md) - Cloud execution with Modal
+- [Extending](docs/extending.md) - Adding new models, datasets, and backends
 
 ## Model Architectures
 
-### Attention Models
-- **Multi-Layer Attention**: Transformer-based denoising with configurable layers and heads
-- **Digress**: Graph transformer using edge-based attention mechanisms
+**Spectral Denoisers**: The main focus of current experiments. Three architectures operating in the spectral domain:
+- Linear PE: Â = V W V^T + bias
+- Filter Bank: Polynomial spectral filters
+- Self-Attention: Query-key attention on eigenvectors
 
-### GNN Models  
-- **Standard GNN**: Graph convolution with eigenvalue embeddings
-- **NodeVar GNN**: Node-variant GNN for heterogeneous processing
-- **Symmetric GNN**: Shared embeddings with symmetric operations
+**DiGress**: Diffusion-based transformer baseline for comparison.
 
-### Hybrid Models
-- **Hybrid with Transformer**: GNN node embeddings followed by transformer-based reconstruction
-- **Hybrid GNN-only**: GNN embeddings without transformer (baseline comparison)
+**Attention Models**: Multi-layer transformer attention processing adjacency matrices directly.
 
-## Configuration System
+**GNN Models**: Spectral graph neural networks using eigendecomposition embeddings. Variants include standard GNN, symmetric GNN (shared embeddings), and node-variant GNN.
 
-The framework uses a centralized configuration system located in `tmgg/src/tmgg/exp_configs/`:
+**Hybrid Models**: Combine GNN embeddings with transformer-based denoising.
 
-```
-exp_configs/
-├── base_config_attention.yaml    # Base attention experiment config
-├── base_config_gnn.yaml         # Base GNN experiment config  
-├── base_config_digress.yaml     # Base digress experiment config
-├── base_config_hybrid.yaml      # Base hybrid experiment config
-├── base/                         # Shared component configs
-│   ├── data/                     # Data module configurations
-│   ├── trainer/                  # PyTorch Lightning trainer configs
-│   └── logger/                   # Logger configurations
-├── models/                       # Model-specific configurations
-│   ├── attention/
-│   ├── gnn/
-│   ├── digress/
-│   └── hybrid/
-└── experiments/                  # Override-based experiment variations
-```
+## Noise Types
 
-### Configuration Examples
+The framework supports three noise models for training and evaluation:
 
-**View current configuration:**
-```bash
-python -m tmgg.experiments.attention_denoising.runner --cfg job
-```
+- **Gaussian**: Additive Gaussian noise to adjacency matrices
+- **Rotation**: Eigenspace rotation via skew-symmetric matrices
+- **Digress**: Edge flipping with configurable probability
 
-**Override specific parameters:**
-```bash
-# Use different model variant
-python -m tmgg.experiments.gnn_denoising.runner /models/gnn/nodevar_gnn@model
-
-# Switch data configuration
-python -m tmgg.experiments.attention_denoising.runner /base/data/nx_square@data
-
-# Custom training configuration
-python -m tmgg.experiments.hybrid_denoising.runner trainer.max_epochs=1000 trainer.gradient_clip_val=0.5
-```
-
-**Create experiment variations:**
-
-Create `exp_configs/experiments/attention_large.yaml`:
-```yaml
-# @package _global_
-defaults:
-  - /base_config_attention
-  - _self_
-
-model:
-  num_layers: 16
-  num_heads: 16
-  d_model: 40
-
-trainer:
-  max_epochs: 500
-```
-
-Run with: `python -m tmgg.experiments.attention_denoising.runner +experiments=attention_large`
-
-## Data and Noise Models
-
-The framework supports Stochastic Block Model (SBM) graph generation with three noise types:
-
-- **Gaussian Noise**: Additive Gaussian noise to adjacency matrices
-- **Rotation Noise**: Eigenspace rotation using skew-symmetric matrices
-- **Digress Noise**: Edge flipping based on noise probability
-
-Data configurations support various graph structures:
-- Standard SBM with configurable block sizes and connectivity
-- NetworkX-based regular graphs (square lattice, star graphs)
-- Custom graph generation parameters
-
-## Experiment Structure
-
-```
-experiments/{experiment_name}/
-├── lightning_module.py    # PyTorch Lightning wrapper
-└── runner.py             # Hydra entry point
-
-experiment_utils/
-├── base_lightningmodule.py  # Shared Lightning base class
-├── data/                    # Data generation and loading
-├── metrics.py              # Evaluation metrics  
-├── plotting.py             # Visualization utilities
-└── run_experiment.py       # Experiment orchestration
-```
-
-## Evaluation Metrics
-
-- **Eigenvalue Error**: L2 distance between eigenvalue spectra
-- **Subspace Distance**: Angular distance between eigenspaces
-- **Frobenius Error**: Matrix reconstruction error
-- **Reconstruction Metrics**: MAE, MSE, BCE for adjacency matrix reconstruction
-
-## Development
-
-### Adding New Models
-
-1. Implement model class in `tmgg/src/tmgg/models/`
-2. Create model configuration in `exp_configs/models/{category}/`
-3. Update experiment lightning module if needed
-4. Add tests in `tmgg/tests/`
-
-### Adding New Experiments
-
-1. Create lightning module in `experiments/{experiment_name}/`
-2. Create base configuration in `exp_configs/base_config_{name}.yaml`
-3. Add model configurations in `exp_configs/models/{category}/`
-4. Create runner script following existing patterns
-
-### Testing
+## Testing
 
 ```bash
 # Run all tests
-pytest
+uv run pytest
 
 # Run with coverage
-pytest --cov=tmgg --cov-report=html
+uv run pytest --cov=tmgg --cov-report=html
 
-# Test specific experiment
-pytest tests/experiments/test_attention_denoising.py
+# Run specific test file
+uv run pytest tests/test_integration.py -v
 ```
 
-## Logging and Monitoring
+## License
 
-The framework supports multiple logging backends:
-
-- **TensorBoard**: Default logger for training curves and metrics
-- **Weights & Biases**: Advanced experiment tracking and visualization
-- **CSV Logger**: Simple CSV-based metric logging
-
-Configure loggers via the configuration system:
-```bash
-# Use wandb logging
-python -m tmgg.experiments.attention_denoising.runner /base/logger/wandb@logger
-
-# Multiple loggers
-python -m tmgg.experiments.gnn_denoising.runner /base/logger/multi@logger
-```
+See LICENSE file for details.

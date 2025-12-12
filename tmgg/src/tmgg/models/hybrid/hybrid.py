@@ -22,7 +22,6 @@ class SequentialDenoisingModel(DenoisingModel):
         self,
         embedding_model: EmbeddingModel,
         denoising_model: Optional[DenoisingModel] = None,
-        domain: str = "standard",
     ):
         """
         Initialize the sequential denoising model.
@@ -30,9 +29,8 @@ class SequentialDenoisingModel(DenoisingModel):
         Args:
             embedding_model: GNN model for generating embeddings
             denoising_model: Optional transformer model for denoising embeddings
-            domain: Domain for adjacency matrix processing ("standard" or "inv-sigmoid")
         """
-        super().__init__(domain=domain)
+        super().__init__()
         self.embedding_model = embedding_model
         self.denoising_model = denoising_model
 
@@ -46,15 +44,12 @@ class SequentialDenoisingModel(DenoisingModel):
         Returns:
             Reconstructed adjacency matrix
         """
-        # Apply domain transformation to input
-        x_transformed = self._apply_domain_transform(x)
-
         # Generate embeddings using GNN
         if hasattr(self.embedding_model, "forward") and callable(
             getattr(self.embedding_model, "forward")
         ):
             # For GNN models that return (X, Y) embeddings
-            X, Y = self.embedding_model(x_transformed)
+            X, Y = self.embedding_model(x)
         else:
             raise ValueError("Embedding model must return (X, Y) embeddings")
 
@@ -65,6 +60,11 @@ class SequentialDenoisingModel(DenoisingModel):
         if self.denoising_model is not None:
             # Apply transformer denoising and add residual connection
             Z_denoised = self.denoising_model(Z)
+            # Validate shape match for residual connection
+            assert Z_denoised.shape == Z.shape, (
+                f"Denoising model output shape {Z_denoised.shape} != input shape {Z.shape}. "
+                "Check d_model matches 2 * feature_dim_out."
+            )
             Z_pred = Z + Z_denoised
         else:
             Z_pred = Z
@@ -74,9 +74,9 @@ class SequentialDenoisingModel(DenoisingModel):
         X_pred = Z_pred[:, :, :feature_dim]
         Y_pred = Z_pred[:, :, feature_dim:]
 
-        # Reconstruct adjacency matrix and apply output transformation
+        # Reconstruct adjacency matrix - return raw logits per base class contract
         A_recon = self._reconstruct_adjacency_from_embeddings(X_pred, Y_pred)
-        return self._apply_output_transform(A_recon)
+        return A_recon
 
     def _reconstruct_adjacency_from_embeddings(
         self, X: torch.Tensor, Y: torch.Tensor
@@ -105,7 +105,6 @@ class SequentialDenoisingModel(DenoisingModel):
             if hasattr(self.embedding_model, "get_config")
             else str(type(self.embedding_model)),
             "has_denoising": self.denoising_model is not None,
-            "domain": self.domain,
         }
         if self.denoising_model is not None and hasattr(
             self.denoising_model, "get_config"
@@ -133,7 +132,7 @@ def create_sequential_model(
         num_terms=gnn_config.get("num_terms", 2),
         feature_dim_in=gnn_config.get("feature_dim_in", 20),
         feature_dim_out=gnn_config.get("feature_dim_out", 5),
-        apply_output_transform=False,
+        eigenvalue_reg=gnn_config.get("eigenvalue_reg", 0.0),
     )
 
     # Create transformer denoising model if config provided
@@ -150,8 +149,6 @@ def create_sequential_model(
             d_v=transformer_config.get("d_v", None),
             dropout=transformer_config.get("dropout", 0.0),
             bias=transformer_config.get("bias", True),
-            apply_input_transform=False,
-            apply_output_transform=False,
         )
 
     return SequentialDenoisingModel(embedding_model, denoising_model)

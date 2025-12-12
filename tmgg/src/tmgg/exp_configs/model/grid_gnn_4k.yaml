@@ -14,9 +14,9 @@ feature_dim_out: 20  # Must match num_nodes in data config
 learning_rate: 0.001  # Will be overridden in grid search
 loss_type: "MSE"
 scheduler_config:
-  type: "cosine"
-  T_0: 20
-  T_mult: 2
+  type: "cosine_warmup"
+  warmup_fraction: 0.02
+  decay_fraction: 0.8
 rotation_k: 20
 
 # These will be overridden by data config

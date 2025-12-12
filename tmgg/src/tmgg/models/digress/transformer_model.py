@@ -258,10 +258,28 @@ class NodeEdgeBlock(nn.Module):
 
 
 class _GraphTransformer(nn.Module):
-    """
-    Core Graph Transformer logic.
-    n_layers : int -- number of layers
-    dims : dict -- contains dimensions for each feature type
+    """Core Graph Transformer for node/edge feature processing.
+
+    Parameters
+    ----------
+    n_layers
+        Number of transformer layers.
+    input_dims
+        Input dimensions dict with keys "X" (node), "E" (edge), "y" (global).
+    hidden_mlp_dims
+        Hidden MLP dimensions dict with keys "X", "E", "y".
+    hidden_dims
+        Transformer hidden dimensions with keys "dx", "de", "dy", "n_head".
+    output_dims
+        Output dimensions dict with keys "X", "E", "y".
+    act_fn_in
+        Activation function for input MLPs. Defaults to ReLU.
+    act_fn_out
+        Activation function for output MLPs. Defaults to ReLU.
+    assume_adjacency_input
+        If True, assumes X is an adjacency matrix (bs, n, n) and extracts
+        diagonal as node features. Set to False when X already contains
+        node features (e.g., eigenvectors with shape (bs, n, k)).
     """
 
     def __init__(
@@ -273,6 +291,7 @@ class _GraphTransformer(nn.Module):
         output_dims: dict,
         act_fn_in: Optional[nn.Module] = None,
         act_fn_out: Optional[nn.Module] = None,
+        assume_adjacency_input: bool = True,
     ):
         super().__init__()
         self.n_layers = n_layers
@@ -280,6 +299,7 @@ class _GraphTransformer(nn.Module):
         self.hidden_mlp_dims = hidden_mlp_dims
         self.hidden_dims = hidden_dims
         self.output_dims = output_dims
+        self.assume_adjacency_input = assume_adjacency_input
 
         self.out_dim_X = output_dims["X"]
         self.out_dim_E = output_dims["E"]
@@ -352,8 +372,8 @@ class _GraphTransformer(nn.Module):
     ) -> GraphFeatures:
         bs = X.shape[0]
 
-        # Handle case where X is adjacency matrix
-        if X.dim() == 3 and X.shape[1] == X.shape[2]:
+        # Handle case where X is adjacency matrix (skip if input is already node features)
+        if self.assume_adjacency_input and X.dim() == 3 and X.shape[1] == X.shape[2]:
             n = X.shape[1]
             # If only adjacency matrix provided, use it as both node and edge features
             if E is None:
@@ -406,7 +426,29 @@ class _GraphTransformer(nn.Module):
         return GraphFeatures(X=X, E=E, y=y).mask(node_mask)
 
 class GraphTransformer(DenoisingModel):
-    """Denoising model wrapper for the Digress Graph Transformer."""
+    """Denoising model wrapper for the DiGress Graph Transformer.
+
+    Parameters
+    ----------
+    n_layers
+        Number of transformer layers.
+    input_dims
+        Input dimensions dict with keys "X" (node), "E" (edge), "y" (global).
+    hidden_mlp_dims
+        Hidden MLP dimensions dict with keys "X", "E", "y".
+    hidden_dims
+        Transformer hidden dimensions with keys "dx", "de", "dy", "n_head".
+    output_dims
+        Output dimensions dict with keys "X", "E", "y".
+    act_fn_in
+        Activation function for input MLPs. Defaults to ReLU.
+    act_fn_out
+        Activation function for output MLPs. Defaults to ReLU.
+    assume_adjacency_input
+        If True, assumes input is an adjacency matrix (bs, n, n) and extracts
+        node/edge features automatically. Set to False when passing pre-computed
+        node features (e.g., eigenvectors).
+    """
 
     def __init__(
         self,
@@ -417,6 +459,7 @@ class GraphTransformer(DenoisingModel):
         output_dims: dict,
         act_fn_in: Optional[nn.Module] = None,
         act_fn_out: Optional[nn.Module] = None,
+        assume_adjacency_input: bool = True,
     ):
         super().__init__()
         self.n_layers = n_layers
@@ -433,17 +476,22 @@ class GraphTransformer(DenoisingModel):
             output_dims=output_dims,
             act_fn_in=act_fn_in,
             act_fn_out=act_fn_out,
+            assume_adjacency_input=assume_adjacency_input,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Denoises the input graph.
+        """Denoise the input graph.
 
-        Args:
-            x: Noisy adjacency matrix of shape (bs, n, n) or
-               initial node features of shape (bs, n, dx_in).
+        Parameters
+        ----------
+        x
+            If assume_adjacency_input=True: adjacency matrix (bs, n, n).
+            If assume_adjacency_input=False: node features (bs, n, d_in).
 
-        Returns:
-            Denoised adjacency matrix of shape (bs, n, n) or (bs, n, n, de_out).
+        Returns
+        -------
+        torch.Tensor
+            Edge logits of shape (bs, n, n).
         """
         features = self.transformer(X=x)
         E = features.E

@@ -22,9 +22,6 @@ class MultiLayerAttention(DenoisingModel):
         d_v: Optional[int] = None,
         dropout: float = 0.0,
         bias: bool = False,
-        domain: str = "standard",
-        apply_input_transform: bool = True,
-        apply_output_transform: bool = True,
     ):
         """
         Initialize the Multi-Layer Attention module.
@@ -37,13 +34,8 @@ class MultiLayerAttention(DenoisingModel):
             d_v: Dimension of values (default: d_model // num_heads)
             dropout: Dropout probability
             bias: Whether to use bias in linear layers
-            domain: Domain for adjacency matrix processing ("standard" or "inv-sigmoid")
         """
-        super().__init__(
-            domain=domain,
-            apply_input_transform=apply_input_transform,
-            apply_output_transform=apply_output_transform,
-        )
+        super().__init__()
 
         self.d_model = d_model
         self.num_heads = num_heads
@@ -79,16 +71,15 @@ class MultiLayerAttention(DenoisingModel):
             mask: Optional attention mask
 
         Returns:
-            Reconstructed adjacency matrix (raw logits)
+            Reconstructed adjacency matrix
         """
-        Ad = self._apply_domain_transform(A)
-        x = Ad
+        x = A
         # Pass through each attention layer sequentially
         for layer in self.layers:
             x, _ = layer(x, mask=mask)
 
-        # Apply output transformation based on domain and training mode
-        return self._apply_output_transform(x)
+        # Return raw logits per base class contract; use predict() for probabilities
+        return x
 
     @override
     def get_config(self) -> Dict[str, Any]:
@@ -101,5 +92,4 @@ class MultiLayerAttention(DenoisingModel):
             "d_v": self.d_v,
             "dropout": self.dropout,
             "bias": self.bias,
-            "domain": self.domain,
         }

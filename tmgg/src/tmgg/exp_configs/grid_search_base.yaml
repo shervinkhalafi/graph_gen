@@ -60,10 +60,10 @@ learning_rate: 0.001  # Will be overridden
 noise_level: 0.1      # Will be overridden
 model_name: "unknown" # Will be set based on model choice
 
-# Hydra configuration
+# Hydra output directory (version-based for checkpoint resumption)
 hydra:
   run:
-    dir: ./outputs/grid_search/${model_name}/${data.noise_type}/lr${learning_rate}/eps${noise_level}
+    dir: outputs/v${tmgg_version:}/grid_search/${model_name}/${data.noise_type}/lr${learning_rate}/eps${noise_level}
   sweep:
-    dir: ./outputs/grid_search/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: outputs/sweeps/grid_search/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${model_name}_${data.noise_type}_lr${learning_rate}_eps${noise_level}

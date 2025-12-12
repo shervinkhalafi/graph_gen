@@ -58,39 +58,50 @@ class TestMultiHeadAttention:
 
 
 class TestMultiLayerAttention:
-    """Test MultiLayerAttention module."""
-    
+    """Test MultiLayerAttention module.
+
+    MultiLayerAttention is a denoising model that processes adjacency matrices.
+    It returns a single tensor (reconstructed adjacency matrix), not a tuple.
+    """
+
     def test_init(self):
         """Test initialization."""
         d_model = 64
         num_heads = 8
         num_layers = 4
-        
+
         model = MultiLayerAttention(d_model, num_heads, num_layers)
-        
+
         assert len(model.layers) == num_layers
         assert model.d_model == d_model
         assert model.num_heads == num_heads
         assert model.num_layers == num_layers
-    
+
     def test_forward_shape(self):
-        """Test forward pass output shapes."""
+        """Test forward pass output shapes.
+
+        MultiLayerAttention takes adjacency matrices and returns reconstructed
+        adjacency matrices. Input/output have shape (batch, n, n) or (n, n).
+        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        """
         batch_size = 2
-        seq_len = 10
-        d_model = 64
-        num_heads = 8
-        num_layers = 4
-        
-        model = MultiLayerAttention(d_model, num_heads, num_layers)
-        x = torch.randn(batch_size, seq_len, d_model)
-        
-        output, attention_scores = model(x)
-        
-        assert output.shape == (batch_size, seq_len, d_model)
-        assert len(attention_scores) == num_layers
-        for scores in attention_scores:
-            assert scores.shape == (batch_size, seq_len, seq_len)
-    
+        num_nodes = 10
+        d_model = num_nodes  # d_model should match adjacency matrix dimension
+
+        model = MultiLayerAttention(d_model, num_heads=2, num_layers=2)
+
+        # Input: batch of adjacency matrices
+        A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
+        A = A + torch.randn_like(A) * 0.1  # Add some noise
+
+        logits = model(A)
+        assert logits.shape == (batch_size, num_nodes, num_nodes)
+
+        # predict() applies sigmoid to get probabilities in [0, 1]
+        probs = model.predict(logits)
+        assert torch.all(probs >= 0)
+        assert torch.all(probs <= 1)
+
     def test_get_config(self):
         """Test configuration retrieval."""
         d_model = 64
@@ -98,7 +109,7 @@ class TestMultiLayerAttention:
         num_layers = 4
         dropout = 0.1
         bias = True
-        
+
         model = MultiLayerAttention(
             d_model=d_model,
             num_heads=num_heads,
@@ -106,9 +117,9 @@ class TestMultiLayerAttention:
             dropout=dropout,
             bias=bias
         )
-        
+
         config = model.get_config()
-        
+
         assert config["d_model"] == d_model
         assert config["num_heads"] == num_heads
         assert config["num_layers"] == num_layers

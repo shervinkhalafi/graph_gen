@@ -49,11 +49,14 @@ class TestSequentialDenoisingModel:
         assert model.denoising_model is None
     
     def test_forward_with_denoising(self):
-        """Test forward pass with denoising model."""
+        """Test forward pass with denoising model.
+
+        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        """
         batch_size = 2
         num_nodes = 10
         feature_dim_out = 5
-        
+
         # Create models
         embedding_model = GNN(
             num_layers=1,
@@ -61,32 +64,35 @@ class TestSequentialDenoisingModel:
             feature_dim_in=num_nodes,
             feature_dim_out=feature_dim_out
         )
-        
+
         denoising_model = MultiLayerAttention(
             d_model=2 * feature_dim_out,
             num_heads=2,
             num_layers=1
         )
-        
+
         model = SequentialDenoisingModel(embedding_model, denoising_model)
-        
+
         # Create input
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        
-        # Forward pass
-        A_recon = model(A)
-        
-        # Check output shape
-        assert A_recon.shape == (batch_size, num_nodes, num_nodes)
-        # Check output is in valid range (sigmoid output)
-        assert torch.all(A_recon >= 0) and torch.all(A_recon <= 1)
-    
+
+        # Forward pass returns logits
+        logits = model(A)
+        assert logits.shape == (batch_size, num_nodes, num_nodes)
+
+        # predict() applies sigmoid to get probabilities in [0, 1]
+        probs = model.predict(logits)
+        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+
     def test_forward_without_denoising(self):
-        """Test forward pass without denoising model."""
+        """Test forward pass without denoising model.
+
+        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        """
         batch_size = 2
         num_nodes = 10
         feature_dim_out = 5
-        
+
         # Create embedding model only
         embedding_model = GNN(
             num_layers=1,
@@ -94,39 +100,19 @@ class TestSequentialDenoisingModel:
             feature_dim_in=num_nodes,
             feature_dim_out=feature_dim_out
         )
-        
+
         model = SequentialDenoisingModel(embedding_model, None)
-        
+
         # Create input
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        
-        # Forward pass
-        A_recon = model(A)
-        
-        # Check output shape
-        assert A_recon.shape == (batch_size, num_nodes, num_nodes)
-        # Check output is in valid range (sigmoid output)
-        assert torch.all(A_recon >= 0) and torch.all(A_recon <= 1)
-    
-    def test_reconstruct_adjacency_from_embeddings(self):
-        """Test adjacency matrix reconstruction from embeddings."""
-        batch_size = 2
-        num_nodes = 10
-        feature_dim = 5
-        
-        # Create model
-        embedding_model = GNN(num_layers=1, feature_dim_out=feature_dim)
-        model = SequentialDenoisingModel(embedding_model)
-        
-        # Create fake embeddings
-        X = torch.randn(batch_size, num_nodes, feature_dim)
-        Y = torch.randn(batch_size, num_nodes, feature_dim)
-        
-        # Reconstruct adjacency
-        A_recon = model._reconstruct_adjacency_from_embeddings(X, Y)
-        
-        assert A_recon.shape == (batch_size, num_nodes, num_nodes)
-        assert torch.all(A_recon >= 0) and torch.all(A_recon <= 1)
+
+        # Forward pass returns logits
+        logits = model(A)
+        assert logits.shape == (batch_size, num_nodes, num_nodes)
+
+        # predict() applies sigmoid to get probabilities in [0, 1]
+        probs = model.predict(logits)
+        assert torch.all(probs >= 0) and torch.all(probs <= 1)
     
     def test_get_config(self):
         """Test configuration retrieval."""
@@ -220,31 +206,36 @@ class TestCreateSequentialModel:
         assert model.denoising_model.num_layers == 4
     
     def test_forward_pass_integration(self):
-        """Test full forward pass through created model."""
+        """Test full forward pass through created model.
+
+        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        """
         batch_size = 2
         num_nodes = 10
-        
+
         gnn_config = {
             "num_layers": 1,
             "feature_dim_in": num_nodes,
             "feature_dim_out": 5
         }
-        
+
         transformer_config = {
             "num_heads": 2,
             "num_layers": 1
         }
-        
+
         model = create_sequential_model(gnn_config, transformer_config)
-        
+
         # Create input
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        
-        # Forward pass
-        A_recon = model(A)
-        
-        assert A_recon.shape == (batch_size, num_nodes, num_nodes)
-        assert torch.all(A_recon >= 0) and torch.all(A_recon <= 1)
+
+        # Forward pass returns logits
+        logits = model(A)
+        assert logits.shape == (batch_size, num_nodes, num_nodes)
+
+        # predict() applies sigmoid to get probabilities in [0, 1]
+        probs = model.predict(logits)
+        assert torch.all(probs >= 0) and torch.all(probs <= 1)
 
 
 if __name__ == "__main__":

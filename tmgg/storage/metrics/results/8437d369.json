@@ -1,0 +1,100 @@
+{
+  "run_id": "8437d369",
+  "status": "failed",
+  "metrics": {},
+  "checkpoint_path": null,
+  "error_message": "Cannot instantiate config of type str.\nTop level config must be an OmegaConf DictConfig/ListConfig object,\na plain dict/list, or a Structured Config class or instance.",
+  "duration_seconds": 0.002602100372314453,
+  "config": {
+    "model": {
+      "k": 8
+    },
+    "data": "data/sbm_default",
+    "trainer": {
+      "_target_": "pytorch_lightning.Trainer",
+      "max_epochs": 200,
+      "accelerator": "auto",
+      "devices": "auto",
+      "precision": 32,
+      "enable_checkpointing": true,
+      "default_root_dir": "/home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/outputs/2025-12-03/15-45-50",
+      "enable_progress_bar": true,
+      "log_every_n_steps": 1,
+      "check_val_every_n_epoch": 1,
+      "val_check_interval": 1.0,
+      "gradient_clip_val": 1.0,
+      "gradient_clip_algorithm": "norm",
+      "deterministic": false,
+      "benchmark": true,
+      "fast_dev_run": false,
+      "overfit_batches": 0,
+      "limit_train_batches": 1.0,
+      "limit_val_batches": 1.0,
+      "limit_test_batches": 1.0
+    },
+    "logger": {
+      "logger": [
+        {
+          "tensorboard": {
+            "save_dir": "s3://iml/shervin-graph-archtensorboard/spectral_denoising/2025-12-03_15-45-50",
+            "name": "spectral_denoising",
+            "version": null,
+            "log_graph": false,
+            "default_hp_metric": false
+          }
+        },
+        {
+          "wandb": {
+            "project": "tmgg",
+            "name": "spectral_denoising",
+            "tags": [],
+            "save_dir": "/home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/outputs/2025-12-03/15-45-50",
+            "entity": null,
+            "log_model": false
+          }
+        }
+      ]
+    },
+    "experiment_name": "spectral_denoising",
+    "sanity_check": false,
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "optimizer_type": "adamw",
+    "scheduler_config": {
+      "type": "cosine_warmup",
+      "T_warmup": 100,
+      "T_max": 10000
+    },
+    "loss_type": "BCE",
+    "noise_type": "digress",
+    "noise_levels": [
+      0.01,
+      0.05,
+      0.1,
+      0.2,
+      0.3
+    ],
+    "domain": "standard",
+    "visualization_interval": 10,
+    "seed": 3,
+    "stage": "stage1_poc",
+    "wandb": {
+      "project": "tmgg-spectral-denoising",
+      "name": "spectral_linear_pe_k8",
+      "tags": [
+        "spectral",
+        "denoising",
+        "sbm"
+      ]
+    },
+    "evaluation": {
+      "visualization_epochs": 10
+    },
+    "paths": {
+      "output_dir": "/home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/outputs/2025-12-03/15-45-50",
+      "results_dir": "/home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/outputs/2025-12-03/15-45-50/results"
+    },
+    "sweep": true,
+    "run_id": "stage1_poc_self_attention_sbm_default_s3"
+  }
+}

@@ -15,13 +15,13 @@ def plot_graph_denoising_comparison(
         Tuple[Union[np.ndarray, torch.Tensor], Any, Any],
     ],
     denoise_fn: Callable[
-        [Union[np.ndarray, torch.Tensor]], Union[np.ndarray, torch.Tensor]
+        [Union[np.ndarray, torch.Tensor]], Union[np.ndarray, torch.Tensor, Tuple]
     ],
     noise_level: float,
     noise_type: str = "Unknown",
     title_prefix: str = "",
     cmap: str = "viridis",
-    figsize: Tuple[int, int] = (20, 5),
+    figsize: Tuple[int, int] = (30, 5),
     save_path: Optional[str] = None,
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
@@ -29,17 +29,20 @@ def plot_graph_denoising_comparison(
     """
     General-purpose visualization for graph denoising experiments.
 
-    This function creates a 4-panel visualization showing:
-    1. Clean graph
-    2. Noisy graph
-    3. Denoised graph
-    4. Delta (Denoised - Clean)
+    This function creates a 6-panel visualization showing:
+    1. Clean graph (binary ground truth)
+    2. Noisy graph (after noise applied)
+    3. Predicted graph (thresholded at 0.5)
+    4. Prediction error (binary difference)
+    5. Logits (raw model output)
+    6. Logit error (logits - clean)
 
     Args:
         A_clean: Clean adjacency matrix (numpy array or torch tensor)
         noise_fn: Function that adds noise. Should accept (matrix, noise_level) and
-                 return (noisy_matrix, noise_info1, noise_info2)
-        denoise_fn: Function that denoises. Should accept noisy matrix and return denoised matrix
+                 return noisy_matrix (or tuple with noisy_matrix first)
+        denoise_fn: Function that denoises. Should accept noisy matrix and return
+                   either predictions alone or (predictions, logits) tuple
         noise_level: Noise level parameter (e.g., epsilon)
         noise_type: Name of the noise type for labeling
         title_prefix: Optional prefix for the plot title
@@ -51,27 +54,6 @@ def plot_graph_denoising_comparison(
 
     Returns:
         Matplotlib figure object
-
-    Example:
-        ```python
-        # For GNN experiments
-        fig = plot_graph_denoising_comparison(
-            A_clean=clean_adjacency,
-            noise_fn=add_gaussian_noise,
-            denoise_fn=lambda A: model(A.unsqueeze(0)).squeeze(0),
-            noise_level=0.1,
-            noise_type="Gaussian"
-        )
-
-        # For DiGress experiments with edge flipping
-        fig = plot_graph_denoising_comparison(
-            A_clean=clean_adjacency,
-            noise_fn=add_digress_noise,
-            denoise_fn=lambda A: digress_model.denoise(A),
-            noise_level=0.3,
-            noise_type="Edge Flipping (DiGress)"
-        )
-        ```
     """
     # Convert to numpy if needed
     if isinstance(A_clean, torch.Tensor):
@@ -86,61 +68,102 @@ def plot_graph_denoising_comparison(
     else:
         A_noisy_np = A_noisy
 
-    # Denoise
-    A_denoised = denoise_fn(A_noisy)
-    if isinstance(A_denoised, torch.Tensor):
-        A_denoised_np = A_denoised.detach().cpu().numpy()
+    # Denoise - may return (predictions, logits) or just predictions
+    denoise_result = denoise_fn(A_noisy)
+    if isinstance(denoise_result, tuple):
+        A_probs, A_logits = denoise_result
     else:
-        A_denoised_np = A_denoised
+        A_probs = denoise_result
+        A_logits = None
+
+    # Convert to numpy
+    if isinstance(A_probs, torch.Tensor):
+        A_probs_np = A_probs.detach().cpu().numpy()
+    else:
+        A_probs_np = A_probs
+
+    if A_logits is not None:
+        if isinstance(A_logits, torch.Tensor):
+            A_logits_np = A_logits.detach().cpu().numpy()
+        else:
+            A_logits_np = A_logits
+    else:
+        A_logits_np = None
 
     # Handle batch dimensions if present
     while A_clean_np.ndim > 2:
         A_clean_np = A_clean_np[0]
     while A_noisy_np.ndim > 2:
         A_noisy_np = A_noisy_np[0]
-    while A_denoised_np.ndim > 2:
-        A_denoised_np = A_denoised_np[0]
+    while A_probs_np.ndim > 2:
+        A_probs_np = A_probs_np[0]
+    if A_logits_np is not None:
+        while A_logits_np.ndim > 2:
+            A_logits_np = A_logits_np[0]
 
-    # Calculate the difference
-    A_delta_np = A_denoised_np - A_clean_np
+    # Threshold predictions at 0.5
+    A_pred_np = (A_probs_np > 0.5).astype(float)
 
-    # Create figure with 4 subplots arranged horizontally
-    fig, axes = plt.subplots(1, 4, figsize=figsize)
+    # Calculate prediction error (binary difference)
+    A_pred_error_np = A_pred_np - A_clean_np
 
-    # Determine color scale if not provided
+    # Determine number of columns based on whether we have logits
+    n_cols = 6 if A_logits_np is not None else 4
+    fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 5))
+
+    # Determine color scale for binary matrices
     if vmin is None:
-        vmin = min(A_clean_np.min(), A_noisy_np.min(), A_denoised_np.min())
+        vmin = 0.0
     if vmax is None:
-        vmax = max(A_clean_np.max(), A_noisy_np.max(), A_denoised_np.max())
+        vmax = 1.0
 
-    # Plot clean graph (left)
-    im1 = axes[0].imshow(A_clean_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
+    # Col 0: Clean graph
+    im0 = axes[0].imshow(A_clean_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
     axes[0].set_title(
-        f"{title_prefix}Clean Graph" if title_prefix else "Clean Graph", fontsize=12
+        f"{title_prefix}Clean" if title_prefix else "Clean", fontsize=12
     )
     axes[0].axis("off")
-    plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
 
-    # Plot noisy graph (middle)
-    im2 = axes[1].imshow(A_noisy_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
-    axes[1].set_title(f"Noisy Graph ({noise_type}, ε={noise_level})", fontsize=12)
+    # Col 1: Noisy graph
+    im1 = axes[1].imshow(A_noisy_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
+    axes[1].set_title(f"Noisy ({noise_type}, ε={noise_level})", fontsize=12)
     axes[1].axis("off")
-    plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
 
-    # Plot denoised graph (right)
-    im3 = axes[2].imshow(A_denoised_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
-    axes[2].set_title("Denoised Graph", fontsize=12)
+    # Col 2: Predicted graph (thresholded)
+    im2 = axes[2].imshow(A_pred_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
+    axes[2].set_title("Predicted (>0.5)", fontsize=12)
     axes[2].axis("off")
-    plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
+    plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
 
-    # Plot delta (right-most)
-    delta_vmax = np.abs(A_delta_np).max()
-    im4 = axes[3].imshow(
-        A_delta_np, cmap="bwr", vmin=-delta_vmax, vmax=delta_vmax, aspect="equal"
-    )
-    axes[3].set_title("Delta (Denoised - Clean)", fontsize=12)
+    # Col 3: Prediction error
+    im3 = axes[3].imshow(A_pred_error_np, cmap="bwr", vmin=-1, vmax=1, aspect="equal")
+    axes[3].set_title("Pred Error", fontsize=12)
     axes[3].axis("off")
-    plt.colorbar(im4, ax=axes[3], fraction=0.046, pad=0.04)
+    plt.colorbar(im3, ax=axes[3], fraction=0.046, pad=0.04)
+
+    # Col 4 & 5: Logits and logit error (if available)
+    if A_logits_np is not None:
+        # Logits
+        logit_vmax = max(abs(A_logits_np.min()), abs(A_logits_np.max()))
+        im4 = axes[4].imshow(
+            A_logits_np, cmap="bwr", vmin=-logit_vmax, vmax=logit_vmax, aspect="equal"
+        )
+        axes[4].set_title("Logits", fontsize=12)
+        axes[4].axis("off")
+        plt.colorbar(im4, ax=axes[4], fraction=0.046, pad=0.04)
+
+        # Logit error (logits - clean, where clean is binary 0/1)
+        # This shows how far the logits are from the "ideal" values
+        A_logit_error_np = A_logits_np - A_clean_np
+        error_vmax = max(abs(A_logit_error_np.min()), abs(A_logit_error_np.max()))
+        im5 = axes[5].imshow(
+            A_logit_error_np, cmap="bwr", vmin=-error_vmax, vmax=error_vmax, aspect="equal"
+        )
+        axes[5].set_title("Logit Error", fontsize=12)
+        axes[5].axis("off")
+        plt.colorbar(im5, ax=axes[5], fraction=0.046, pad=0.04)
 
     plt.tight_layout()
 
@@ -354,15 +377,17 @@ def create_multi_noise_visualization(
     noise_function,
     noise_levels: List[float],
     device: str = "cpu",
+    threshold: float = 0.5,
 ) -> plt.Figure:
     """
     Create visualization showing denoising results across multiple noise levels.
 
-    This function creates a 4-row visualization for each noise level:
+    This function creates a 5-row visualization for each noise level:
     1. Clean Graph
     2. Noisy Graph
-    3. Denoised Graph
-    4. Delta (Denoised - Clean)
+    3. Denoised Graph (probabilities)
+    4. Predicted Graph (thresholded)
+    5. Delta (Denoised - Clean)
 
     Args:
         A_original: Original clean adjacency matrix
@@ -370,15 +395,17 @@ def create_multi_noise_visualization(
         noise_function: Function to add noise
         noise_levels: List of noise levels to visualize
         device: Device for computation
+        threshold: Threshold for binary prediction (default 0.5)
 
     Returns:
         Matplotlib figure
     """
+    n_rows = 5
     fig_size = 4
     fig, axes = plt.subplots(
-        4, len(noise_levels), figsize=(fig_size * len(noise_levels), fig_size * 4)
+        n_rows, len(noise_levels), figsize=(fig_size * len(noise_levels), fig_size * n_rows)
     )
-    axes = axes.reshape(4, -1)
+    axes = axes.reshape(n_rows, -1)
 
     model.eval()
     with torch.no_grad():
@@ -403,14 +430,16 @@ def create_multi_noise_visualization(
             A_original_np = A_original.squeeze().cpu().numpy()
             A_noisy_np = A_noisy.squeeze().cpu().numpy()
             A_reconstructed_np = A_reconstructed.squeeze().cpu().numpy()
+            A_predicted_np = (A_reconstructed_np > threshold).astype(float)
 
-            # Determine shared vmin/vmax for first 3 rows
+            # Determine shared vmin/vmax for first 3 rows (continuous values)
             vmin = min(A_original_np.min(), A_noisy_np.min(), A_reconstructed_np.min())
             vmax = max(A_original_np.max(), A_noisy_np.max(), A_reconstructed_np.max())
             plot_params = {"cmap": "viridis", "vmin": vmin, "vmax": vmax}
+            binary_params = {"cmap": "viridis", "vmin": 0, "vmax": 1}
 
             # Row 0: Clean
-            axes[0, i].imshow(A_original_np, **plot_params)
+            axes[0, i].imshow(A_original_np, **binary_params)
             axes[0, i].set_title(f"ε={eps:.2f}")
             if i == 0:
                 axes[0, i].set_ylabel("Clean", fontsize=12)
@@ -420,19 +449,24 @@ def create_multi_noise_visualization(
             if i == 0:
                 axes[1, i].set_ylabel("Noisy", fontsize=12)
 
-            # Row 2: Denoised
+            # Row 2: Denoised (probabilities)
             axes[2, i].imshow(A_reconstructed_np, **plot_params)
             if i == 0:
                 axes[2, i].set_ylabel("Denoised", fontsize=12)
 
-            # Row 3: Delta
-            delta = A_reconstructed_np - A_original_np
-            delta_vmax = np.abs(delta).max()
-            axes[3, i].imshow(delta, cmap="bwr", vmin=-delta_vmax, vmax=delta_vmax)
+            # Row 3: Predicted (thresholded)
+            axes[3, i].imshow(A_predicted_np, **binary_params)
             if i == 0:
-                axes[3, i].set_ylabel("Delta", fontsize=12)
+                axes[3, i].set_ylabel("Predicted", fontsize=12)
 
-            for row in range(4):
+            # Row 4: Delta
+            delta = A_reconstructed_np - A_original_np
+            delta_vmax = max(np.abs(delta).max(), 1e-6)
+            axes[4, i].imshow(delta, cmap="bwr", vmin=-delta_vmax, vmax=delta_vmax)
+            if i == 0:
+                axes[4, i].set_ylabel("Delta", fontsize=12)
+
+            for row in range(n_rows):
                 axes[row, i].axis("off")
 
     plt.tight_layout(pad=0.1, h_pad=0.5)

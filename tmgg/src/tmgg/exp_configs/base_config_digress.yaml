@@ -4,11 +4,12 @@ defaults:
   - models/digress/digress_transformer@model
   - data: sbm_default
   - base/trainer/default@trainer
-  - base/logger/tensorboard@logger
+  - base/logger/default@logger
+  - base/callbacks/default
   - _self_
 
-# Experiment identification
-experiment_name: "digress_denoising"
+# Experiment identification (set by model config via model.digress_arch and model.digress_mode)
+experiment_name: "digress_${model.digress_arch}_${model.digress_mode}"
 seed: 42
 sanity_check: false
 
@@ -24,20 +25,22 @@ wandb:
   name: "digress_${model.n_layers}L_${model.hidden_dims.n_head}H"
   tags: ["digress", "transformer", "denoising", "sbm"]
 
+# Visualization settings (step-based)
+visualization_interval: 5000  # steps between logging visualizations
+
 # Evaluation settings
 evaluation:
-  visualization_epochs: 10
-  # noise_levels: [0.01, 0.05, 0.1, 0.2]  # Optional: override noise levels for final evaluation
+  visualization_interval: ${visualization_interval}
 
 # Paths
 paths:
   output_dir: ${hydra:runtime.output_dir}
   results_dir: ${paths.output_dir}/results
 
-# Hydra configuration
+# Hydra output directory (version-based for checkpoint resumption)
 hydra:
   run:
-    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: outputs/v${tmgg_version:}/${experiment_name}
   sweep:
-    dir: ./multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: outputs/sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}

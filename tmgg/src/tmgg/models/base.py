@@ -62,96 +62,107 @@ class BaseModel(nn.Module, ABC):
 class DenoisingModel(BaseModel):  # pyright: ignore[reportImplicitAbstractClass]
     """Abstract base class for graph denoising models."""
 
-    def __init__(
-        self,
-        domain: str = "standard",
-        apply_input_transform: bool = True,
-        apply_output_transform: bool = True,
-    ):
-        """
-        Initialize denoising model.
-
-        Args:
-            domain: Domain for adjacency matrix processing
-                   - "standard": Direct adjacency matrix processing
-                   - "inv-sigmoid": Apply logistic transformation before processing
-        """
+    def __init__(self):
+        """Initialize denoising model."""
         super().__init__()
-        if domain not in ["standard", "inv-sigmoid"]:
-            raise ValueError(
-                f"Invalid domain '{domain}'. Must be 'standard' or 'inv-sigmoid'"
-            )
-        self.domain = domain
-        self.apply_input_transform = apply_input_transform
-        self.apply_output_transform = apply_output_transform
 
-    def _apply_domain_transform(self, A: torch.Tensor) -> torch.Tensor:
+    def transform_for_loss(
+        self, output: torch.Tensor, target: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return output and target directly for loss computation.
+
+        Parameters
+        ----------
+        output
+            Model output tensor (denoised adjacency).
+        target
+            Target tensor (clean adjacency matrix).
+
+        Returns
+        -------
+        tuple
+            (output, target) unchanged.
         """
-        Apply domain transformation to adjacency matrix.
+        return output, target
 
-        Args:
-            A: Input adjacency matrix
+    def logits_to_graph(self, logits: torch.Tensor) -> torch.Tensor:
+        """Convert logits to binary graph predictions.
 
-        Returns:
-            Transformed adjacency matrix
+        For BCE loss, sigmoid(x) > 0.5 is equivalent to x > 0, so we threshold
+        logits directly. Subclasses may override for different thresholding.
+
+        Parameters
+        ----------
+        logits
+            Raw model output from forward().
+
+        Returns
+        -------
+        torch.Tensor
+            Binary predictions (0 or 1).
         """
-        if self.domain == "inv-sigmoid" and self.apply_input_transform:
-            # Apply logistic transformation: logit(A) = log(A / (1 - A))
-            # Clamp values to avoid numerical issues
-            A_clamped = torch.clamp(A, 1e-7, 1 - 1e-7)
-            return torch.logit(A_clamped)
+        return (logits > 0).float()
+
+    def predict(self, logits: torch.Tensor, zero_diag: bool = True) -> torch.Tensor:
+        """Convert model output (logits) to binary graph predictions.
+
+        Uses logits_to_graph() for thresholding, then optionally zeros diagonal
+        (adjacency matrices have no self-loops).
+
+        Parameters
+        ----------
+        logits
+            Raw model output from forward().
+        zero_diag
+            If True, zero out diagonal entries. Default True since adjacency
+            matrices typically have no self-loops.
+
+        Returns
+        -------
+        torch.Tensor
+            Binary predictions with zero diagonal (if zero_diag=True).
+        """
+        graph = self.logits_to_graph(logits)
+        if zero_diag:
+            graph = self._zero_diagonal(graph)
+        return graph
+
+    def _zero_diagonal(self, A: torch.Tensor) -> torch.Tensor:
+        """Zero out diagonal entries of adjacency matrix.
+
+        Parameters
+        ----------
+        A
+            Adjacency matrix of shape (n, n) or (batch, n, n).
+
+        Returns
+        -------
+        torch.Tensor
+            Matrix with zeros on diagonal.
+        """
+        if A.ndim == 2:
+            return A.fill_diagonal_(0)
+        elif A.ndim == 3:
+            # Batch case: zero diagonal for each matrix
+            mask = torch.eye(A.shape[-1], device=A.device, dtype=torch.bool)
+            A = A.masked_fill(mask.unsqueeze(0), 0)
+            return A
         else:
             return A
 
-    def _apply_output_transform(self, output: torch.Tensor) -> torch.Tensor:
-        """
-        Apply output transformation based on domain and training mode.
-
-        Args:
-            output: Raw model output (logits)
-
-        Returns:
-            Transformed output
-        """
-        if (
-            self.domain == "inv-sigmoid"
-            and not self.training
-            and self.apply_output_transform
-        ) or self.domain != "inv-sigmoid":  # if we output probabilitis, always sigmoid
-            # Convert logits back to probabilities during evaluation
-            return torch.sigmoid(output)
-        else:
-            # Return raw logits for training or standard domain
-            return output
-
-    def _apply_target_transform(self, target: torch.Tensor) -> torch.Tensor:
-        """
-        Apply target transformation to match output domain during training.
-
-        Args:
-            target: Target tensor (adjacency matrix in probability space)
-
-        Returns:
-            Transformed target tensor
-        """
-        if self.domain == "inv-sigmoid" and self.training:
-            # Convert target to logit space for training with inv-sigmoid domain
-            target_clamped = torch.clamp(target, 1e-7, 1 - 1e-7)
-            return torch.logit(target_clamped)
-        else:
-            # Return original target for standard domain or evaluation
-            return target
-
     @abstractmethod
     def forward(self, x: torch.Tensor) -> Union[torch.Tensor, tuple]:
-        """
-        Forward pass for denoising.
+        """Forward pass for denoising.
 
-        Args:
-            x: Input tensor (typically noisy adjacency matrix or embeddings)
+        Parameters
+        ----------
+        x
+            Input tensor (typically noisy adjacency matrix).
 
-        Returns:
-            Denoised output tensor or tuple of tensors (raw logits)
+        Returns
+        -------
+        torch.Tensor
+            Raw logits (unbounded). Use predict() for [0, 1] probabilities.
         """
         pass
 

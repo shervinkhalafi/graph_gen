@@ -1,0 +1,83 @@
+# @package _global_
+# Stage 5: Full Validation
+#
+# Budget: 1500 GPU-hours (future work, for publication)
+# Goal: Comprehensive ablations and robustness analysis
+#
+# Uses same optimizer settings as stage1_poc for fair comparison
+
+defaults:
+  - override /data: sbm_single_graph
+
+# Stage identifier
+stage: stage5_full
+
+# Optimizer settings (matches stage1_poc)
+learning_rate: 1e-2
+weight_decay: 0.0
+optimizer_type: adam
+scheduler_config:
+  type: none
+
+# Model settings
+model:
+  k: 50
+
+# Default noise levels (overridden in sweep)
+noise_levels: [0.1]
+eval_noise_levels: [0.1]
+
+# --- Sweep metadata (used by coordinator when sweep=true) ---
+_sweep_config:
+  architectures:
+    - models/spectral/linear_pe
+    - models/spectral/filter_bank
+    - models/spectral/self_attention
+    - models/digress/digress_sbm_small
+    - models/digress/digress_sbm_small_highlr
+  datasets:
+    # Synthetic
+    - data/sbm_default
+    - data/sbm_n100
+    - data/sbm_n200
+    - data/er_spectral
+    - data/regular_spectral
+    - data/tree_spectral
+    - data/lfr_spectral
+    - data/ring_of_cliques
+    # Benchmarks
+    - data/pyg_qm9
+    - data/pyg_enzymes
+    - data/pyg_proteins
+  hyperparameter_space:
+    learning_rate: [1e-3, 1e-2]
+    model.k: [50, 100, 200]  # Match synthetic dataset sizes
+    noise_levels:
+      - [0.01]
+      - [0.05]
+      - [0.1]
+      - [0.2]
+      - [0.3]
+    # Architecture-specific
+    model.polynomial_degree: [3, 5, 8]  # filter_bank
+    model.d_k: [32, 64, 128]  # self_attention
+  num_trials: 20
+  seeds: [1, 2, 3, 4, 5]
+  timeout_seconds: 7200
+  gpu_type: fast
+
+# Ablation studies
+ablations:
+  - name: spectral_polynomial_depth
+    param: model.polynomial_degree
+    values: [3, 5, 8]
+  - name: eigenvector_count
+    param: model.k
+    values: [2, 4, 8, 16, 32, 64]
+
+# Statistical analysis
+statistical_tests:
+  methods:
+    - wilcoxon_signed_rank
+    - holm_bonferroni_correction
+  significance_level: 0.05

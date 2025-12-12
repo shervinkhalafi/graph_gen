@@ -9,11 +9,13 @@ import numpy as np
 from unittest.mock import Mock, patch, MagicMock
 import warnings
 
-from tmgg.models.gnn import (
-    GNN, GNNSymmetric, NodeVarGNN, 
-    EigenEmbedding, GaussianEmbedding,
-    GraphConvolutionLayer, NodeVarGraphConvolutionLayer,
-    EigenDecompositionError
+from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
+from tmgg.models.layers import (
+    EigenDecompositionError,
+    EigenEmbedding,
+    GaussianEmbedding,
+    GraphConvolutionLayer,
+    NodeVarGraphConvolutionLayer,
 )
 
 
@@ -214,22 +216,26 @@ class TestGNNProperties:
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=8))
     @settings(max_examples=15)
     def test_gnn_symmetric_produces_valid_adjacency(self, A):
-        """Test that GNNSymmetric produces valid adjacency matrices."""
+        """Test that GNNSymmetric produces valid adjacency matrices.
+
+        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        """
         model = GNNSymmetric(num_layers=2, feature_dim_out=5)
-        
+
         try:
-            A_recon, X = model(A)
-            
+            logits, X = model(A)
+
             # Check shape
-            assert A_recon.shape == A.shape
-            
-            # Check values are in [0, 1] (sigmoid output)
-            assert torch.all(A_recon >= 0)
-            assert torch.all(A_recon <= 1)
-            
+            assert logits.shape == A.shape
+
+            # predict() applies sigmoid to get probabilities in [0, 1]
+            probs = model.predict(logits)
+            assert torch.all(probs >= 0)
+            assert torch.all(probs <= 1)
+
             # Check symmetry preservation
             # Note: Output may not be perfectly symmetric due to numerical operations
-            diff = torch.abs(A_recon - A_recon.transpose(-2, -1))
+            diff = torch.abs(probs - probs.transpose(-2, -1))
             assert torch.max(diff) < 0.1  # Allow some asymmetry
         except EigenDecompositionError:
             pass
@@ -240,21 +246,24 @@ class TestGNNProperties:
     )
     @settings(max_examples=15)
     def test_node_var_gnn_valid_output(self, A, num_layers):
-        """Test NodeVarGNN produces valid adjacency matrices."""
+        """Test NodeVarGNN produces valid adjacency matrices.
+
+        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        """
         model = NodeVarGNN(num_layers=num_layers, feature_dim=5)
-        
+
         try:
-            A_recon = model(A)
-            
+            logits = model(A)
+
             # Check shape
-            assert A_recon.shape == A.shape
-            
-            # Check values are in [0, 1]
-            assert torch.all(A_recon >= 0)
-            assert torch.all(A_recon <= 1)
-            
-            assert not torch.isnan(A_recon).any()
-            assert not torch.isinf(A_recon).any()
+            assert logits.shape == A.shape
+            assert not torch.isnan(logits).any()
+            assert not torch.isinf(logits).any()
+
+            # predict() applies sigmoid to get probabilities in [0, 1]
+            probs = model.predict(logits)
+            assert torch.all(probs >= 0)
+            assert torch.all(probs <= 1)
         except EigenDecompositionError:
             pass
     

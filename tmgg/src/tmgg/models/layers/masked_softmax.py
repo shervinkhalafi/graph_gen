@@ -36,4 +36,12 @@ def masked_softmax(
 
     x_masked = x.clone()
     x_masked[mask == 0] = -float("inf")
-    return torch.softmax(x_masked, **kwargs)
+    result = torch.softmax(x_masked, **kwargs)
+
+    # Handle row-wise all-masked case: softmax([-inf, -inf, ...]) = NaN
+    # Replace NaN rows with zeros
+    nan_mask = torch.isnan(result)
+    if nan_mask.any():
+        result = torch.where(nan_mask, torch.zeros_like(result), result)
+
+    return result

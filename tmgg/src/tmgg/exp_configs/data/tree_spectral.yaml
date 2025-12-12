@@ -1,0 +1,27 @@
+# Random tree graph dataset for spectral denoising experiments
+
+_target_: tmgg.experiment_utils.data.data_module.GraphDataModule
+
+dataset_name: tree
+
+dataset_config:
+  num_nodes: 50
+  num_graphs: 1000
+  seed: 42
+
+# Samples per graph (permutations)
+num_samples_per_graph: 100
+
+# Batch size
+batch_size: 16
+
+# Data loading
+num_workers: 4
+pin_memory: true
+
+# Train/val/test split
+val_split: 0.1
+test_split: 0.2
+
+# Noise levels for evaluation
+noise_levels: ${noise_levels}

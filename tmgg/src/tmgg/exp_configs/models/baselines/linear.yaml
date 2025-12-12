@@ -1,0 +1,25 @@
+# Linear baseline denoiser
+# A_pred = W @ A @ W.T + b
+# Initialized at identity for stable learning
+
+_target_: tmgg.experiments.baselines.BaselineLightningModule
+
+model_type: linear
+
+# Maximum nodes (determines parameter size)
+max_nodes: 200
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+
+# Loss
+loss_type: ${loss_type}

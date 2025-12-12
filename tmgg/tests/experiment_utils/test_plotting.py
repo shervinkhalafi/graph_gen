@@ -15,7 +15,7 @@ from tmgg.experiment_utils.plotting import (
     create_multi_noise_visualization,
     plot_training_metrics_grid
 )
-from tmgg.models.gnn import GNN
+from tmgg.models.gnn import GNNSymmetric
 from tmgg.experiment_utils.data import add_digress_noise
 
 
@@ -101,16 +101,18 @@ class TestPlottingFunctions:
             noise_type="Gaussian",
             eps=0.1
         )
-        
+
         assert isinstance(fig, plt.Figure)
-        assert len(fig.axes) == 6  # 3 main plots + 3 colorbars
-        
-        # Check titles
-        titles = [ax.get_title() for ax in fig.axes[:3]]
+        assert len(fig.axes) == 8  # 4 main plots + 4 colorbars (includes Delta)
+
+        # Check titles - get non-colorbar axes
+        main_axes = [ax for ax in fig.axes if ax.get_label() != '<colorbar>']
+        titles = [ax.get_title() for ax in main_axes]
         assert 'Original' in titles[0]
         assert 'Noisy' in titles[1]
         assert 'Denoised' in titles[2]
-        
+        assert 'Delta' in titles[3]
+
         plt.close(fig)
     
     def test_plot_noise_level_comparison(self):
@@ -159,26 +161,30 @@ class TestPlottingFunctions:
         plt.close(fig)
     
     def test_create_multi_noise_visualization(self):
-        """Test multi-noise visualization."""
-        # Create simple model
-        model = GNN(num_layers=1, feature_dim_in=10, feature_dim_out=5)
+        """Test multi-noise visualization.
+
+        Uses GNNSymmetric which outputs adjacency matrix reconstructions,
+        as expected by create_multi_noise_visualization.
+        """
+        # Create model that outputs adjacency reconstruction
+        model = GNNSymmetric(num_layers=1, feature_dim_out=5)
         model.eval()
-        
+
         # Create test adjacency matrix
         A_original = torch.eye(10).unsqueeze(0)
         noise_levels = [0.1, 0.2, 0.3]
-        
+
         fig = create_multi_noise_visualization(
             A_original,
             model,
             add_digress_noise,
             noise_levels
         )
-        
+
         assert isinstance(fig, plt.Figure)
-        # Should have 2 rows x 3 columns = 6 subplots
-        assert len(fig.axes) == 6
-        
+        # Should have 4 rows x 3 columns = 12 subplots (clean, noisy, denoised, delta)
+        assert len(fig.axes) == 12
+
         plt.close(fig)
     
     def test_plot_training_metrics_grid(self):

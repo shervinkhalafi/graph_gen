@@ -1,0 +1,58 @@
+# @package _global_
+# Stage 1: Proof of Concept
+#
+# Budget: 4.4 GPU-hours
+# Goal: Validate that spectral PE architectures can denoise graphs
+#
+# Uses same optimizer settings as working sanity check:
+# - No weight decay (simpler optimization)
+# - No LR scheduling (constant LR)
+# - Adam optimizer (not AdamW)
+
+defaults:
+  - override /data: sbm_single_graph
+
+# Stage identifier
+stage: stage1_poc
+
+# Optimizer settings (matches sanity check)
+learning_rate: 1e-2
+weight_decay: 0.0
+optimizer_type: adam
+
+# Disable LR scheduling for simpler optimization
+scheduler_config:
+  type: none
+
+# Full spectrum for n=50 graph
+model:
+  k: 50
+
+# Single noise level per experiment (swept via hyperparameters)
+noise_levels: [0.1]
+eval_noise_levels: [0.1]
+
+# --- Sweep metadata (used by coordinator when sweep=true) ---
+_sweep_config:
+  architectures:
+    - models/spectral/linear_pe
+    - models/spectral/filter_bank
+    - models/spectral/self_attention
+    - models/digress/digress_sbm_small          # Official LR=0.0002
+    - models/digress/digress_sbm_small_highlr   # High LR=1e-2 (matching spectral)
+  hyperparameter_space:
+    learning_rate: [1e-3, 1e-2]
+    # Note: model.k=50 is set in each spectral model config (DiGress doesn't use k)
+    noise_levels:
+      - [0.01]
+      - [0.05]
+      - [0.1]
+      - [0.2]
+      - [0.3]
+  num_trials: 4
+  seeds: [1, 2, 3]
+  timeout_seconds: 600
+  success_criteria:
+    metric: val_loss
+    improvement_threshold: 0.15
+    baseline: linear_pe

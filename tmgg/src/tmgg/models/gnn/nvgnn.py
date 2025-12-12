@@ -17,7 +17,7 @@ class NodeVarGNN(DenoisingModel):
         num_layers: int,
         num_terms: int = 3,
         feature_dim: int = 10,
-        domain: str = "standard",
+        eigenvalue_reg: float = 0.0,
     ):
         """
         Initialize Node-variant GNN.
@@ -26,15 +26,16 @@ class NodeVarGNN(DenoisingModel):
             num_layers: Number of layers
             num_terms: Number of polynomial terms
             feature_dim: Feature dimension
-            domain: Domain for adjacency matrix processing ("standard" or "inv-sigmoid")
+            eigenvalue_reg: Diagonal regularization for eigendecomposition stability
         """
-        super(NodeVarGNN, self).__init__(domain=domain)
+        super().__init__()
 
         self.num_layers = num_layers
         self.num_terms = num_terms
         self.feature_dim = feature_dim
+        self.eigenvalue_reg = eigenvalue_reg
 
-        self.embedding_layer = EigenEmbedding()
+        self.embedding_layer = EigenEmbedding(eigenvalue_reg=eigenvalue_reg)
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
@@ -55,10 +56,7 @@ class NodeVarGNN(DenoisingModel):
         Returns:
             Reconstructed adjacency matrix
         """
-        # Apply domain transformation to input
-        A_transformed = self._apply_domain_transform(A)
-
-        Z = self.embedding_layer(A_transformed)
+        Z = self.embedding_layer(A)
         # Take only the first feature_dim columns from eigenvectors
         # But ensure we don't exceed the available columns
         actual_feature_dim = min(Z.shape[2], self.feature_dim)
@@ -75,23 +73,17 @@ class NodeVarGNN(DenoisingModel):
             )
             Z = torch.cat([Z, padding], dim=2)
 
-        # Dynamically create layers if needed with correct num_nodes
-        if len(self.layers) == 0 or self.layers[0].num_nodes != Z.shape[1]:
-            self.layers = nn.ModuleList()
-            for _ in range(self.num_layers):
-                self.layers.append(
-                    NodeVarGraphConvolutionLayer(
-                        self.num_terms, self.feature_dim, Z.shape[1]
-                    )
-                )
+        # NOTE: Dynamic layer recreation removed. The redesigned
+        # NodeVarGraphConvolutionLayer uses node-agnostic parameters,
+        # supporting any graph size without re-creating layers.
 
         for layer in self.layers:
-            Z = layer(A_transformed, Z)
+            Z = layer(A, Z)
         X = self.out_x(Z)
         Y = self.out_y(Z)
         outer = torch.bmm(X, Y.transpose(1, 2))
-        # Apply output transformation based on domain and training mode
-        return self._apply_output_transform(outer)
+        # Return raw logits per base class contract; use predict() for probabilities
+        return outer
 
     def get_config(self) -> Dict[str, Any]:
         """Get model configuration."""
@@ -99,5 +91,5 @@ class NodeVarGNN(DenoisingModel):
             "num_layers": self.num_layers,
             "num_terms": self.num_terms,
             "feature_dim": self.feature_dim,
-            "domain": self.domain,
+            "eigenvalue_reg": self.eigenvalue_reg,
         }

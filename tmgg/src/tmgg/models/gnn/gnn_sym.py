@@ -20,16 +20,17 @@ class GNNSymmetric(DenoisingModel):
         num_terms: int = 3,
         feature_dim_in: int = 10,
         feature_dim_out: int = 10,
-        domain: str = "standard",
+        eigenvalue_reg: float = 0.0,
     ):
-        super(GNNSymmetric, self).__init__(domain=domain)
+        super().__init__()
 
         self.num_layers = num_layers
         self.num_terms = num_terms
         self.feature_dim_in = feature_dim_in
         self.feature_dim_out = feature_dim_out
+        self.eigenvalue_reg = eigenvalue_reg
 
-        self.embedding_layer = EigenEmbedding()
+        self.embedding_layer = EigenEmbedding(eigenvalue_reg=eigenvalue_reg)
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
@@ -47,10 +48,7 @@ class GNNSymmetric(DenoisingModel):
         Returns:
             Tuple of (reconstructed_adjacency, X_embeddings)
         """
-        # Apply domain transformation to input
-        A_transformed = self._apply_domain_transform(A)
-
-        Z = self.embedding_layer(A_transformed)
+        Z = self.embedding_layer(A)
         # Take only the first feature_dim_in columns from eigenvectors
         # But ensure we don't exceed the available columns
         actual_feature_dim = min(Z.shape[2], self.feature_dim_in)
@@ -67,13 +65,12 @@ class GNNSymmetric(DenoisingModel):
             )
             Z = torch.cat([Z, padding], dim=2)
         for layer in self.layers:
-            Z = layer(A_transformed, Z)
+            Z = layer(A, Z)
         X = self.out_x(Z)
 
         outer = torch.bmm(X, X.transpose(1, 2))
-        # Apply output transformation based on domain and training mode
-        outer_transformed = self._apply_output_transform(outer)
-        return outer_transformed, X
+        # Return raw logits per base class contract; use predict() for probabilities
+        return outer, X
 
     def get_config(self) -> Dict[str, Any]:
         """Get model configuration."""
@@ -82,5 +79,5 @@ class GNNSymmetric(DenoisingModel):
             "num_terms": self.num_terms,
             "feature_dim_in": self.feature_dim_in,
             "feature_dim_out": self.feature_dim_out,
-            "domain": self.domain,
+            "eigenvalue_reg": self.eigenvalue_reg,
         }

@@ -353,7 +353,10 @@ def compute_batched_over0_posterior_distribution(X_t, Qt, Qsb, Qtb):
     prod = Qtb @ X_t_transposed  # bs, d0, N
     prod = prod.transpose(-1, -2)  # bs, N, d0
     denominator = prod.unsqueeze(-1)  # bs, N, d0, 1
-    denominator[denominator == 0] = 1e-6
+    # Clamp denominator to avoid division by near-zero values.
+    # The original exact-zero check (denominator == 0) only caught exact zeros,
+    # missing values like 1e-30 that cause overflow.
+    denominator = denominator.clamp(min=1e-6)
 
     out = numerator / denominator
     return out

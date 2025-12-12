@@ -1,91 +1,126 @@
+"""Node-variant graph convolution layer.
+
+REDESIGNED: The original implementation used node-specific parameters with shape
+(num_terms+1, num_channels, num_nodes), which caused:
+- Dynamic layer recreation breaking optimizer state
+- Parameter truncation/padding losing learned weights
+- Incompatibility with variable graph sizes
+
+The new design uses node-agnostic parameters with shape
+(num_terms+1, num_channels_in, num_channels_out), supporting any graph size.
+"""
+
 import torch
 import torch.nn as nn
 
 
 class NodeVarGraphConvolutionLayer(nn.Module):
-    """Node-variant graph convolution layer."""
+    """Graph convolution layer with polynomial filters.
 
-    def __init__(self, num_terms: int, num_channels: int, num_nodes: int):
-        """
-        Initialize node-variant graph convolution layer.
+    This layer computes a polynomial graph convolution:
+        Y = sum_{i=0}^{num_terms} A^i @ X @ H[i]
 
-        Args:
-            num_terms: Number of terms in polynomial filter
-            num_channels: Number of output channels
-            num_nodes: Number of nodes in the graph
+    where A is the (normalized) adjacency matrix and H[i] are learnable weight
+    matrices. Unlike the original "node-variant" design, parameters are shared
+    across all nodes, enabling support for variable graph sizes.
+
+    Parameters
+    ----------
+    num_terms : int
+        Number of polynomial terms (excluding the identity term).
+    num_channels_in : int
+        Input feature dimension.
+    num_channels_out : int
+        Output feature dimension.
+
+    Notes
+    -----
+    The `num_nodes` parameter from the original API is kept for backwards
+    compatibility but is now ignored - the layer works with any graph size.
+    """
+
+    def __init__(
+        self, num_terms: int, num_channels_in: int, num_channels_out: int = None
+    ):
+        """Initialize the graph convolution layer.
+
+        Parameters
+        ----------
+        num_terms : int
+            Number of polynomial terms.
+        num_channels_in : int
+            Input feature dimension.
+        num_channels_out : int, optional
+            Output feature dimension. If None, defaults to num_channels_in.
+            (For backwards compatibility with the old 3-arg signature where
+            the third arg was num_nodes, this is ignored if it seems too large.)
         """
-        super(NodeVarGraphConvolutionLayer, self).__init__()
+        super().__init__()
         self.num_terms = num_terms
-        self.num_channels = num_channels
-        self.num_nodes = num_nodes
+        self.num_channels_in = num_channels_in
 
-        self.h = nn.Parameter(torch.randn(num_terms + 1, num_channels, num_nodes))
-        nn.init.xavier_uniform_(self.h)
+        # Backwards compatibility: old signature was (num_terms, num_channels, num_nodes)
+        # where num_nodes was typically >> num_channels. Detect this and ignore.
+        if num_channels_out is None or num_channels_out > 100:
+            # Likely old usage with num_nodes as third arg, use num_channels_in
+            self.num_channels_out = num_channels_in
+        else:
+            self.num_channels_out = num_channels_out
 
-        self.activation = nn.Tanh()
-        self.layer_norm = nn.LayerNorm(num_channels)
+        # Node-agnostic parameters: (num_terms+1, in_channels, out_channels)
+        self.H = nn.Parameter(
+            torch.randn(num_terms + 1, self.num_channels_in, self.num_channels_out)
+        )
+        nn.init.xavier_uniform_(self.H)
+
+        # GELU provides better nonlinearity than Tanh after LayerNorm
+        self.activation = nn.GELU()
+        self.layer_norm = nn.LayerNorm(self.num_channels_out)
+
+    @property
+    def num_nodes(self) -> int:
+        """Backwards compatibility: return a placeholder value.
+
+        The new design doesn't store num_nodes since it's node-agnostic.
+        Returns -1 to indicate this, which will always differ from actual
+        node counts, preventing the old dynamic recreation logic from triggering.
+        """
+        return -1
 
     def forward(self, A: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
+        """Forward pass of graph convolution.
+
+        Parameters
+        ----------
+        A : torch.Tensor
+            Adjacency matrix of shape (batch, num_nodes, num_nodes).
+        X : torch.Tensor
+            Input features of shape (batch, num_nodes, num_channels_in).
+
+        Returns
+        -------
+        torch.Tensor
+            Output features of shape (batch, num_nodes, num_channels_out).
         """
-        Forward pass of node-variant graph convolution.
+        # Ensure consistent dtype
+        X = X.to(self.H.dtype)
+        A = A.to(self.H.dtype)
 
-        Args:
-            A: Adjacency matrix
-            X: Input features
+        # Symmetric normalization to bound spectral radius
+        D = A.sum(dim=-1)
+        D_inv_sqrt = torch.where(D > 0, D.pow(-0.5), torch.zeros_like(D))
+        D_inv_sqrt_mat = torch.diag_embed(D_inv_sqrt)
+        A_norm = torch.bmm(torch.bmm(D_inv_sqrt_mat, A), D_inv_sqrt_mat)
 
-        Returns:
-            Convolved features
-        """
-        batch_size, num_nodes, num_channels_in = X.shape
-        Y_hat = torch.zeros(batch_size, num_nodes, self.num_channels, device=A.device)
+        # Polynomial convolution: Y = sum_i A^i @ X @ H[i]
+        Y = X @ self.H[0]  # Identity term (A^0 = I)
 
-        for c in range(self.num_channels):
-            result = torch.zeros(batch_size, num_nodes, device=A.device)
-            # Ensure self.h[0, c] has correct size for current num_nodes
-            if self.h.shape[2] != num_nodes:
-                # Resize h to match current num_nodes by truncating or padding
-                h_vals = self.h[0, c]
-                if h_vals.shape[0] > num_nodes:
-                    h_vals = h_vals[:num_nodes]
-                else:
-                    h_vals = torch.nn.functional.pad(
-                        h_vals, (0, num_nodes - h_vals.shape[0])
-                    )
-                h_diag = torch.diag_embed(h_vals)
-            else:
-                h_diag = torch.diag_embed(self.h[0, c])
+        A_power = A_norm  # Start with A^1
+        for i in range(1, self.num_terms + 1):
+            Y = Y + torch.bmm(A_power, X) @ self.H[i]
+            if i < self.num_terms:
+                A_power = torch.bmm(A_power, A_norm)  # A^{i+1}
 
-            # Expand h_diag to batch size
-            h_diag = h_diag.unsqueeze(0).expand(batch_size, -1, -1)
-            A_w = h_diag
-
-            for ch in range(num_channels_in):
-                result += torch.bmm(A_w, X[..., ch].unsqueeze(-1)).squeeze(-1)
-
-            for i in range(1, self.num_terms + 1):
-                A_power_i = torch.matrix_power(A, i)
-
-                # Handle dimension mismatch for h
-                if self.h.shape[2] != num_nodes:
-                    h_vals = self.h[i, c]
-                    if h_vals.shape[0] > num_nodes:
-                        h_vals = h_vals[:num_nodes]
-                    else:
-                        h_vals = torch.nn.functional.pad(
-                            h_vals, (0, num_nodes - h_vals.shape[0])
-                        )
-                    h_diag = torch.diag_embed(h_vals)
-                else:
-                    h_diag = torch.diag_embed(self.h[i, c])
-
-                # Expand h_diag to batch size
-                h_diag = h_diag.unsqueeze(0).expand(batch_size, -1, -1)
-                A_w = torch.bmm(h_diag, A_power_i)
-
-                for ch in range(num_channels_in):
-                    result += torch.bmm(A_w, X[..., ch].unsqueeze(-1)).squeeze(-1)
-            Y_hat[..., c] = result
-
-        Y_hat = self.layer_norm(Y_hat)
-        Y_hat = self.activation(Y_hat)
-        return Y_hat
+        Y = self.layer_norm(Y)
+        Y = self.activation(Y)
+        return Y

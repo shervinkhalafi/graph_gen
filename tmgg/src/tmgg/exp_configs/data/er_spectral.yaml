@@ -1,0 +1,30 @@
+# Erdős-Rényi graph dataset for spectral denoising experiments
+
+_target_: tmgg.experiment_utils.data.data_module.GraphDataModule
+
+dataset_name: erdos_renyi
+
+dataset_config:
+  num_nodes: 50
+  # Edge probability
+  # Sweep: {0.1, 0.2, 0.3}
+  p: 0.1
+  num_graphs: 1000
+  seed: 42
+
+# Samples per graph (permutations)
+num_samples_per_graph: 100
+
+# Batch size
+batch_size: 16
+
+# Data loading
+num_workers: 4
+pin_memory: true
+
+# Train/val/test split
+val_split: 0.1
+test_split: 0.2
+
+# Noise levels for evaluation
+noise_levels: ${noise_levels}

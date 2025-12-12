@@ -16,6 +16,8 @@ from tmgg.experiment_utils.data.dataset_wrappers import (
     NXGraphWrapperWrapper,
     create_dataset_wrapper,
 )
+from tmgg.experiment_utils.data.synthetic_graphs import SyntheticGraphDataset
+from tmgg.experiment_utils.data.pyg_datasets import PyGDatasetWrapper
 
 # Legacy wrapper mapping for backward compatibility
 # Prefer using create_dataset_wrapper() for new code
@@ -24,6 +26,12 @@ DATASET_WRAPPERS = {
     "classical": ClassicalGraphsWrapper,
     "nx": NXGraphWrapperWrapper,
 }
+
+# New synthetic graph types
+SYNTHETIC_GRAPH_TYPES = {"d_regular", "regular", "lfr", "tree", "erdos_renyi", "er"}
+
+# PyG benchmark datasets
+PYG_DATASETS = {"qm9", "enzymes", "proteins"}
 
 
 class GraphDataModule(pl.LightningDataModule):
@@ -101,6 +109,10 @@ class GraphDataModule(pl.LightningDataModule):
             self._setup_sbm(stage)
         elif self.dataset_name in DATASET_WRAPPERS:
             self._setup_from_wrapper()
+        elif self.dataset_name.lower() in SYNTHETIC_GRAPH_TYPES:
+            self._setup_synthetic_graphs()
+        elif self.dataset_name.lower() in PYG_DATASETS:
+            self._setup_pyg_dataset()
         else:
             raise ValueError(f"Unknown dataset name: {self.dataset_name}")
 
@@ -203,6 +215,104 @@ class GraphDataModule(pl.LightningDataModule):
         self.test_adjacency_matrices = all_matrices[:num_test]
         self.val_adjacency_matrices = all_matrices[num_test : num_test + num_val]
         self.train_adjacency_matrices = all_matrices[num_test + num_val :]
+
+    def _setup_synthetic_graphs(self):
+        """Set up synthetic graph datasets (d-regular, LFR, tree, ER)."""
+        if self.train_adjacency_matrices is not None:
+            return
+
+        # Map dataset name to graph type
+        name_to_type = {
+            "d_regular": "regular",
+            "regular": "regular",
+            "lfr": "lfr",
+            "tree": "tree",
+            "erdos_renyi": "erdos_renyi",
+            "er": "erdos_renyi",
+        }
+        graph_type = name_to_type[self.dataset_name.lower()]
+
+        # Get parameters from config
+        n = self.dataset_config.get("num_nodes", 50)
+        num_graphs = self.dataset_config.get("num_graphs", 1000)
+        seed = self.dataset_config.get("seed", 42)
+
+        # Extract type-specific parameters
+        type_kwargs = {}
+        if graph_type == "regular":
+            type_kwargs["d"] = self.dataset_config.get("d", 3)
+        elif graph_type == "erdos_renyi":
+            type_kwargs["p"] = self.dataset_config.get("p", 0.1)
+        elif graph_type == "lfr":
+            type_kwargs["tau1"] = self.dataset_config.get("tau1", 3.0)
+            type_kwargs["tau2"] = self.dataset_config.get("tau2", 1.5)
+            type_kwargs["mu"] = self.dataset_config.get("mu", 0.1)
+            type_kwargs["average_degree"] = self.dataset_config.get("average_degree", None)
+            type_kwargs["min_community"] = self.dataset_config.get("min_community", None)
+
+        # Generate graphs
+        dataset = SyntheticGraphDataset(
+            graph_type=graph_type,
+            n=n,
+            num_graphs=num_graphs,
+            seed=seed,
+            **type_kwargs,
+        )
+
+        # Split into train/val/test (70/10/20 default)
+        train_ratio = 1 - self.val_split - self.test_split
+        train, val, test = dataset.train_val_test_split(
+            train_ratio=train_ratio,
+            val_ratio=self.val_split,
+            seed=seed,
+        )
+
+        # Convert to list of tensors
+        self.train_adjacency_matrices = [
+            torch.from_numpy(A).float() for A in train
+        ]
+        self.val_adjacency_matrices = [
+            torch.from_numpy(A).float() for A in val
+        ]
+        self.test_adjacency_matrices = [
+            torch.from_numpy(A).float() for A in test
+        ]
+
+    def _setup_pyg_dataset(self):
+        """Set up PyTorch Geometric benchmark datasets."""
+        if self.train_adjacency_matrices is not None:
+            return
+
+        # Get parameters from config
+        root = self.dataset_config.get("root", None)
+        max_graphs = self.dataset_config.get("max_graphs", None)
+        seed = self.dataset_config.get("seed", 42)
+
+        # Load dataset
+        dataset = PyGDatasetWrapper(
+            dataset_name=self.dataset_name,
+            root=root,
+            max_graphs=max_graphs,
+        )
+
+        # Split into train/val/test
+        train_ratio = 1 - self.val_split - self.test_split
+        train, val, test = dataset.train_val_test_split(
+            train_ratio=train_ratio,
+            val_ratio=self.val_split,
+            seed=seed,
+        )
+
+        # Convert to list of tensors
+        self.train_adjacency_matrices = [
+            torch.from_numpy(A).float() for A in train
+        ]
+        self.val_adjacency_matrices = [
+            torch.from_numpy(A).float() for A in val
+        ]
+        self.test_adjacency_matrices = [
+            torch.from_numpy(A).float() for A in test
+        ]
 
     def _create_dataloader(
         self, adjacency_matrices: List[torch.Tensor], samples_per_graph: int, shuffle: bool

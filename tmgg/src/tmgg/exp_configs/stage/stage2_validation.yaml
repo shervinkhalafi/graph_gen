@@ -1,0 +1,67 @@
+# @package _global_
+# Stage 2: Core Validation
+#
+# Budget: 166.5 GPU-hours
+# Goal: Validate generalization across configurations and compare with DiGress
+#
+# Uses same optimizer settings as stage1_poc for fair comparison
+
+defaults:
+  - override /data: sbm_single_graph
+
+# Stage identifier
+stage: stage2_validation
+
+# Optimizer settings (matches stage1_poc)
+learning_rate: 1e-2
+weight_decay: 0.0
+optimizer_type: adam
+scheduler_config:
+  type: none
+
+# Model settings
+model:
+  k: 50
+
+# Default noise levels (overridden in sweep)
+noise_levels: [0.1]
+eval_noise_levels: [0.1]
+
+# --- Sweep metadata (used by coordinator when sweep=true) ---
+_sweep_config:
+  architectures:
+    - models/spectral/filter_bank
+    - models/spectral/self_attention
+    - models/digress/digress_sbm_small
+    - models/digress/digress_sbm_small_highlr
+  datasets:
+    - data/sbm_default        # n=50, k=2, p_in=0.7, p_out=0.05
+    - data/sbm_n100           # n=100, k=3, p_in=0.7, p_out=0.05
+  hyperparameter_space:
+    learning_rate: [1e-3, 1e-2]
+    model.k: [50, 100]  # Match dataset sizes
+    noise_levels:
+      - [0.01]
+      - [0.05]
+      - [0.1]
+      - [0.2]
+      - [0.3]
+  num_trials: 12
+  seeds: [1, 2, 3]
+  timeout_seconds: 2700  # 45 minutes per run
+  gpu_type: standard
+  success_criteria:
+    reconstruction_error_threshold: 0.05
+    generalization_gap_threshold: 0.15
+    baseline: digress
+
+# Testing protocols
+protocols:
+  single_graph:
+    num_noise_samples: 1000
+    val_graph_seed: 100
+    test_graph_seed: 200
+  multi_graph:
+    num_graphs: 100
+    train_ratio: 0.7
+    val_ratio: 0.1

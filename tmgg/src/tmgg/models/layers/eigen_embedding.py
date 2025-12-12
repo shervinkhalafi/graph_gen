@@ -76,10 +76,20 @@ class EigenDecompositionError(Exception):
 
 
 class EigenEmbedding(nn.Module):
-    """Embedding layer using eigenvectors of adjacency matrix."""
+    """Embedding layer using eigenvectors of adjacency matrix.
 
-    def __init__(self):
+    Parameters
+    ----------
+    eigenvalue_reg : float, optional
+        Diagonal regularization added before eigendecomposition. This spreads
+        eigenvalues apart, improving gradient stability through the eigh
+        operation. Default is 0.0 (no regularization). Values around 1e-4 to
+        1e-2 help when training produces NaN gradients or unstable loss.
+    """
+
+    def __init__(self, eigenvalue_reg: float = 0.0):
         super(EigenEmbedding, self).__init__()
+        self.eigenvalue_reg = eigenvalue_reg
 
     def forward(self, A: torch.Tensor) -> torch.Tensor:
         """
@@ -94,10 +104,20 @@ class EigenEmbedding(nn.Module):
         Raises:
             EigenDecompositionError: If eigendecomposition fails with debugging context
         """
+        # Apply diagonal regularization if enabled
+        if self.eigenvalue_reg > 0:
+            n = A.shape[-1]
+            eye = torch.eye(n, device=A.device, dtype=A.dtype)
+            A = A + self.eigenvalue_reg * eye
+
         eigenvectors = []
         for i in range(A.shape[0]):
             try:
-                _, V = torch.linalg.eigh(A[i])
+                # Enforce symmetry before eigh: floating-point operations can
+                # introduce small asymmetries, and eigh silently uses only the
+                # lower triangle, which can cause inconsistent results
+                A_sym = (A[i] + A[i].T) / 2
+                _, V = torch.linalg.eigh(A_sym)
                 eigenvectors.append(V)
             except torch._C._LinAlgError as e:  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
                 # Propagate with debugging context

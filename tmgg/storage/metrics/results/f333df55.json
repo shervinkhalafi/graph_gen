@@ -1,0 +1,188 @@
+{
+  "run_id": "f333df55",
+  "status": "failed",
+  "metrics": {},
+  "checkpoint_path": null,
+  "error_message": "pop from empty list",
+  "duration_seconds": 0.028531789779663086,
+  "config": {
+    "model": {
+      "_target_": "tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule",
+      "model_type": "self_attention",
+      "k": 8,
+      "max_nodes": 200,
+      "use_bias": true,
+      "domain": "standard",
+      "learning_rate": 0.001,
+      "weight_decay": 0.001,
+      "optimizer_type": "adamw",
+      "scheduler_config": {
+        "type": "cosine_warmup",
+        "warmup_fraction": 0.02,
+        "decay_fraction": 0.8
+      },
+      "noise_type": "digress",
+      "noise_levels": [
+        0.01,
+        0.05,
+        0.1,
+        0.2,
+        0.3
+      ],
+      "loss_type": "BCE",
+      "d_k": 64,
+      "nonlinearity": "sigmoid"
+    },
+    "data": {
+      "_target_": "tmgg.experiment_utils.data.GraphDataModule",
+      "num_workers": 4,
+      "pin_memory": true,
+      "batch_size": 16,
+      "val_split": 0.2,
+      "test_split": 0.2,
+      "noise_levels": [
+        0.01,
+        0.05,
+        0.1,
+        0.2,
+        0.3
+      ],
+      "dataset_name": "sbm",
+      "dataset_config": {
+        "num_nodes": 20,
+        "p_intra": 1.0,
+        "q_inter": 0.0,
+        "min_blocks": 2,
+        "max_blocks": 4,
+        "min_block_size": 2,
+        "max_block_size": 15,
+        "num_train_partitions": 10,
+        "num_test_partitions": 10
+      },
+      "num_samples_per_graph": 1000,
+      "noise_type": "digress",
+      "defaults": [
+        "base_dataloader",
+        "_self_"
+      ]
+    },
+    "trainer": {
+      "_target_": "pytorch_lightning.Trainer",
+      "max_steps": 50000,
+      "max_epochs": -1,
+      "accelerator": "auto",
+      "devices": "auto",
+      "precision": 32,
+      "enable_checkpointing": true,
+      "default_root_dir": "/home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/outputs/2025-12-03/18-33-42",
+      "enable_progress_bar": true,
+      "log_every_n_steps": 1,
+      "val_check_interval": 500,
+      "check_val_every_n_epoch": null,
+      "gradient_clip_val": 1.0,
+      "gradient_clip_algorithm": "norm",
+      "deterministic": false,
+      "benchmark": true,
+      "fast_dev_run": false,
+      "overfit_batches": 0,
+      "limit_train_batches": 1.0,
+      "limit_val_batches": 1.0,
+      "limit_test_batches": 1.0
+    },
+    "logger": {
+      "logger": [
+        {
+          "tensorboard": {
+            "save_dir": "s3://iml/shervin-graph-archtensorboard/spectral_denoising/2025-12-03_18-33-42",
+            "name": "spectral_denoising",
+            "version": null,
+            "log_graph": false,
+            "default_hp_metric": false
+          }
+        },
+        {
+          "wandb": {
+            "project": "tmgg",
+            "name": "spectral_denoising",
+            "tags": [],
+            "save_dir": "/home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/outputs/2025-12-03/18-33-42",
+            "entity": null,
+            "log_model": false
+          }
+        }
+      ]
+    },
+    "callbacks": {
+      "early_stopping": {
+        "monitor": "val/loss",
+        "mode": "min",
+        "patience": 10,
+        "min_delta": 0.0001
+      },
+      "checkpoint": {
+        "monitor": "val/loss",
+        "mode": "min",
+        "save_top_k": 3,
+        "save_last": true,
+        "filename": "model-step{step:06d}-{val_loss:.4f}",
+        "every_n_train_steps": null
+      }
+    },
+    "base": {
+      "progress_bar": {
+        "progress_bar": {
+          "metrics_to_show": [
+            "train_loss",
+            "val/loss"
+          ],
+          "show_epoch": true,
+          "metrics_format": ".4f"
+        }
+      }
+    },
+    "experiment_name": "spectral_denoising",
+    "sanity_check": false,
+    "learning_rate": 0.001,
+    "weight_decay": 0.001,
+    "optimizer_type": "adamw",
+    "scheduler_config": {
+      "type": "cosine_warmup",
+      "warmup_fraction": 0.02,
+      "decay_fraction": 0.8
+    },
+    "loss_type": "BCE",
+    "noise_type": "digress",
+    "noise_levels": [
+      0.01,
+      0.05,
+      0.1,
+      0.2,
+      0.3
+    ],
+    "domain": "standard",
+    "visualization_interval": 5000,
+    "seed": 2,
+    "force_fresh": false,
+    "stage": "stage1_poc",
+    "sweep": true,
+    "parallelism": 4,
+    "resume": true,
+    "wandb": {
+      "project": "tmgg-spectral-denoising",
+      "name": "spectral_linear_pe_k8",
+      "tags": [
+        "spectral",
+        "denoising",
+        "sbm"
+      ]
+    },
+    "evaluation": {
+      "visualization_interval": 5000
+    },
+    "paths": {
+      "output_dir": "/home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/outputs/2025-12-03/18-33-42",
+      "results_dir": "/home/igork/900_personal/900.000_research/900.003_shervin_graphgen/tmgg/outputs/2025-12-03/18-33-42/results"
+    },
+    "run_id": "stage1_poc_self_attention_sbm_default_s2"
+  }
+}

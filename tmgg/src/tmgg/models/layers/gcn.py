@@ -20,7 +20,9 @@ class GraphConvolutionLayer(nn.Module):
         self.H = nn.Parameter(torch.randn(num_terms + 1, num_channels, num_channels))
         nn.init.xavier_uniform_(self.H)
 
-        self.activation = nn.Tanh()
+        # GELU provides better nonlinearity than Tanh after LayerNorm,
+        # since LayerNorm already normalizes to ~N(0,1) where Tanh is nearly linear
+        self.activation = nn.GELU()
         self.layer_norm = nn.LayerNorm(num_channels)
 
     def forward(self, A: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
@@ -38,9 +40,21 @@ class GraphConvolutionLayer(nn.Module):
         X = X.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]
         A = A.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]
 
+        # Symmetric normalization: D^{-1/2} A D^{-1/2} bounds spectral radius to [-1, 1],
+        # preventing overflow in matrix powers for dense graphs
+        D = A.sum(dim=-1)  # (batch, n) - degree vector
+        D_inv_sqrt = torch.where(
+            D > 0,
+            D.pow(-0.5),
+            torch.zeros_like(D)
+        )
+        # Create diagonal matrices and apply normalization
+        D_inv_sqrt_mat = torch.diag_embed(D_inv_sqrt)  # (batch, n, n)
+        A_norm = torch.bmm(torch.bmm(D_inv_sqrt_mat, A), D_inv_sqrt_mat)
+
         Y_hat = X @ self.H[0]
         for i in range(1, self.num_terms + 1):
-            A_power_i = torch.matrix_power(A, i)
+            A_power_i = torch.matrix_power(A_norm, i)
             Y_hat += torch.bmm(A_power_i, X) @ self.H[i]
         Y_hat = self.layer_norm(Y_hat)
         Y_hat = self.activation(Y_hat)

@@ -1,0 +1,30 @@
+# Graph Filter Bank denoiser with spectral polynomial
+# W = Σ Λ^ℓ H^{(ℓ)}, Â = V W V^T
+
+_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+
+model_type: filter_bank
+
+# Number of eigenvectors
+k: 8
+
+# Polynomial degree K
+# Sweep: {3, 5, 8}
+polynomial_degree: 5
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
+
+# Loss
+loss_type: ${loss_type}

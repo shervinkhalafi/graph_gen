@@ -1,0 +1,36 @@
+# @package data
+# Single-graph protocol for LFR benchmark graphs (planted community structure)
+# Train, val, and test all use the SAME graph with varying noise only
+
+_target_: tmgg.experiment_utils.data.SingleGraphDataModule
+
+# Graph type and parameters
+graph_type: lfr
+n: 200  # LFR needs large n for community constraints
+
+# LFR benchmark parameters (tuned to work reliably)
+tau1: 2.0       # Power law exponent for degree distribution
+tau2: 1.1       # Power law exponent for community size distribution
+mu: 0.1         # Mixing parameter (fraction of inter-community edges)
+average_degree: 8
+min_community: 15
+
+# Stage 1 protocol: same graph for all splits
+same_graph_all_splits: true
+
+# Random seed for graph generation
+train_seed: 42
+val_test_seed: 123
+
+# Number of samples per split (noise realizations)
+num_train_samples: 1000
+num_val_samples: 100
+num_test_samples: 100
+
+# Dataloader parameters
+batch_size: 16
+num_workers: 4
+
+# Noise configuration
+noise_levels: [0.1]
+noise_type: digress

@@ -67,8 +67,10 @@ def final_eval(
     best_model_path: str,
     eval_noise_levels: list[float] | None = None,
 ):
-    # hack to get class method
-    best_model = model.__class__.load_from_checkpoint(best_model_path)
+    # Load best model with fallback for old checkpoint hyperparameter structures
+    from tmgg.experiment_utils.checkpoint_utils import load_checkpoint_with_fallback
+
+    best_model = load_checkpoint_with_fallback(model.__class__, best_model_path)
 
     # Perform final evaluation across noise levels
     noise_levels = eval_noise_levels if eval_noise_levels is not None else data_module.noise_levels
