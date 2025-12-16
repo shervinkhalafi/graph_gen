@@ -11,9 +11,9 @@ logger:
       log_graph: false
       default_hp_metric: false
   - wandb:
-      project: tmgg
+      project: tmgg-${oc.select:stage,default}
       name: ${experiment_name}
       tags: []
       save_dir: ${paths.output_dir}
-      entity: null
+      entity: graph_denoise_team
       log_model: false

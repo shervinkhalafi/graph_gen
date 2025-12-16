@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for headless/multi-threaded use
 import matplotlib.pyplot as plt
 import torch
 from omegaconf import DictConfig

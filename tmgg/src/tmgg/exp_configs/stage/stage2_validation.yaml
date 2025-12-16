@@ -1,21 +1,32 @@
 # @package _global_
-# Stage 2: Core Validation
+# Stage 2: Cross-Dataset Validation with Separate Graphs
 #
-# Budget: 166.5 GPU-hours
-# Goal: Validate generalization across configurations and compare with DiGress
+# Identical to stage1_5_crossdata, except:
+# - same_graph_all_splits: false (train/val/test use different graphs)
 #
-# Uses same optimizer settings as stage1_poc for fair comparison
+# Budget: ~19 GPU-hours (5 architectures x 9 datasets x 3 noise levels x 3 seeds)
+# Goal: Validate generalization to unseen graph structures
+#
+# Spectral models: high LR (1e-2) + amsgrad + tiny weight decay
+# DiGress: official settings (LR=0.0002, amsgrad, weight_decay=1e-12)
 
 defaults:
-  - override /data: sbm_single_graph
+  - override /data: er_single_graph
+
+# Stage 2 protocol: use different graphs for val/test
+data:
+  same_graph_all_splits: false
+  val_test_seed: 100  # val uses 100, test uses 1100
 
 # Stage identifier
 stage: stage2_validation
 
-# Optimizer settings (matches stage1_poc)
+# Spectral models: high LR + amsgrad + tiny weight decay
+# DiGress overrides these via its own config
 learning_rate: 1e-2
-weight_decay: 0.0
-optimizer_type: adam
+weight_decay: 1e-12
+optimizer_type: adamw
+amsgrad: true
 scheduler_config:
   type: none
 
@@ -30,38 +41,33 @@ eval_noise_levels: [0.1]
 # --- Sweep metadata (used by coordinator when sweep=true) ---
 _sweep_config:
   architectures:
+    # Spectral models (use stage config: high LR + amsgrad)
+    - models/spectral/linear_pe
     - models/spectral/filter_bank
     - models/spectral/self_attention
-    - models/digress/digress_sbm_small
-    - models/digress/digress_sbm_small_highlr
+    # DiGress variants
+    - models/digress/digress_sbm_small           # official optimizer
+    - models/digress/digress_sbm_small_highlr    # high LR ablation
   datasets:
-    - data/sbm_default        # n=50, k=2, p_in=0.7, p_out=0.05
-    - data/sbm_n100           # n=100, k=3, p_in=0.7, p_out=0.05
+    # Synthetic graphs
+    - data/er_single_graph
+    - data/regular_single_graph
+    - data/tree_single_graph
+    - data/roc_single_graph
+    - data/lfr_single_graph
+    - data/sbm_single_graph
+    # PyG benchmark graphs
+    - data/pyg_qm9_single_graph
+    - data/pyg_enzymes_single_graph
+    - data/pyg_proteins_single_graph
   hyperparameter_space:
-    learning_rate: [1e-3, 1e-2]
-    model.k: [50, 100]  # Match dataset sizes
     noise_levels:
       - [0.01]
-      - [0.05]
       - [0.1]
       - [0.2]
-      - [0.3]
-  num_trials: 12
+  num_trials: 4
   seeds: [1, 2, 3]
-  timeout_seconds: 2700  # 45 minutes per run
-  gpu_type: standard
+  timeout_seconds: 600
   success_criteria:
-    reconstruction_error_threshold: 0.05
-    generalization_gap_threshold: 0.15
-    baseline: digress
-
-# Testing protocols
-protocols:
-  single_graph:
-    num_noise_samples: 1000
-    val_graph_seed: 100
-    test_graph_seed: 200
-  multi_graph:
-    num_graphs: 100
-    train_ratio: 0.7
-    val_ratio: 0.1
+    metric: val_loss
+    improvement_threshold: 0.15

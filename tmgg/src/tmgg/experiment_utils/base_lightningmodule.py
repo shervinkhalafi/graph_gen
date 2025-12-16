@@ -576,7 +576,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                 )
                 plot_name = f"{stage}_denoising_{noise_type}_eps_{eps:.3f}"
                 log_figure(
-                    self.logger,
+                    self.loggers,  # Use all loggers, not just first
                     plot_name,
                     fig,
                     global_step=self.global_step,
@@ -600,7 +600,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             )
             overview_name = f"{stage}_multi_noise_{noise_type}_overview"
             log_figure(
-                self.logger,
+                self.loggers,  # Use all loggers, not just first
                 overview_name,
                 multi_fig,
                 global_step=self.global_step,

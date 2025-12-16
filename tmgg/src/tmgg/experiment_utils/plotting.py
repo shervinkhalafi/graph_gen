@@ -2,6 +2,8 @@
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for headless/multi-threaded use
 import matplotlib.pyplot as plt
 import numpy as np
 import torch

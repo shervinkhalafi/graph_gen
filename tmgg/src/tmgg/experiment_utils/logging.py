@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for headless/multi-threaded use
 import matplotlib.figure
 import matplotlib.pyplot as plt
 from loguru import logger as loguru
@@ -118,15 +120,16 @@ def create_loggers(config: DictConfig) -> List[Logger]:
                 logger_params = logger_config[logger_type]
 
                 if logger_type == "tensorboard":
-                    # TensorBoard supports S3 paths via fsspec
                     save_dir = logger_params.get(
                         "save_dir", os.path.join(config.paths.output_dir, "tensorboard")
                     )
 
-                    # Skip S3-based TensorBoard if credentials are missing
-                    if _is_s3_path(save_dir) and not _has_s3_credentials():
-                        loguru.warning(
-                            "Skipping TensorBoard S3 logger: S3 credentials not set"
+                    # Skip S3-based TensorBoard from config - TensorFlow's SummaryWriter
+                    # doesn't support S3 paths. The auto-inject logic below handles S3
+                    # by writing locally and syncing at the end of training.
+                    if _is_s3_path(save_dir):
+                        loguru.info(
+                            "Skipping config TensorBoard S3 logger (handled by auto-inject)"
                         )
                         continue
 
@@ -149,7 +152,11 @@ def create_loggers(config: DictConfig) -> List[Logger]:
                         loguru.warning("Skipping WandB logger: WANDB_API_KEY not set")
                         continue
 
-                    loguru.info("Using {logger_type} logger", logger_type=logger_type)
+                    loguru.info(
+                        "Using wandb logger: entity={entity}, project={project}",
+                        entity=logger_params.get("entity"),
+                        project=logger_params.get("project"),
+                    )
                     wandb_logger = WandbLogger(
                         project=logger_params.get("project"),
                         name=logger_params.get("name"),

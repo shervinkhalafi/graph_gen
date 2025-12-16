@@ -247,7 +247,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
             Adjacency matrix of shape (n, n).
         """
         try:
-            from torch_geometric.datasets import ENZYMES, PROTEINS, QM9
+            from torch_geometric.datasets import QM9, TUDataset
             from torch_geometric.utils import to_dense_adj
         except ImportError as e:
             raise ImportError(
@@ -255,24 +255,22 @@ class SingleGraphDataModule(pl.LightningDataModule):
                 "Install with: pip install torch-geometric"
             ) from e
 
-        # Map graph_type to dataset class
-        dataset_map = {
-            "pyg_enzymes": ENZYMES,
-            "pyg_proteins": PROTEINS,
-            "pyg_qm9": QM9,
-        }
-
         dataset_name = self.graph_type.lower()
-        if dataset_name not in dataset_map:
-            raise ValueError(
-                f"Unknown PyG dataset: {dataset_name}. "
-                f"Supported: {list(dataset_map.keys())}"
-            )
+        root = self.graph_kwargs.get("root", f"./data/{dataset_name}")
 
         # Load dataset (downloads if necessary)
-        dataset_cls = dataset_map[dataset_name]
-        root = self.graph_kwargs.get("root", f"./data/{dataset_name}")
-        dataset = dataset_cls(root=root)
+        # ENZYMES and PROTEINS are TUDataset collections, QM9 is standalone
+        if dataset_name == "pyg_qm9":
+            dataset = QM9(root=root)
+        elif dataset_name == "pyg_enzymes":
+            dataset = TUDataset(root=root, name="ENZYMES")
+        elif dataset_name == "pyg_proteins":
+            dataset = TUDataset(root=root, name="PROTEINS")
+        else:
+            raise ValueError(
+                f"Unknown PyG dataset: {dataset_name}. "
+                f"Supported: pyg_qm9, pyg_enzymes, pyg_proteins"
+            )
 
         # Select graph by index or use seed to pick one
         graph_idx = self.graph_kwargs.get("graph_idx", None)

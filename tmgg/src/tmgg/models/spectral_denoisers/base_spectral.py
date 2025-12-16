@@ -53,6 +53,20 @@ class SpectralDenoiser(DenoisingModel):
         # Extract top-k eigenvectors
         V, Lambda = self.eigen_layer(A)
 
+        # Pad V and Lambda to k columns if graph is smaller than k
+        # This ensures models with k-dimensional weights work on any graph size
+        actual_k = V.shape[-1]
+        if actual_k < self.k:
+            pad_size = self.k - actual_k
+            if V.ndim == 2:
+                # Unbatched: (n, actual_k) -> (n, k)
+                V = torch.nn.functional.pad(V, (0, pad_size))
+                Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))
+            else:
+                # Batched: (batch, n, actual_k) -> (batch, n, k)
+                V = torch.nn.functional.pad(V, (0, pad_size))
+                Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))
+
         # Architecture-specific processing
         return self._spectral_forward(V, Lambda, A)
 

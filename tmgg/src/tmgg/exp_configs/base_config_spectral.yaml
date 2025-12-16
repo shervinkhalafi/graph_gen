@@ -7,7 +7,7 @@ defaults:
   - models/spectral/linear_pe@model
   - data: sbm_default
   - base/trainer/default@trainer
-  - base/logger/default@logger
+  - base/logger/default
   - base/callbacks/default
   - base/progress_bar/default
   - _self_
@@ -60,12 +60,6 @@ stage: null
 sweep: false
 parallelism: 4
 resume: true
-
-# Logging configuration
-wandb:
-  project: "tmgg-spectral-denoising"
-  name: "spectral_${model.model_type}_k${model.k}"
-  tags: ["spectral", "denoising", "sbm"]
 
 # Evaluation settings (step-based)
 evaluation:
