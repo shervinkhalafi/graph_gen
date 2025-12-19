@@ -1,16 +1,19 @@
+from typing import Any
+
 import torch
 import torch.nn as nn
-from typing import Optional
 
 
 class Xtoy(nn.Module):
-    def __init__(self, dx, dy):
-        """ Map node features to global features """
+    lin: nn.Linear
+
+    def __init__(self, dx: int, dy: int) -> None:
+        """Map node features to global features"""
         super().__init__()
         self.lin = nn.Linear(4 * dx, dy)
 
-    def forward(self, X):
-        """ X: bs, n, dx. """
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        """X: bs, n, dx."""
         m = X.mean(dim=1)
         mi = X.min(dim=1)[0]
         ma = X.max(dim=1)[0]
@@ -21,14 +24,16 @@ class Xtoy(nn.Module):
 
 
 class Etoy(nn.Module):
-    def __init__(self, d, dy):
-        """ Map edge features to global features. """
+    lin: nn.Linear
+
+    def __init__(self, d: int, dy: int) -> None:
+        """Map edge features to global features."""
         super().__init__()
         self.lin = nn.Linear(4 * d, dy)
 
-    def forward(self, E):
-        """ E: bs, n, n, de
-            Features relative to the diagonal of E could potentially be added.
+    def forward(self, E: torch.Tensor) -> torch.Tensor:
+        """E: bs, n, n, de
+        Features relative to the diagonal of E could potentially be added.
         """
         m = E.mean(dim=(1, 2))
         mi = E.min(dim=2)[0].min(dim=1)[0]
@@ -39,7 +44,9 @@ class Etoy(nn.Module):
         return out
 
 
-def masked_softmax(x: torch.Tensor, mask: Optional[torch.Tensor], **kwargs) -> torch.Tensor:
+def masked_softmax(
+    x: torch.Tensor, mask: torch.Tensor | None, **kwargs: Any
+) -> torch.Tensor:
     if mask is None:
         return torch.softmax(x, **kwargs)
 

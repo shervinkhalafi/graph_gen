@@ -92,8 +92,12 @@ class TestSyntheticGraphs:
         val_graph = dm.get_val_graph()
         test_graph = dm.get_test_graph()
 
-        assert np.array_equal(train_graph, val_graph), "Train and val should be identical"
-        assert np.array_equal(train_graph, test_graph), "Train and test should be identical"
+        assert np.array_equal(
+            train_graph, val_graph
+        ), "Train and val should be identical"
+        assert np.array_equal(
+            train_graph, test_graph
+        ), "Train and test should be identical"
 
     @pytest.mark.parametrize(
         "graph_type,kwargs",
@@ -122,7 +126,9 @@ class TestSyntheticGraphs:
 
         # Graphs should differ (with high probability for random graphs)
         assert not np.array_equal(train_graph, val_graph), "Train and val should differ"
-        assert not np.array_equal(train_graph, test_graph), "Train and test should differ"
+        assert not np.array_equal(
+            train_graph, test_graph
+        ), "Train and test should differ"
 
     @pytest.mark.parametrize(
         "graph_type,kwargs",
@@ -151,7 +157,11 @@ class TestSyntheticGraphs:
         loader = dm.train_dataloader()
         batch = next(iter(loader))
 
-        assert batch.shape == (batch_size, 50, 50), f"Expected ({batch_size}, 50, 50), got {batch.shape}"
+        assert batch.shape == (
+            batch_size,
+            50,
+            50,
+        ), f"Expected ({batch_size}, 50, 50), got {batch.shape}"
         assert batch.dtype == torch.float32, f"Expected float32, got {batch.dtype}"
 
 

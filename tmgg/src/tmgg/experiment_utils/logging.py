@@ -3,10 +3,11 @@
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING
 
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for headless/multi-threaded use
+
+matplotlib.use("Agg")  # Non-interactive backend for headless/multi-threaded use
 import matplotlib.figure
 import matplotlib.pyplot as plt
 from loguru import logger as loguru
@@ -44,12 +45,14 @@ def _is_s3_path(path: str) -> bool:
 
 def _has_s3_credentials() -> bool:
     """Check if all required S3/Tigris credentials are set."""
-    return all([
-        os.environ.get("TMGG_S3_BUCKET"),
-        os.environ.get("AWS_S3_ENDPOINT"),
-        os.environ.get("AWS_ACCESS_KEY_ID"),
-        os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    ])
+    return all(
+        [
+            os.environ.get("TMGG_S3_BUCKET"),
+            os.environ.get("AWS_S3_ENDPOINT"),
+            os.environ.get("AWS_ACCESS_KEY_ID"),
+            os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        ]
+    )
 
 
 def _has_wandb_credentials() -> bool:
@@ -67,16 +70,18 @@ def _setup_s3_env_for_fsspec() -> None:
     endpoint = os.environ.get("AWS_S3_ENDPOINT")
     if endpoint:
         import fsspec
-        fsspec.config.conf["s3"] = {"endpoint_url": endpoint}
+
+        fsspec.config.conf["s3"] = {"endpoint_url": endpoint}  # pyright: ignore[reportAttributeAccessIssue]
 
     try:
         import s3fs
+
         s3fs.S3FileSystem.clear_instance_cache()
     except (ImportError, AttributeError):
         pass
 
 
-def create_loggers(config: DictConfig) -> List[Logger]:
+def create_loggers(config: DictConfig) -> list[Logger]:
     """
     Create PyTorch Lightning loggers based on configuration.
 
@@ -110,7 +115,7 @@ def create_loggers(config: DictConfig) -> List[Logger]:
         logger_configs = config.logger
 
         # Handle single logger config or list of configs
-        if not isinstance(logger_configs, (list, ListConfig)):
+        if not isinstance(logger_configs, list | ListConfig):
             logger_configs = [logger_configs]
 
         for logger_config in logger_configs:
@@ -183,6 +188,39 @@ def create_loggers(config: DictConfig) -> List[Logger]:
                     )
                     loggers.append(csv_logger)
 
+    # Auto-create W&B logger for remote execution (Modal/Ray)
+    # When logger config is stripped but WANDB_API_KEY is available
+    # Uses _wandb_config if present (extracted by prepare_config_for_remote)
+    if not loggers and _has_wandb_credentials():
+        wandb_cfg = config.get("_wandb_config", {})
+
+        # Use preserved config if available, otherwise fall back to defaults
+        if wandb_cfg:
+            project = wandb_cfg.get("project", f"tmgg-{config.get('stage', 'default')}")
+            entity = wandb_cfg.get("entity")
+            tags = wandb_cfg.get("tags", [])
+            log_model = wandb_cfg.get("log_model", False)
+        else:
+            project = config.get("experiment_name", "tmgg")
+            entity = None
+            tags = []
+            log_model = False
+
+        loguru.info(
+            "Auto-creating WandB logger (entity={entity}, project={project})",
+            entity=entity,
+            project=project,
+        )
+        wandb_logger = WandbLogger(
+            project=project,
+            name=config.get("run_id", None),
+            entity=entity,
+            tags=tags,
+            save_dir=config.paths.output_dir,
+            log_model=log_model,
+        )
+        loggers.append(wandb_logger)
+
     # Default to TensorBoard if no loggers configured
     if not loggers:
         loguru.info("Using {logger_type} logger", logger_type="tensorboard")
@@ -228,13 +266,13 @@ def create_loggers(config: DictConfig) -> List[Logger]:
                 flush_secs=120,
             )
             # Store S3 destination for sync_tensorboard_to_s3()
-            auto_tb_logger._s3_sync_path = s3_path
+            setattr(auto_tb_logger, "_s3_sync_path", s3_path)  # noqa: B010
             loggers.append(auto_tb_logger)
 
     return loggers
 
 
-def sync_tensorboard_to_s3(loggers: List[Logger]) -> None:
+def sync_tensorboard_to_s3(loggers: list[Logger]) -> None:
     """Sync any TensorBoard loggers with _s3_sync_path to S3.
 
     Called at end of training to upload local TensorBoard logs to S3.
@@ -244,7 +282,7 @@ def sync_tensorboard_to_s3(loggers: List[Logger]) -> None:
 
     for logger in loggers:
         if isinstance(logger, TensorBoardLogger) and hasattr(logger, "_s3_sync_path"):
-            s3_path = logger._s3_sync_path
+            s3_path = getattr(logger, "_s3_sync_path")  # noqa: B009
             local_path = Path(logger.log_dir)
 
             if not local_path.exists():
@@ -262,16 +300,18 @@ def sync_tensorboard_to_s3(loggers: List[Logger]) -> None:
                         s3_file = f"{s3_path}/{rel_path}"
                         fs.put_file(str(local_file), s3_file)
                         uploaded += 1
-                loguru.info(f"TensorBoard S3 sync complete: {uploaded} files -> {s3_path}")
+                loguru.info(
+                    f"TensorBoard S3 sync complete: {uploaded} files -> {s3_path}"
+                )
             except Exception as e:
                 loguru.error(f"Failed to sync TensorBoard to S3: {e}")
 
 
 def log_figure(
-    loggers: Union[Logger, list[Logger]],
+    loggers: Logger | list[Logger],
     tag: str,
     figure: matplotlib.figure.Figure,
-    global_step: Optional[int] = None,
+    global_step: int | None = None,
     close: bool = True,
 ) -> None:
     """
@@ -325,9 +365,9 @@ def log_figure(
 
 
 def log_figures(
-    loggers: Union[Logger, List[Logger]],
-    figures: Dict[str, matplotlib.figure.Figure],
-    global_step: Optional[int] = None,
+    loggers: Logger | list[Logger],
+    figures: dict[str, matplotlib.figure.Figure],
+    global_step: int | None = None,
     close: bool = True,
 ) -> None:
     """
@@ -344,9 +384,9 @@ def log_figures(
 
 
 def log_metrics(
-    logger: Union[Logger, List[Logger]],
-    metrics: Dict[str, float],
-    step: Optional[int] = None,
+    logger: Logger | list[Logger],
+    metrics: dict[str, float],
+    step: int | None = None,
 ) -> None:
     """
     Log scalar metrics to any PyTorch Lightning logger with consistent API.
@@ -378,10 +418,7 @@ def log_metrics(
         return
 
     # Ensure logger is a list
-    if not isinstance(logger, list):
-        loggers = [logger]
-    else:
-        loggers = logger
+    loggers = [logger] if not isinstance(logger, list) else logger
 
     # Filter out None loggers
     loggers = [lg for lg in loggers if lg is not None]
@@ -409,7 +446,9 @@ def log_metrics(
                 file_exists = csv_path.exists()
 
                 # Prepare row with optional step column
-                row_data = {"step": step} if step is not None else {}
+                row_data: dict[str, float | int | None] = (
+                    {"step": step} if step is not None else {}
+                )
                 row_data.update(metrics)
 
                 with open(csv_path, "a", newline="") as f:

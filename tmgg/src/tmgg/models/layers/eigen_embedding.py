@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,7 +20,7 @@ class EigenDecompositionError(Exception):
 
         super().__init__(self._format_message())
 
-    def _compute_debugging_metrics(self, A: torch.Tensor) -> dict:  # pyright: ignore[reportMissingTypeArgument]
+    def _compute_debugging_metrics(self, A: torch.Tensor) -> dict[str, Any]:
         """Compute key metrics for debugging ill-conditioned matrices."""
         with torch.no_grad():
             # Convert to numpy for condition number calculation
@@ -28,7 +30,7 @@ class EigenDecompositionError(Exception):
             try:
                 singular_values = np.linalg.svd(A_np, compute_uv=False)
                 condition_number = singular_values[0] / (singular_values[-1] + 1e-10)
-            except:
+            except Exception:
                 condition_number = float("inf")
 
             # 2. Frobenius norm (matrix magnitude)
@@ -88,7 +90,7 @@ class EigenEmbedding(nn.Module):
     """
 
     def __init__(self, eigenvalue_reg: float = 0.0):
-        super(EigenEmbedding, self).__init__()
+        super().__init__()
         self.eigenvalue_reg = eigenvalue_reg
 
     def forward(self, A: torch.Tensor) -> torch.Tensor:
@@ -121,5 +123,5 @@ class EigenEmbedding(nn.Module):
                 eigenvectors.append(V)
             except torch._C._LinAlgError as e:  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
                 # Propagate with debugging context
-                raise EigenDecompositionError(i, A[i], e)
+                raise EigenDecompositionError(i, A[i], e) from e
         return torch.stack(eigenvectors, dim=0)

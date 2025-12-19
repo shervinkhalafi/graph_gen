@@ -13,6 +13,9 @@ defaults:
 # Stage identifier
 stage: stage1_5_crossdata
 
+# Modal cloud execution (off by default, use run_on_modal=true to enable)
+run_on_modal: false
+
 # Spectral models: high LR + amsgrad + tiny weight decay
 # DiGress overrides these via its own config
 learning_rate: 1e-2

@@ -29,22 +29,28 @@ Decision Tree:
     - Level 1 fails on one target → Model may struggle with that structure type
 """
 
+import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
-import numpy as np
 
-from tmgg.models.spectral_denoisers import LinearPE, GraphFilterBank, SelfAttentionDenoiser
-from tmgg.models.baselines import LinearBaseline, MLPBaseline
-from tmgg.experiment_utils.data import add_digress_noise
 from tmgg.experiment_utils import generate_sbm_adjacency
-
+from tmgg.experiment_utils.data import add_digress_noise
+from tmgg.models.baselines import LinearBaseline, MLPBaseline
+from tmgg.models.spectral_denoisers import (
+    GraphFilterBank,
+    LinearPE,
+    SelfAttentionDenoiser,
+)
 
 # =============================================================================
 # TARGET GENERATION UTILITIES
 # =============================================================================
 
-def create_erdos_renyi_target(n: int = 16, p: float = 0.3, seed: int = 42) -> torch.Tensor:
+
+def create_erdos_renyi_target(
+    n: int = 16, p: float = 0.3, seed: int = 42
+) -> torch.Tensor:
     """Create Erdos-Renyi random graph with edge probability p.
 
     Unlike random_binary (p=0.5), this uses a sane sparsity level that
@@ -70,12 +76,14 @@ def create_block_diagonal_target(n: int = 16, num_blocks: int = 4) -> torch.Tens
 
 
 def create_sbm_target(
-    block_sizes: list = [4, 4, 4, 4],
+    block_sizes: list | None = None,
     p: float = 0.8,
     q: float = 0.1,
     seed: int = 42,
 ) -> torch.Tensor:
     """Create SBM graph with community structure."""
+    if block_sizes is None:
+        block_sizes = [4, 4, 4, 4]
     rng = np.random.default_rng(seed)
     A_np = generate_sbm_adjacency(block_sizes, p=p, q=q, rng=rng)
     A = torch.tensor(A_np, dtype=torch.float32).unsqueeze(0)
@@ -85,6 +93,7 @@ def create_sbm_target(
 # =============================================================================
 # LEVEL 1: CONSTANT NOISE MEMORIZATION TESTS
 # =============================================================================
+
 
 class TestLevel1ConstantNoiseMemorization:
     """LEVEL 1 SANITY CHECK: Constant noise memorization.
@@ -112,7 +121,9 @@ class TestLevel1ConstantNoiseMemorization:
     """
 
     @pytest.fixture(params=["erdos_renyi", "block_diagonal", "sbm"])
-    def fixed_sample(self, request):
+    def fixed_sample(
+        self, request: pytest.FixtureRequest
+    ) -> tuple[torch.Tensor, torch.Tensor, str]:
         """Create fixed noisy/clean pair - SAME noise every time.
 
         The key property is that A_noisy is deterministically generated
@@ -135,15 +146,18 @@ class TestLevel1ConstantNoiseMemorization:
         np.random.seed(123)
         A_noisy = add_digress_noise(A_clean, p=0.1)
 
-        return A_noisy, A_clean, request.param
+        return A_noisy, A_clean, str(request.param)
 
-    @pytest.mark.parametrize("model_class,kwargs", [
-        (LinearPE, {"k": 16, "max_nodes": 16}),  # Full spectrum for 16 nodes
-        (GraphFilterBank, {"k": 16, "polynomial_degree": 8}),  # Increased capacity
-        (SelfAttentionDenoiser, {"k": 16, "d_k": 64}),  # Increased capacity
-        (LinearBaseline, {"max_nodes": 16}),
-        (MLPBaseline, {"max_nodes": 16, "hidden_dim": 256}),  # Increased hidden dim
-    ])
+    @pytest.mark.parametrize(
+        "model_class,kwargs",
+        [
+            (LinearPE, {"k": 16, "max_nodes": 16}),  # Full spectrum for 16 nodes
+            (GraphFilterBank, {"k": 16, "polynomial_degree": 8}),  # Increased capacity
+            (SelfAttentionDenoiser, {"k": 16, "d_k": 64}),  # Increased capacity
+            (LinearBaseline, {"max_nodes": 16}),
+            (MLPBaseline, {"max_nodes": 16, "hidden_dim": 256}),  # Increased hidden dim
+        ],
+    )
     def test_memorize_fixed_mapping(self, model_class, kwargs, fixed_sample):
         """Model must achieve ~99% accuracy on fixed input.
 
@@ -185,6 +199,7 @@ class TestLevel1ConstantNoiseMemorization:
 # =============================================================================
 # LEVEL 2: FRESH NOISE GENERALIZATION TESTS
 # =============================================================================
+
 
 class TestLevel2FreshNoiseGeneralization:
     """LEVEL 2 SANITY CHECK: Fresh noise generalization.
@@ -236,13 +251,16 @@ class TestLevel2FreshNoiseGeneralization:
 
         return A_clean, request.param
 
-    @pytest.mark.parametrize("model_class,kwargs", [
-        (LinearPE, {"k": 8, "max_nodes": 16}),
-        (GraphFilterBank, {"k": 8, "polynomial_degree": 5}),
-        (SelfAttentionDenoiser, {"k": 8, "d_k": 32}),
-        (LinearBaseline, {"max_nodes": 16}),
-        (MLPBaseline, {"max_nodes": 16, "hidden_dim": 128}),
-    ])
+    @pytest.mark.parametrize(
+        "model_class,kwargs",
+        [
+            (LinearPE, {"k": 8, "max_nodes": 16}),
+            (GraphFilterBank, {"k": 8, "polynomial_degree": 5}),
+            (SelfAttentionDenoiser, {"k": 8, "d_k": 32}),
+            (LinearBaseline, {"max_nodes": 16}),
+            (MLPBaseline, {"max_nodes": 16, "hidden_dim": 128}),
+        ],
+    )
     def test_generalize_denoising(self, model_class, kwargs, structured_sample):
         """Model should learn denoising with fresh noise each step.
 
@@ -287,6 +305,7 @@ class TestLevel2FreshNoiseGeneralization:
 # SUPPLEMENTARY TESTS (kept for backwards compatibility)
 # =============================================================================
 
+
 class TestSingleStepLearning:
     """Verify that one optimizer step reduces loss.
 
@@ -302,13 +321,16 @@ class TestSingleStepLearning:
         A_noisy = add_digress_noise(A_clean, p=0.1)
         return A_noisy, A_clean
 
-    @pytest.mark.parametrize("model_class,kwargs", [
-        (LinearPE, {"k": 8, "max_nodes": 32}),
-        (GraphFilterBank, {"k": 8, "polynomial_degree": 5}),
-        (SelfAttentionDenoiser, {"k": 8, "d_k": 64}),
-        (LinearBaseline, {"max_nodes": 32}),
-        (MLPBaseline, {"max_nodes": 32, "hidden_dim": 256}),
-    ])
+    @pytest.mark.parametrize(
+        "model_class,kwargs",
+        [
+            (LinearPE, {"k": 8, "max_nodes": 32}),
+            (GraphFilterBank, {"k": 8, "polynomial_degree": 5}),
+            (SelfAttentionDenoiser, {"k": 8, "d_k": 64}),
+            (LinearBaseline, {"max_nodes": 32}),
+            (MLPBaseline, {"max_nodes": 32, "hidden_dim": 256}),
+        ],
+    )
     def test_single_step_reduces_loss(self, model_class, kwargs, training_data):
         """Verify one optimizer step reduces loss."""
         A_noisy, A_clean = training_data
@@ -347,11 +369,14 @@ class TestLossDecreasesCurve:
         A_noisy = add_digress_noise(A_clean, p=0.1)
         return A_noisy, A_clean
 
-    @pytest.mark.parametrize("model_class,kwargs", [
-        (LinearBaseline, {"max_nodes": 16}),
-        (MLPBaseline, {"max_nodes": 16, "hidden_dim": 64}),
-        (LinearPE, {"k": 4, "max_nodes": 16}),
-    ])
+    @pytest.mark.parametrize(
+        "model_class,kwargs",
+        [
+            (LinearBaseline, {"max_nodes": 16}),
+            (MLPBaseline, {"max_nodes": 16, "hidden_dim": 64}),
+            (LinearPE, {"k": 4, "max_nodes": 16}),
+        ],
+    )
     def test_loss_trend_is_downward(self, model_class, kwargs, training_batch):
         """Loss should trend downward over 100 steps."""
         A_noisy, A_clean = training_batch

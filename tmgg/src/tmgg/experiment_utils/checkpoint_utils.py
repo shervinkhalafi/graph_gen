@@ -11,7 +11,7 @@ import torch
 T = TypeVar("T", bound=pl.LightningModule)
 
 
-def load_checkpoint_with_fallback(
+def load_checkpoint_with_fallback[T: pl.LightningModule](
     module_class: type[T],
     checkpoint_path: str | Path,
     strict: bool = True,
@@ -91,6 +91,7 @@ def load_checkpoint_with_fallback(
             f"Checkpoint '{checkpoint_path}' has hyperparameters not accepted by "
             f"{module_class.__name__}.__init__. Filtered: {removed_keys}",
             UserWarning,
+            stacklevel=2,
         )
 
     # Instantiate with filtered hparams and load state dict

@@ -4,7 +4,7 @@ Implements a learnable spectral filter as a polynomial in the eigenvalues,
 allowing the model to learn frequency-dependent transformations.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -61,10 +61,9 @@ class GraphFilterBank(SpectralDenoiser):
         self.polynomial_degree = polynomial_degree
 
         # Learnable coefficient matrices H^{(ℓ)} ∈ R^{k×k} for ℓ = 0, ..., K-1
-        self.H = nn.ParameterList([
-            nn.Parameter(torch.empty(k, k))
-            for _ in range(polynomial_degree)
-        ])
+        self.H = nn.ParameterList(
+            [nn.Parameter(torch.empty(k, k)) for _ in range(polynomial_degree)]
+        )
         for h in self.H:
             nn.init.xavier_uniform_(h)
 
@@ -107,11 +106,15 @@ class GraphFilterBank(SpectralDenoiser):
         # Λ^ℓ is broadcast to (batch, k, k) via outer product of eigenvalue powers
         W = torch.zeros(batch_size, k, k, device=V.device, dtype=V.dtype)
 
-        Lambda_power = torch.ones_like(Lambda_normalized)  # (batch, k), starts as Λ^0 = 1
+        Lambda_power = torch.ones_like(
+            Lambda_normalized
+        )  # (batch, k), starts as Λ^0 = 1
         for ell in range(self.polynomial_degree):
             # Create scaling matrix from eigenvalue powers
             # Λ^ℓ_ij = λ_i^ℓ (same value across columns j)
-            Lambda_matrix = Lambda_power.unsqueeze(-1).expand(-1, -1, k)  # (batch, k, k)
+            Lambda_matrix = Lambda_power.unsqueeze(-1).expand(
+                -1, -1, k
+            )  # (batch, k, k)
             # Element-wise multiply with H^{(ℓ)}
             W = W + Lambda_matrix * self.H[ell].unsqueeze(0)
             # Update for next power (using normalized eigenvalues)
@@ -128,7 +131,7 @@ class GraphFilterBank(SpectralDenoiser):
 
         return A_reconstructed
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         config = super().get_config()
         config["polynomial_degree"] = self.polynomial_degree
         return config

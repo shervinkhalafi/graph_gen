@@ -14,10 +14,7 @@ Invariants:
     - Missing environment variables raise ValueError (not AttributeError)
 """
 
-import json
 import os
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,7 +26,7 @@ class TestTigrisStorageConfiguration:
     def test_missing_bucket_raises_valueerror(self):
         """Missing TMGG_TIGRIS_BUCKET should raise clear error."""
         with patch.dict(os.environ, {}, clear=True):
-            from tmgg_modal.storage import TigrisStorage
+            from tmgg_modal.storage import TigrisStorage  # pyright: ignore[reportImplicitRelativeImport]
 
             with pytest.raises(ValueError, match="TMGG_TIGRIS_BUCKET"):
                 TigrisStorage()
@@ -38,7 +35,7 @@ class TestTigrisStorageConfiguration:
         """Missing access credentials should raise clear error."""
         env = {"TMGG_TIGRIS_BUCKET": "test-bucket"}
         with patch.dict(os.environ, env, clear=True):
-            from tmgg_modal.storage import TigrisStorage
+            from tmgg_modal.storage import TigrisStorage  # pyright: ignore[reportImplicitRelativeImport]
 
             with pytest.raises(ValueError, match="ACCESS_KEY.*SECRET_KEY"):
                 TigrisStorage()
@@ -51,7 +48,7 @@ class TestTigrisStorageConfiguration:
             "TMGG_TIGRIS_SECRET_KEY": "test-secret",
         }
         with patch.dict(os.environ, env, clear=True):
-            from tmgg_modal.storage import TigrisStorage
+            from tmgg_modal.storage import TigrisStorage  # pyright: ignore[reportImplicitRelativeImport]
 
             storage = TigrisStorage()
 
@@ -67,7 +64,7 @@ class TestTigrisStorageConfiguration:
             "TMGG_TIGRIS_SECRET_KEY": "test-secret",
         }
         with patch.dict(os.environ, env, clear=True):
-            from tmgg_modal.storage import TigrisStorage
+            from tmgg_modal.storage import TigrisStorage  # pyright: ignore[reportImplicitRelativeImport]
 
             storage = TigrisStorage()
 
@@ -82,7 +79,7 @@ class TestTigrisStorageConfiguration:
             "TMGG_TIGRIS_ENDPOINT": "https://custom.endpoint.com",
         }
         with patch.dict(os.environ, env, clear=True):
-            from tmgg_modal.storage import TigrisStorage
+            from tmgg_modal.storage import TigrisStorage  # pyright: ignore[reportImplicitRelativeImport]
 
             storage = TigrisStorage()
 
@@ -95,7 +92,7 @@ class TestGetStorageFromEnv:
     def test_returns_none_when_unconfigured(self):
         """Should return None when environment is not configured."""
         with patch.dict(os.environ, {}, clear=True):
-            from tmgg_modal.storage import get_storage_from_env
+            from tmgg_modal.storage import get_storage_from_env  # pyright: ignore[reportImplicitRelativeImport]
 
             result = get_storage_from_env()
 
@@ -109,7 +106,7 @@ class TestGetStorageFromEnv:
             "TMGG_TIGRIS_SECRET_KEY": "test-secret",
         }
         with patch.dict(os.environ, env, clear=True):
-            from tmgg_modal.storage import TigrisStorage, get_storage_from_env
+            from tmgg_modal.storage import TigrisStorage, get_storage_from_env  # pyright: ignore[reportImplicitRelativeImport]
 
             result = get_storage_from_env()
 
@@ -216,7 +213,7 @@ class TestLocalStorageOperations:
         src_file.write_bytes(original_content)
 
         # Upload
-        uri = storage.upload_file(src_file, "uploads/data.bin")
+        storage.upload_file(src_file, "uploads/data.bin")
 
         # Download to different location
         dest_file = tmp_path / "download" / "data.bin"
@@ -272,7 +269,7 @@ class TestTigrisStorageCheckpoints:
             "TMGG_TIGRIS_SECRET_KEY": "test-secret",
         }
         with patch.dict(os.environ, env, clear=True):
-            from tmgg_modal.storage import TigrisStorage
+            from tmgg_modal.storage import TigrisStorage  # pyright: ignore[reportImplicitRelativeImport]
 
             storage = TigrisStorage(prefix="experiments")
             _ = storage.client  # Force client creation

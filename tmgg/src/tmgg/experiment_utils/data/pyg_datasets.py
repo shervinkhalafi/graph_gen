@@ -6,7 +6,6 @@ through padding.
 """
 
 from pathlib import Path
-from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -43,8 +42,8 @@ class PyGDatasetWrapper:
     def __init__(
         self,
         dataset_name: str,
-        root: Optional[str] = None,
-        max_graphs: Optional[int] = None,
+        root: str | None = None,
+        max_graphs: int | None = None,
     ):
         if dataset_name.lower() not in self.VALID_DATASETS:
             raise ValueError(
@@ -82,19 +81,20 @@ class PyGDatasetWrapper:
 
         # Limit number of graphs if specified
         if self.max_graphs is not None:
-            dataset = dataset[:self.max_graphs]
+            dataset = dataset[: self.max_graphs]
 
         # Extract adjacency matrices
         adjacencies = []
         num_nodes = []
 
-        for data in dataset:
-            # Get number of nodes
-            n = data.num_nodes
+        for i in range(len(dataset)):
+            data = dataset[i]  # pyright: ignore[reportArgumentType]
+            # Get number of nodes - use getattr for PyG Data dynamic attributes
+            n = getattr(data, "num_nodes")  # noqa: B009
             num_nodes.append(n)
 
             # Convert edge_index to dense adjacency
-            edge_index = data.edge_index
+            edge_index = getattr(data, "edge_index")  # noqa: B009
             A = to_dense_adj(edge_index, max_num_nodes=n).squeeze(0)
             adjacencies.append(A.numpy().astype(np.float32))
 
@@ -170,8 +170,8 @@ class PyGDatasetWrapper:
         self,
         train_ratio: float = 0.7,
         val_ratio: float = 0.1,
-        seed: Optional[int] = None,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        seed: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Split dataset into train/validation/test sets.
 
         Parameters
@@ -199,8 +199,8 @@ class PyGDatasetWrapper:
         n_val = int(val_ratio * self._num_graphs)
 
         train_idx = indices[:n_train]
-        val_idx = indices[n_train:n_train + n_val]
-        test_idx = indices[n_train + n_val:]
+        val_idx = indices[n_train : n_train + n_val]
+        test_idx = indices[n_train + n_val :]
 
         return (
             self.adjacencies[train_idx],
@@ -211,8 +211,8 @@ class PyGDatasetWrapper:
 
 def load_pyg_dataset(
     name: str,
-    root: Optional[str] = None,
-    max_graphs: Optional[int] = None,
+    root: str | None = None,
+    max_graphs: int | None = None,
 ) -> PyGDatasetWrapper:
     """Convenience function to load a PyG dataset.
 

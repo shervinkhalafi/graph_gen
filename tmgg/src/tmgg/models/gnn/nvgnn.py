@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -85,7 +85,7 @@ class NodeVarGNN(DenoisingModel):
         # Return raw logits per base class contract; use predict() for probabilities
         return outer
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get model configuration."""
         return {
             "num_layers": self.num_layers,

@@ -1,25 +1,29 @@
 """
 A dataset which accessible all the graphs at https://users.cecs.anu.edu.au/~bdm/data/graphs.html
 """
-import os
+
 import datetime
-import torch as pt
-import numpy as np
-import networkx as nx
+import os
 import subprocess as sp
+from pathlib import Path
+from typing import Any, override
 from urllib.parse import urlparse
 
+import networkx as nx
+import numpy as np
+import numpy.typing as npt
+import torch as pt
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
 ANU_BASE_URL = "https://users.cecs.anu.edu.au/~bdm/data/"
 
 
-def ANU_URL(f):
+def ANU_URL(f: str) -> str:
     return f"{ANU_BASE_URL}/{f}"
 
 
-def url_file(url):
+def url_file(url: str) -> str:
     """
     Extracts the filename from a url, assuming the url ends in it
     :param url:
@@ -28,7 +32,9 @@ def url_file(url):
     return os.path.basename(urlparse(url).path)
 
 
-def triangles_(adj_matrix, k_, prev_k=None):
+def triangles_(
+    adj_matrix: pt.Tensor, k_: int, prev_k: pt.Tensor | None = None
+) -> tuple[pt.Tensor, pt.Tensor]:
     if prev_k is None:
         k_matrix = pt.matrix_power(adj_matrix.float(), k_)
     else:
@@ -36,7 +42,6 @@ def triangles_(adj_matrix, k_, prev_k=None):
     egd_l = pt.diagonal(k_matrix, dim1=-2, dim2=-1)
     return egd_l, k_matrix
 
-from pathlib import Path
 
 parent_dir = str(str(Path(os.path.abspath(__file__)).parents[2]))
 
@@ -141,7 +146,12 @@ GRAPH_FILES = dict(
 )
 
 
-def download_g6_files(datasets, root_path, parallel=True, exclude_files=()):
+def download_g6_files(
+    datasets: list[str],
+    root_path: str,
+    parallel: bool = True,
+    exclude_files: tuple[str, ...] = (),
+) -> None:
     """
     Gets the g6 files from  https://users.cecs.anu.edu.au/~bdm/data/graphs.html in a folder structure of
     root_path/datasetname/files.g6
@@ -158,8 +168,11 @@ def download_g6_files(datasets, root_path, parallel=True, exclude_files=()):
     for k, files in file_dict.items():
         os.makedirs(k, exist_ok=True)
         os.chdir(k)
-        dl_procs = []
+        dl_procs: list[sp.Popen[bytes]] = []
         for f in files:
+            # Skip nested lists (e.g., from selfcomp20 definition)
+            if isinstance(f, list):
+                continue
             if not (
                 os.path.exists(f)
                 or f.replace(".gz", "") in exclude_files
@@ -169,22 +182,27 @@ def download_g6_files(datasets, root_path, parallel=True, exclude_files=()):
                 if parallel:
                     dl_procs.append(p)
                 else:
-                    p.wait()
+                    _ = p.wait()
         for p in dl_procs:
-            p.wait()
+            _ = p.wait()
 
         for f in tqdm(
-            [x for x in os.listdir("") if ".gz" == os.path.splitext(x)[-1]],
+            [x for x in os.listdir("") if os.path.splitext(x)[-1] == ".gz"],
             "Unzipping gz files",
         ):
             if not os.path.exists(k.replace(".gz", "")):
-                sp.run(["gunzip", "-k", f])
+                _ = sp.run(["gunzip", "-k", f])
 
         os.chdir(root_abs)
     os.chdir(old_path)
 
 
-def convert_g6_to_dense(datasets, root_path, exclude_files=(), create_rand=False):
+def convert_g6_to_dense(
+    datasets: list[str],
+    root_path: str,
+    exclude_files: tuple[str, ...] = (),
+    create_rand: bool = False,
+) -> None:
     """
     Converts the g6 datasets to numpy arrays. Stores all graphs of one dataset in a single .npz array
     :param datasets:
@@ -198,17 +216,17 @@ def convert_g6_to_dense(datasets, root_path, exclude_files=(), create_rand=False
         if os.path.exists(base_f):
             continue
 
-        def filter_files(f):
+        def filter_files(f: str) -> bool:
             keep = os.path.splitext(f)[-1] in {".g6", ".s6"} and f not in exclude_files
             return keep
 
         all_files = [k for k in os.listdir(os.path.join(root_path, d))]
         all_files = list(filter(filter_files, all_files))
         all_files = [os.path.abspath(os.path.join(root_path, d, k)) for k in all_files]
-        X_max_shape = None
-        A_max_shape = None
-        Xs = []
-        As = []
+        X_max_shape: list[int] | None = None
+        A_max_shape: list[int] | None = None
+        Xs: list[npt.NDArray[np.float64]] = []
+        As: list[npt.NDArray[np.float64]] = []
         # read in all files
         fbar = tqdm(all_files, desc="File", leave=False)
         for f in fbar:
@@ -240,9 +258,13 @@ def convert_g6_to_dense(datasets, root_path, exclude_files=(), create_rand=False
                 if idx + 1 == 5000 and not create_rand:
                     break
 
+        if A_max_shape is None or X_max_shape is None:
+            raise RuntimeError("No graphs were loaded from the dataset files")
         As_ = np.zeros([len(As)] + A_max_shape)
         Xs_ = np.zeros([len(Xs)] + X_max_shape)
-        for i, (X, A) in tqdm(enumerate(zip(Xs, As)), desc="Finalizing batch"):
+        for i, (X, A) in tqdm(
+            enumerate(zip(Xs, As, strict=False)), desc="Finalizing batch"
+        ):
             num_nodes, node_dim = X.shape
             As_[i, :num_nodes, :num_nodes] = A
             Xs_[i, :num_nodes, :node_dim] = X
@@ -256,21 +278,23 @@ def convert_g6_to_dense(datasets, root_path, exclude_files=(), create_rand=False
         )
 
 
-def load_npz_keys(keys, file):
+def load_npz_keys(
+    keys: list[str], file: str
+) -> tuple[npt.NDArray[Any], ...] | npt.NDArray[Any]:
     """
     Small utility to directly load an npz_compressed file
     :param keys:
     :param file:
     :return:
     """
-    out = []
+    out: list[npt.NDArray[Any]] = []
     with np.load(file) as d:
         for k in keys:
             out.append(d[k])
     return tuple(out) if len(out) > 1 else out[0]
 
 
-def get_X(A):
+def get_X(A: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     """
     Gets primitive Node features from a graph
     :param graph:
@@ -278,10 +302,10 @@ def get_X(A):
     """
 
     X = pt.tensor([])
-    k_matrix = None
+    k_matrix: pt.Tensor | None = None
     Asize = A.shape
     triang_adj = pt.from_numpy(A).clone()
-    pt.diagonal(triang_adj, dim1=-2, dim2=-1).fill_(0)
+    _ = pt.diagonal(triang_adj, dim1=-2, dim2=-1).fill_(0)
     for k_ in range(2, 7 + 1):
         paths, k_matrix = triangles_(triang_adj, k_, prev_k=k_matrix)
         X = pt.cat((X, paths.reshape(Asize[0], -1)), -1)
@@ -289,20 +313,29 @@ def get_X(A):
     return X.numpy()
 
 
-class ANUDataset(Dataset):
+class ANUDataset(Dataset[tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]]):
+    Py_data: list[Any]
+    device: pt.device
+    data_dir: str
+    num_graphs_per_set: int
+    datasets: list[str]
+    X: npt.NDArray[np.float64]
+    A: npt.NDArray[np.float64]
+    num_graphs: int
+
     def __init__(
         self,
-        datasets=None,
-        data_dir=None,
-        num_graphs_per_set=-1,
-        exclude_files=None,
-        create_rand=False,
+        datasets: list[str] | None = None,
+        data_dir: str | None = None,
+        num_graphs_per_set: int = -1,
+        exclude_files: set[str] | None = None,
+        create_rand: bool = False,
     ):
         super().__init__()
         if datasets is None:
             datasets = list(GRAPH_FILES.keys())
-        exclude_files = exclude_files if exclude_files is not None else set()
-        exclude_files = set([x.replace(".gz", "") for x in exclude_files])
+        exclude_files_set = exclude_files if exclude_files is not None else set()
+        exclude_files_tuple = tuple([x.replace(".gz", "") for x in exclude_files_set])
         assert all(d in GRAPH_FILES for d in datasets)
         if data_dir is None:
             data_dir = "anu_graphs"
@@ -312,23 +345,30 @@ class ANUDataset(Dataset):
         self.num_graphs_per_set = num_graphs_per_set
         self.datasets = datasets
         download_g6_files(
-            datasets, data_dir, parallel=False, exclude_files=exclude_files
+            datasets, data_dir, parallel=False, exclude_files=exclude_files_tuple
         )
         convert_g6_to_dense(
-            datasets, data_dir, exclude_files=exclude_files, create_rand=create_rand
+            datasets,
+            data_dir,
+            exclude_files=exclude_files_tuple,
+            create_rand=create_rand,
         )
         self.load()
 
-    def load(self):
+    def load(self) -> None:
         max_shape = [0, 0, 0]
         num_graphs = 0
         for d in self.datasets:
             Xshape = load_npz_keys(["Xshape"], os.path.join(self.data_dir, f"{d}.npz"))
-            max_shape = [max(o, n) for o, n in zip(max_shape, Xshape)]
+            if isinstance(Xshape, tuple):
+                raise RuntimeError("Expected single array, got tuple")
+            max_shape = [
+                max(o, int(n)) for o, n in zip(max_shape, Xshape, strict=False)
+            ]
             N = (
-                min(Xshape[0], self.num_graphs_per_set)
+                min(int(Xshape[0]), self.num_graphs_per_set)
                 if self.num_graphs_per_set > 0
-                else Xshape[0]
+                else int(Xshape[0])
             )
             num_graphs += N
         # intialize dense graph combination
@@ -337,7 +377,10 @@ class ANUDataset(Dataset):
         self.num_graphs = 0
         # actually assign the loaded X,A
         for d in self.datasets:
-            X, A = load_npz_keys(["X", "A"], os.path.join(self.data_dir, f"{d}.npz"))
+            result = load_npz_keys(["X", "A"], os.path.join(self.data_dir, f"{d}.npz"))
+            if not isinstance(result, tuple):
+                raise RuntimeError("Expected tuple of arrays")
+            X, A = result
             N = (
                 min(X.shape[0], self.num_graphs_per_set)
                 if self.num_graphs_per_set > 0
@@ -352,17 +395,20 @@ class ANUDataset(Dataset):
             self.num_graphs += N
 
     @staticmethod
-    def log(msg="", date=True):
+    def log(msg: str = "", date: bool = True) -> None:
         print(
-            str(datetime.now().strftime("%Y-%m-%d %H:%M:%S")) + " " + str(msg)
+            str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")) + " " + str(msg)
             if date
             else str(msg)
         )
 
-    def __getitem__(self, item):
+    @override
+    def __getitem__(
+        self, item: int
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         return self.X[item], self.A[item]
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.X)
 
 
@@ -370,8 +416,8 @@ if __name__ == "__main__":
     a = ANUDataset(
         data_dir="",
         datasets=["chordal"],
-        exclude_files=[
+        exclude_files={
             f"chordal{i}.g6.gz" for i in filter(lambda x: x != 9, range(4, 14))
-        ],
+        },
     )
     print(a[0])

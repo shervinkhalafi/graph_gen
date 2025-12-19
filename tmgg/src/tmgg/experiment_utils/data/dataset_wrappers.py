@@ -3,10 +3,8 @@ Wrappers for various graph datasets to make them compatible with the
 experimental data modules, which expect a list of uniformly-sized adjacency matrices.
 """
 
-from typing import List
-import torch
 import numpy as np
-from torch._C import dtype
+import torch
 
 from .ggg_data.dense.anu_graphs.anudataset import ANUDataset
 from .ggg_data.dense.classical import CassicalGraphs
@@ -19,7 +17,7 @@ class GraphCollection:
     def __init__(self, dataset):
         self.dataset = dataset
 
-    def get_adjacency_matrices(self) -> List[torch.Tensor]:
+    def get_adjacency_matrices(self) -> list[torch.Tensor]:
         """
         Extracts all adjacency matrices from the wrapped dataset and pads them
         to a uniform size.
@@ -59,11 +57,11 @@ class GraphCollection:
 def create_dataset_wrapper(dataset_type: str, **kwargs) -> GraphCollection:
     """
     Factory function to create dataset wrappers.
-    
+
     Args:
         dataset_type: Type of dataset ("anu", "classical", "nx")
         **kwargs: Parameters passed to the dataset constructor
-        
+
     Returns:
         GraphCollection wrapper around the specified dataset
     """
@@ -72,10 +70,12 @@ def create_dataset_wrapper(dataset_type: str, **kwargs) -> GraphCollection:
         "classical": CassicalGraphs,
         "nx": NXGraphWrapper,
     }
-    
+
     if dataset_type not in dataset_classes:
-        raise ValueError(f"Unknown dataset type: {dataset_type}. Available: {list(dataset_classes.keys())}")
-    
+        raise ValueError(
+            f"Unknown dataset type: {dataset_type}. Available: {list(dataset_classes.keys())}"
+        )
+
     dataset = dataset_classes[dataset_type](**kwargs)
     return GraphCollection(dataset)
 

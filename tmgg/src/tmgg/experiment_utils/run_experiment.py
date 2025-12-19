@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import hydra
 import torch
@@ -70,11 +70,12 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
     # TODO: I think this might be redundant?
     if logger:
         # Handle multiple loggers
+        config_dict = cast(dict[str, Any], OmegaConf.to_container(config, resolve=True))
         if isinstance(logger, list):
             for lg in logger:
-                lg.log_hyperparams(OmegaConf.to_container(config, resolve=True))
+                lg.log_hyperparams(config_dict)
         else:
-            logger.log_hyperparams(OmegaConf.to_container(config, resolve=True))
+            logger.log_hyperparams(config_dict)
 
     # Checkpoint resumption: look for last.ckpt unless force_fresh is set
     ckpt_path = None
@@ -107,7 +108,9 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
         # Ensure test data is set up (may have been skipped if test results existed)
         data_module.setup("test")
         eval_noise_levels = config.get("evaluation", {}).get("noise_levels", None)
-        final_eval(model, data_module, logger, trainer, best_model_path, eval_noise_levels)
+        final_eval(
+            model, data_module, logger, trainer, best_model_path, eval_noise_levels
+        )
 
     # Sync TensorBoard logs to S3 (if configured)
     if isinstance(logger, list):

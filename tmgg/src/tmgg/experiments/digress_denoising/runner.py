@@ -5,7 +5,9 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 
-from tmgg.experiment_utils.run_experiment import run_experiment  # pyright: ignore[reportMissingTypeStubs]
+from tmgg.experiment_utils.run_experiment import (
+    run_experiment,  # pyright: ignore[reportMissingTypeStubs]
+)
 
 # Navigate to the centralized config location
 TMGG_ROOT = Path(__file__).parent.parent.parent  # Navigate to tmgg/src/tmgg
@@ -26,7 +28,6 @@ def main(config: DictConfig):
         Dictionary with training results
     """
     return run_experiment(config)
-
 
 
 if __name__ == "__main__":

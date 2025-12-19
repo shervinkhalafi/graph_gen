@@ -4,7 +4,7 @@ Implements a scaled dot-product attention mechanism operating on the
 eigenspace of the noisy adjacency matrix.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -60,7 +60,7 @@ class SelfAttentionDenoiser(SpectralDenoiser):
     ):
         super().__init__(k=k)
         self.d_k = d_k
-        self.scale = d_k ** -0.5  # 1/√d_k
+        self.scale = d_k**-0.5  # 1/√d_k
 
         # Query and Key projection matrices
         self.W_Q = nn.Parameter(torch.empty(k, d_k))
@@ -110,7 +110,7 @@ class SelfAttentionDenoiser(SpectralDenoiser):
 
         return A_reconstructed
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         config = super().get_config()
         config["d_k"] = self.d_k
         return config

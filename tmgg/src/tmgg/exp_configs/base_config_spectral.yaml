@@ -61,11 +61,18 @@ sweep: false
 parallelism: 4
 resume: true
 
+# Modal cloud execution (opt-in, use run_on_modal=true to enable)
+run_on_modal: false
+detach: false  # Fire-and-forget mode: spawn experiments and exit immediately
+
 # Evaluation settings (step-based)
 evaluation:
   visualization_interval: ${visualization_interval}
 
-# Paths (resolved at runtime by Hydra)
+# Paths configuration
+# - Local execution: Hydra resolves ${hydra:runtime.output_dir} automatically
+# - Remote execution (Modal/Ray): prepare_config_for_remote() sets these to None,
+#   then execute_task() resolves from TMGG_OUTPUT_BASE env var and run_id
 paths:
   output_dir: ${hydra:runtime.output_dir}
   results_dir: ${paths.output_dir}/results

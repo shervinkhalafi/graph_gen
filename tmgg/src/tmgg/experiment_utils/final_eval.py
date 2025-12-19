@@ -38,12 +38,7 @@ def evaluate_across_noise_levels(
             _, V_noisy = compute_eigendecomposition(A_noisy)
 
             # Predict
-            if A_noisy.ndim == 2:
-                A_noisy_input = A_noisy.unsqueeze(0)
-                V_noisy_input = V_noisy.unsqueeze(0)
-            else:
-                A_noisy_input = A_noisy
-                V_noisy_input = V_noisy
+            V_noisy_input = V_noisy.unsqueeze(0) if A_noisy.ndim == 2 else V_noisy
 
             # Move to model's device
             V_noisy_input = V_noisy_input.to(model.device)
@@ -62,7 +57,7 @@ def evaluate_across_noise_levels(
 def final_eval(
     model: pl.LightningModule,
     data_module: GraphDataModule,
-    logger: Logger,
+    logger: Logger | list[Logger],
     trainer: pl.Trainer,
     best_model_path: str,
     eval_noise_levels: list[float] | None = None,
@@ -73,7 +68,9 @@ def final_eval(
     best_model = load_checkpoint_with_fallback(model.__class__, best_model_path)
 
     # Perform final evaluation across noise levels
-    noise_levels = eval_noise_levels if eval_noise_levels is not None else data_module.noise_levels
+    noise_levels = (
+        eval_noise_levels if eval_noise_levels is not None else data_module.noise_levels
+    )
     final_results = evaluate_across_noise_levels(best_model, data_module, noise_levels)
 
     # Log final results

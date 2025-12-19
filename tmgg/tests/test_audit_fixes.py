@@ -11,28 +11,26 @@ failure modes documented in the audit report.
 """
 
 import math
-import warnings
 
 import numpy as np
-import pytest
 import torch
 import torch.nn as nn
 
-from tmgg.models.layers.mha_layer import MultiHeadAttention
-from tmgg.models.layers.eigen_embedding import EigenEmbedding
-from tmgg.models.layers.gcn import GraphConvolutionLayer
-from tmgg.models.layers.nvgcn_layer import NodeVarGraphConvolutionLayer
-from tmgg.models.layers.masked_softmax import masked_softmax
-from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
-from tmgg.models.spectral_denoisers.filter_bank import GraphFilterBank
-from tmgg.models.gnn.nvgnn import NodeVarGNN
-from tmgg.models.gnn.gnn_sym import GNNSymmetric
-from tmgg.models.attention.attention import MultiLayerAttention
-from tmgg.models.hybrid.hybrid import SequentialDenoisingModel
 from tmgg.experiment_utils.metrics import (
     compute_eigenvalue_error,
     compute_subspace_distance,
 )
+from tmgg.models.attention.attention import MultiLayerAttention
+from tmgg.models.gnn.gnn_sym import GNNSymmetric
+from tmgg.models.gnn.nvgnn import NodeVarGNN
+from tmgg.models.hybrid.hybrid import SequentialDenoisingModel
+from tmgg.models.layers.eigen_embedding import EigenEmbedding
+from tmgg.models.layers.gcn import GraphConvolutionLayer
+from tmgg.models.layers.masked_softmax import masked_softmax
+from tmgg.models.layers.mha_layer import MultiHeadAttention
+from tmgg.models.layers.nvgcn_layer import NodeVarGraphConvolutionLayer
+from tmgg.models.spectral_denoisers.filter_bank import GraphFilterBank
+from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
 
 
 class TestIssue1AttentionScaling:
@@ -51,9 +49,9 @@ class TestIssue1AttentionScaling:
         layer = MultiHeadAttention(d_model=d_model, num_heads=num_heads)
 
         expected_scale = 1.0 / math.sqrt(d_k)
-        assert abs(layer.scale - expected_scale) < 1e-6, (
-            f"Scale should be 1/sqrt({d_k})={expected_scale}, got {layer.scale}"
-        )
+        assert (
+            abs(layer.scale - expected_scale) < 1e-6
+        ), f"Scale should be 1/sqrt({d_k})={expected_scale}, got {layer.scale}"
 
     def test_attention_scores_bounded(self):
         """Verify attention scores don't explode with large d_k."""
@@ -133,9 +131,9 @@ class TestIssue3MatrixPowerOverflow:
     def test_gcn_uses_gelu_activation(self):
         """GCN should use GELU instead of Tanh (Issue 14 fix)."""
         layer = GraphConvolutionLayer(num_terms=3, num_channels=10)
-        assert isinstance(layer.activation, nn.GELU), (
-            f"Expected GELU activation, got {type(layer.activation)}"
-        )
+        assert isinstance(
+            layer.activation, nn.GELU
+        ), f"Expected GELU activation, got {type(layer.activation)}"
 
 
 class TestIssues4And5NodeVarGNNRedesign:
@@ -170,9 +168,9 @@ class TestIssues4And5NodeVarGNNRedesign:
             _ = layer(A, X)
 
         param_ids_after = {id(p) for p in layer.parameters()}
-        assert param_ids_before == param_ids_after, (
-            "Parameters were recreated during forward pass"
-        )
+        assert (
+            param_ids_before == param_ids_after
+        ), "Parameters were recreated during forward pass"
 
     def test_nvgnn_returns_logits(self):
         """NodeVarGNN.forward() should return raw logits, not sigmoid."""
@@ -301,7 +299,7 @@ class TestIssue10ResidualShapeAssertion:
         from tmgg.models.gnn import GNN
 
         # Create embedding model
-        embedding_model = GNN(
+        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
             num_layers=1, num_terms=2, feature_dim_in=10, feature_dim_out=5
         )
 
@@ -312,7 +310,7 @@ class TestIssue10ResidualShapeAssertion:
             num_layers=1,
         )
 
-        model = SequentialDenoisingModel(embedding_model, denoising_model)
+        model = SequentialDenoisingModel(embedding_model, denoising_model)  # pyright: ignore[reportArgumentType]
         A = torch.eye(8).unsqueeze(0)
 
         # Should work without error
@@ -361,9 +359,9 @@ class TestIssue11ZeroEigenvectorWarning:
                 nonzero_mask = col.abs() > 1e-10
                 if nonzero_mask.any():
                     first_nonzero_idx = nonzero_mask.float().argmax()
-                    assert col[first_nonzero_idx] > 0, (
-                        f"First nonzero entry should be positive"
-                    )
+                    assert (
+                        col[first_nonzero_idx] > 0
+                    ), "First nonzero entry should be positive"
 
 
 class TestIssue12MaskedSoftmaxNaN:
@@ -410,4 +408,5 @@ class TestIssue14GELUActivation:
 
     Already covered in TestIssue3MatrixPowerOverflow.test_gcn_uses_gelu_activation.
     """
+
     pass

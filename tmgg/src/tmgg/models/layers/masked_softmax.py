@@ -1,12 +1,10 @@
 """Utility layers for digress style graph neural networks."""
 
-from typing import Optional
-
 import torch
 
 
 def masked_softmax(
-    x: torch.Tensor, mask: Optional[torch.Tensor], **kwargs
+    x: torch.Tensor, mask: torch.Tensor | None, **kwargs
 ) -> torch.Tensor:
     """Compute softmax with optional masking.
 

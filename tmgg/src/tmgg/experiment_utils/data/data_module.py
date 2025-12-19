@@ -1,23 +1,21 @@
 """PyTorch Lightning data module for graph data."""
 
+import random
+from typing import Any, override
+
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
-from typing import List, Optional, Dict, Any
-import random
-import numpy as np
-import networkx as nx
 
 from tmgg.experiment_utils.data.dataset import GraphDataset
-from tmgg.experiment_utils.data.sbm import generate_sbm_adjacency, generate_block_sizes
 from tmgg.experiment_utils.data.dataset_wrappers import (
     ANUDatasetWrapper,
     ClassicalGraphsWrapper,
     NXGraphWrapperWrapper,
-    create_dataset_wrapper,
 )
-from tmgg.experiment_utils.data.synthetic_graphs import SyntheticGraphDataset
 from tmgg.experiment_utils.data.pyg_datasets import PyGDatasetWrapper
+from tmgg.experiment_utils.data.sbm import generate_block_sizes, generate_sbm_adjacency
+from tmgg.experiment_utils.data.synthetic_graphs import SyntheticGraphDataset
 
 # Legacy wrapper mapping for backward compatibility
 # Prefer using create_dataset_wrapper() for new code
@@ -37,18 +35,33 @@ PYG_DATASETS = {"qm9", "enzymes", "proteins"}
 class GraphDataModule(pl.LightningDataModule):
     """PyTorch Lightning data module for various graph datasets."""
 
+    dataset_name: str
+    dataset_config: dict[str, Any]
+    num_samples_per_graph: int
+    batch_size: int
+    num_workers: int
+    pin_memory: bool
+    val_split: float
+    test_split: float
+    noise_levels: list[float]
+    train_adjacency_matrices: list[torch.Tensor] | None
+    val_adjacency_matrices: list[torch.Tensor] | None
+    test_adjacency_matrices: list[torch.Tensor] | None
+    all_partitions: list[list[int]] | None
+    train_partitions: list[list[int]]
+
     def __init__(
         self,
         dataset_name: str,
-        dataset_config: Dict[str, Any],
+        dataset_config: dict[str, Any],
         num_samples_per_graph: int = 1000,
         batch_size: int = 100,
         num_workers: int = 4,
         pin_memory: bool = True,
         val_split: float = 0.2,
         test_split: float = 0.2,
-        noise_levels: Optional[List[float]] = None,
-        **kwargs,
+        noise_levels: list[float] | None = None,
+        **kwargs: Any,
     ):
         """
         Initialize the GraphDataModule.
@@ -81,12 +94,14 @@ class GraphDataModule(pl.LightningDataModule):
         self.val_adjacency_matrices = None
         self.test_adjacency_matrices = None
         self.all_partitions = None  # For SBM
+        self.train_partitions = []
 
+    @override
     def prepare_data(self) -> None:
         """Download or prepare data. Called only once per node."""
         if self.dataset_name == "sbm":
             sbm_params = self.dataset_config
-            
+
             # Check if explicit block_sizes provided (for denoising script replication)
             if "block_sizes" in sbm_params:
                 self.all_partitions = [sbm_params["block_sizes"]]
@@ -101,9 +116,11 @@ class GraphDataModule(pl.LightningDataModule):
                 )
         elif self.dataset_name in DATASET_WRAPPERS:
             # Instantiating the wrapper might trigger downloads
-            _ = DATASET_WRAPPERS[self.dataset_name](**self.dataset_config)
+            wrapper_cls = DATASET_WRAPPERS[self.dataset_name]
+            _ = wrapper_cls(**self.dataset_config)
 
-    def setup(self, stage: Optional[str] = None) -> None:
+    @override
+    def setup(self, stage: str | None = None) -> None:
         """Set up datasets for each stage."""
         if self.dataset_name == "sbm":
             self._setup_sbm(stage)
@@ -116,11 +133,18 @@ class GraphDataModule(pl.LightningDataModule):
         else:
             raise ValueError(f"Unknown dataset name: {self.dataset_name}")
 
-    def _setup_sbm(self, stage: Optional[str] = None):
+    def _setup_sbm(self, stage: str | None = None) -> None:
         sbm_params = self.dataset_config
-        p_intra = sbm_params.get("p_intra", 1.0)
-        q_inter = sbm_params.get("q_inter", 0.0)
-        
+        p_intra: float = sbm_params.get("p_intra", 1.0)
+        q_inter: float = sbm_params.get("q_inter", 0.0)
+
+        # all_partitions must be set by prepare_data() before setup() is called
+        if self.all_partitions is None:
+            raise RuntimeError(
+                "all_partitions is None. prepare_data() must be called before setup()."
+            )
+        all_partitions = self.all_partitions  # Local reference for type narrowing
+
         # Handle fixed block sizes (for denoising script replication)
         if "block_sizes" in sbm_params:
             # Use the single fixed partition for both train and test
@@ -134,69 +158,65 @@ class GraphDataModule(pl.LightningDataModule):
             num_test_partitions = sbm_params.get("num_test_partitions", 10)
             total_needed = num_train_partitions + num_test_partitions
 
-        if len(self.all_partitions) < total_needed:
+        if len(all_partitions) < total_needed:
             raise ValueError(
-                f"Not enough valid SBM partitions ({len(self.all_partitions)}) for "
+                f"Not enough valid SBM partitions ({len(all_partitions)}) for "
                 f"requested train ({num_train_partitions}) and test ({num_test_partitions}) partitions."
             )
 
-        if stage == "fit" or stage is None:
-            if self.train_adjacency_matrices is None:
-                if "block_sizes" in sbm_params:
-                    # For fixed block sizes, use the same partition
-                    train_partitions = self.all_partitions
-                else:
-                    # For random partitions, sample different ones
-                    train_partitions = random.sample(
-                        self.all_partitions, num_train_partitions
-                    )
-                self.train_partitions = train_partitions  # Save for test set exclusion
-                
-                if "block_sizes" in sbm_params:
-                    # For fixed block sizes, use the same partition for test too
-                    remaining_partitions = self.all_partitions
-                else:
-                    # For random partitions, use different ones for test
-                    remaining_partitions = [
-                        p for p in self.all_partitions if p not in train_partitions
-                    ]
+        if (stage == "fit" or stage is None) and self.train_adjacency_matrices is None:
+            if "block_sizes" in sbm_params:
+                # For fixed block sizes, use the same partition
+                train_partitions = all_partitions
+            else:
+                # For random partitions, sample different ones
+                train_partitions = random.sample(all_partitions, num_train_partitions)
+            self.train_partitions = train_partitions  # Save for test set exclusion
 
-                num_val_partitions = min(5, max(1, len(remaining_partitions) // 2))
-                val_partitions = random.sample(remaining_partitions, num_val_partitions)
-
-                self.train_adjacency_matrices = [
-                    torch.tensor(
-                        generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
-                    )
-                    for p in train_partitions
-                ]
-                self.val_adjacency_matrices = [
-                    torch.tensor(
-                        generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
-                    )
-                    for p in val_partitions
+            if "block_sizes" in sbm_params:
+                # For fixed block sizes, use the same partition for test too
+                remaining_partitions = all_partitions
+            else:
+                # For random partitions, use different ones for test
+                remaining_partitions = [
+                    p for p in all_partitions if p not in train_partitions
                 ]
 
-        if stage == "test" or stage is None:
-            if self.test_adjacency_matrices is None:
-                train_partitions = getattr(self, "train_partitions", [])
-                if "block_sizes" in sbm_params:
-                    # For fixed block sizes, reuse the same partition for test
-                    test_partitions = self.all_partitions
-                else:
-                    # For random partitions, exclude train partitions
-                    test_partitions = random.sample(
-                        [p for p in self.all_partitions if p not in train_partitions],
-                        num_test_partitions,
-                    )
-                self.test_adjacency_matrices = [
-                    torch.tensor(
-                        generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
-                    )
-                    for p in test_partitions
-                ]
+            num_val_partitions = min(5, max(1, len(remaining_partitions) // 2))
+            val_partitions = random.sample(remaining_partitions, num_val_partitions)
 
-    def _setup_from_wrapper(self):
+            self.train_adjacency_matrices = [
+                torch.tensor(
+                    generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
+                )
+                for p in train_partitions
+            ]
+            self.val_adjacency_matrices = [
+                torch.tensor(
+                    generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
+                )
+                for p in val_partitions
+            ]
+
+        if (stage == "test" or stage is None) and self.test_adjacency_matrices is None:
+            train_partitions = getattr(self, "train_partitions", [])
+            if "block_sizes" in sbm_params:
+                # For fixed block sizes, reuse the same partition for test
+                test_partitions = all_partitions
+            else:
+                # For random partitions, exclude train partitions
+                test_partitions = random.sample(
+                    [p for p in all_partitions if p not in train_partitions],
+                    num_test_partitions,
+                )
+            self.test_adjacency_matrices = [
+                torch.tensor(
+                    generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
+                )
+                for p in test_partitions
+            ]
+
+    def _setup_from_wrapper(self) -> None:
         if self.train_adjacency_matrices is not None:
             return
 
@@ -216,7 +236,7 @@ class GraphDataModule(pl.LightningDataModule):
         self.val_adjacency_matrices = all_matrices[num_test : num_test + num_val]
         self.train_adjacency_matrices = all_matrices[num_test + num_val :]
 
-    def _setup_synthetic_graphs(self):
+    def _setup_synthetic_graphs(self) -> None:
         """Set up synthetic graph datasets (d-regular, LFR, tree, ER)."""
         if self.train_adjacency_matrices is not None:
             return
@@ -247,8 +267,12 @@ class GraphDataModule(pl.LightningDataModule):
             type_kwargs["tau1"] = self.dataset_config.get("tau1", 3.0)
             type_kwargs["tau2"] = self.dataset_config.get("tau2", 1.5)
             type_kwargs["mu"] = self.dataset_config.get("mu", 0.1)
-            type_kwargs["average_degree"] = self.dataset_config.get("average_degree", None)
-            type_kwargs["min_community"] = self.dataset_config.get("min_community", None)
+            type_kwargs["average_degree"] = self.dataset_config.get(
+                "average_degree", None
+            )
+            type_kwargs["min_community"] = self.dataset_config.get(
+                "min_community", None
+            )
 
         # Generate graphs
         dataset = SyntheticGraphDataset(
@@ -268,25 +292,19 @@ class GraphDataModule(pl.LightningDataModule):
         )
 
         # Convert to list of tensors
-        self.train_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in train
-        ]
-        self.val_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in val
-        ]
-        self.test_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in test
-        ]
+        self.train_adjacency_matrices = [torch.from_numpy(A).float() for A in train]
+        self.val_adjacency_matrices = [torch.from_numpy(A).float() for A in val]
+        self.test_adjacency_matrices = [torch.from_numpy(A).float() for A in test]
 
-    def _setup_pyg_dataset(self):
+    def _setup_pyg_dataset(self) -> None:
         """Set up PyTorch Geometric benchmark datasets."""
         if self.train_adjacency_matrices is not None:
             return
 
         # Get parameters from config
-        root = self.dataset_config.get("root", None)
-        max_graphs = self.dataset_config.get("max_graphs", None)
-        seed = self.dataset_config.get("seed", 42)
+        root: str | None = self.dataset_config.get("root", None)
+        max_graphs: int | None = self.dataset_config.get("max_graphs", None)
+        seed: int = self.dataset_config.get("seed", 42)
 
         # Load dataset
         dataset = PyGDatasetWrapper(
@@ -304,19 +322,16 @@ class GraphDataModule(pl.LightningDataModule):
         )
 
         # Convert to list of tensors
-        self.train_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in train
-        ]
-        self.val_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in val
-        ]
-        self.test_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in test
-        ]
+        self.train_adjacency_matrices = [torch.from_numpy(A).float() for A in train]
+        self.val_adjacency_matrices = [torch.from_numpy(A).float() for A in val]
+        self.test_adjacency_matrices = [torch.from_numpy(A).float() for A in test]
 
     def _create_dataloader(
-        self, adjacency_matrices: List[torch.Tensor], samples_per_graph: int, shuffle: bool
-    ) -> DataLoader:
+        self,
+        adjacency_matrices: list[torch.Tensor],
+        samples_per_graph: int,
+        shuffle: bool,
+    ) -> DataLoader[tuple[torch.Tensor, torch.Tensor]]:
         """Create a data loader with common parameters."""
         dataset = GraphDataset(adjacency_matrices, samples_per_graph)
         return DataLoader(
@@ -328,27 +343,36 @@ class GraphDataModule(pl.LightningDataModule):
             persistent_workers=self.num_workers > 0,
         )
 
-    def train_dataloader(self) -> DataLoader:
+    @override
+    def train_dataloader(self) -> DataLoader[tuple[torch.Tensor, torch.Tensor]]:
         """Create training data loader."""
+        if self.train_adjacency_matrices is None:
+            raise RuntimeError("Call setup() before accessing dataloaders")
         return self._create_dataloader(
             self.train_adjacency_matrices, self.num_samples_per_graph, shuffle=True
         )
 
-    def val_dataloader(self) -> DataLoader:
+    @override
+    def val_dataloader(self) -> DataLoader[tuple[torch.Tensor, torch.Tensor]]:
         """Create validation data loader."""
+        if self.val_adjacency_matrices is None:
+            raise RuntimeError("Call setup() before accessing dataloaders")
         return self._create_dataloader(
             self.val_adjacency_matrices, self.num_samples_per_graph // 2, shuffle=False
         )
 
-    def test_dataloader(self) -> DataLoader:
+    @override
+    def test_dataloader(self) -> DataLoader[tuple[torch.Tensor, torch.Tensor]]:
         """Create test data loader."""
+        if self.test_adjacency_matrices is None:
+            raise RuntimeError("Call setup() before accessing dataloaders")
         return self._create_dataloader(
             self.test_adjacency_matrices, self.num_samples_per_graph // 2, shuffle=False
         )
 
     def get_sample_adjacency_matrix(self, stage: str = "train") -> torch.Tensor:
         """Get a sample adjacency matrix for visualization."""
-        matrices = None
+        matrices: list[torch.Tensor] | None = None
         if stage == "train":
             matrices = self.train_adjacency_matrices
         elif stage == "val":

@@ -5,13 +5,15 @@
 import abc
 from abc import abstractmethod
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Protocol, cast, override, runtime_checkable
 
+import matplotlib.figure
 import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch as pt
 import torch.nn as nn
+from pytorch_lightning.loggers import Logger
 
 from tmgg.experiment_utils import (
     compute_batch_metrics,
@@ -19,6 +21,45 @@ from tmgg.experiment_utils import (
     create_noise_generator,
 )
 from tmgg.experiment_utils.logging import log_figure
+
+
+@runtime_checkable
+class _DenoisingModelProtocol(Protocol):
+    """Protocol defining the interface expected from denoising models.
+
+    This protocol is used for type checking within experiment_utils without
+    creating a dependency on tmgg.models, respecting module boundaries.
+    """
+
+    def parameter_count(self) -> dict[str, Any]:
+        """Return hierarchical parameter counts."""
+        ...
+
+    def get_config(self) -> dict[str, Any]:
+        """Return model configuration."""
+        ...
+
+    def transform_for_loss(
+        self, output: torch.Tensor, target: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Transform output and target for loss computation."""
+        ...
+
+    def predict(self, logits: torch.Tensor, zero_diag: bool = True) -> torch.Tensor:
+        """Convert logits to predictions."""
+        ...
+
+    def logits_to_graph(self, logits: torch.Tensor) -> torch.Tensor:
+        """Convert logits to binary graph predictions."""
+        ...
+
+    def parameters(self, recurse: bool = True) -> Any:  # pyright: ignore[reportExplicitAny]
+        """Return an iterator over module parameters (from nn.Module)."""
+        ...
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass."""
+        ...
 
 
 class DenoisingLightningModule(pl.LightningModule, abc.ABC):
@@ -34,14 +75,14 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         optimizer_type: str = "adam",
         amsgrad: bool = False,
         loss_type: str = "MSE",
-        scheduler_config: Optional[Dict[str, Any]] = None,
-        noise_levels: Optional[List[float]] = None,
-        eval_noise_levels: Optional[List[float]] = None,
+        scheduler_config: dict[str, Any] | None = None,
+        noise_levels: list[float] | None = None,
+        eval_noise_levels: list[float] | None = None,
         noise_type: str = "Digress",
         rotation_k: int = 20,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         visualization_interval: int = 5000,
-        fixed_noise_seed: Optional[int] = None,
+        fixed_noise_seed: int | None = None,
         **kwargs,
     ):
         """
@@ -73,10 +114,10 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         super().__init__()
         # Exclude noise_levels to avoid hparam conflict with datamodule
         # (datamodule is the authoritative source for noise_levels)
-        self.save_hyperparameters(ignore=["noise_levels"])
+        _ = self.save_hyperparameters(ignore=["noise_levels"])
 
-        # Model
-        self.model: nn.Module = self._make_model(
+        # Model (typed as Protocol for methods, but actual impl is nn.Module subclass)
+        self.model: _DenoisingModelProtocol = self._make_model(
             *args,
             bias=bias,
             dropout=dropout,
@@ -90,40 +131,45 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             **kwargs,
         )
         # Loss function (models output logits, use BCEWithLogitsLoss for stability)
+        self.criterion: nn.Module
         if loss_type == "MSE":
             self.criterion = nn.MSELoss()
         elif loss_type == "BCEWithLogits":
             self.criterion = nn.BCEWithLogitsLoss()
         else:
-            raise ValueError(f"Unknown loss type: {loss_type}. Use 'MSE' or 'BCEWithLogits'.")
+            raise ValueError(
+                f"Unknown loss type: {loss_type}. Use 'MSE' or 'BCEWithLogits'."
+            )
 
         # Store configuration
-        self.learning_rate = learning_rate
-        self.weight_decay = weight_decay
-        self.optimizer_type = optimizer_type.lower()
-        self.amsgrad = amsgrad
-        self.scheduler_config = scheduler_config
-        self._noise_levels_override = noise_levels  # May be None if using datamodule's
-        self._eval_noise_levels_override = eval_noise_levels  # May be None to use noise_levels
-        self.noise_type = noise_type
-        self.visualization_interval = visualization_interval
+        self.learning_rate: float = learning_rate
+        self.weight_decay: float = weight_decay
+        self.optimizer_type: str = optimizer_type.lower()
+        self.amsgrad: bool = amsgrad
+        self.scheduler_config: dict[str, Any] | None = scheduler_config
+        self._noise_levels_override: list[float] | None = noise_levels
+        self._eval_noise_levels_override: list[float] | None = eval_noise_levels
+        self.noise_type: str = noise_type
+        self.visualization_interval: int = visualization_interval
 
         # Create noise generator
-        self.noise_generator = create_noise_generator(
+        from tmgg.experiment_utils.data.noise_generators import NoiseGenerator
+
+        self.noise_generator: NoiseGenerator = create_noise_generator(
             noise_type=noise_type, rotation_k=rotation_k, seed=seed
         )
 
         # Metrics tracking
-        self.train_metrics = []
-        self.val_metrics = []
+        self.train_metrics: list[Any] = []
+        self.val_metrics: list[Any] = []
 
         # Fixed noise mode for sanity check (constant noise memorization)
-        self.fixed_noise_seed = fixed_noise_seed
-        self._noise_cache: Dict[tuple, torch.Tensor] = {}  # Cache for (N, eps) -> noisy graph
-        self._clean_cache: Dict[int, torch.Tensor] = {}  # Cache for N -> clean graph
+        self.fixed_noise_seed: int | None = fixed_noise_seed
+        self._noise_cache: dict[tuple[int, float], torch.Tensor] = {}
+        self._clean_cache: dict[int, torch.Tensor] = {}
 
     @property
-    def noise_levels(self) -> List[float]:
+    def noise_levels(self) -> list[float]:
         """Get noise levels from datamodule or override.
 
         Returns the noise levels to use for training and evaluation. Prefers
@@ -134,13 +180,12 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         # Note: Lightning's trainer property raises RuntimeError when not attached
         try:
             trainer = self.trainer
-            if (
-                trainer is not None
-                and hasattr(trainer, "datamodule")
-                and trainer.datamodule is not None
-                and hasattr(trainer.datamodule, "noise_levels")
-            ):
-                return trainer.datamodule.noise_levels
+            if trainer is not None:
+                datamodule = getattr(trainer, "datamodule", None)
+                if datamodule is not None:
+                    noise_levels = getattr(datamodule, "noise_levels", None)
+                    if noise_levels is not None:
+                        return cast(list[float], noise_levels)
         except RuntimeError:
             pass  # Not attached to trainer yet
 
@@ -150,7 +195,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         return [0.01, 0.05, 0.1, 0.2, 0.3]  # Default fallback
 
     @property
-    def eval_noise_levels(self) -> List[float]:
+    def eval_noise_levels(self) -> list[float]:
         """Get noise levels for evaluation.
 
         Returns eval_noise_levels if explicitly set, otherwise falls back to
@@ -160,8 +205,19 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             return self._eval_noise_levels_override
         return self.noise_levels  # Default: same as training
 
+    def _get_datamodule(self) -> pl.LightningDataModule | None:
+        """Safely get the datamodule from the trainer.
+
+        Returns None if no trainer is attached or if the trainer has no datamodule.
+        Uses getattr to avoid pyright errors with Lightning's incomplete type stubs.
+        """
+        trainer = self.trainer
+        if trainer is None:
+            return None
+        return cast(pl.LightningDataModule | None, getattr(trainer, "datamodule", None))
+
     @abstractmethod
-    def _make_model(self, *args: Any, **kwargs: Any) -> nn.Module:  # pyright: ignore[reportExplicitAny, reportAny]
+    def _make_model(self, *args: Any, **kwargs: Any) -> _DenoisingModelProtocol:  # pyright: ignore[reportExplicitAny, reportAny]
         """
         Instantiate the model based on the config
         """
@@ -169,7 +225,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
 
     def get_model_name(self) -> str:
         """Get the name of the model for visualization purposes.
-        
+
         Returns:
             Model name to use in plot titles and logging.
         """
@@ -177,72 +233,79 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
 
     def log_parameter_count(self) -> None:
         """Log the parameter count of the model in a formatted way."""
-        if not hasattr(self.model, 'parameter_count'):
+        if not hasattr(self.model, "parameter_count"):
             # Fallback for models without parameter_count method
-            total_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-            print(f"\n{'='*50}")
-            print(f"Model: {self.get_model_name()}")
-            print(f"Total Trainable Parameters: {total_params:,}")
-            print(f"{'='*50}\n")
-            
+            total_params: int = sum(
+                p.numel() for p in self.model.parameters() if p.requires_grad
+            )
+            _ = print(f"\n{'=' * 50}")
+            _ = print(f"Model: {self.get_model_name()}")
+            _ = print(f"Total Trainable Parameters: {total_params:,}")
+            _ = print(f"{'=' * 50}\n")
+
             # Log to logger if available
             if self.logger:
-                self.logger.log_hyperparams({"total_parameters": total_params})
+                _ = self.logger.log_hyperparams({"total_parameters": total_params})
             return
-        
+
         # Get hierarchical parameter counts
-        param_counts = self.model.parameter_count()
-        
+        param_counts: dict[str, Any] = self.model.parameter_count()
+
         # Format and print parameter counts
-        def format_counts(counts: Dict[str, Any], indent: int = 0) -> List[str]:
+        def format_counts(counts: dict[str, Any], indent: int = 0) -> list[str]:
             """Recursively format parameter counts."""
-            lines = []
-            prefix = "  " * indent
-            
+            lines: list[str] = []
+            prefix: str = "  " * indent
+
             # Skip printing "self" and "total" at sub-levels, just show them at top level
             for key, value in counts.items():
                 if key == "total" and indent == 0:
                     continue  # Will be printed separately at the top
                 elif key == "self":
                     if value > 0:
-                        lines.append(f"{prefix}├─ {key}: {value:,}")
+                        _ = lines.append(f"{prefix}├─ {key}: {value:,}")
                 elif isinstance(value, dict):
                     if "total" in value:
-                        lines.append(f"{prefix}├─ {key}: {value['total']:,}")
+                        _ = lines.append(f"{prefix}├─ {key}: {value['total']:,}")
                         # Recursively format sub-counts if they exist
-                        sub_items = {k: v for k, v in value.items() if k != 'total'}
+                        sub_items: dict[str, Any] = {
+                            k: v for k, v in value.items() if k != "total"
+                        }
                         if sub_items:
-                            sub_lines = format_counts(sub_items, indent + 1)
-                            lines.extend(sub_lines)
+                            sub_lines: list[str] = format_counts(sub_items, indent + 1)
+                            _ = lines.extend(sub_lines)
                     else:
-                        lines.append(f"{prefix}├─ {key}:")
+                        _ = lines.append(f"{prefix}├─ {key}:")
                         sub_lines = format_counts(value, indent + 1)
-                        lines.extend(sub_lines)
+                        _ = lines.extend(sub_lines)
                 else:
-                    lines.append(f"{prefix}├─ {key}: {value:,}")
-            
+                    _ = lines.append(f"{prefix}├─ {key}: {value:,}")
+
             return lines
-        
+
         # Print formatted output
-        print(f"\n{'='*60}")
-        print(f"Model Parameter Count: {self.get_model_name()}")
-        print(f"{'='*60}")
-        print(f"Total Trainable Parameters: {param_counts['total']:,}")
-        print("-" * 60)
-        
-        formatted_lines = format_counts(param_counts)
+        _ = print(f"\n{'=' * 60}")
+        _ = print(f"Model Parameter Count: {self.get_model_name()}")
+        _ = print(f"{'=' * 60}")
+        _ = print(f"Total Trainable Parameters: {param_counts['total']:,}")
+        _ = print("-" * 60)
+
+        formatted_lines: list[str] = format_counts(param_counts)
         for line in formatted_lines:
-            print(line)
-        
-        print(f"{'='*60}\n")
-        
+            _ = print(line)
+
+        _ = print(f"{'=' * 60}\n")
+
         # Log to logger if available
         if self.logger:
-            self.logger.log_hyperparams({
-                "total_parameters": param_counts['total'],
-                "parameter_breakdown": param_counts
-            })
+            _ = self.logger.log_hyperparams(
+                {
+                    "total_parameters": param_counts["total"],
+                    "parameter_breakdown": param_counts,
+                }
+            )
 
+    @override
     def setup(self, stage: str) -> None:
         """Validate configuration before training/testing begins.
 
@@ -251,15 +314,15 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         stage
             Either 'fit', 'validate', 'test', or 'predict'.
         """
-        super().setup(stage)
+        _ = super().setup(stage)
 
         # Validate datamodule provides required attributes
-        if self.trainer is None or self.trainer.datamodule is None:
+        dm = self._get_datamodule()
+        if dm is None:
             return  # Skip validation if no trainer/datamodule
 
-        dm = self.trainer.datamodule
-        required_attrs = ["noise_levels"]
-        missing = [attr for attr in required_attrs if not hasattr(dm, attr)]
+        required_attrs: list[str] = ["noise_levels"]
+        missing: list[str] = [attr for attr in required_attrs if not hasattr(dm, attr)]
 
         if missing:
             raise ValueError(
@@ -267,10 +330,11 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                 "Ensure your DataModule provides 'noise_levels' attribute."
             )
 
+    @override
     def on_fit_start(self) -> None:
         """Called at the beginning of training."""
         # Log parameter count at the start of training
-        self.log_parameter_count()
+        _ = self.log_parameter_count()
 
         # Log scheduler configuration for cosine_warmup
         if (
@@ -278,35 +342,41 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             and self.scheduler_config.get("type") == "cosine_warmup"
             and hasattr(self, "_scheduler_T_warmup")
         ):
-            T_warmup = self._scheduler_T_warmup
-            T_max = self._scheduler_T_max
-            total_steps = self._scheduler_estimated_total_steps
+            T_warmup: int = self._scheduler_T_warmup
+            T_max: int = self._scheduler_T_max
+            total_steps: int = self._scheduler_estimated_total_steps
 
             # Estimate steps per epoch for readable output
-            steps_per_epoch = 1
-            if self.trainer and self.trainer.datamodule:
+            steps_per_epoch: int = 1
+            dm = self._get_datamodule()
+            if dm is not None:
                 try:
-                    train_loader = self.trainer.datamodule.train_dataloader()
-                    dataset_size = len(train_loader.dataset)
-                    batch_size = getattr(
-                        self.trainer.datamodule, "batch_size", train_loader.batch_size
-                    )
+                    train_loader = dm.train_dataloader()
+                    dataset_size: int = len(train_loader.dataset)
+                    batch_size: int = getattr(dm, "batch_size", train_loader.batch_size)
                     steps_per_epoch = (dataset_size + batch_size - 1) // batch_size
                 except Exception:
                     pass
 
-            warmup_epochs = T_warmup / steps_per_epoch if steps_per_epoch > 0 else 0
-            decay_epochs = T_max / steps_per_epoch if steps_per_epoch > 0 else 0
-            total_epochs = total_steps / steps_per_epoch if steps_per_epoch > 0 else 0
+            warmup_epochs: float = (
+                T_warmup / steps_per_epoch if steps_per_epoch > 0 else 0
+            )
+            decay_epochs: float = T_max / steps_per_epoch if steps_per_epoch > 0 else 0
+            total_epochs: float = (
+                total_steps / steps_per_epoch if steps_per_epoch > 0 else 0
+            )
 
-            print(f"\n{'='*60}")
-            print("Scheduler Configuration (cosine_warmup)")
-            print(f"{'='*60}")
-            print(f"  Warmup:     {T_warmup:,} steps ({warmup_epochs:.1f} epochs)")
-            print(f"  LR at zero: {T_max:,} steps ({decay_epochs:.1f} epochs)")
-            print(f"  Total est:  {total_steps:,} steps ({total_epochs:.0f} epochs)")
-            print(f"{'='*60}\n")
+            _ = print(f"\n{'=' * 60}")
+            _ = print("Scheduler Configuration (cosine_warmup)")
+            _ = print(f"{'=' * 60}")
+            _ = print(f"  Warmup:     {T_warmup:,} steps ({warmup_epochs:.1f} epochs)")
+            _ = print(f"  LR at zero: {T_max:,} steps ({decay_epochs:.1f} epochs)")
+            _ = print(
+                f"  Total est:  {total_steps:,} steps ({total_epochs:.0f} epochs)"
+            )
+            _ = print(f"{'=' * 60}\n")
 
+    @override
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the attention model.
@@ -318,7 +388,8 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             Reconstructed adjacency matrix
         """
         # Model returns reconstructed adjacency matrix directly
-        return self.model(x)
+        output: torch.Tensor = self.model(x)
+        return output
 
     def _apply_noise(self, batch: torch.Tensor, eps: float) -> torch.Tensor:
         """Apply noise to batch, with optional caching for sanity check mode.
@@ -340,24 +411,25 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             Noisy adjacency matrices, same shape as input.
         """
         if self.fixed_noise_seed is None:
-            return self.noise_generator.add_noise(batch, eps)
+            noisy_batch: torch.Tensor = self.noise_generator.add_noise(batch, eps)
+            return noisy_batch
 
         # Sanity check mode: use SINGLE noise pattern for all batches
         B, N, _ = batch.shape
-        cache_key = (N, eps)  # Key by graph size and eps only
+        cache_key: tuple[int, float] = (N, eps)
 
         if cache_key not in self._noise_cache:
             # Generate noise for ONE graph with fixed seed
             # Use cached clean graph to ensure consistent (clean, noisy) pair
-            clean_graph = self._get_cached_clean(batch)
-            torch.manual_seed(self.fixed_noise_seed)
-            np.random.seed(self.fixed_noise_seed)
+            clean_graph: torch.Tensor = self._get_cached_clean(batch)
+            _ = torch.manual_seed(self.fixed_noise_seed)
+            _ = np.random.seed(self.fixed_noise_seed)
             self._noise_cache[cache_key] = self.noise_generator.add_noise(
                 clean_graph, eps
             ).detach()
 
         # Broadcast to batch size
-        cached = self._noise_cache[cache_key].to(batch.device)
+        cached: torch.Tensor = self._noise_cache[cache_key].to(batch.device)
         return cached.expand(B, -1, -1)
 
     def _get_cached_clean(self, batch: torch.Tensor) -> torch.Tensor:
@@ -370,7 +442,8 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         B, N, _ = batch.shape
         if N not in self._clean_cache:
             self._clean_cache[N] = batch[:1].clone().detach()
-        return self._clean_cache[N]
+        cached_clean: torch.Tensor = self._clean_cache[N]
+        return cached_clean
 
     def _get_fixed_target(self, batch: torch.Tensor) -> torch.Tensor:
         """Get target for fixed noise mode.
@@ -379,10 +452,11 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         This ensures the target matches the cached noisy input.
         """
         B, N, _ = batch.shape
-        cached = self._get_cached_clean(batch).to(batch.device)
+        cached: torch.Tensor = self._get_cached_clean(batch).to(batch.device)
         return cached.expand(B, -1, -1)
 
-    def training_step(self, batch: torch.Tensor, batch_idx: int) -> Dict[str, Any]:
+    @override
+    def training_step(self, batch: torch.Tensor, batch_idx: int) -> dict[str, Any]:
         """Execute single training step with noise application.
 
         In normal mode: noise is sampled fresh for each batch.
@@ -402,69 +476,78 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             Dictionary with 'loss' (required by Lightning) and 'logits' for debugging.
         """
         # In fixed noise mode, use first noise level; else sample randomly
+        eps: float
+        target: torch.Tensor
         if self.fixed_noise_seed is not None:
             eps = self.noise_levels[0]
             # Use cached clean graph as target (matches cached noisy input)
             target = self._get_fixed_target(batch)
         else:
-            eps = np.random.choice(self.noise_levels)
+            eps = float(np.random.choice(self.noise_levels))
             target = batch
 
         # Add noise (cached in fixed noise mode, fresh otherwise)
-        batch_noisy = self._apply_noise(batch, eps)
+        batch_noisy: torch.Tensor = self._apply_noise(batch, eps)
 
         # Forward pass using noisy adjacency matrix
-        output = self.forward(batch_noisy)
+        output: torch.Tensor = self.forward(batch_noisy)
 
         # Transform output and target to match for loss computation
         # This handles domain transformations (inv-sigmoid vs standard) automatically
+        output_for_loss: torch.Tensor
+        target_for_loss: torch.Tensor
         output_for_loss, target_for_loss = self.model.transform_for_loss(output, target)
-        loss = self.criterion(output_for_loss, target_for_loss)
+        loss: torch.Tensor = self.criterion(output_for_loss, target_for_loss)
 
         # Compute train accuracy from logits using model's thresholding
         with torch.no_grad():
-            predictions = self.model.logits_to_graph(output)
-            train_acc = (predictions == target).float().mean()
+            predictions: torch.Tensor = self.model.logits_to_graph(output)
+            train_acc: torch.Tensor = (predictions == target).float().mean()
 
         # Log metrics
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("train_accuracy", train_acc, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("train_noise_level", eps, on_step=False, on_epoch=True)
+        _ = self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        _ = self.log(
+            "train_accuracy", train_acc, on_step=True, on_epoch=True, prog_bar=True
+        )
+        _ = self.log("train_noise_level", eps, on_step=False, on_epoch=True)
 
         # Return dict with loss and logits for debugging callbacks
         return {"loss": loss, "logits": output}
 
-    def _val_or_test(self, mode: str, batch):
+    def _val_or_test(self, mode: str, batch: torch.Tensor) -> dict[str, torch.Tensor]:
         # In fixed noise mode, use cached clean graph as target
+        target: torch.Tensor
         if self.fixed_noise_seed is not None:
             target = self._get_fixed_target(batch)
         else:
             target = batch
 
         # Evaluate across all eval noise levels
-        mode_loss_mean = 0.0
-        batch_metrics_mean = defaultdict(lambda: 0.0)
-        N = len(self.eval_noise_levels)
+        mode_loss_mean: float = 0.0
+        batch_metrics_mean: defaultdict[str, float] = defaultdict(lambda: 0.0)
+        N: int = len(self.eval_noise_levels)
         for eps in self.eval_noise_levels:
             # Add noise (cached in fixed noise mode, fresh otherwise)
-            batch_noisy = self._apply_noise(batch, eps)
+            batch_noisy: torch.Tensor = self._apply_noise(batch, eps)
 
             # Forward pass
-            output = self.forward(batch_noisy)
+            output: torch.Tensor = self.forward(batch_noisy)
 
             # Transform output and target to match for loss computation
             # This ensures comparable loss values between training and validation
+            output_for_loss: torch.Tensor
+            target_for_loss: torch.Tensor
             output_for_loss, target_for_loss = self.model.transform_for_loss(
                 output, target
             )
-            mode_loss = self.criterion(output_for_loss, target_for_loss)
+            mode_loss: torch.Tensor = self.criterion(output_for_loss, target_for_loss)
 
             # Compute reconstruction metrics on predictions (post-sigmoid)
-            predictions = self.model.predict(output)
-            batch_metrics = compute_batch_metrics(target, predictions)
+            predictions: torch.Tensor = self.model.predict(output)
+            batch_metrics: dict[str, float] = compute_batch_metrics(target, predictions)
 
             # Log metrics
-            self.log(
+            _ = self.log(
                 f"{mode}_{eps}/loss",
                 mode_loss,
                 on_step=False,
@@ -472,24 +555,27 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                 prog_bar=True,
             )
             for metric_name, value in batch_metrics.items():
-                self.log(
+                _ = self.log(
                     f"{mode}_{eps}/{metric_name}", value, on_step=False, on_epoch=True
                 )
-            mode_loss_mean += mode_loss / N
+            mode_loss_mean += mode_loss.item() / N
             for k, v in batch_metrics.items():
                 batch_metrics_mean[k] += v / N
 
         # Log metrics
-        self.log(
+        _ = self.log(
             f"{mode}/loss", mode_loss_mean, on_step=False, on_epoch=True, prog_bar=True
         )
         for metric_name, value in batch_metrics_mean.items():
-            self.log(f"{mode}/{metric_name}", value, on_step=False, on_epoch=True)
-        mode_loss_mean: pt.Tensor
-        batch_metrics_mean: dict[str, pt.Tensor]
-        return {f"{mode}_loss": mode_loss_mean, **batch_metrics_mean}
+            _ = self.log(f"{mode}/{metric_name}", value, on_step=False, on_epoch=True)
+        mode_loss_mean_tensor: pt.Tensor = torch.tensor(mode_loss_mean)
+        batch_metrics_mean_dict: dict[str, pt.Tensor] = {
+            k: torch.tensor(v) for k, v in batch_metrics_mean.items()
+        }
+        return {f"{mode}_loss": mode_loss_mean_tensor, **batch_metrics_mean_dict}
 
-    def test_step(self, batch: torch.Tensor, batch_idx: int) -> Dict[str, torch.Tensor]:
+    @override
+    def test_step(self, batch: torch.Tensor, batch_idx: int) -> dict[str, torch.Tensor]:
         """
         Test step.
 
@@ -502,9 +588,10 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         """
         return self._val_or_test(mode="test", batch=batch)
 
+    @override
     def validation_step(
         self, batch: torch.Tensor, batch_idx: int
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """
         Validation step.
 
@@ -517,14 +604,16 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         """
         return self._val_or_test(mode="val", batch=batch)
 
+    @override
     def on_validation_epoch_end(self) -> None:
         """Called at the end of validation for visualization (step-based)."""
         if self.global_step % self.visualization_interval == 0:
-            self._log_visualizations("val")
+            _ = self._log_visualizations("val")
 
+    @override
     def on_test_epoch_end(self) -> None:
         """Called at the end of test epoch for visualization."""
-        self._log_visualizations("test")
+        _ = self._log_visualizations("test")
 
     def _log_visualizations(self, stage: str) -> None:
         """
@@ -533,87 +622,104 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         Args:
             stage: Stage name ("val" or "test")
         """
-        if not self.logger or self.trainer.sanity_checking:
+        trainer = self.trainer
+        if not self.logger or trainer is None or trainer.sanity_checking:
+            return
+
+        # Require datamodule for visualization
+        dm = self._get_datamodule()
+        if dm is None:
             return
 
         # Get a sample from the appropriate dataloader
+        dataloader: Any
         if stage == "val":
-            dataloader = self.trainer.datamodule.val_dataloader()
+            dataloader = dm.val_dataloader()
         elif stage == "test":
-            dataloader = self.trainer.datamodule.test_dataloader()
+            dataloader = dm.test_dataloader()
         else:
             return  # Should not happen
 
         # Get a single batch and take the first sample for visualization
-        batch = next(iter(dataloader))
-        A_sample = batch[0]
+        batch: torch.Tensor = next(iter(dataloader))
+        A_sample: torch.Tensor = batch[0]
 
         # Use consistent noise_levels from property (which uses datamodule's when available)
-        noise_levels = self.noise_levels
-        noise_type = getattr(self.trainer.datamodule, "noise_type", self.noise_type)
+        noise_levels: list[float] = self.noise_levels
+        noise_type: str = getattr(dm, "noise_type", self.noise_type)
 
         # Create denoise function that returns (predictions, logits) tuple
-        def denoise_fn(A_noisy):
+        def denoise_fn(
+            A_noisy: np.ndarray | torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
             with torch.no_grad():
-                self.eval()
-                A_input = A_noisy.to(self.device)
+                _ = self.eval()
+                A_input: torch.Tensor = (
+                    A_noisy.to(self.device)
+                    if isinstance(A_noisy, torch.Tensor)
+                    else torch.from_numpy(A_noisy).to(self.device)
+                )
                 if A_input.ndim == 2:
                     A_input = A_input.unsqueeze(0)
-                logits = self.forward(A_input)
-                predictions = self.model.predict(logits)
+                logits: torch.Tensor = self.forward(A_input)
+                predictions: torch.Tensor = self.model.predict(logits)
                 return predictions.squeeze(0), logits.squeeze(0)
 
         # Log visualization for each noise level
         for eps in noise_levels:
             try:
-                fig = create_graph_denoising_figure(
+                fig: matplotlib.figure.Figure = create_graph_denoising_figure(
                     A_clean=A_sample,
-                    noise_fn=self.noise_generator.add_noise,
+                    noise_fn=cast(Any, self.noise_generator.add_noise),
                     denoise_fn=denoise_fn,
                     noise_level=eps,
                     noise_type=noise_type,
                     title_prefix=f"{self.get_model_name()} - ",
                 )
-                plot_name = f"{stage}_denoising_{noise_type}_eps_{eps:.3f}"
-                log_figure(
-                    self.loggers,  # Use all loggers, not just first
+                plot_name: str = f"{stage}_denoising_{noise_type}_eps_{eps:.3f}"
+                _ = log_figure(
+                    cast(list[Logger], self.loggers),
                     plot_name,
                     fig,
                     global_step=self.global_step,
                 )
-                print(f"Logged individual plot: {plot_name}")
+                _ = print(f"Logged individual plot: {plot_name}")
             except Exception as e:
-                print(f"Failed to create/log plot for eps={eps}: {e}")
+                _ = print(f"Failed to create/log plot for eps={eps}: {e}")
                 import traceback
-                traceback.print_exc()
+
+                _ = traceback.print_exc()
 
         # Also create multi-noise visualization
         try:
             from tmgg.experiment_utils.plotting import create_multi_noise_visualization
 
-            multi_fig = create_multi_noise_visualization(
+            multi_fig: matplotlib.figure.Figure = create_multi_noise_visualization(
                 A_sample,
                 self,
                 self.noise_generator.add_noise,
                 noise_levels,
-                self.device,
+                str(self.device),
             )
-            overview_name = f"{stage}_multi_noise_{noise_type}_overview"
-            log_figure(
-                self.loggers,  # Use all loggers, not just first
+            overview_name: str = f"{stage}_multi_noise_{noise_type}_overview"
+            _ = log_figure(
+                cast(list[Logger], self.loggers),
                 overview_name,
                 multi_fig,
                 global_step=self.global_step,
             )
-            print(f"Logged multi-noise overview: {overview_name}")
+            _ = print(f"Logged multi-noise overview: {overview_name}")
         except Exception as e:
-            print(f"Failed to create/log multi-noise overview: {e}")
+            _ = print(f"Failed to create/log multi-noise overview: {e}")
             import traceback
-            traceback.print_exc()
 
-    def configure_optimizers(self):
+            _ = traceback.print_exc()
+
+    @override
+    def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:
         """Configure optimizers and learning rate schedulers."""
         # Select optimizer based on type
+        optimizer: torch.optim.Optimizer
         if self.optimizer_type == "adamw":
             optimizer = torch.optim.AdamW(
                 self.parameters(),
@@ -631,7 +737,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         if self.scheduler_config is None:
             return optimizer
 
-        scheduler_type = self.scheduler_config.get("type", "cosine")
+        scheduler_type: str = self.scheduler_config.get("type", "cosine")
 
         if scheduler_type == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -667,23 +773,33 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             # Estimate total training steps from trainer context
             # Prefer max_steps if set (step-based training), otherwise compute from epochs
             estimated_total_steps = None
-            if self.trainer is not None:
+            trainer = self.trainer
+            if trainer is not None:
                 # First check if max_steps is explicitly configured
-                if self.trainer.max_steps and self.trainer.max_steps > 0:
-                    estimated_total_steps = self.trainer.max_steps
-                elif self.trainer.datamodule is not None:
-                    # Fallback: compute from epochs (legacy compatibility)
-                    try:
-                        train_loader = self.trainer.datamodule.train_dataloader()
-                        dataset_size = len(train_loader.dataset)
-                        batch_size = getattr(
-                            self.trainer.datamodule, "batch_size", train_loader.batch_size
-                        )
-                        steps_per_epoch = (dataset_size + batch_size - 1) // batch_size
-                        max_epochs = self.trainer.max_epochs if self.trainer.max_epochs > 0 else 100
-                        estimated_total_steps = steps_per_epoch * max_epochs
-                    except Exception:
-                        pass  # Fall back to defaults below
+                if trainer.max_steps and trainer.max_steps > 0:
+                    estimated_total_steps = trainer.max_steps
+                else:
+                    dm = self._get_datamodule()
+                    if dm is not None:
+                        # Fallback: compute from epochs (legacy compatibility)
+                        try:
+                            train_loader = dm.train_dataloader()
+                            dataset_size = len(train_loader.dataset)
+                            batch_size = getattr(
+                                dm, "batch_size", train_loader.batch_size
+                            )
+                            steps_per_epoch = (
+                                dataset_size + batch_size - 1
+                            ) // batch_size
+                            max_epochs_val = trainer.max_epochs
+                            max_epochs = (
+                                max_epochs_val
+                                if max_epochs_val is not None and max_epochs_val > 0
+                                else 100
+                            )
+                            estimated_total_steps = steps_per_epoch * max_epochs
+                        except Exception:
+                            pass  # Fall back to defaults below
 
             if estimated_total_steps is None:
                 # Fallback when trainer context unavailable (e.g., during testing)
@@ -694,6 +810,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                         f"Using fallback of {estimated_total_steps} steps. "
                         "Scheduler fractions may not work as expected.",
                         UserWarning,
+                        stacklevel=2,
                     )
 
             # Compute T_warmup and T_max from fractions or legacy values
@@ -722,6 +839,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                     f"stay there for the remaining training. Consider increasing "
                     f"decay_fraction or T_max.",
                     UserWarning,
+                    stacklevel=2,
                 )
 
             # Store computed values for logging in on_fit_start
@@ -766,6 +884,6 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         else:
             return optimizer
 
-    def get_model_config(self) -> Dict[str, Any]:
+    def get_model_config(self) -> dict[str, Any]:
         """Get model configuration for logging."""
         return self.model.get_config()

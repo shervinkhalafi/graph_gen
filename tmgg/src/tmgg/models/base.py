@@ -1,7 +1,7 @@
 """Abstract base classes for denoising models."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Union
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -11,7 +11,7 @@ class BaseModel(nn.Module, ABC):
     """Base class for all models with configuration support."""
 
     @abstractmethod
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """
         Get model configuration for logging/saving.
 
@@ -20,46 +20,48 @@ class BaseModel(nn.Module, ABC):
         """
         pass
 
-    def parameter_count(self) -> Dict[str, Any]:
+    def parameter_count(self) -> dict[str, Any]:
         """
         Count trainable parameters in this module and its children.
-        
+
         Returns a hierarchical dictionary with:
         - "total": Total trainable parameters in this module and all children
         - "self": Parameters directly owned by this module (not in children)
         - Child module counts with their names as keys
-        
+
         Returns:
             Dictionary with parameter counts
         """
-        counts: Dict[str, Any] = {"total": 0, "self": 0}
-        
+        counts: dict[str, Any] = {"total": 0, "self": 0}
+
         # Count parameters directly owned by this module (not in children)
-        for name, param in self.named_parameters(recurse=False):
+        for _, param in self.named_parameters(recurse=False):
             if param.requires_grad:
                 counts["self"] += param.numel()
-        
+
         # Recursively count child modules
         for name, module in self.named_children():
-            if hasattr(module, 'parameter_count') and callable(getattr(module, 'parameter_count')):
+            if hasattr(module, "parameter_count") and callable(module.parameter_count):
                 # Child has parameter_count method - use it for recursive counting
                 child_counts = module.parameter_count()
                 counts[name] = child_counts
                 counts["total"] += child_counts["total"]
             else:
                 # Standard PyTorch module - count its parameters
-                child_total = sum(p.numel() for p in module.parameters() if p.requires_grad)
+                child_total = sum(
+                    p.numel() for p in module.parameters() if p.requires_grad
+                )
                 if child_total > 0:
                     counts[name] = {"total": child_total}
                     counts["total"] += child_total
-        
+
         # Add self parameters to total
         counts["total"] += counts["self"]
-        
+
         return counts
 
 
-class DenoisingModel(BaseModel):  # pyright: ignore[reportImplicitAbstractClass]
+class DenoisingModel(BaseModel):
     """Abstract base class for graph denoising models."""
 
     def __init__(self):
@@ -151,7 +153,7 @@ class DenoisingModel(BaseModel):  # pyright: ignore[reportImplicitAbstractClass]
             return A
 
     @abstractmethod
-    def forward(self, x: torch.Tensor) -> Union[torch.Tensor, tuple]:
+    def forward(self, x: torch.Tensor) -> torch.Tensor | tuple:
         """Forward pass for denoising.
 
         Parameters
@@ -167,11 +169,11 @@ class DenoisingModel(BaseModel):  # pyright: ignore[reportImplicitAbstractClass]
         pass
 
 
-class EmbeddingModel(BaseModel):  # pyright: ignore[reportImplicitAbstractClass]
+class EmbeddingModel(BaseModel):
     """Abstract base class for graph embedding models."""
 
     @abstractmethod
-    def forward(self, A: torch.Tensor) -> Union[torch.Tensor, tuple]:
+    def forward(self, A: torch.Tensor) -> torch.Tensor | tuple:
         """
         Forward pass for embedding generation.
 

@@ -1,6 +1,6 @@
 """Graph Neural Network models for graph denoising."""
 
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -38,7 +38,7 @@ class GNNSymmetric(DenoisingModel):
 
         self.out_x = nn.Linear(feature_dim_in, feature_dim_out)
 
-    def forward(self, A: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass with symmetric embeddings.
 
@@ -72,7 +72,7 @@ class GNNSymmetric(DenoisingModel):
         # Return raw logits per base class contract; use predict() for probabilities
         return outer, X
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get model configuration."""
         return {
             "num_layers": self.num_layers,

@@ -2,62 +2,72 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, cast
 
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for headless/multi-threaded use
+import matplotlib.figure
+
+matplotlib.use("Agg")  # Non-interactive backend for headless/multi-threaded use
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
+import torch.nn as nn
+import torch.utils.data
 from omegaconf import DictConfig
 from pytorch_lightning import LightningDataModule, LightningModule
 
 from .data.noise_generators import NoiseGenerator
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class SanityCheckResult:
     """Container for sanity check results."""
 
-    def __init__(self):
+    passed: bool
+    messages: list[str]
+    warnings: list[str]
+    metrics: dict[str, float]
+
+    def __init__(self) -> None:
         self.passed = True
         self.messages = []
         self.warnings = []
         self.metrics = {}
 
-    def add_check(self, name: str, passed: bool, message: str):
+    def add_check(self, name: str, passed: bool, message: str) -> None:
         """Add a check result."""
-        self.messages.append(f"[{'PASS' if passed else 'FAIL'}] {name}: {message}")
+        _ = self.messages.append(f"[{'PASS' if passed else 'FAIL'}] {name}: {message}")
         if not passed:
             self.passed = False
 
-    def add_warning(self, message: str):
+    def add_warning(self, message: str) -> None:
         """Add a warning message."""
-        self.warnings.append(f"[WARN] {message}")
+        _ = self.warnings.append(f"[WARN] {message}")
 
-    def add_metric(self, name: str, value: float):
+    def add_metric(self, name: str, value: float) -> None:
         """Add a metric value."""
         self.metrics[name] = value
 
-    def __str__(self):
+    def __str__(self) -> str:
         """String representation of results."""
-        lines = ["=== Sanity Check Results ==="]
-        lines.extend(self.messages)
+        lines: list[str] = ["=== Sanity Check Results ==="]
+        _ = lines.extend(self.messages)
         if self.warnings:
-            lines.append("\nWarnings:")
-            lines.extend(self.warnings)
+            _ = lines.append("\nWarnings:")
+            _ = lines.extend(self.warnings)
         if self.metrics:
-            lines.append("\nMetrics:")
+            _ = lines.append("\nMetrics:")
             for k, v in self.metrics.items():
-                lines.append(f"  {k}: {v:.4f}")
-        lines.append(f"\nOverall: {'PASSED' if self.passed else 'FAILED'}")
+                _ = lines.append(f"  {k}: {v:.4f}")
+        _ = lines.append(f"\nOverall: {'PASSED' if self.passed else 'FAILED'}")
         return "\n".join(lines)
 
 
 def check_noise_generator(
     noise_generator: NoiseGenerator,
     sample_size: int = 10,
-    noise_levels: List[float] = [0.1, 0.3, 0.5],
+    noise_levels: list[float] | None = None,
 ) -> SanityCheckResult:
     """
     Verify noise generator is working correctly.
@@ -70,7 +80,10 @@ def check_noise_generator(
     Returns:
         SanityCheckResult with test outcomes
     """
-    result = SanityCheckResult()
+    if noise_levels is None:
+        noise_levels = [0.1, 0.3, 0.5]
+
+    result: SanityCheckResult = SanityCheckResult()
 
     # For rotation noise generator, use its configured k value
     from .data.noise_generators import RotationNoiseGenerator
@@ -79,46 +92,48 @@ def check_noise_generator(
         sample_size = noise_generator.k
 
     # Create test adjacency matrix
-    A = torch.eye(sample_size) + torch.rand(sample_size, sample_size) * 0.3
+    A: torch.Tensor = (
+        torch.eye(sample_size) + torch.rand(sample_size, sample_size) * 0.3
+    )
     A = (A + A.T) / 2  # Make symmetric
     A = (A > 0.5).float()  # Binarize
 
     # Test different noise levels
     for eps in noise_levels:
         try:
-            A_noisy = noise_generator.add_noise(A, eps)
+            A_noisy: torch.Tensor = noise_generator.add_noise(A, eps)
 
             # Check output shape
-            shape_ok = A_noisy.shape == A.shape
-            result.add_check(
+            shape_ok: bool = A_noisy.shape == A.shape
+            _ = result.add_check(
                 f"Output shape (eps={eps})",
                 shape_ok,
                 f"A_noisy: {A_noisy.shape}, expected: {A.shape}",
             )
 
             # Check noise was actually added
-            diff = torch.abs(A_noisy - A).sum().item()
-            noise_added = diff > 0
-            result.add_check(
+            diff: float = float(torch.abs(A_noisy - A).sum().item())
+            noise_added: bool = diff > 0
+            _ = result.add_check(
                 f"Noise added (eps={eps})", noise_added, f"Total difference: {diff:.4f}"
             )
 
             # Check that noisy matrix is still valid (symmetric, etc)
-            symmetry_error = torch.norm(A_noisy - A_noisy.T).item()
-            is_symmetric = symmetry_error < 1e-6
-            result.add_check(
+            symmetry_error: float = float(torch.norm(A_noisy - A_noisy.T).item())
+            is_symmetric: bool = symmetry_error < 1e-6
+            _ = result.add_check(
                 f"Output symmetry (eps={eps})",
                 is_symmetric,
                 f"Symmetry error: {symmetry_error:.6f}",
             )
 
             # Store metrics
-            result.add_metric(
+            _ = result.add_metric(
                 f"noise_amount_eps_{eps}", diff / (sample_size * sample_size)
             )
 
         except Exception as e:
-            result.add_check(
+            _ = result.add_check(
                 f"Noise generation (eps={eps})", False, f"Exception: {str(e)}"
             )
 
@@ -127,8 +142,8 @@ def check_noise_generator(
 
 def check_model_forward_pass(
     model: torch.nn.Module,
-    input_shape: Tuple[int, ...],
-    device: torch.device = torch.device("cpu"),
+    input_shape: tuple[int, ...],
+    device: str | torch.device = "cpu",
 ) -> SanityCheckResult:
     """
     Verify model forward pass works correctly.
@@ -141,13 +156,14 @@ def check_model_forward_pass(
     Returns:
         SanityCheckResult with test outcomes
     """
-    result = SanityCheckResult()
+    result: SanityCheckResult = SanityCheckResult()
 
     # Move model to device
-    model = model.to(device)
-    model.eval()
+    _ = model.to(device)
+    _ = model.eval()
 
     # Create test input
+    test_input: torch.Tensor
     if len(input_shape) == 2:
         # Single adjacency matrix
         test_input = torch.eye(input_shape[0]).unsqueeze(0).to(device)
@@ -170,19 +186,19 @@ def check_model_forward_pass(
     # Test forward pass
     try:
         with torch.no_grad():
-            output = model(test_input)
-        
+            output: torch.Tensor | tuple[torch.Tensor, ...] = model(test_input)
+
         # Handle models that return tuples
         if isinstance(output, tuple):
             output = output[0]
 
-        result.add_check("Forward pass", True, f"Output shape: {output.shape}")
+        _ = result.add_check("Forward pass", True, f"Output shape: {output.shape}")
 
         # Check output properties
-        has_nan = torch.isnan(output).any().item()
-        has_inf = torch.isinf(output).any().item()
+        has_nan: bool = bool(torch.isnan(output).any().item())
+        has_inf: bool = bool(torch.isinf(output).any().item())
 
-        result.add_check(
+        _ = result.add_check(
             "Output validity",
             not (has_nan or has_inf),
             f"NaN: {has_nan}, Inf: {has_inf}",
@@ -190,20 +206,20 @@ def check_model_forward_pass(
 
         # Check output range for adjacency matrices (warning only)
         if len(output.shape) == 3 and output.shape[1] == output.shape[2]:
-            in_range = (output >= 0).all() and (output <= 1).all()
+            in_range: bool = bool((output >= 0).all()) and bool((output <= 1).all())
             if not in_range:
-                result.add_warning(
-                    f"Output range outside [0,1]: Min: {output.min():.4f}, Max: {output.max():.4f}"
+                _ = result.add_warning(
+                    f"Output range outside [0,1]: Min: {float(output.min()):.4f}, Max: {float(output.max()):.4f}"
                 )
             else:
-                result.add_check(
+                _ = result.add_check(
                     "Output range [0,1]",
                     True,
-                    f"Min: {output.min():.4f}, Max: {output.max():.4f}",
+                    f"Min: {float(output.min()):.4f}, Max: {float(output.max()):.4f}",
                 )
 
     except Exception as e:
-        result.add_check("Forward pass", False, f"Exception: {str(e)}")
+        _ = result.add_check("Forward pass", False, f"Exception: {str(e)}")
 
     return result
 
@@ -211,7 +227,7 @@ def check_model_forward_pass(
 def check_data_loader(
     data_loader: torch.utils.data.DataLoader,
     expected_batch_size: int,
-    expected_shape: Tuple[int, int],
+    expected_shape: tuple[int, int],
     num_batches_to_check: int = 3,
 ) -> SanityCheckResult:
     """
@@ -248,8 +264,8 @@ def check_data_loader(
             )
 
             # Check data validity
-            has_nan = torch.isnan(batch).any().item()
-            has_inf = torch.isinf(batch).any().item()
+            has_nan = bool(torch.isnan(batch).any().item())
+            has_inf = bool(torch.isinf(batch).any().item())
 
             result.add_check(
                 f"Batch {i} validity",
@@ -278,7 +294,7 @@ def check_loss_computation(
     criterion: torch.nn.Module,
     sample_input: torch.Tensor,
     sample_target: torch.Tensor,
-    device: torch.device = torch.device("cpu"),
+    device: str | torch.device = "cpu",
 ) -> SanityCheckResult:
     """
     Verify loss computation works correctly.
@@ -332,10 +348,10 @@ def run_experiment_sanity_check(
     noise_generator: NoiseGenerator,
     data_loader: torch.utils.data.DataLoader,
     criterion: torch.nn.Module,
-    device: torch.device = torch.device("cpu"),
+    device: str | torch.device = "cpu",
     save_plots: bool = True,
-    output_dir: Optional[Path] = None,
-) -> Dict[str, Any]:
+    output_dir: Path | None = None,
+) -> dict[str, Any]:
     """
     Run comprehensive sanity checks for an experiment.
 
@@ -425,26 +441,28 @@ def run_experiment_sanity_check(
 
 def maybe_run_sanity_check(
     config: DictConfig, data_module: LightningDataModule, model: LightningModule
-):
+) -> dict[str, str] | None:
     # Run sanity check if requested
     if config.get("sanity_check", False):
-        print("\n" + "=" * 70)
-        print("SANITY CHECK MODE - Validating experimental setup")
-        print("=" * 70)
+        _ = print("\n" + "=" * 70)
+        _ = print("SANITY CHECK MODE - Validating experimental setup")
+        _ = print("=" * 70)
 
         # Setup data module (ensure prepare_data is called first)
-        data_module.prepare_data()
-        data_module.setup("fit")
+        _ = data_module.prepare_data()
+        _ = data_module.setup("fit")
 
         # Get data loader and other components
-        train_loader = data_module.train_dataloader()
+        train_loader: torch.utils.data.DataLoader[Any] = data_module.train_dataloader()
 
-        # Run sanity checks
-        sanity_results = run_experiment_sanity_check(
+        # Run sanity checks - cast attributes to expected types
+        noise_gen = cast(NoiseGenerator, model.noise_generator)
+        crit = cast(nn.Module, model.criterion)
+        sanity_results: dict[str, Any] = run_experiment_sanity_check(
             model=model,
-            noise_generator=model.noise_generator,
+            noise_generator=noise_gen,
             data_loader=train_loader,
-            criterion=model.criterion,
+            criterion=crit,
             device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
             save_plots=True,
             output_dir=Path(config.paths.output_dir) / "sanity_check_plots",
@@ -453,8 +471,9 @@ def maybe_run_sanity_check(
         if not sanity_results["passed"]:
             raise RuntimeError("Sanity check failed! See output above for details.")
 
-        print("\nSanity check passed! Exiting without training.")
+        _ = print("\nSanity check passed! Exiting without training.")
         return {"sanity_check": "passed"}
+    return None
 
 
 def generate_diagnostic_plots(
@@ -462,59 +481,64 @@ def generate_diagnostic_plots(
     noise_generator: NoiseGenerator,
     sample_adjacency: torch.Tensor,
     output_dir: Path,
-    device: torch.device = torch.device("cpu"),
-):
+    device: str | torch.device = "cpu",
+) -> None:
     """Generate diagnostic plots for sanity checking."""
     output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _ = output_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Noise effect visualization
-    fig, axes = plt.subplots(2, 3, figsize=(12, 8))
-    noise_levels = [0.0, 0.1, 0.3]
+    fig, axes_raw = plt.subplots(2, 3, figsize=(12, 8))
+    axes: np.ndarray = np.array(axes_raw)
+    noise_levels: list[float] = [0.0, 0.1, 0.3]
 
     for i, eps in enumerate(noise_levels):
+        A_noisy: torch.Tensor
         if eps == 0:
             A_noisy = sample_adjacency
         else:
             A_noisy = noise_generator.add_noise(sample_adjacency, eps)
 
         # Top row: adjacency matrices
-        im = axes[0, i].imshow(A_noisy.cpu().numpy(), cmap="viridis")
-        axes[0, i].set_title(f"Noise level: {eps}")
-        axes[0, i].axis("off")
+        _ = axes[0, i].imshow(A_noisy.cpu().numpy(), cmap="viridis")
+        _ = axes[0, i].set_title(f"Noise level: {eps}")
+        _ = axes[0, i].axis("off")
 
         # Bottom row: difference from original
-        diff = torch.abs(A_noisy - sample_adjacency)
-        axes[1, i].imshow(diff.cpu().numpy(), cmap="Reds")
-        axes[1, i].set_title(f"Difference (sum: {diff.sum():.2f})")
-        axes[1, i].axis("off")
+        diff: torch.Tensor = torch.abs(A_noisy - sample_adjacency)
+        _ = axes[1, i].imshow(diff.cpu().numpy(), cmap="Reds")
+        _ = axes[1, i].set_title(f"Difference (sum: {float(diff.sum()):.2f})")
+        _ = axes[1, i].axis("off")
 
-    plt.tight_layout()
-    plt.savefig(output_dir / "noise_effects.png", dpi=150, bbox_inches="tight")
-    plt.close()
+    _ = plt.tight_layout()
+    _ = plt.savefig(output_dir / "noise_effects.png", dpi=150, bbox_inches="tight")
+    _ = plt.close()
 
     # 2. Model input/output visualization
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    fig2, axes2_raw = plt.subplots(1, 3, figsize=(12, 4))
+    axes2: np.ndarray = np.array(axes2_raw)
 
     # Original
-    axes[0].imshow(sample_adjacency.cpu().numpy(), cmap="viridis")
-    axes[0].set_title("Original")
-    axes[0].axis("off")
+    _ = axes2[0].imshow(sample_adjacency.cpu().numpy(), cmap="viridis")
+    _ = axes2[0].set_title("Original")
+    _ = axes2[0].axis("off")
 
     # Noisy
     A_noisy = noise_generator.add_noise(sample_adjacency, 0.2)
-    axes[1].imshow(A_noisy.cpu().numpy(), cmap="viridis")
-    axes[1].set_title("Noisy (eps=0.2)")
-    axes[1].axis("off")
+    _ = axes2[1].imshow(A_noisy.cpu().numpy(), cmap="viridis")
+    _ = axes2[1].set_title("Noisy (eps=0.2)")
+    _ = axes2[1].axis("off")
 
     # Denoised
-    model.eval()
+    _ = model.eval()
     with torch.no_grad():
         # Handle different model types
+        denoised: torch.Tensor | tuple[torch.Tensor, ...]
         if hasattr(model, "forward"):
             if "Attention" in model.__class__.__name__:
                 # Attention models need eigenvectors - compute them from noisy adjacency
                 from tmgg.experiment_utils.data import compute_eigendecomposition
+
                 _, V_noisy = compute_eigendecomposition(A_noisy)
                 denoised = model(V_noisy.unsqueeze(0).to(device))
             else:
@@ -526,14 +550,14 @@ def generate_diagnostic_plots(
         # Handle models that return tuples
         if isinstance(denoised, tuple):
             denoised = denoised[0]
-            
+
         if len(denoised.shape) == 3:
             denoised = denoised.squeeze(0)
 
-    axes[2].imshow(denoised.cpu().numpy(), cmap="viridis")
-    axes[2].set_title("Denoised")
-    axes[2].axis("off")
+    _ = axes2[2].imshow(denoised.cpu().numpy(), cmap="viridis")
+    _ = axes2[2].set_title("Denoised")
+    _ = axes2[2].axis("off")
 
-    plt.tight_layout()
-    plt.savefig(output_dir / "model_io.png", dpi=150, bbox_inches="tight")
-    plt.close()
+    _ = plt.tight_layout()
+    _ = plt.savefig(output_dir / "model_io.png", dpi=150, bbox_inches="tight")
+    _ = plt.close()

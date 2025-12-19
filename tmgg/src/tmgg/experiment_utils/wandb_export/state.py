@@ -7,8 +7,8 @@ of partial/incomplete exports that need cleanup.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -109,7 +109,9 @@ class ExportState:
                     status = RunExportStatus.from_dict(data)
                     self._cache[status.run_id] = status
                 except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Skipping malformed line {line_num} in state file: {e}")
+                    logger.warning(
+                        f"Skipping malformed line {line_num} in state file: {e}"
+                    )
 
         logger.debug(f"Loaded {len(self._cache)} run statuses from {self.state_file}")
 
@@ -137,7 +139,7 @@ class ExportState:
         status = RunExportStatus(
             run_id=run_id,
             run_path=run_path,
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
             status="in_progress",
         )
         self._append(status)
@@ -146,13 +148,15 @@ class ExportState:
         """Mark run export as completed with component status."""
         existing = self._cache.get(run_id)
         if existing is None:
-            raise ValueError(f"Cannot mark {run_id} as completed - no started status found")
+            raise ValueError(
+                f"Cannot mark {run_id} as completed - no started status found"
+            )
 
         status = RunExportStatus(
             run_id=run_id,
             run_path=existing.run_path,
             started_at=existing.started_at,
-            completed_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=datetime.now(UTC).isoformat(),
             status="completed",
             components=components,
         )
@@ -162,13 +166,15 @@ class ExportState:
         """Mark run export as failed with error message."""
         existing = self._cache.get(run_id)
         if existing is None:
-            raise ValueError(f"Cannot mark {run_id} as failed - no started status found")
+            raise ValueError(
+                f"Cannot mark {run_id} as failed - no started status found"
+            )
 
         status = RunExportStatus(
             run_id=run_id,
             run_path=existing.run_path,
             started_at=existing.started_at,
-            completed_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=datetime.now(UTC).isoformat(),
             status="failed",
             error_message=error,
         )

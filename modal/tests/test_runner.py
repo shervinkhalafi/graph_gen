@@ -35,7 +35,7 @@ class TestResultStatus:
 
     def test_missing_when_result_not_found(self, mock_storage):
         """Should return MISSING when storage.exists returns False."""
-        from tmgg_modal.result_status import ResultStatus, check_result_status
+        from tmgg_modal.result_status import ResultStatus, check_result_status  # pyright: ignore[reportImplicitRelativeImport]
 
         mock_storage.exists.return_value = False
 
@@ -45,7 +45,7 @@ class TestResultStatus:
 
     def test_complete_with_valid_metrics(self, mock_storage):
         """Should return COMPLETE when all required metrics present."""
-        from tmgg_modal.result_status import ResultStatus, check_result_status
+        from tmgg_modal.result_status import ResultStatus, check_result_status  # pyright: ignore[reportImplicitRelativeImport]
 
         mock_storage.exists.return_value = True
         mock_storage.download_metrics.return_value = {
@@ -59,7 +59,7 @@ class TestResultStatus:
 
     def test_partial_when_metric_missing(self, mock_storage):
         """Should return PARTIAL when required metric is None."""
-        from tmgg_modal.result_status import ResultStatus, check_result_status
+        from tmgg_modal.result_status import ResultStatus, check_result_status  # pyright: ignore[reportImplicitRelativeImport]
 
         mock_storage.exists.return_value = True
         mock_storage.download_metrics.return_value = {
@@ -72,7 +72,7 @@ class TestResultStatus:
 
     def test_partial_when_metric_is_inf(self, mock_storage):
         """Should return PARTIAL when metric is infinity (failed run)."""
-        from tmgg_modal.result_status import ResultStatus, check_result_status
+        from tmgg_modal.result_status import ResultStatus, check_result_status  # pyright: ignore[reportImplicitRelativeImport]
 
         mock_storage.exists.return_value = True
         mock_storage.download_metrics.return_value = {
@@ -85,7 +85,7 @@ class TestResultStatus:
 
     def test_stale_when_older_than_threshold(self, mock_storage):
         """Should return STALE when result is older than max_age_hours."""
-        from tmgg_modal.result_status import ResultStatus, check_result_status
+        from tmgg_modal.result_status import ResultStatus, check_result_status  # pyright: ignore[reportImplicitRelativeImport]
 
         mock_storage.exists.return_value = True
         old_time = datetime.now() - timedelta(hours=48)
@@ -95,14 +95,16 @@ class TestResultStatus:
         }
 
         status = check_result_status(
-            mock_storage, "run-123", max_age_hours=24  # 24 hour threshold
+            mock_storage,
+            "run-123",
+            max_age_hours=24,  # 24 hour threshold
         )
 
         assert status == ResultStatus.STALE
 
     def test_complete_when_within_age_threshold(self, mock_storage):
         """Should return COMPLETE when result is within max_age_hours."""
-        from tmgg_modal.result_status import ResultStatus, check_result_status
+        from tmgg_modal.result_status import ResultStatus, check_result_status  # pyright: ignore[reportImplicitRelativeImport]
 
         mock_storage.exists.return_value = True
         recent_time = datetime.now() - timedelta(hours=12)
@@ -112,14 +114,16 @@ class TestResultStatus:
         }
 
         status = check_result_status(
-            mock_storage, "run-123", max_age_hours=24  # 24 hour threshold
+            mock_storage,
+            "run-123",
+            max_age_hours=24,  # 24 hour threshold
         )
 
         assert status == ResultStatus.COMPLETE
 
     def test_custom_required_metrics(self, mock_storage):
         """Should check custom required_metrics list."""
-        from tmgg_modal.result_status import ResultStatus, check_result_status
+        from tmgg_modal.result_status import ResultStatus, check_result_status  # pyright: ignore[reportImplicitRelativeImport]
 
         mock_storage.exists.return_value = True
         mock_storage.download_metrics.return_value = {
@@ -155,7 +159,7 @@ class TestFilterConfigsByStatus:
 
     def test_returns_all_configs_when_storage_is_none(self, sample_configs):
         """When storage is None, all configs should be returned as MISSING."""
-        from tmgg_modal.result_status import ResultStatus, filter_configs_by_status
+        from tmgg_modal.result_status import ResultStatus, filter_configs_by_status  # pyright: ignore[reportImplicitRelativeImport]
 
         filtered, status_map = filter_configs_by_status(None, sample_configs)
 
@@ -164,7 +168,7 @@ class TestFilterConfigsByStatus:
 
     def test_filters_complete_results_by_default(self, mock_storage, sample_configs):
         """By default, should skip COMPLETE results."""
-        from tmgg_modal.result_status import ResultStatus, filter_configs_by_status
+        from tmgg_modal.result_status import ResultStatus, filter_configs_by_status  # pyright: ignore[reportImplicitRelativeImport]
 
         # run-1 is complete, run-2 and run-3 are missing
         def mock_exists(key):
@@ -188,13 +192,11 @@ class TestFilterConfigsByStatus:
 
     def test_custom_skip_statuses(self, mock_storage, sample_configs):
         """Should respect custom skip_statuses parameter."""
-        from tmgg_modal.result_status import ResultStatus, filter_configs_by_status
+        from tmgg_modal.result_status import filter_configs_by_status  # pyright: ignore[reportImplicitRelativeImport]
 
         # All are complete
         mock_storage.exists.return_value = True
-        mock_storage.download_metrics.return_value = {
-            "metrics": {"best_val_loss": 0.1}
-        }
+        mock_storage.download_metrics.return_value = {"metrics": {"best_val_loss": 0.1}}
 
         # Don't skip anything
         filtered, _ = filter_configs_by_status(
@@ -205,7 +207,7 @@ class TestFilterConfigsByStatus:
 
     def test_status_map_contains_all_run_ids(self, mock_storage, sample_configs):
         """Status map should contain entries for all configs."""
-        from tmgg_modal.result_status import filter_configs_by_status
+        from tmgg_modal.result_status import filter_configs_by_status  # pyright: ignore[reportImplicitRelativeImport]
 
         mock_storage.exists.return_value = False
 
@@ -219,7 +221,7 @@ class TestSummarizeStatusMap:
 
     def test_summarizes_all_statuses(self):
         """Should include counts for all present statuses."""
-        from tmgg_modal.result_status import ResultStatus, summarize_status_map
+        from tmgg_modal.result_status import ResultStatus, summarize_status_map  # pyright: ignore[reportImplicitRelativeImport]
 
         status_map = {
             "run-1": ResultStatus.COMPLETE,
@@ -237,7 +239,7 @@ class TestSummarizeStatusMap:
 
     def test_empty_map_returns_no_results(self):
         """Empty status map should return 'no results'."""
-        from tmgg_modal.result_status import summarize_status_map
+        from tmgg_modal.result_status import summarize_status_map  # pyright: ignore[reportImplicitRelativeImport]
 
         summary = summarize_status_map({})
 
@@ -254,7 +256,7 @@ class TestModalRunner:
 
     def test_runner_initialization(self, mock_storage):
         """ModalRunner should initialize with gpu_type and storage."""
-        from tmgg_modal.runner import ModalRunner
+        from tmgg_modal.runner import ModalRunner  # pyright: ignore[reportImplicitRelativeImport]
 
         runner = ModalRunner(gpu_type="fast", storage=mock_storage)
 
@@ -264,7 +266,7 @@ class TestModalRunner:
     def test_create_runner_factory(self):
         """create_runner should create ModalRunner with default settings."""
         with patch.dict("os.environ", {}, clear=True):
-            from tmgg_modal.runner import create_runner
+            from tmgg_modal.runner import create_runner  # pyright: ignore[reportImplicitRelativeImport]
 
             runner = create_runner(gpu_type="standard")
 
@@ -278,18 +280,16 @@ class TestExperimentResult:
 
     def test_result_from_dict(self):
         """ExperimentResult should be constructable from result dict."""
-        from tmgg_modal.runner import ExperimentResult
+        from tmgg_modal.runner import ExperimentResult  # pyright: ignore[reportImplicitRelativeImport]
 
-        result_dict = {
-            "run_id": "test-123",
-            "config": {"lr": 1e-4},
-            "metrics": {"best_val_loss": 0.5},
-            "checkpoint_path": "s3://bucket/checkpoints/test-123/model.ckpt",
-            "status": "completed",
-            "duration_seconds": 3600.0,
-        }
-
-        result = ExperimentResult(**result_dict)
+        result = ExperimentResult(
+            run_id="test-123",
+            config={"lr": 1e-4},
+            metrics={"best_val_loss": 0.5},
+            checkpoint_path="s3://bucket/checkpoints/test-123/model.ckpt",
+            status="completed",
+            duration_seconds=3600.0,
+        )
 
         assert result.run_id == "test-123"
         assert result.metrics["best_val_loss"] == 0.5
@@ -297,7 +297,7 @@ class TestExperimentResult:
 
     def test_result_with_error(self):
         """Failed experiments should capture error message."""
-        from tmgg_modal.runner import ExperimentResult
+        from tmgg_modal.runner import ExperimentResult  # pyright: ignore[reportImplicitRelativeImport]
 
         result = ExperimentResult(
             run_id="failed-run",
@@ -309,6 +309,7 @@ class TestExperimentResult:
         )
 
         assert result.status == "failed"
+        assert result.error_message is not None
         assert "CUDA" in result.error_message
 
 
@@ -317,14 +318,14 @@ class TestGPUConfigs:
 
     def test_gpu_configs_defined(self):
         """GPU_CONFIGS should define expected tiers."""
-        from tmgg_modal.app import GPU_CONFIGS
+        from tmgg_modal.app import GPU_CONFIGS  # pyright: ignore[reportImplicitRelativeImport]
 
         assert "standard" in GPU_CONFIGS
         assert "fast" in GPU_CONFIGS
 
     def test_default_timeouts_match_gpu_tiers(self):
         """DEFAULT_TIMEOUTS should have entries for GPU tiers."""
-        from tmgg_modal.app import DEFAULT_TIMEOUTS, GPU_CONFIGS
+        from tmgg_modal.app import DEFAULT_TIMEOUTS, GPU_CONFIGS  # pyright: ignore[reportImplicitRelativeImport]
 
         # All GPU configs should have corresponding timeouts
         for tier in GPU_CONFIGS:
@@ -332,7 +333,7 @@ class TestGPUConfigs:
 
     def test_timeouts_are_reasonable(self):
         """Timeouts should be in reasonable range (10 min to 24 hours)."""
-        from tmgg_modal.app import DEFAULT_TIMEOUTS
+        from tmgg_modal.app import DEFAULT_TIMEOUTS  # pyright: ignore[reportImplicitRelativeImport]
 
         for tier, timeout in DEFAULT_TIMEOUTS.items():
             assert timeout >= 600, f"Timeout for {tier} too short"

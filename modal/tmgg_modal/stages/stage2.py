@@ -6,22 +6,19 @@ Budget: 166.5 GPU-hours
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-import modal
 from omegaconf import OmegaConf
 
-from tmgg_modal.app import app, GPU_CONFIGS, DEFAULT_TIMEOUTS
-from tmgg_modal.runner import (
+from tmgg_modal.app import app  # pyright: ignore[reportImplicitRelativeImport]
+from tmgg_modal.runner import (  # pyright: ignore[reportImplicitRelativeImport]
     experiment_image,
     tigris_secret,
     wandb_secret,
     run_single_experiment,
     run_single_experiment_fast,
 )
-from tmgg_modal.storage import get_storage_from_env
-from tmgg_modal.volumes import get_volume_mounts
+from tmgg_modal.storage import get_storage_from_env  # pyright: ignore[reportImplicitRelativeImport]
 
 
 # Stage 2 configuration
@@ -61,7 +58,7 @@ def generate_stage2_configs(
         List of configuration dictionaries.
     """
     import itertools
-    from tmgg_modal.paths import get_exp_configs_path
+    from tmgg_modal.paths import get_exp_configs_path  # pyright: ignore[reportImplicitRelativeImport]
 
     configs = []
 
@@ -87,12 +84,8 @@ def generate_stage2_configs(
         # Narrow hyperparameter search around best values
         best_lr = best_stage1_config.get("learning_rate", 1e-4)
         best_wd = best_stage1_config.get("weight_decay", 1e-2)
-        STAGE2_HYPERPARAMETERS["learning_rate"] = [
-            best_lr / 5, best_lr, best_lr * 5
-        ]
-        STAGE2_HYPERPARAMETERS["weight_decay"] = [
-            best_wd / 10, best_wd, best_wd * 10
-        ]
+        STAGE2_HYPERPARAMETERS["learning_rate"] = [best_lr / 5, best_lr, best_lr * 5]
+        STAGE2_HYPERPARAMETERS["weight_decay"] = [best_wd / 10, best_wd, best_wd * 10]
 
     # Generate hyperparameter combinations
     hp_keys = list(STAGE2_HYPERPARAMETERS.keys())
@@ -190,7 +183,7 @@ def run_stage2(
         return {"status": "dry_run", "num_configs": len(configs)}
 
     # Check for completed runs with fine-grained status
-    from tmgg_modal.result_status import (
+    from tmgg_modal.result_status import (  # pyright: ignore[reportImplicitRelativeImport]
         ResultStatus,
         filter_configs_by_status,
         summarize_status_map,
@@ -231,7 +224,7 @@ def run_stage2(
                 print(f"  Warning: {w}")
 
     # Validate metrics helper
-    def get_val_loss(result: dict) -> float | None:
+    def get_val_loss(result: dict[str, Any]) -> float | None:
         """Extract validation loss, returning None if missing or invalid."""
         metrics = result.get("metrics", {})
         loss = metrics.get("best_val_loss")
@@ -258,7 +251,9 @@ def run_stage2(
             }
 
     if results_without_metrics:
-        print(f"Warning: {len(results_without_metrics)} completed runs missing best_val_loss metric:")
+        print(
+            f"Warning: {len(results_without_metrics)} completed runs missing best_val_loss metric:"
+        )
         for r in results_without_metrics[:5]:
             print(f"  - {r.get('run_id', 'unknown')}")
         if len(results_without_metrics) > 5:

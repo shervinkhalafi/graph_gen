@@ -12,6 +12,7 @@ Output files:
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,13 @@ import click
 import pandas as pd
 from loguru import logger
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -69,10 +76,14 @@ def extract_config_fields(config: dict[str, Any]) -> dict[str, Any]:
         flat["data_num_nodes"] = data.get("n")
         dataset_config = data.get("dataset_config", {})
         if isinstance(dataset_config, dict):
-            flat["data_num_nodes"] = flat["data_num_nodes"] or dataset_config.get("num_nodes")
+            flat["data_num_nodes"] = flat["data_num_nodes"] or dataset_config.get(
+                "num_nodes"
+            )
 
     # Top-level config
-    flat["learning_rate"] = config.get("learning_rate") or config.get("model", {}).get("learning_rate")
+    flat["learning_rate"] = config.get("learning_rate") or config.get("model", {}).get(
+        "learning_rate"
+    )
     flat["seed"] = config.get("seed")
     flat["noise_level"] = config.get("noise_level")
 
@@ -114,8 +125,9 @@ def load_run_data(run_dir: Path, project_id: str) -> dict[str, Any] | None:
     summary = load_json(run_dir / "summary.json")
     # Filter out non-scalar values (images, etc.)
     summary_scalar = {
-        k: v for k, v in summary.items()
-        if isinstance(v, (int, float, str, bool, type(None)))
+        k: v
+        for k, v in summary.items()
+        if isinstance(v, int | float | str | bool | type(None))
     }
 
     # Load metadata
@@ -171,7 +183,9 @@ def unify_exports(
     if projects:
         project_dirs = [export_dir / p for p in projects if (export_dir / p).exists()]
     else:
-        project_dirs = [d for d in export_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        project_dirs = [
+            d for d in export_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
+        ]
 
     if not project_dirs:
         logger.error(f"No projects found in {export_dir}")
@@ -192,7 +206,11 @@ def unify_exports(
     ) as progress:
         for project_dir in project_dirs:
             project_id = project_dir.name
-            run_dirs = [d for d in project_dir.iterdir() if d.is_dir() and not d.name.startswith("_")]
+            run_dirs = [
+                d
+                for d in project_dir.iterdir()
+                if d.is_dir() and not d.name.startswith("_")
+            ]
 
             if not run_dirs:
                 continue
@@ -231,7 +249,13 @@ def unify_exports(
                 # Append history
                 if run_data["history"] is not None:
                     # Add config fields to history for filtering
-                    for key in ["model_type", "data_noise_type", "data_dataset_name", "learning_rate", "noise_level"]:
+                    for key in [
+                        "model_type",
+                        "data_noise_type",
+                        "data_dataset_name",
+                        "learning_rate",
+                        "noise_level",
+                    ]:
                         if key in run_data["config"]:
                             run_data["history"][key] = run_data["config"][key]
                     all_history.append(run_data["history"])
@@ -254,10 +278,8 @@ def unify_exports(
             # Convert object columns that should be numeric
             for col in history_df.columns:
                 if history_df[col].dtype == object:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         history_df[col] = pd.to_numeric(history_df[col])
-                    except (ValueError, TypeError):
-                        pass  # Keep as object if conversion fails
         else:
             history_df = pd.DataFrame()
     else:
@@ -266,8 +288,12 @@ def unify_exports(
     summary_df = pd.DataFrame(all_summary)
     metadata_df = pd.DataFrame(all_metadata)
 
-    logger.info(f"Unified history: {len(history_df)} rows, {len(history_df.columns)} columns")
-    logger.info(f"Unified summary: {len(summary_df)} rows, {len(summary_df.columns)} columns")
+    logger.info(
+        f"Unified history: {len(history_df)} rows, {len(history_df.columns)} columns"
+    )
+    logger.info(
+        f"Unified summary: {len(summary_df)} rows, {len(summary_df.columns)} columns"
+    )
     logger.info(f"Unified metadata: {len(metadata_df)} rows")
 
     # Save if output_dir specified
@@ -312,6 +338,7 @@ def unify_exports(
 def main(export_dir: Path, projects: tuple[str, ...], output_dir: Path) -> None:
     """Unify exported W&B data into consolidated parquet files."""
     import sys
+
     from loguru import logger
 
     logger.remove()

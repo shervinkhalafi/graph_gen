@@ -4,8 +4,6 @@ This module provides wrappers around NetworkX graph generators for creating
 datasets of d-regular graphs, LFR community graphs, and random trees.
 """
 
-from typing import List, Optional, Tuple
-
 import networkx as nx
 import numpy as np
 import torch
@@ -15,7 +13,7 @@ def generate_regular_graphs(
     n: int,
     d: int,
     num_graphs: int,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Generate random d-regular graphs.
 
@@ -42,7 +40,6 @@ def generate_regular_graphs(
     ValueError
         If d >= n or n*d is odd (no d-regular graph exists).
     """
-    import random
 
     if d >= n:
         raise ValueError(f"Degree d={d} must be less than n={n}")
@@ -55,7 +52,7 @@ def generate_regular_graphs(
     for i in range(num_graphs):
         graph_seed = base_seed + i
         G = nx.random_regular_graph(d, n, seed=graph_seed)
-        A = nx.to_numpy_array(G, dtype=np.float32)
+        A = nx.to_numpy_array(G, dtype=np.dtype(np.float32))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -64,7 +61,7 @@ def generate_regular_graphs(
 def generate_tree_graphs(
     n: int,
     num_graphs: int,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Generate random tree graphs using Prüfer sequences.
 
@@ -99,7 +96,7 @@ def generate_tree_graphs(
         # Prüfer sequence has length n-2, with elements in [0, n-1]
         prufer_seq = [random.randint(0, n - 1) for _ in range(n - 2)]
         G = nx.from_prufer_sequence(prufer_seq)
-        A = nx.to_numpy_array(G, dtype=np.float32)
+        A = nx.to_numpy_array(G, dtype=np.dtype(np.float32))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -111,9 +108,9 @@ def generate_lfr_graphs(
     tau1: float = 3.0,
     tau2: float = 1.5,
     mu: float = 0.1,
-    average_degree: Optional[int] = None,
-    min_community: Optional[int] = None,
-    seed: Optional[int] = None,
+    average_degree: int | None = None,
+    min_community: int | None = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Generate LFR (Lancichinetti-Fortunato-Radicchi) benchmark graphs.
 
@@ -197,7 +194,7 @@ def generate_lfr_graphs(
                 seed=graph_seed,
             )
 
-        A = nx.to_numpy_array(G, dtype=np.float32)
+        A = nx.to_numpy_array(G, dtype=np.dtype(np.float32))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -207,7 +204,7 @@ def generate_erdos_renyi_graphs(
     n: int,
     p: float,
     num_graphs: int,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Generate Erdős-Rényi random graphs.
 
@@ -235,7 +232,7 @@ def generate_erdos_renyi_graphs(
     for i in range(num_graphs):
         graph_seed = base_seed + i
         G = nx.fast_gnp_random_graph(n, p, seed=graph_seed)
-        A = nx.to_numpy_array(G, dtype=np.float32)
+        A = nx.to_numpy_array(G, dtype=np.dtype(np.float32))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -246,7 +243,7 @@ def generate_watts_strogatz_graphs(
     num_graphs: int,
     k: int = 4,
     p: float = 0.3,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Generate Watts-Strogatz small-world graphs.
 
@@ -289,7 +286,7 @@ def generate_watts_strogatz_graphs(
     for i in range(num_graphs):
         graph_seed = base_seed + i
         G = nx.watts_strogatz_graph(n, k, p, seed=graph_seed)
-        A = nx.to_numpy_array(G, dtype=np.float32)
+        A = nx.to_numpy_array(G, dtype=np.dtype(np.float32))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -299,7 +296,7 @@ def generate_random_geometric_graphs(
     n: int,
     num_graphs: int,
     radius: float = 0.3,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Generate random geometric graphs.
 
@@ -328,7 +325,7 @@ def generate_random_geometric_graphs(
     for i in range(num_graphs):
         graph_seed = base_seed + i
         G = nx.random_geometric_graph(n, radius, seed=graph_seed)
-        A = nx.to_numpy_array(G, dtype=np.float32)
+        A = nx.to_numpy_array(G, dtype=np.dtype(np.float32))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -337,8 +334,8 @@ def generate_random_geometric_graphs(
 def generate_configuration_model_graphs(
     n: int,
     num_graphs: int,
-    degree_sequence: Optional[List[int]] = None,
-    seed: Optional[int] = None,
+    degree_sequence: list[int] | None = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Generate random graphs with a specified degree sequence.
 
@@ -397,7 +394,7 @@ def generate_configuration_model_graphs(
         G = nx.Graph(G)
         G.remove_edges_from(nx.selfloop_edges(G))
 
-        A = nx.to_numpy_array(G, dtype=np.float32, nodelist=range(n))
+        A = nx.to_numpy_array(G, dtype=np.dtype(np.float32), nodelist=range(n))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -446,9 +443,17 @@ class SyntheticGraphDataset:
     """
 
     VALID_TYPES = {
-        "regular", "tree", "lfr", "erdos_renyi", "er",
-        "watts_strogatz", "ws", "random_geometric", "rg",
-        "configuration_model", "cm"
+        "regular",
+        "tree",
+        "lfr",
+        "erdos_renyi",
+        "er",
+        "watts_strogatz",
+        "ws",
+        "random_geometric",
+        "rg",
+        "configuration_model",
+        "cm",
     }
 
     # Map aliases to canonical names
@@ -464,7 +469,7 @@ class SyntheticGraphDataset:
         graph_type: str,
         n: int,
         num_graphs: int,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         **kwargs,
     ):
         if graph_type not in self.VALID_TYPES:
@@ -488,9 +493,7 @@ class SyntheticGraphDataset:
         elif canonical_type == "tree":
             self.adjacencies = generate_tree_graphs(n, num_graphs, seed)
         elif canonical_type == "lfr":
-            self.adjacencies = generate_lfr_graphs(
-                n, num_graphs, seed=seed, **kwargs
-            )
+            self.adjacencies = generate_lfr_graphs(n, num_graphs, seed=seed, **kwargs)
         elif canonical_type == "erdos_renyi":
             p = kwargs.get("p", 0.1)
             self.adjacencies = generate_erdos_renyi_graphs(n, p, num_graphs, seed)
@@ -500,9 +503,11 @@ class SyntheticGraphDataset:
             self.adjacencies = generate_watts_strogatz_graphs(n, num_graphs, k, p, seed)
         elif canonical_type == "random_geometric":
             radius = kwargs.get("radius", 0.3)
-            self.adjacencies = generate_random_geometric_graphs(n, num_graphs, radius, seed)
+            self.adjacencies = generate_random_geometric_graphs(
+                n, num_graphs, radius, seed
+            )
         elif canonical_type == "configuration_model":
-            degree_sequence = kwargs.get("degree_sequence", None)
+            degree_sequence = kwargs.get("degree_sequence")
             self.adjacencies = generate_configuration_model_graphs(
                 n, num_graphs, degree_sequence, seed
             )
@@ -537,8 +542,8 @@ class SyntheticGraphDataset:
         self,
         train_ratio: float = 0.7,
         val_ratio: float = 0.1,
-        seed: Optional[int] = None,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        seed: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Split dataset into train/validation/test sets.
 
         Parameters
@@ -566,8 +571,8 @@ class SyntheticGraphDataset:
         n_val = int(val_ratio * self.num_graphs)
 
         train_idx = indices[:n_train]
-        val_idx = indices[n_train:n_train + n_val]
-        test_idx = indices[n_train + n_val:]
+        val_idx = indices[n_train : n_train + n_val]
+        test_idx = indices[n_train + n_val :]
 
         return (
             self.adjacencies[train_idx],

@@ -2,10 +2,7 @@
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
 from scipy.linalg import expm
-from typing import List, Tuple, Optional, Union
-import random
 
 
 def random_skew_symmetric_matrix(n: int) -> np.ndarray:
@@ -23,7 +20,7 @@ def random_skew_symmetric_matrix(n: int) -> np.ndarray:
 
 
 def add_rotation_noise(
-    A: Union[torch.Tensor, np.ndarray], eps: float, skew: np.ndarray
+    A: torch.Tensor | np.ndarray, eps: float, skew: np.ndarray
 ) -> torch.Tensor:
     """
     Add rotation noise to adjacency matrix by rotating eigenvectors.
@@ -37,46 +34,45 @@ def add_rotation_noise(
         Noisy adjacency matrix
     """
     # Convert to tensor if needed
-    if isinstance(A, np.ndarray):
-        A = torch.tensor(A, dtype=torch.float32)
-    else:
-        A = A.float()
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
 
     # Handle both single matrix and batch cases
     if A.dim() == 2:
         # Single matrix case
-        l, V = torch.linalg.eigh(A)
+        eigenvalues, V = torch.linalg.eigh(A)
         R = expm(eps * skew)
         R_tensor = torch.tensor(R, dtype=torch.float32).to(V.device)
         V_rot = V @ R_tensor
-        A_noisy = V_rot @ torch.diag(l) @ V_rot.T
+        A_noisy = V_rot @ torch.diag(eigenvalues) @ V_rot.T
     else:
         # Batch case
-        l, V = torch.linalg.eigh(A)
+        eigenvalues, V = torch.linalg.eigh(A)
         R = expm(eps * skew)
         R_tensor = torch.tensor(R, dtype=torch.float32).to(V.device)
         V_rot = V @ R_tensor
 
         # Initialize tensor of appropriate size
-        l_diag = torch.zeros(
-            l.shape[0], l.shape[1], l.shape[1], device=l.device, dtype=l.dtype
+        eig_diag = torch.zeros(
+            eigenvalues.shape[0],
+            eigenvalues.shape[1],
+            eigenvalues.shape[1],
+            device=eigenvalues.device,
+            dtype=eigenvalues.dtype,
         )
 
         # Fill diagonal elements for each matrix in the batch
-        batch_indices = torch.arange(l.shape[0])
-        diag_indices = torch.arange(l.shape[1])
-        l_diag[batch_indices[:, None], diag_indices, diag_indices] = l
+        batch_indices = torch.arange(eigenvalues.shape[0])
+        diag_indices = torch.arange(eigenvalues.shape[1])
+        eig_diag[batch_indices[:, None], diag_indices, diag_indices] = eigenvalues
 
         A_noisy = torch.matmul(
-            torch.matmul(V_rot, l_diag), torch.transpose(V_rot, 1, 2)
+            torch.matmul(V_rot, eig_diag), torch.transpose(V_rot, 1, 2)
         )
 
     return torch.real(A_noisy)
 
 
-def add_gaussian_noise(
-    A: Union[torch.Tensor, np.ndarray], eps: float
-) -> torch.Tensor:
+def add_gaussian_noise(A: torch.Tensor | np.ndarray, eps: float) -> torch.Tensor:
     """
     Add Gaussian noise to adjacency matrix.
 
@@ -88,19 +84,16 @@ def add_gaussian_noise(
         Noisy adjacency matrix
     """
     # Convert to tensor if needed
-    if isinstance(A, np.ndarray):
-        A = torch.tensor(A, dtype=torch.float32)
-    else:
-        A = A.float()
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
 
     A_noisy = A + eps * torch.randn_like(A)
     return A_noisy
 
 
 def add_digress_noise(
-    A: Union[torch.Tensor, np.ndarray],
+    A: torch.Tensor | np.ndarray,
     p: float,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> torch.Tensor:
     """
     Add noise to an adjacency matrix by flipping edges with probability p.
@@ -117,10 +110,7 @@ def add_digress_noise(
         rng = np.random.default_rng()
 
     # Convert to tensor if needed
-    if isinstance(A, np.ndarray):
-        A = torch.tensor(A, dtype=torch.float32)
-    else:
-        A = A.float()
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
 
     # Generate random values for each element
     random_values = torch.rand_like(A)

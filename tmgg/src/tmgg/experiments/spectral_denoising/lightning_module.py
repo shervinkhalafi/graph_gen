@@ -5,7 +5,7 @@ architectures (Linear PE, Graph Filter Bank, Self-Attention) through a single
 configurable Lightning module.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import torch.nn as nn
 
@@ -143,7 +143,7 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         }
         return name_map.get(self._model_type, self._model_type)
 
-    def get_model_config(self) -> Dict[str, Any]:
+    def get_model_config(self) -> dict[str, Any]:
         """Get model configuration for logging.
 
         Returns

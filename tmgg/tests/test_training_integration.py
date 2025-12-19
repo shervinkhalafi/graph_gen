@@ -16,11 +16,8 @@ Invariants:
 """
 
 import pytest
-import tempfile
-from pathlib import Path
-
-import torch
 import pytorch_lightning as pl
+import torch
 from omegaconf import OmegaConf
 
 
@@ -30,24 +27,26 @@ class TestTrainingPipeline:
     @pytest.fixture
     def minimal_config(self, tmp_path):
         """Create a minimal configuration for testing."""
-        return OmegaConf.create({
-            "seed": 42,
-            "learning_rate": 1e-3,
-            "weight_decay": 0.0,
-            "optimizer_type": "adam",
-            "loss_type": "BCEWithLogits",
-            "noise_type": "Digress",
-            "noise_levels": [0.1, 0.2],
-            "visualization_interval": 100,  # Don't visualize during short tests
-            "model": {
-                "k": 8,
-                "model_type": "filter_bank",
-            },
-            "paths": {
-                "output_dir": str(tmp_path),
-                "results_dir": str(tmp_path / "results"),
-            },
-        })
+        return OmegaConf.create(
+            {
+                "seed": 42,
+                "learning_rate": 1e-3,
+                "weight_decay": 0.0,
+                "optimizer_type": "adam",
+                "loss_type": "BCEWithLogits",
+                "noise_type": "Digress",
+                "noise_levels": [0.1, 0.2],
+                "visualization_interval": 100,  # Don't visualize during short tests
+                "model": {
+                    "k": 8,
+                    "model_type": "filter_bank",
+                },
+                "paths": {
+                    "output_dir": str(tmp_path),
+                    "results_dir": str(tmp_path / "results"),
+                },
+            }
+        )
 
     @pytest.fixture
     def sample_adjacency_matrices(self):
@@ -125,17 +124,17 @@ class TestTrainingPipeline:
             loss_type=minimal_config.loss_type,
         )
 
-        loss = module.training_step(sample_adjacency_matrices, batch_idx=0)
+        loss = module.training_step(sample_adjacency_matrices, batch_idx=0)  # pyright: ignore[reportArgumentType]
 
-        assert torch.isfinite(loss)
-        assert loss > 0
+        assert torch.isfinite(loss)  # pyright: ignore[reportArgumentType]
+        assert loss > 0  # pyright: ignore[reportOperatorIssue]
 
     def test_short_training_run(self, minimal_config, tmp_path):
         """Test a short training run completes without errors."""
+        from tmgg.experiment_utils.data.data_module import GraphDataModule
         from tmgg.experiments.spectral_denoising.lightning_module import (
             SpectralDenoisingLightningModule,
         )
-        from tmgg.experiment_utils.data.data_module import GraphDataModule
 
         # Create model
         module = SpectralDenoisingLightningModule(
@@ -176,10 +175,10 @@ class TestTrainingPipeline:
 
     def test_loss_decreases_during_training(self, minimal_config, tmp_path):
         """Test that loss decreases during training (model learns)."""
+        from tmgg.experiment_utils.data.data_module import GraphDataModule
         from tmgg.experiments.spectral_denoising.lightning_module import (
             SpectralDenoisingLightningModule,
         )
-        from tmgg.experiment_utils.data.data_module import GraphDataModule
 
         # Create model with nonlinear model for bounded output with MSE loss
         module = SpectralDenoisingLightningModule(
@@ -208,10 +207,10 @@ class TestTrainingPipeline:
 
         def tracking_training_step(batch, batch_idx):
             loss = original_training_step(batch, batch_idx)
-            losses.append(loss.item())
+            losses.append(loss.item())  # pyright: ignore[reportAttributeAccessIssue]
             return loss
 
-        module.training_step = tracking_training_step
+        module.training_step = tracking_training_step  # pyright: ignore[reportAttributeAccessIssue]
 
         # Train for a few epochs
         trainer = pl.Trainer(
@@ -256,10 +255,10 @@ class TestDataModuleIntegration:
 
     def test_lightning_module_uses_datamodule_noise_levels(self):
         """Test that Lightning module uses datamodule's noise_levels when attached."""
+        from tmgg.experiment_utils.data.data_module import GraphDataModule
         from tmgg.experiments.spectral_denoising.lightning_module import (
             SpectralDenoisingLightningModule,
         )
-        from tmgg.experiment_utils.data.data_module import GraphDataModule
 
         # Create module with different noise levels
         module = SpectralDenoisingLightningModule(
@@ -291,8 +290,8 @@ class TestDataModuleIntegration:
         # Properly set up datamodule (prepare_data then setup)
         data_module.prepare_data()
         data_module.setup("fit")
-        trainer.datamodule = data_module
-        module.trainer = trainer
+        trainer.datamodule = data_module  # pyright: ignore[reportAttributeAccessIssue]
+        module.trainer = trainer  # pyright: ignore[reportAttributeAccessIssue]
 
         # Now the noise_levels property should return datamodule's values
         assert module.noise_levels == dm_noise_levels

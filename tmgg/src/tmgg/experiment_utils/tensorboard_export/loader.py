@@ -1,8 +1,9 @@
 """Loader module for parsing TensorBoard events and config files."""
 
 import struct
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, cast
 
 import pandas as pd
 from omegaconf import OmegaConf
@@ -11,7 +12,7 @@ from tensorboard.compat.proto import event_pb2
 from .discovery import DiscoveredRun
 
 
-def _read_events(path: Path) -> Iterator[event_pb2.Event]:
+def _read_events(path: Path) -> Iterator[Any]:
     """Read events from a TensorBoard event file using raw protobuf.
 
     TensorBoard event files use a record format:
@@ -42,7 +43,7 @@ def _read_events(path: Path) -> Iterator[event_pb2.Event]:
 
             # Parse event
             event = event_pb2.Event()
-            event.ParseFromString(data)
+            event.ParseFromString(data)  # pyright: ignore[reportAttributeAccessIssue]
             yield event
 
 
@@ -88,7 +89,7 @@ def load_events(run: DiscoveredRun) -> pd.DataFrame:
 
     if not all_events:
         return pd.DataFrame(
-            columns=["project_id", "run_id", "tag", "step", "wall_time", "value"]
+            columns=["project_id", "run_id", "tag", "step", "wall_time", "value"]  # pyright: ignore[reportArgumentType]
         )
 
     return pd.DataFrame(all_events)
@@ -118,7 +119,10 @@ def load_config(run: DiscoveredRun) -> dict[str, Any]:
     try:
         config = OmegaConf.load(run.config_file)
         config_dict = OmegaConf.to_container(config, resolve=True)
-        flattened = _flatten_dict(config_dict)
+        if not isinstance(config_dict, dict):
+            return result
+        # Cast to satisfy pyright - we've verified it's a dict above
+        flattened = _flatten_dict(cast(dict[str, Any], config_dict))
         result.update(flattened)
     except Exception as e:
         print(f"Warning: Failed to load config {run.config_file}: {e}")

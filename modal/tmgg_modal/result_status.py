@@ -6,14 +6,12 @@ based on the state of their results.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from tmgg_modal.storage import TigrisStorage
+    from tmgg_modal.storage import TigrisStorage  # pyright: ignore[reportImplicitRelativeImport]
 
 
 class ResultStatus(Enum):

@@ -5,7 +5,7 @@ it through hidden layers, and reshapes back. Tests whether the training
 pipeline can train any neural network at all.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -62,10 +62,12 @@ class MLPBaseline(DenoisingModel):
         in_dim = self.flatten_dim
 
         for _ in range(num_layers):
-            layers.extend([
-                nn.Linear(in_dim, hidden_dim),
-                nn.ReLU(),
-            ])
+            layers.extend(
+                [
+                    nn.Linear(in_dim, hidden_dim),
+                    nn.ReLU(),
+                ]
+            )
             in_dim = hidden_dim
 
         layers.append(nn.Linear(hidden_dim, self.flatten_dim))
@@ -87,7 +89,7 @@ class MLPBaseline(DenoisingModel):
         B, N, _ = A.shape
 
         # Pad to max_nodes if needed
-        if N < self.max_nodes:
+        if self.max_nodes > N:
             A_padded = torch.zeros(B, self.max_nodes, self.max_nodes, device=A.device)
             A_padded[:, :N, :N] = A
         else:
@@ -99,12 +101,12 @@ class MLPBaseline(DenoisingModel):
         out = out.view(B, self.max_nodes, self.max_nodes)
 
         # Slice back to original size
-        if N < self.max_nodes:
+        if self.max_nodes > N:
             out = out[:, :N, :N]
 
         return out
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Return model configuration."""
         return {
             "model_type": "MLPBaseline",

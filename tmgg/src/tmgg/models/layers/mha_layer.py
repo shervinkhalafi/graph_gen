@@ -1,5 +1,4 @@
 import math
-from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -17,8 +16,8 @@ class MultiHeadAttention(nn.Module):
         self,
         d_model: int,
         num_heads: int,
-        d_k: Optional[int] = None,
-        d_v: Optional[int] = None,
+        d_k: int | None = None,
+        d_v: int | None = None,
         dropout: float = 0.0,
         bias: bool = False,
     ):
@@ -33,7 +32,7 @@ class MultiHeadAttention(nn.Module):
             dropout: Dropout probability
             bias: Whether to use bias in linear layers
         """
-        super(MultiHeadAttention, self).__init__()
+        super().__init__()
 
         self.num_heads = num_heads
         self.d_model = d_model
@@ -67,9 +66,9 @@ class MultiHeadAttention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        residual: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        mask: torch.Tensor | None = None,
+        residual: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of the Multi-Head Attention module.
 

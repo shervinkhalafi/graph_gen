@@ -4,7 +4,7 @@ Implements the simplest spectral denoiser: a linear transformation in
 eigenspace with optional node-specific bias correction.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -114,7 +114,9 @@ class LinearPE(SpectralDenoiser):
             # This adds b_i + b_j to entry (i, j)
             ones = torch.ones(n, device=V.device, dtype=V.dtype)
             # outer products: (n, 1) @ (1, n) -> (n, n)
-            bias_term = b.unsqueeze(1) @ ones.unsqueeze(0) + ones.unsqueeze(1) @ b.unsqueeze(0)
+            bias_term = b.unsqueeze(1) @ ones.unsqueeze(0) + ones.unsqueeze(
+                1
+            ) @ b.unsqueeze(0)
             # Broadcast over batch
             A_reconstructed = A_reconstructed + bias_term.unsqueeze(0)
 
@@ -123,10 +125,12 @@ class LinearPE(SpectralDenoiser):
 
         return A_reconstructed
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         config = super().get_config()
-        config.update({
-            "max_nodes": self.max_nodes,
-            "use_bias": self.use_bias,
-        })
+        config.update(
+            {
+                "max_nodes": self.max_nodes,
+                "use_bias": self.use_bias,
+            }
+        )
         return config

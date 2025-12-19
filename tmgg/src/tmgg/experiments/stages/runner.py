@@ -18,6 +18,10 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 
+from tmgg.experiment_utils.cloud.base import LocalRunner
+from tmgg.experiment_utils.cloud.coordinator import ExperimentCoordinator, StageConfig
+from tmgg.modal.runner import ModalRunner
+
 # Config path relative to this file
 TMGG_ROOT = Path(__file__).parent.parent.parent
 CONFIG_PATH = str(TMGG_ROOT / "exp_configs")
@@ -30,6 +34,7 @@ def _inject_stage_override(stage_name: str):
     automatically load its corresponding stage config without requiring the
     user to specify it manually.
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -37,37 +42,90 @@ def _inject_stage_override(stage_name: str):
             stage_override = f"+stage={stage_name}"
             if stage_override not in sys.argv:
                 # Check if any stage override is already specified
-                has_stage = any(arg.startswith("+stage=") or arg.startswith("stage=")
-                               for arg in sys.argv)
+                has_stage = any(
+                    arg.startswith("+stage=") or arg.startswith("stage=")
+                    for arg in sys.argv
+                )
                 if not has_stage:
                     sys.argv.append(stage_override)
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 def _run_stage(cfg: DictConfig, stage_name: str) -> dict:
     """Common stage execution logic.
 
-    Runs the stage either locally (default) or via cloud coordinator
-    if cloud configuration is provided.
-    """
-    from tmgg.experiment_utils.cloud import ExperimentCoordinator
-    from tmgg.experiment_utils.cloud.coordinator import StageConfig
+    Runs the stage either locally (default) or via Modal
+    if run_on_modal=true is specified in config.
 
+    Parameters
+    ----------
+    cfg
+        Hydra configuration with optional settings:
+        - sweep: bool - Run full sweep (default: False)
+        - run_on_modal: bool - Use Modal GPUs (default: False)
+        - detach: bool - Fire-and-forget, don't wait for results (default: False)
+        - parallelism: int - Max concurrent experiments (default: 4)
+        - resume: bool - Skip completed experiments (default: True)
+    stage_name
+        Stage identifier used for config lookup.
+
+    Returns
+    -------
+    dict
+        Stage results (empty if detach=true).
+    """
     # Check if running in sweep mode or single experiment mode
     if cfg.get("sweep", False):
         # Use stage name from config if available (allows override via +stage=...)
         actual_stage_name = cfg.get("stage", stage_name)
-        stage_config_path = TMGG_ROOT / "exp_configs" / "stage" / f"{actual_stage_name}.yaml"
+        stage_config_path = (
+            TMGG_ROOT / "exp_configs" / "stage" / f"{actual_stage_name}.yaml"
+        )
         stage_config = StageConfig.from_yaml(stage_config_path)
 
-        # Initialize coordinator
+        # Select runner based on config
+        runner_instance = (
+            ModalRunner() if cfg.get("run_on_modal", False) else LocalRunner()
+        )
+
+        # Initialize coordinator with runner
+        # CloudRunner type is compatible at runtime (both implement the same interface)
         coordinator = ExperimentCoordinator(
+            runner=runner_instance,  # pyright: ignore[reportArgumentType]
             base_config_path=Path(CONFIG_PATH),
         )
 
-        # Run the stage sweep
+        # Detached mode: spawn and exit immediately
+        if cfg.get("detach", False):
+            if not cfg.get("run_on_modal", False):
+                raise ValueError("detach=true requires run_on_modal=true")
+
+            spawned = coordinator.spawn_stage(
+                stage_config,
+                cfg,
+                resume=cfg.get("resume", True),
+            )
+
+            if not spawned:
+                print("All experiments already completed (or none to run).")
+                return {}
+
+            print(f"Spawned {len(spawned)} experiments on Modal (detached):")
+            print(f"  GPU tier: {stage_config.gpu_type}")
+            for task in spawned:
+                print(f"  - {task.run_id}")
+            print(
+                "\nExperiments running in background. Check Modal dashboard for status:"
+            )
+            print("  https://modal.com/apps")
+
+            return {"spawned_run_ids": [t.run_id for t in spawned]}
+
+        # Blocking mode: run and wait for results
         result = coordinator.run_stage(
             stage_config,
             cfg,

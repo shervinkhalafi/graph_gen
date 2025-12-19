@@ -13,7 +13,7 @@ class GraphConvolutionLayer(nn.Module):
             num_terms: Number of terms in polynomial filter
             num_channels: Number of input/output channels
         """
-        super(GraphConvolutionLayer, self).__init__()
+        super().__init__()
         self.num_terms = num_terms
         self.num_channels = num_channels
 
@@ -37,17 +37,13 @@ class GraphConvolutionLayer(nn.Module):
             Convolved features
         """
         # Ensure X has the same dtype as model parameters
-        X = X.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]
-        A = A.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]
+        X = X.to(self.H.dtype)
+        A = A.to(self.H.dtype)
 
         # Symmetric normalization: D^{-1/2} A D^{-1/2} bounds spectral radius to [-1, 1],
         # preventing overflow in matrix powers for dense graphs
         D = A.sum(dim=-1)  # (batch, n) - degree vector
-        D_inv_sqrt = torch.where(
-            D > 0,
-            D.pow(-0.5),
-            torch.zeros_like(D)
-        )
+        D_inv_sqrt = torch.where(D > 0, D.pow(-0.5), torch.zeros_like(D))
         # Create diagonal matrices and apply normalization
         D_inv_sqrt_mat = torch.diag_embed(D_inv_sqrt)  # (batch, n, n)
         A_norm = torch.bmm(torch.bmm(D_inv_sqrt_mat, A), D_inv_sqrt_mat)

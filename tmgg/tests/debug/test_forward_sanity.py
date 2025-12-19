@@ -17,8 +17,12 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from tmgg.models.spectral_denoisers import LinearPE, GraphFilterBank, SelfAttentionDenoiser
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
+from tmgg.models.spectral_denoisers import (
+    GraphFilterBank,
+    LinearPE,
+    SelfAttentionDenoiser,
+)
 
 
 class TestSpectralModelsForwardSanity:
@@ -52,25 +56,30 @@ class TestSpectralModelsForwardSanity:
         model = GraphFilterBank(k=8, polynomial_degree=5)
         logits = model(identity_adjacency)
 
-        assert logits.abs().mean() > 1e-6, (
-            f"GraphFilterBank outputs near-zero logits: mean={logits.mean():.2e}"
-        )
+        assert (
+            logits.abs().mean() > 1e-6
+        ), f"GraphFilterBank outputs near-zero logits: mean={logits.mean():.2e}"
 
     def test_self_attention_produces_nonzero_logits(self, identity_adjacency):
         """Verify SelfAttentionDenoiser doesn't output exactly zero logits."""
         model = SelfAttentionDenoiser(k=8, d_k=64)
         logits = model(identity_adjacency)
 
-        assert logits.abs().mean() > 1e-6, (
-            f"SelfAttentionDenoiser outputs near-zero logits: mean={logits.mean():.2e}"
-        )
+        assert (
+            logits.abs().mean() > 1e-6
+        ), f"SelfAttentionDenoiser outputs near-zero logits: mean={logits.mean():.2e}"
 
-    @pytest.mark.parametrize("model_class,kwargs", [
-        (LinearPE, {"k": 8, "max_nodes": 32}),
-        (GraphFilterBank, {"k": 8, "polynomial_degree": 5}),
-        (SelfAttentionDenoiser, {"k": 8, "d_k": 64}),
-    ])
-    def test_gradients_flow_to_parameters(self, model_class, kwargs, identity_adjacency):
+    @pytest.mark.parametrize(
+        "model_class,kwargs",
+        [
+            (LinearPE, {"k": 8, "max_nodes": 32}),
+            (GraphFilterBank, {"k": 8, "polynomial_degree": 5}),
+            (SelfAttentionDenoiser, {"k": 8, "d_k": 64}),
+        ],
+    )
+    def test_gradients_flow_to_parameters(
+        self, model_class, kwargs, identity_adjacency
+    ):
         """Verify BCEWithLogitsLoss gradients reach model parameters."""
         model = model_class(**kwargs)
 
@@ -85,7 +94,7 @@ class TestSpectralModelsForwardSanity:
         # Check that at least some parameters have gradients
         has_grad = False
         max_grad = 0.0
-        for name, param in model.named_parameters():
+        for _, param in model.named_parameters():
             if param.grad is not None:
                 grad_norm = param.grad.abs().max().item()
                 max_grad = max(max_grad, grad_norm)
@@ -118,9 +127,9 @@ class TestBaselineModelsForwardSanity:
         logits = model(random_adjacency)
 
         # With identity initialization, output ≈ input (which is non-zero)
-        assert logits.abs().mean() > 0.1, (
-            f"LinearBaseline outputs near-zero logits: mean={logits.mean():.2e}"
-        )
+        assert (
+            logits.abs().mean() > 0.1
+        ), f"LinearBaseline outputs near-zero logits: mean={logits.mean():.2e}"
 
     def test_mlp_baseline_produces_nonzero_logits(self, random_adjacency):
         """Verify MLPBaseline doesn't output exactly zero logits."""
@@ -128,14 +137,17 @@ class TestBaselineModelsForwardSanity:
         logits = model(random_adjacency)
 
         # MLP should produce some output from random initialization
-        assert logits.abs().mean() > 1e-6, (
-            f"MLPBaseline outputs near-zero logits: mean={logits.mean():.2e}"
-        )
+        assert (
+            logits.abs().mean() > 1e-6
+        ), f"MLPBaseline outputs near-zero logits: mean={logits.mean():.2e}"
 
-    @pytest.mark.parametrize("model_class,kwargs", [
-        (LinearBaseline, {"max_nodes": 32}),
-        (MLPBaseline, {"max_nodes": 32, "hidden_dim": 256}),
-    ])
+    @pytest.mark.parametrize(
+        "model_class,kwargs",
+        [
+            (LinearBaseline, {"max_nodes": 32}),
+            (MLPBaseline, {"max_nodes": 32, "hidden_dim": 256}),
+        ],
+    )
     def test_baseline_gradients_flow(self, model_class, kwargs, random_adjacency):
         """Verify baseline model gradients flow properly."""
         model = model_class(**kwargs)
@@ -148,7 +160,7 @@ class TestBaselineModelsForwardSanity:
 
         # Check gradients exist and are non-trivial
         has_grad = False
-        for name, param in model.named_parameters():
+        for _, param in model.named_parameters():
             if param.grad is not None and param.grad.abs().max() > 1e-10:
                 has_grad = True
                 break

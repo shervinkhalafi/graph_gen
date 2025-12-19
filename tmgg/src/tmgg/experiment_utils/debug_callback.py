@@ -4,7 +4,7 @@ This callback logs detailed statistics about model outputs, gradients, and
 weights to help identify why models might get stuck at sigmoid(0) = 0.5.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pytorch_lightning as pl
 import torch
@@ -38,7 +38,7 @@ class DebugCallback(pl.Callback):
         log_interval: int = 50,
         log_gradients: bool = True,
         log_weights: bool = True,
-        gradient_names: Optional[list] = None,
+        gradient_names: list | None = None,
     ):
         super().__init__()
         self.log_interval = log_interval
@@ -50,7 +50,7 @@ class DebugCallback(pl.Callback):
         self,
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
-        outputs: Dict[str, Any],
+        outputs: dict[str, Any],
         batch: Any,
         batch_idx: int,
     ) -> None:
@@ -147,12 +147,13 @@ class DebugCallback(pl.Callback):
                 continue
 
             # Filter by name if specified
-            if self.gradient_names is not None:
-                if not any(gn in name for gn in self.gradient_names):
-                    continue
+            if self.gradient_names is not None and not any(
+                gn in name for gn in self.gradient_names
+            ):
+                continue
 
             grad_norm = param.grad.norm().item()
-            total_norm += grad_norm ** 2
+            total_norm += grad_norm**2
             num_params += 1
 
             # Log individual gradient norms for important parameters
@@ -167,7 +168,7 @@ class DebugCallback(pl.Callback):
 
         # Log total gradient norm
         if num_params > 0:
-            total_norm = total_norm ** 0.5
+            total_norm = total_norm**0.5
             pl_module.log(
                 "debug/total_grad_norm",
                 total_norm,

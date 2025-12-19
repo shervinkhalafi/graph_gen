@@ -1,5 +1,6 @@
 import sys
-sys.path.append('src')
+
+sys.path.append("src")
 
 from hydra import compose, initialize
 from hydra.core.global_hydra import GlobalHydra
@@ -20,10 +21,10 @@ with initialize(config_path="src/tmgg/exp_configs", version_base=None):
             "model.noise_levels=[0.3]",
             "model.num_heads=8",
             "model.num_layers=8",
-        ]
+        ],
     )
-    
+
     print("Full config:")
     print(OmegaConf.to_yaml(cfg))
-    
+
     print("\n\nData config value:", cfg.data)

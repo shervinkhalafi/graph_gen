@@ -3,51 +3,45 @@
 import pytest
 import torch
 
-from tmgg.models.hybrid import SequentialDenoisingModel, create_sequential_model
-from tmgg.models.gnn import GNN
 from tmgg.models.attention import MultiLayerAttention
+from tmgg.models.gnn import GNN
+from tmgg.models.hybrid import SequentialDenoisingModel, create_sequential_model
 
 
 class TestSequentialDenoisingModel:
     """Test SequentialDenoisingModel class."""
-    
+
     def test_init_with_denoising(self):
         """Test initialization with both embedding and denoising models."""
         # Create embedding model
-        embedding_model = GNN(
-            num_layers=2,
-            num_terms=3,
-            feature_dim_in=20,
-            feature_dim_out=5
+        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
+            num_layers=2, num_terms=3, feature_dim_in=20, feature_dim_out=5
         )
-        
+
         # Create denoising model
         denoising_model = MultiLayerAttention(
             d_model=10,  # 2 * feature_dim_out
             num_heads=2,
-            num_layers=2
+            num_layers=2,
         )
-        
+
         # Create sequential model
-        model = SequentialDenoisingModel(embedding_model, denoising_model)
-        
+        model = SequentialDenoisingModel(embedding_model, denoising_model)  # pyright: ignore[reportArgumentType]
+
         assert model.embedding_model is embedding_model
         assert model.denoising_model is denoising_model
-    
+
     def test_init_without_denoising(self):
         """Test initialization with only embedding model."""
-        embedding_model = GNN(
-            num_layers=2,
-            num_terms=3,
-            feature_dim_in=20,
-            feature_dim_out=5
+        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
+            num_layers=2, num_terms=3, feature_dim_in=20, feature_dim_out=5
         )
-        
-        model = SequentialDenoisingModel(embedding_model, None)
-        
+
+        model = SequentialDenoisingModel(embedding_model, None)  # pyright: ignore[reportArgumentType]
+
         assert model.embedding_model is embedding_model
         assert model.denoising_model is None
-    
+
     def test_forward_with_denoising(self):
         """Test forward pass with denoising model.
 
@@ -58,20 +52,18 @@ class TestSequentialDenoisingModel:
         feature_dim_out = 5
 
         # Create models
-        embedding_model = GNN(
+        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
             num_layers=1,
             num_terms=2,
             feature_dim_in=num_nodes,
-            feature_dim_out=feature_dim_out
+            feature_dim_out=feature_dim_out,
         )
 
         denoising_model = MultiLayerAttention(
-            d_model=2 * feature_dim_out,
-            num_heads=2,
-            num_layers=1
+            d_model=2 * feature_dim_out, num_heads=2, num_layers=1
         )
 
-        model = SequentialDenoisingModel(embedding_model, denoising_model)
+        model = SequentialDenoisingModel(embedding_model, denoising_model)  # pyright: ignore[reportArgumentType]
 
         # Create input
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
@@ -94,14 +86,14 @@ class TestSequentialDenoisingModel:
         feature_dim_out = 5
 
         # Create embedding model only
-        embedding_model = GNN(
+        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
             num_layers=1,
             num_terms=2,
             feature_dim_in=num_nodes,
-            feature_dim_out=feature_dim_out
+            feature_dim_out=feature_dim_out,
         )
 
-        model = SequentialDenoisingModel(embedding_model, None)
+        model = SequentialDenoisingModel(embedding_model, None)  # pyright: ignore[reportArgumentType]
 
         # Create input
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
@@ -113,26 +105,19 @@ class TestSequentialDenoisingModel:
         # predict() applies sigmoid to get probabilities in [0, 1]
         probs = model.predict(logits)
         assert torch.all(probs >= 0) and torch.all(probs <= 1)
-    
+
     def test_get_config(self):
         """Test configuration retrieval."""
-        embedding_model = GNN(
-            num_layers=2,
-            num_terms=3,
-            feature_dim_in=20,
-            feature_dim_out=5
+        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
+            num_layers=2, num_terms=3, feature_dim_in=20, feature_dim_out=5
         )
-        
-        denoising_model = MultiLayerAttention(
-            d_model=10,
-            num_heads=2,
-            num_layers=2
-        )
-        
-        model = SequentialDenoisingModel(embedding_model, denoising_model)
-        
+
+        denoising_model = MultiLayerAttention(d_model=10, num_heads=2, num_layers=2)
+
+        model = SequentialDenoisingModel(embedding_model, denoising_model)  # pyright: ignore[reportArgumentType]
+
         config = model.get_config()
-        
+
         assert "embedding_model" in config
         assert "has_denoising" in config
         assert config["has_denoising"] is True
@@ -142,69 +127,69 @@ class TestSequentialDenoisingModel:
 
 class TestCreateSequentialModel:
     """Test factory function for creating sequential models."""
-    
+
     def test_create_with_transformer(self):
         """Test creating model with transformer denoising."""
         gnn_config = {
             "num_layers": 2,
             "num_terms": 3,
             "feature_dim_in": 20,
-            "feature_dim_out": 5
+            "feature_dim_out": 5,
         }
-        
+
         transformer_config = {
             "num_heads": 4,
             "num_layers": 2,
             "d_k": 10,
             "d_v": 10,
             "dropout": 0.1,
-            "bias": True
+            "bias": True,
         }
-        
+
         model = create_sequential_model(gnn_config, transformer_config)
-        
+
         assert isinstance(model, SequentialDenoisingModel)
         assert isinstance(model.embedding_model, GNN)
         assert isinstance(model.denoising_model, MultiLayerAttention)
-        
+
         # Check GNN config
         assert model.embedding_model.num_layers == 2
         assert model.embedding_model.feature_dim_out == 5
-        
+
         # Check transformer config
         assert model.denoising_model.d_model == 10  # 2 * feature_dim_out
         assert model.denoising_model.num_heads == 4
         assert model.denoising_model.num_layers == 2
-    
+
     def test_create_without_transformer(self):
         """Test creating model without transformer denoising."""
         gnn_config = {
             "num_layers": 2,
             "num_terms": 3,
             "feature_dim_in": 20,
-            "feature_dim_out": 5
+            "feature_dim_out": 5,
         }
-        
+
         model = create_sequential_model(gnn_config, None)
-        
+
         assert isinstance(model, SequentialDenoisingModel)
         assert isinstance(model.embedding_model, GNN)
         assert model.denoising_model is None
-    
+
     def test_create_with_defaults(self):
         """Test creating model with default configurations."""
         model = create_sequential_model({}, {})
-        
+
         assert isinstance(model, SequentialDenoisingModel)
         assert isinstance(model.embedding_model, GNN)
         assert isinstance(model.denoising_model, MultiLayerAttention)
-        
+
         # Check defaults
         assert model.embedding_model.num_layers == 2
         assert model.embedding_model.feature_dim_out == 5
         assert model.denoising_model.num_heads == 4
         assert model.denoising_model.num_layers == 4
-    
+
     def test_forward_pass_integration(self):
         """Test full forward pass through created model.
 
@@ -216,13 +201,10 @@ class TestCreateSequentialModel:
         gnn_config = {
             "num_layers": 1,
             "feature_dim_in": num_nodes,
-            "feature_dim_out": 5
+            "feature_dim_out": 5,
         }
 
-        transformer_config = {
-            "num_heads": 2,
-            "num_layers": 1
-        }
+        transformer_config = {"num_heads": 2, "num_layers": 1}
 
         model = create_sequential_model(gnn_config, transformer_config)
 

@@ -5,15 +5,20 @@ across distributed runs.
 """
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, cast
 
 from omegaconf import DictConfig, OmegaConf
 
-from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult
-from tmgg.experiment_utils.cloud.factory import CloudRunnerFactory
+from tmgg.experiment_utils.cloud.base import (
+    CloudRunner,
+    ExperimentResult,
+    LocalRunner,
+    SpawnedTask,
+)
 from tmgg.experiment_utils.cloud.storage import CloudStorage, LocalStorage
 
 
@@ -47,31 +52,45 @@ class StageConfig:
     hyperparameter_space: dict[str, list[Any]] = field(default_factory=dict)
     num_trials: int = 4
     seeds: list[int] = field(default_factory=lambda: [1, 2, 3])
-    gpu_type: str = "standard"
+    gpu_type: str = "debug"
     timeout_seconds: int = 3600
 
     @classmethod
     def from_yaml(cls, path: Path) -> "StageConfig":
         """Load stage configuration from YAML file."""
-        config = OmegaConf.load(path)
+        config_raw = OmegaConf.load(path)
+        if not isinstance(config_raw, DictConfig):
+            raise TypeError(f"Expected DictConfig, got {type(config_raw)}")
+        config = config_raw
 
         # Sweep metadata is nested under _sweep_config
-        sweep_config = config.get("_sweep_config", {})
+        sweep_config_raw = config.get("_sweep_config", {})
+        sweep_config = (
+            sweep_config_raw if isinstance(sweep_config_raw, dict | DictConfig) else {}
+        )
 
         # Handle both OmegaConf and plain dict
-        hp_space = sweep_config.get("hyperparameter_space", {})
-        if OmegaConf.is_config(hp_space):
-            hp_space = OmegaConf.to_container(hp_space, resolve=True)
+        hp_space_raw = sweep_config.get("hyperparameter_space", {})
+        hp_space: dict[str, list[Any]]
+        if OmegaConf.is_config(hp_space_raw):
+            hp_space = cast(
+                dict[str, list[Any]], OmegaConf.to_container(hp_space_raw, resolve=True)
+            )
+        else:
+            hp_space = cast(dict[str, list[Any]], hp_space_raw)
+
+        stage_name_raw = config.get("stage", config.get("name", path.stem))
+        stage_name = str(stage_name_raw) if stage_name_raw is not None else path.stem
 
         return cls(
-            name=config.get("stage", config.get("name", path.stem)),
+            name=stage_name,
             architectures=list(sweep_config.get("architectures", [])),
             datasets=list(sweep_config.get("datasets", [])),
             hyperparameter_space=hp_space,
-            num_trials=sweep_config.get("num_trials", 4),
+            num_trials=int(sweep_config.get("num_trials", 4)),
             seeds=list(sweep_config.get("seeds", [1, 2, 3])),
-            gpu_type=sweep_config.get("gpu_type", "standard"),
-            timeout_seconds=sweep_config.get("timeout_seconds", 3600),
+            gpu_type=str(sweep_config.get("gpu_type", "debug")),
+            timeout_seconds=int(sweep_config.get("timeout_seconds", 3600)),
         )
 
 
@@ -135,36 +154,27 @@ class ExperimentCoordinator:
 
     def __init__(
         self,
-        storage: CloudStorage | None = None,
         runner: CloudRunner | None = None,
-        backend: str = "local",
+        storage: CloudStorage | None = None,
         base_config_path: Path | None = None,
         cache_dir: Path | None = None,
-        **runner_kwargs,
     ):
         """Initialize the coordinator.
 
         Parameters
         ----------
+        runner
+            Cloud runner for experiment execution. Defaults to LocalRunner.
         storage
             Cloud storage backend for checkpoints and metrics.
             Defaults to LocalStorage.
-        runner
-            Cloud runner for experiment execution. If provided, takes
-            precedence over backend parameter.
-        backend
-            Backend name to use via CloudRunnerFactory (e.g., "local", "modal").
-            Ignored if runner is provided directly.
         base_config_path
             Path to base Hydra configuration directory.
         cache_dir
             Local cache directory for temporary files.
-        **runner_kwargs
-            Additional arguments passed to CloudRunnerFactory.create()
-            when using backend parameter.
         """
+        self.runner = runner or LocalRunner()
         self.storage = storage or LocalStorage()
-        self.runner = runner or CloudRunnerFactory.create(backend, **runner_kwargs)
         self.base_config_path = base_config_path
         self.cache_dir = cache_dir or Path("./cache")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -204,21 +214,31 @@ class ExperimentCoordinator:
             for arch in stage.architectures or [None]:
                 for dataset in stage.datasets or [None]:
                     for hp_combo in hp_combos:
-                        config = OmegaConf.create(
+                        config_raw = OmegaConf.create(
                             OmegaConf.to_container(base_config, resolve=True)
                         )
+                        config = cast(DictConfig, config_raw)
 
                         # Apply architecture override by loading and merging config
                         if arch:
+                            if self.base_config_path is None:
+                                raise RuntimeError(
+                                    "base_config_path must be set to apply architecture overrides"
+                                )
                             arch_path = self.base_config_path / f"{arch}.yaml"
                             if arch_path.exists():
-                                arch_config = OmegaConf.load(arch_path)
+                                arch_config_raw = OmegaConf.load(arch_path)
+                                arch_config = cast(DictConfig, arch_config_raw)
                                 # If _target_ changes (different model class), replace entirely
                                 # to avoid leftover params from base config (e.g. model_type)
-                                if arch_config.get("_target_") != config.model.get("_target_"):
+                                if arch_config.get("_target_") != config.model.get(
+                                    "_target_"
+                                ):
                                     config.model = arch_config
                                 else:
-                                    config.model = OmegaConf.merge(config.model, arch_config)
+                                    config.model = OmegaConf.merge(
+                                        config.model, arch_config
+                                    )
                             else:
                                 raise FileNotFoundError(
                                     f"Architecture config not found: {arch_path}"
@@ -226,17 +246,23 @@ class ExperimentCoordinator:
 
                         # Apply dataset override by loading and merging config
                         if dataset:
+                            if self.base_config_path is None:
+                                raise RuntimeError(
+                                    "base_config_path must be set to apply dataset overrides"
+                                )
                             dataset_path = self.base_config_path / f"{dataset}.yaml"
                             if dataset_path.exists():
                                 dataset_config = OmegaConf.load(dataset_path)
-                                config.data = OmegaConf.merge(config.data, dataset_config)
+                                config.data = OmegaConf.merge(
+                                    config.data, dataset_config
+                                )
                             else:
                                 raise FileNotFoundError(
                                     f"Dataset config not found: {dataset_path}"
                                 )
 
                         # Apply hyperparameters
-                        for key, value in zip(hp_keys, hp_combo):
+                        for key, value in zip(hp_keys, hp_combo, strict=False):
                             OmegaConf.update(config, key, value)
                             # Keep data.noise_levels in sync with noise_levels
                             # (interpolation ${noise_levels} was resolved at config creation)
@@ -252,18 +278,24 @@ class ExperimentCoordinator:
                         # Generate deterministic run ID from config signature
                         run_id_parts = [stage.name]
                         if arch:
-                            run_id_parts.append(arch.split("/")[-1].replace(".yaml", ""))
+                            run_id_parts.append(
+                                arch.split("/")[-1].replace(".yaml", "")
+                            )
                         if dataset:
-                            run_id_parts.append(dataset.split("/")[-1].replace(".yaml", ""))
+                            run_id_parts.append(
+                                dataset.split("/")[-1].replace(".yaml", "")
+                            )
                         # Include hyperparameters in run_id for uniqueness
-                        for key, value in zip(hp_keys, hp_combo):
+                        for key, value in zip(hp_keys, hp_combo, strict=False):
                             short_key = key.split(".")[-1]
                             run_id_parts.append(f"{short_key}_{value}")
                         run_id_parts.append(f"s{seed}")
                         config.run_id = "_".join(run_id_parts)
 
                         # Isolate output directory per sweep run
-                        sweep_output_dir = Path("outputs/sweeps") / stage.name / config.run_id
+                        sweep_output_dir = (
+                            Path("outputs/sweeps") / stage.name / config.run_id
+                        )
                         config.paths.output_dir = str(sweep_output_dir)
                         config.paths.results_dir = str(sweep_output_dir / "results")
 
@@ -305,8 +337,7 @@ class ExperimentCoordinator:
         # Filter out completed runs if resuming
         if resume:
             configs = [
-                c for c in configs
-                if not self._check_completed(c.get("run_id", ""))
+                c for c in configs if not self._check_completed(c.get("run_id", ""))
             ]
 
         if not configs:
@@ -328,6 +359,197 @@ class ExperimentCoordinator:
         stage_result = self._aggregate_results(stage.name, results, started_at)
 
         # Persist stage result
+        self._persist_stage_result(stage_result)
+
+        return stage_result
+
+    # =========================================================================
+    # Async/Spawn Methods (for detached execution)
+    # =========================================================================
+
+    def spawn_stage(
+        self,
+        stage: StageConfig,
+        base_config: DictConfig,
+        resume: bool = True,
+    ) -> list[SpawnedTask]:
+        """Spawn all experiments in a stage without waiting.
+
+        Fire-and-forget execution. Use get_stage_status() to poll and
+        wait_for_stage() to block until completion.
+
+        Parameters
+        ----------
+        stage
+            Stage configuration.
+        base_config
+            Base Hydra configuration.
+        resume
+            If True, skip experiments with existing results.
+
+        Returns
+        -------
+        list[SpawnedTask]
+            Handles for tracking spawned experiments.
+
+        Raises
+        ------
+        NotImplementedError
+            If the runner does not support spawn execution.
+        """
+        if not self.runner.supports_spawn:
+            raise NotImplementedError(
+                f"{self.runner.__class__.__name__} does not support spawn execution. "
+                + "Use run_stage() for blocking execution, or use ModalRunner/RayRunner."
+            )
+
+        configs = list(self.generate_configs(stage, base_config))
+
+        # Filter out completed runs if resuming
+        if resume:
+            configs = [
+                c for c in configs if not self._check_completed(c.get("run_id", ""))
+            ]
+
+        if not configs:
+            return []
+
+        # Spawn experiments
+        return self.runner.spawn_sweep(
+            configs,
+            gpu_type=stage.gpu_type,
+            timeout_seconds=stage.timeout_seconds,
+        )
+
+    def get_stage_status(
+        self,
+        spawned_tasks: list[SpawnedTask],
+    ) -> dict[str, str]:
+        """Get status of all experiments in a spawned stage.
+
+        Polls storage and runner to determine experiment status.
+
+        Parameters
+        ----------
+        spawned_tasks
+            List of spawned task handles from spawn_stage().
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping of run_id to status ('pending', 'running', 'completed', 'failed').
+        """
+        status_map: dict[str, str] = {}
+
+        for task in spawned_tasks:
+            run_id = task.run_id
+
+            # First check storage (source of truth for completion)
+            if self._check_completed(run_id):
+                # Load metrics to get actual status
+                try:
+                    metrics = self.storage.download_metrics(f"results/{run_id}")
+                    status_map[run_id] = metrics.get("status", "completed")
+                except Exception:
+                    status_map[run_id] = "completed"
+            else:
+                # Not in storage - check runner status
+                status_map[run_id] = self.runner.get_status(run_id)
+
+        return status_map
+
+    def wait_for_stage(
+        self,
+        spawned_tasks: list[SpawnedTask],
+        stage_name: str,
+        poll_interval_seconds: float = 30.0,
+        timeout_seconds: float | None = None,
+    ) -> StageResult:
+        """Wait for all spawned experiments to complete.
+
+        Polls storage periodically until all experiments finish.
+
+        Parameters
+        ----------
+        spawned_tasks
+            List of spawned task handles from spawn_stage().
+        stage_name
+            Name of the stage for result aggregation.
+        poll_interval_seconds
+            Time between status polls.
+        timeout_seconds
+            Maximum wait time. None means wait indefinitely.
+
+        Returns
+        -------
+        StageResult
+            Aggregated results from the stage.
+
+        Raises
+        ------
+        TimeoutError
+            If timeout_seconds is exceeded before all experiments complete.
+        """
+        import time
+
+        started_at = datetime.now().isoformat()
+        start_time = time.time()
+        run_ids = [t.run_id for t in spawned_tasks]
+
+        while True:
+            # Check status of all runs
+            status_map = self.get_stage_status(spawned_tasks)
+
+            # Count completed (including failed)
+            terminal_statuses = {"completed", "failed", "timeout"}
+            completed_count = sum(
+                1 for status in status_map.values() if status in terminal_statuses
+            )
+
+            if completed_count == len(run_ids):
+                break
+
+            # Check timeout
+            if timeout_seconds is not None:
+                elapsed = time.time() - start_time
+                if elapsed > timeout_seconds:
+                    raise TimeoutError(
+                        f"Stage {stage_name} did not complete within {timeout_seconds}s. "
+                        + f"Completed: {completed_count}/{len(run_ids)}"
+                    )
+
+            # Wait before next poll
+            time.sleep(poll_interval_seconds)
+
+        # Load results from storage
+        results: list[ExperimentResult] = []
+        for run_id in run_ids:
+            try:
+                metrics = self.storage.download_metrics(f"results/{run_id}")
+                results.append(
+                    ExperimentResult(
+                        run_id=run_id,
+                        config=metrics.get("config", {}),
+                        metrics=metrics.get("metrics", {}),
+                        checkpoint_path=metrics.get("checkpoint_path"),
+                        status=metrics.get("status", "unknown"),
+                        error_message=metrics.get("error_message"),
+                        duration_seconds=metrics.get("duration_seconds", 0.0),
+                    )
+                )
+            except Exception as e:
+                # Failed to load result - mark as unknown
+                results.append(
+                    ExperimentResult(
+                        run_id=run_id,
+                        config={},
+                        status="unknown",
+                        error_message=f"Failed to load result: {e}",
+                    )
+                )
+
+        # Aggregate and persist
+        stage_result = self._aggregate_results(stage_name, results, started_at)
         self._persist_stage_result(stage_result)
 
         return stage_result
@@ -399,7 +621,9 @@ class ExperimentCoordinator:
             "completed": completed,
             "failed": failed,
             "success_rate": completed / total if total > 0 else 0,
-            "mean_duration_seconds": sum(durations) / len(durations) if durations else 0,
+            "mean_duration_seconds": sum(durations) / len(durations)
+            if durations
+            else 0,
             "total_duration_seconds": sum(durations),
         }
 

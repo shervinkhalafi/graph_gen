@@ -5,7 +5,7 @@ the training pipeline itself has issues. If they learn but spectral models
 don't, the issue lies in the spectral architecture.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import torch.nn as nn
 
@@ -113,7 +113,7 @@ class BaselineLightningModule(DenoisingLightningModule):
         }
         return name_map.get(self._model_type, self._model_type)
 
-    def get_model_config(self) -> Dict[str, Any]:
+    def get_model_config(self) -> dict[str, Any]:
         """Get model configuration for logging.
 
         Returns

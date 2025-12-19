@@ -1,11 +1,16 @@
-from pathlib import Path
 import random
+from pathlib import Path
+
 import numpy as np
-from omegaconf import DictConfig
-from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
-from pytorch_lightning.loggers import Logger
-import torch
 import pytorch_lightning as pl
+import torch
+from omegaconf import DictConfig
+from pytorch_lightning.callbacks import (
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+)
+
 
 def set_seed(seed: int) -> None:
     """Set random seeds for reproducibility."""
@@ -36,7 +41,9 @@ def create_callbacks(config: DictConfig) -> list[pl.Callback]:
     # auto_insert_metric_name=False required because metric name val/loss contains a slash
     checkpoint_callback = ModelCheckpoint(
         dirpath=Path(config.paths.output_dir) / "checkpoints",
-        filename=ckpt_config.get("filename", "model-step={step:06d}-val_loss={val/loss:.4f}"),
+        filename=ckpt_config.get(
+            "filename", "model-step={step:06d}-val_loss={val/loss:.4f}"
+        ),
         monitor=ckpt_config.get("monitor", "val/loss"),
         mode=ckpt_config.get("mode", "min"),
         save_top_k=ckpt_config.get("save_top_k", 3),
@@ -68,7 +75,9 @@ def create_callbacks(config: DictConfig) -> list[pl.Callback]:
     pb_config = config.get("progress_bar", {})
     callbacks.append(
         StepProgressBar(
-            metrics_to_show=pb_config.get("metrics_to_show", ["train_loss", "val/loss"]),
+            metrics_to_show=pb_config.get(
+                "metrics_to_show", ["train_loss", "val/loss"]
+            ),
             show_epoch=pb_config.get("show_epoch", True),
             metrics_format=pb_config.get("metrics_format", ".4f"),
         )

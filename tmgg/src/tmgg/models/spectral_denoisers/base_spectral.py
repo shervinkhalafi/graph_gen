@@ -5,8 +5,8 @@ the noisy adjacency matrix, process them through an architecture-specific
 transformation, and reconstruct the denoised adjacency matrix.
 """
 
-from abc import abstractmethod
-from typing import Any, Dict, Tuple
+from abc import ABC, abstractmethod
+from typing import Any
 
 import torch
 
@@ -14,7 +14,7 @@ from tmgg.models.base import DenoisingModel
 from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
 
 
-class SpectralDenoiser(DenoisingModel):
+class SpectralDenoiser(DenoisingModel, ABC):
     """Abstract base class for spectral graph denoising models.
 
     Spectral denoisers operate on the eigenspace of the noisy adjacency matrix.
@@ -96,7 +96,7 @@ class SpectralDenoiser(DenoisingModel):
         """
         pass
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get model configuration for logging/saving.
 
         Returns
@@ -108,5 +108,3 @@ class SpectralDenoiser(DenoisingModel):
             "model_class": self.__class__.__name__,
             "k": self.k,
         }
-
-

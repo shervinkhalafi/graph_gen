@@ -6,21 +6,18 @@ Budget: 4.4 GPU-hours
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-import modal
 from omegaconf import OmegaConf
 
-from tmgg_modal.app import app, GPU_CONFIGS, DEFAULT_TIMEOUTS
-from tmgg_modal.runner import (
+from tmgg_modal.app import app  # pyright: ignore[reportImplicitRelativeImport]
+from tmgg_modal.runner import (  # pyright: ignore[reportImplicitRelativeImport]
     experiment_image,
     tigris_secret,
     wandb_secret,
     run_single_experiment,
 )
-from tmgg_modal.storage import get_storage_from_env
-from tmgg_modal.volumes import get_volume_mounts
+from tmgg_modal.storage import get_storage_from_env  # pyright: ignore[reportImplicitRelativeImport]
 
 
 # Stage 1 configuration
@@ -48,7 +45,7 @@ def generate_stage1_configs() -> list[dict[str, Any]]:
         List of configuration dictionaries.
     """
     import itertools
-    from tmgg_modal.paths import get_exp_configs_path
+    from tmgg_modal.paths import get_exp_configs_path  # pyright: ignore[reportImplicitRelativeImport]
 
     configs = []
 
@@ -130,7 +127,6 @@ def run_stage1(
     dict
         Stage results summary.
     """
-    import json
     from datetime import datetime
 
     configs = generate_stage1_configs()
@@ -145,7 +141,7 @@ def run_stage1(
         return {"status": "dry_run", "num_configs": len(configs)}
 
     # Check for completed runs with fine-grained status
-    from tmgg_modal.result_status import (
+    from tmgg_modal.result_status import (  # pyright: ignore[reportImplicitRelativeImport]
         ResultStatus,
         filter_configs_by_status,
         summarize_status_map,
@@ -182,7 +178,7 @@ def run_stage1(
                 print(f"  Warning: {w}")
 
     # Validate metrics and find best result
-    def get_val_loss(result: dict) -> float | None:
+    def get_val_loss(result: dict[str, Any]) -> float | None:
         """Extract validation loss, returning None if missing or invalid."""
         metrics = result.get("metrics", {})
         loss = metrics.get("best_val_loss")
@@ -201,7 +197,9 @@ def run_stage1(
             results_without_metrics.append(r)
 
     if results_without_metrics:
-        print(f"Warning: {len(results_without_metrics)} completed runs missing best_val_loss metric:")
+        print(
+            f"Warning: {len(results_without_metrics)} completed runs missing best_val_loss metric:"
+        )
         for r in results_without_metrics[:5]:
             print(f"  - {r.get('run_id', 'unknown')}")
         if len(results_without_metrics) > 5:
@@ -212,7 +210,9 @@ def run_stage1(
     if results_with_metrics:
         best_result, _ = min(results_with_metrics, key=lambda x: x[1])
     elif completed_results:
-        print("Warning: No completed runs have valid metrics, cannot determine best result")
+        print(
+            "Warning: No completed runs have valid metrics, cannot determine best result"
+        )
 
     # Upload stage summary
     summary = {
@@ -223,7 +223,9 @@ def run_stage1(
         "completed": len(completed_results),
         "failed": len(failed_results),
         "best_run_id": best_result.get("run_id") if best_result else None,
-        "best_val_loss": best_result.get("metrics", {}).get("best_val_loss") if best_result else None,
+        "best_val_loss": best_result.get("metrics", {}).get("best_val_loss")
+        if best_result
+        else None,
     }
 
     if storage:
@@ -231,7 +233,9 @@ def run_stage1(
 
     print(f"Stage 1 complete: {len(completed_results)}/{len(results)} succeeded")
     if best_result:
-        print(f"Best run: {best_result.get('run_id')} with val_loss={best_result.get('metrics', {}).get('best_val_loss', 'N/A')}")
+        print(
+            f"Best run: {best_result.get('run_id')} with val_loss={best_result.get('metrics', {}).get('best_val_loss', 'N/A')}"
+        )
 
     return summary
 

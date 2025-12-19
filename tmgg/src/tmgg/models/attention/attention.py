@@ -1,6 +1,6 @@
 """Attention-based models for graph denoising."""
 
-from typing import Any, Dict, Optional, override
+from typing import Any, override
 
 import torch
 import torch.nn as nn
@@ -18,8 +18,8 @@ class MultiLayerAttention(DenoisingModel):
         d_model: int,
         num_heads: int,
         num_layers: int,
-        d_k: Optional[int] = None,
-        d_v: Optional[int] = None,
+        d_k: int | None = None,
+        d_v: int | None = None,
         dropout: float = 0.0,
         bias: bool = False,
     ):
@@ -61,7 +61,7 @@ class MultiLayerAttention(DenoisingModel):
         )
 
     def forward(
-        self, A: torch.Tensor, mask: Optional[torch.Tensor] = None
+        self, A: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         """
         Forward pass through all attention layers.
@@ -82,7 +82,7 @@ class MultiLayerAttention(DenoisingModel):
         return x
 
     @override
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get model configuration."""
         return {
             "d_model": self.d_model,

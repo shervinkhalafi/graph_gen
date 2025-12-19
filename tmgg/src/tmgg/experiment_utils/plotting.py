@@ -1,33 +1,38 @@
 """Plotting utilities for graph denoising experiments."""
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from collections.abc import Callable
+from typing import Any
 
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for headless/multi-threaded use
+import matplotlib.axes
+import matplotlib.figure
+
+matplotlib.use("Agg")  # Non-interactive backend for headless/multi-threaded use
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wandb
+import wandb.sdk.data_types.image
 
 
 def plot_graph_denoising_comparison(
-    A_clean: Union[np.ndarray, torch.Tensor],
+    A_clean: np.ndarray | torch.Tensor,
     noise_fn: Callable[
-        [Union[np.ndarray, torch.Tensor], float],
-        Tuple[Union[np.ndarray, torch.Tensor], Any, Any],
+        [np.ndarray | torch.Tensor, float],
+        np.ndarray | torch.Tensor | tuple[np.ndarray | torch.Tensor, Any, Any],
     ],
     denoise_fn: Callable[
-        [Union[np.ndarray, torch.Tensor]], Union[np.ndarray, torch.Tensor, Tuple]
+        [np.ndarray | torch.Tensor], np.ndarray | torch.Tensor | tuple[Any, ...]
     ],
     noise_level: float,
     noise_type: str = "Unknown",
     title_prefix: str = "",
     cmap: str = "viridis",
-    figsize: Tuple[int, int] = (30, 5),
-    save_path: Optional[str] = None,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
-) -> plt.Figure:
+    figsize: tuple[int, int] = (30, 5),
+    save_path: str | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+) -> matplotlib.figure.Figure:
     """
     General-purpose visualization for graph denoising experiments.
 
@@ -58,32 +63,42 @@ def plot_graph_denoising_comparison(
         Matplotlib figure object
     """
     # Convert to numpy if needed
+    A_clean_np: np.ndarray
     if isinstance(A_clean, torch.Tensor):
         A_clean_np = A_clean.detach().cpu().numpy()
     else:
         A_clean_np = A_clean
 
     # Add noise
-    A_noisy = noise_fn(A_clean, noise_level)
+    A_noisy: np.ndarray | torch.Tensor | tuple[np.ndarray | torch.Tensor, Any, Any] = (
+        noise_fn(A_clean, noise_level)
+    )
+    A_noisy_np: np.ndarray
+    if isinstance(A_noisy, tuple):
+        A_noisy = A_noisy[0]
     if isinstance(A_noisy, torch.Tensor):
         A_noisy_np = A_noisy.detach().cpu().numpy()
     else:
         A_noisy_np = A_noisy
 
     # Denoise - may return (predictions, logits) or just predictions
-    denoise_result = denoise_fn(A_noisy)
+    denoise_result: np.ndarray | torch.Tensor | tuple[Any, ...] = denoise_fn(A_noisy)
+    A_probs: np.ndarray | torch.Tensor
+    A_logits: np.ndarray | torch.Tensor | None
     if isinstance(denoise_result, tuple):
-        A_probs, A_logits = denoise_result
+        A_probs, A_logits = denoise_result[0], denoise_result[1]
     else:
         A_probs = denoise_result
         A_logits = None
 
     # Convert to numpy
+    A_probs_np: np.ndarray
     if isinstance(A_probs, torch.Tensor):
         A_probs_np = A_probs.detach().cpu().numpy()
     else:
         A_probs_np = A_probs
 
+    A_logits_np: np.ndarray | None
     if A_logits is not None:
         if isinstance(A_logits, torch.Tensor):
             A_logits_np = A_logits.detach().cpu().numpy()
@@ -100,8 +115,10 @@ def plot_graph_denoising_comparison(
     while A_probs_np.ndim > 2:
         A_probs_np = A_probs_np[0]
     if A_logits_np is not None:
-        while A_logits_np.ndim > 2:
-            A_logits_np = A_logits_np[0]
+        A_logits_work = A_logits_np
+        while A_logits_work.ndim > 2:
+            A_logits_work = A_logits_work[0]
+        A_logits_np = A_logits_work
 
     # Threshold predictions at 0.5
     A_pred_np = (A_probs_np > 0.5).astype(float)
@@ -111,7 +128,10 @@ def plot_graph_denoising_comparison(
 
     # Determine number of columns based on whether we have logits
     n_cols = 6 if A_logits_np is not None else 4
-    fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 5))
+    fig, axes_raw = plt.subplots(1, n_cols, figsize=(5 * n_cols, 5))
+    axes: np.ndarray = (
+        np.array(axes_raw) if not isinstance(axes_raw, np.ndarray) else axes_raw
+    )
 
     # Determine color scale for binary matrices
     if vmin is None:
@@ -121,66 +141,74 @@ def plot_graph_denoising_comparison(
 
     # Col 0: Clean graph
     im0 = axes[0].imshow(A_clean_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
-    axes[0].set_title(
+    _ = axes[0].set_title(
         f"{title_prefix}Clean" if title_prefix else "Clean", fontsize=12
     )
-    axes[0].axis("off")
-    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+    _ = axes[0].axis("off")
+    _ = plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
 
     # Col 1: Noisy graph
     im1 = axes[1].imshow(A_noisy_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
-    axes[1].set_title(f"Noisy ({noise_type}, ε={noise_level})", fontsize=12)
-    axes[1].axis("off")
-    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+    _ = axes[1].set_title(f"Noisy ({noise_type}, ε={noise_level})", fontsize=12)
+    _ = axes[1].axis("off")
+    _ = plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
 
     # Col 2: Predicted graph (thresholded)
     im2 = axes[2].imshow(A_pred_np, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
-    axes[2].set_title("Predicted (>0.5)", fontsize=12)
-    axes[2].axis("off")
-    plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+    _ = axes[2].set_title("Predicted (>0.5)", fontsize=12)
+    _ = axes[2].axis("off")
+    _ = plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
 
     # Col 3: Prediction error
     im3 = axes[3].imshow(A_pred_error_np, cmap="bwr", vmin=-1, vmax=1, aspect="equal")
-    axes[3].set_title("Pred Error", fontsize=12)
-    axes[3].axis("off")
-    plt.colorbar(im3, ax=axes[3], fraction=0.046, pad=0.04)
+    _ = axes[3].set_title("Pred Error", fontsize=12)
+    _ = axes[3].axis("off")
+    _ = plt.colorbar(im3, ax=axes[3], fraction=0.046, pad=0.04)
 
     # Col 4 & 5: Logits and logit error (if available)
     if A_logits_np is not None:
         # Logits
-        logit_vmax = max(abs(A_logits_np.min()), abs(A_logits_np.max()))
+        logit_vmax: float = max(
+            abs(float(A_logits_np.min())), abs(float(A_logits_np.max()))
+        )
         im4 = axes[4].imshow(
             A_logits_np, cmap="bwr", vmin=-logit_vmax, vmax=logit_vmax, aspect="equal"
         )
-        axes[4].set_title("Logits", fontsize=12)
-        axes[4].axis("off")
-        plt.colorbar(im4, ax=axes[4], fraction=0.046, pad=0.04)
+        _ = axes[4].set_title("Logits", fontsize=12)
+        _ = axes[4].axis("off")
+        _ = plt.colorbar(im4, ax=axes[4], fraction=0.046, pad=0.04)
 
         # Logit error (logits - clean, where clean is binary 0/1)
         # This shows how far the logits are from the "ideal" values
-        A_logit_error_np = A_logits_np - A_clean_np
-        error_vmax = max(abs(A_logit_error_np.min()), abs(A_logit_error_np.max()))
-        im5 = axes[5].imshow(
-            A_logit_error_np, cmap="bwr", vmin=-error_vmax, vmax=error_vmax, aspect="equal"
+        A_logit_error_np: np.ndarray = A_logits_np - A_clean_np
+        error_vmax: float = max(
+            abs(float(A_logit_error_np.min())), abs(float(A_logit_error_np.max()))
         )
-        axes[5].set_title("Logit Error", fontsize=12)
-        axes[5].axis("off")
-        plt.colorbar(im5, ax=axes[5], fraction=0.046, pad=0.04)
+        im5 = axes[5].imshow(
+            A_logit_error_np,
+            cmap="bwr",
+            vmin=-error_vmax,
+            vmax=error_vmax,
+            aspect="equal",
+        )
+        _ = axes[5].set_title("Logit Error", fontsize=12)
+        _ = axes[5].axis("off")
+        _ = plt.colorbar(im5, ax=axes[5], fraction=0.046, pad=0.04)
 
-    plt.tight_layout()
+    _ = plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        _ = plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig
 
 
 def plot_training_curves(
-    train_losses: List[float],
-    val_losses: List[float],
-    save_path: Optional[str] = None,
+    train_losses: list[float],
+    val_losses: list[float],
+    save_path: str | None = None,
     title: str = "Training Curves",
-) -> plt.Figure:
+) -> matplotlib.figure.Figure:
     """
     Plot training and validation loss curves.
 
@@ -196,19 +224,19 @@ def plot_training_curves(
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
 
     epochs = range(1, len(train_losses) + 1)
-    ax.plot(epochs, train_losses, "b-", label="Training Loss", linewidth=2)
-    ax.plot(epochs, val_losses, "r-", label="Validation Loss", linewidth=2)
+    _ = ax.plot(epochs, train_losses, "b-", label="Training Loss", linewidth=2)
+    _ = ax.plot(epochs, val_losses, "r-", label="Validation Loss", linewidth=2)
 
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    _ = ax.set_xlabel("Epoch")
+    _ = ax.set_ylabel("Loss")
+    _ = ax.set_title(title)
+    _ = ax.legend()
+    _ = ax.grid(True, alpha=0.3)
 
-    plt.tight_layout()
+    _ = plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        _ = plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig
 
@@ -219,8 +247,8 @@ def plot_denoising_results(
     A_denoised: np.ndarray,
     noise_type: str = "Unknown",
     eps: float = 0.0,
-    save_path: Optional[str] = None,
-) -> plt.Figure:
+    save_path: str | None = None,
+) -> matplotlib.figure.Figure:
     """
     Plot original, noisy, denoised, and delta adjacency matrices side by side.
 
@@ -235,53 +263,60 @@ def plot_denoising_results(
     Returns:
         Matplotlib figure
     """
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    fig, axes_raw = plt.subplots(1, 4, figsize=(20, 5))
+    axes: np.ndarray = (
+        np.array(axes_raw) if not isinstance(axes_raw, np.ndarray) else axes_raw
+    )
 
     # Determine a shared color scale for consistency across plots
-    vmin = min(A_original.min(), A_noisy.min(), A_denoised.min())
-    vmax = max(A_original.max(), A_noisy.max(), A_denoised.max())
+    vmin: float = min(
+        float(A_original.min()), float(A_noisy.min()), float(A_denoised.min())
+    )
+    vmax: float = max(
+        float(A_original.max()), float(A_noisy.max()), float(A_denoised.max())
+    )
 
     # Original matrix
     im1 = axes[0].imshow(A_original, cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[0].set_title("Original")
-    axes[0].axis("off")
-    plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+    _ = axes[0].set_title("Original")
+    _ = axes[0].axis("off")
+    _ = plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
 
     # Noisy matrix
     im2 = axes[1].imshow(A_noisy, cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[1].set_title(f"Noisy ({noise_type}, ε={eps})")
-    axes[1].axis("off")
-    plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+    _ = axes[1].set_title(f"Noisy ({noise_type}, ε={eps})")
+    _ = axes[1].axis("off")
+    _ = plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
 
     # Denoised matrix
     im3 = axes[2].imshow(A_denoised, cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[2].set_title("Denoised")
-    axes[2].axis("off")
-    plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
+    _ = axes[2].set_title("Denoised")
+    _ = axes[2].axis("off")
+    _ = plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
 
     # Delta matrix
-    A_delta = A_denoised - A_original
-    delta_vmax = np.abs(A_delta).max()
+    A_delta: np.ndarray = A_denoised - A_original
+    delta_vmax: float = float(np.abs(A_delta).max())
     im4 = axes[3].imshow(A_delta, cmap="bwr", vmin=-delta_vmax, vmax=delta_vmax)
-    axes[3].set_title("Delta (Denoised - Original)")
-    axes[3].axis("off")
-    plt.colorbar(im4, ax=axes[3], fraction=0.046, pad=0.04)
+    _ = axes[3].set_title("Delta (Denoised - Original)")
+    _ = axes[3].axis("off")
+    _ = plt.colorbar(im4, ax=axes[3], fraction=0.046, pad=0.04)
 
-    plt.tight_layout()
+    _ = plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        _ = plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig
 
 
 def plot_noise_level_comparison(
-    noise_levels: List[float],
-    metrics_dict: Dict[str, List[float]],
+    noise_levels: list[float],
+    metrics_dict: dict[str, list[float]],
     metric_name: str = "MSE",
-    title: Optional[str] = None,
-    save_path: Optional[str] = None,
-) -> plt.Figure:
+    title: str | None = None,
+    save_path: str | None = None,
+) -> matplotlib.figure.Figure:
     """
     Plot how model performance varies with noise levels.
 
@@ -298,22 +333,22 @@ def plot_noise_level_comparison(
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
 
     for dataset_type, values in metrics_dict.items():
-        ax.plot(
+        _ = ax.plot(
             noise_levels, values, "o-", label=dataset_type, linewidth=2, markersize=6
         )
 
-    ax.set_xlabel("Noise Level (ε)")
-    ax.set_ylabel(metric_name)
-    ax.set_title(title or f"{metric_name} vs Noise Level")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.set_xscale("log")
-    ax.set_yscale("log")
+    _ = ax.set_xlabel("Noise Level (ε)")
+    _ = ax.set_ylabel(metric_name)
+    _ = ax.set_title(title or f"{metric_name} vs Noise Level")
+    _ = ax.legend()
+    _ = ax.grid(True, alpha=0.3)
+    _ = ax.set_xscale("log")
+    _ = ax.set_yscale("log")
 
-    plt.tight_layout()
+    _ = plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        _ = plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig
 
@@ -322,8 +357,8 @@ def plot_eigenvalue_comparison(
     eigenvals_true: np.ndarray,
     eigenvals_noisy: np.ndarray,
     eigenvals_denoised: np.ndarray,
-    save_path: Optional[str] = None,
-) -> plt.Figure:
+    save_path: str | None = None,
+) -> matplotlib.figure.Figure:
     """
     Plot comparison of eigenvalues before and after denoising.
 
@@ -341,7 +376,7 @@ def plot_eigenvalue_comparison(
     indices = range(len(eigenvals_true))
     width = 0.25
 
-    ax.bar(
+    _ = ax.bar(
         [i - width for i in indices],
         eigenvals_true,
         width,
@@ -349,8 +384,8 @@ def plot_eigenvalue_comparison(
         alpha=0.8,
         color="blue",
     )
-    ax.bar(indices, eigenvals_noisy, width, label="Noisy", alpha=0.8, color="red")
-    ax.bar(
+    _ = ax.bar(indices, eigenvals_noisy, width, label="Noisy", alpha=0.8, color="red")
+    _ = ax.bar(
         [i + width for i in indices],
         eigenvals_denoised,
         width,
@@ -359,16 +394,16 @@ def plot_eigenvalue_comparison(
         color="green",
     )
 
-    ax.set_xlabel("Eigenvalue Index")
-    ax.set_ylabel("Eigenvalue")
-    ax.set_title("Eigenvalue Comparison")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    _ = ax.set_xlabel("Eigenvalue Index")
+    _ = ax.set_ylabel("Eigenvalue")
+    _ = ax.set_title("Eigenvalue Comparison")
+    _ = ax.legend()
+    _ = ax.grid(True, alpha=0.3)
 
-    plt.tight_layout()
+    _ = plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        _ = plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig
 
@@ -376,11 +411,11 @@ def plot_eigenvalue_comparison(
 def create_multi_noise_visualization(
     A_original: torch.Tensor,
     model: torch.nn.Module,
-    noise_function,
-    noise_levels: List[float],
+    noise_function: Callable[[torch.Tensor, float], torch.Tensor],
+    noise_levels: list[float],
     device: str = "cpu",
     threshold: float = 0.5,
-) -> plt.Figure:
+) -> matplotlib.figure.Figure:
     """
     Create visualization showing denoising results across multiple noise levels.
 
@@ -404,91 +439,105 @@ def create_multi_noise_visualization(
     """
     n_rows = 5
     fig_size = 4
-    fig, axes = plt.subplots(
-        n_rows, len(noise_levels), figsize=(fig_size * len(noise_levels), fig_size * n_rows)
+    fig, axes_raw = plt.subplots(
+        n_rows,
+        len(noise_levels),
+        figsize=(fig_size * len(noise_levels), fig_size * n_rows),
     )
-    axes = axes.reshape(n_rows, -1)
+    axes: np.ndarray = np.array(axes_raw).reshape(n_rows, -1)
 
-    model.eval()
+    _ = model.eval()
     with torch.no_grad():
         for i, eps in enumerate(noise_levels):
             # Add noise
-            A_noisy = noise_function(A_original, eps)
+            A_noisy: torch.Tensor = noise_function(A_original, eps)
             A_noisy = A_noisy.to(device)
 
             # Get reconstruction
-            if A_noisy.ndim == 2:
-                A_noisy_input = A_noisy.unsqueeze(0)
-            else:
-                A_noisy_input = A_noisy
+            A_noisy_input: torch.Tensor = (
+                A_noisy.unsqueeze(0) if A_noisy.ndim == 2 else A_noisy
+            )
 
             # Get reconstruction handling different model outputs
-            model_output = model(A_noisy_input)
+            model_output: torch.Tensor | tuple[torch.Tensor, ...] = model(A_noisy_input)
+            A_reconstructed: torch.Tensor
             if isinstance(model_output, tuple):
                 A_reconstructed = model_output[0]
             else:
                 A_reconstructed = model_output
 
-            A_original_np = A_original.squeeze().cpu().numpy()
-            A_noisy_np = A_noisy.squeeze().cpu().numpy()
-            A_reconstructed_np = A_reconstructed.squeeze().cpu().numpy()
-            A_predicted_np = (A_reconstructed_np > threshold).astype(float)
+            A_original_np: np.ndarray = A_original.squeeze().cpu().numpy()
+            A_noisy_np: np.ndarray = A_noisy.squeeze().cpu().numpy()
+            A_reconstructed_np: np.ndarray = A_reconstructed.squeeze().cpu().numpy()
+            A_predicted_np: np.ndarray = (A_reconstructed_np > threshold).astype(float)
 
             # Determine shared vmin/vmax for first 3 rows (continuous values)
-            vmin = min(A_original_np.min(), A_noisy_np.min(), A_reconstructed_np.min())
-            vmax = max(A_original_np.max(), A_noisy_np.max(), A_reconstructed_np.max())
-            plot_params = {"cmap": "viridis", "vmin": vmin, "vmax": vmax}
-            binary_params = {"cmap": "viridis", "vmin": 0, "vmax": 1}
+            vmin: float = min(
+                float(A_original_np.min()),
+                float(A_noisy_np.min()),
+                float(A_reconstructed_np.min()),
+            )
+            vmax: float = max(
+                float(A_original_np.max()),
+                float(A_noisy_np.max()),
+                float(A_reconstructed_np.max()),
+            )
+            plot_params: dict[str, Any] = {
+                "cmap": "viridis",
+                "vmin": vmin,
+                "vmax": vmax,
+            }
+            binary_params: dict[str, Any] = {"cmap": "viridis", "vmin": 0, "vmax": 1}
 
             # Row 0: Clean
-            axes[0, i].imshow(A_original_np, **binary_params)
-            axes[0, i].set_title(f"ε={eps:.2f}")
+            _ = axes[0, i].imshow(A_original_np, **binary_params)
+            _ = axes[0, i].set_title(f"ε={eps:.2f}")
             if i == 0:
-                axes[0, i].set_ylabel("Clean", fontsize=12)
+                _ = axes[0, i].set_ylabel("Clean", fontsize=12)
 
             # Row 1: Noisy
-            axes[1, i].imshow(A_noisy_np, **plot_params)
+            _ = axes[1, i].imshow(A_noisy_np, **plot_params)
             if i == 0:
-                axes[1, i].set_ylabel("Noisy", fontsize=12)
+                _ = axes[1, i].set_ylabel("Noisy", fontsize=12)
 
             # Row 2: Denoised (probabilities)
-            axes[2, i].imshow(A_reconstructed_np, **plot_params)
+            _ = axes[2, i].imshow(A_reconstructed_np, **plot_params)
             if i == 0:
-                axes[2, i].set_ylabel("Denoised", fontsize=12)
+                _ = axes[2, i].set_ylabel("Denoised", fontsize=12)
 
             # Row 3: Predicted (thresholded)
-            axes[3, i].imshow(A_predicted_np, **binary_params)
+            _ = axes[3, i].imshow(A_predicted_np, **binary_params)
             if i == 0:
-                axes[3, i].set_ylabel("Predicted", fontsize=12)
+                _ = axes[3, i].set_ylabel("Predicted", fontsize=12)
 
             # Row 4: Delta
-            delta = A_reconstructed_np - A_original_np
-            delta_vmax = max(np.abs(delta).max(), 1e-6)
-            axes[4, i].imshow(delta, cmap="bwr", vmin=-delta_vmax, vmax=delta_vmax)
+            delta: np.ndarray = A_reconstructed_np - A_original_np
+            delta_vmax: float = max(float(np.abs(delta).max()), 1e-6)
+            _ = axes[4, i].imshow(delta, cmap="bwr", vmin=-delta_vmax, vmax=delta_vmax)
             if i == 0:
-                axes[4, i].set_ylabel("Delta", fontsize=12)
+                _ = axes[4, i].set_ylabel("Delta", fontsize=12)
 
             for row in range(n_rows):
-                axes[row, i].axis("off")
+                _ = axes[row, i].axis("off")
 
-    plt.tight_layout(pad=0.1, h_pad=0.5)
+    _ = plt.tight_layout(pad=0.1, h_pad=0.5)
     return fig
 
 
 def create_graph_denoising_wandb_image(
-    A_clean: Union[np.ndarray, torch.Tensor],
+    A_clean: np.ndarray | torch.Tensor,
     noise_fn: Callable[
-        [Union[np.ndarray, torch.Tensor], float],
-        Tuple[Union[np.ndarray, torch.Tensor], Any, Any],
+        [np.ndarray | torch.Tensor, float],
+        tuple[np.ndarray | torch.Tensor, Any, Any],
     ],
     denoise_fn: Callable[
-        [Union[np.ndarray, torch.Tensor]], Union[np.ndarray, torch.Tensor]
+        [np.ndarray | torch.Tensor], np.ndarray | torch.Tensor | tuple[Any, ...]
     ],
     noise_level: float,
     noise_type: str = "Unknown",
     title_prefix: str = "",
     cmap: str = "viridis",
-) -> wandb.Image:
+) -> wandb.sdk.data_types.image.Image:
     """
     Create a wandb Image for graph denoising visualization.
 
@@ -506,7 +555,7 @@ def create_graph_denoising_wandb_image(
     Returns:
         wandb.Image object
     """
-    fig = plot_graph_denoising_comparison(
+    fig: matplotlib.figure.Figure = plot_graph_denoising_comparison(
         A_clean=A_clean,
         noise_fn=noise_fn,
         denoise_fn=denoise_fn,
@@ -516,26 +565,26 @@ def create_graph_denoising_wandb_image(
         cmap=cmap,
     )
 
-    wandb_image = wandb.Image(fig)
-    plt.close(fig)  # Clean up to avoid memory issues
+    wandb_image: wandb.sdk.data_types.image.Image = wandb.Image(fig)
+    _ = plt.close(fig)
 
     return wandb_image
 
 
 def create_graph_denoising_figure(
-    A_clean: Union[np.ndarray, torch.Tensor],
+    A_clean: np.ndarray | torch.Tensor,
     noise_fn: Callable[
-        [Union[np.ndarray, torch.Tensor], float],
-        Tuple[Union[np.ndarray, torch.Tensor], Any, Any],
+        [np.ndarray | torch.Tensor, float],
+        np.ndarray | torch.Tensor | tuple[np.ndarray | torch.Tensor, Any, Any],
     ],
     denoise_fn: Callable[
-        [Union[np.ndarray, torch.Tensor]], Union[np.ndarray, torch.Tensor]
+        [np.ndarray | torch.Tensor], np.ndarray | torch.Tensor | tuple[Any, ...]
     ],
     noise_level: float,
     noise_type: str = "Unknown",
     title_prefix: str = "",
     cmap: str = "viridis",
-) -> plt.Figure:
+) -> matplotlib.figure.Figure:
     """
     Create a matplotlib figure for graph denoising visualization.
 
@@ -567,11 +616,11 @@ def create_graph_denoising_figure(
 def create_wandb_visualization(
     A_original: torch.Tensor,
     model: torch.nn.Module,
-    noise_function,
-    noise_levels: List[float],
+    noise_function: Callable[[torch.Tensor, float], torch.Tensor],
+    noise_levels: list[float],
     dataset_type: str = "test",
     device: str = "cpu",
-) -> Dict[str, wandb.Image]:
+) -> dict[str, wandb.sdk.data_types.image.Image]:
     """
     Create visualizations for Weights & Biases logging.
 
@@ -586,13 +635,15 @@ def create_wandb_visualization(
     Returns:
         Dictionary of wandb Images
     """
-    fig = create_multi_noise_visualization(
+    fig: matplotlib.figure.Figure = create_multi_noise_visualization(
         A_original, model, noise_function, noise_levels, device
     )
 
-    wandb_images = {f"{dataset_type}_reconstruction": wandb.Image(fig)}
+    wandb_images: dict[str, wandb.sdk.data_types.image.Image] = {
+        f"{dataset_type}_reconstruction": wandb.Image(fig)
+    }
 
-    plt.close(fig)  # Clean up to avoid memory issues
+    _ = plt.close(fig)
 
     return wandb_images
 
@@ -602,8 +653,8 @@ def plot_eigenvalue_denoising(
     A_noisy: np.ndarray,
     eigenvals_denoised: np.ndarray,
     eigenvecs_noisy: np.ndarray,
-    save_path: Optional[str] = None,
-) -> plt.Figure:
+    save_path: str | None = None,
+) -> matplotlib.figure.Figure:
     """
     Plot eigenvalue-only denoising visualization.
 
@@ -622,48 +673,51 @@ def plot_eigenvalue_denoising(
         Matplotlib figure
     """
     # Reconstruct using denoised eigenvalues and noisy eigenvectors
-    A_recon_eigvals_only = (
+    A_recon_eigvals_only: np.ndarray = (
         eigenvecs_noisy @ np.diag(eigenvals_denoised) @ eigenvecs_noisy.T
     )
 
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    fig, axes_raw = plt.subplots(1, 4, figsize=(20, 5))
+    axes: np.ndarray = (
+        np.array(axes_raw) if not isinstance(axes_raw, np.ndarray) else axes_raw
+    )
 
     # Original matrix
     im1 = axes[0].imshow(A_original, cmap="viridis")
-    axes[0].set_title("Original")
-    axes[0].axis("off")
-    plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+    _ = axes[0].set_title("Original")
+    _ = axes[0].axis("off")
+    _ = plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
 
     # Noisy matrix
     im2 = axes[1].imshow(A_noisy, cmap="viridis")
-    axes[1].set_title("Noisy")
-    axes[1].axis("off")
-    plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+    _ = axes[1].set_title("Noisy")
+    _ = axes[1].axis("off")
+    _ = plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
 
     # Eigenvalue-only denoised
     im3 = axes[2].imshow(A_recon_eigvals_only, cmap="viridis")
-    axes[2].set_title("Denoised (Eigenvalues Only)")
-    axes[2].axis("off")
-    plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
+    _ = axes[2].set_title("Denoised (Eigenvalues Only)")
+    _ = axes[2].axis("off")
+    _ = plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
 
     # Difference plot
-    diff = np.abs(A_original - A_recon_eigvals_only)
+    diff: np.ndarray = np.abs(A_original - A_recon_eigvals_only)
     im4 = axes[3].imshow(diff, cmap="hot")
-    axes[3].set_title("Absolute Difference")
-    axes[3].axis("off")
-    plt.colorbar(im4, ax=axes[3], fraction=0.046, pad=0.04)
+    _ = axes[3].set_title("Absolute Difference")
+    _ = axes[3].axis("off")
+    _ = plt.colorbar(im4, ax=axes[3], fraction=0.046, pad=0.04)
 
-    plt.tight_layout()
+    _ = plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        _ = plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig
 
 
 def plot_training_metrics_grid(
-    metrics_history: Dict[str, List[float]], save_path: Optional[str] = None
-) -> plt.Figure:
+    metrics_history: dict[str, list[float]], save_path: str | None = None
+) -> matplotlib.figure.Figure:
     """
     Plot a grid of training metrics over time.
 
@@ -674,38 +728,37 @@ def plot_training_metrics_grid(
     Returns:
         Matplotlib figure
     """
-    n_metrics = len(metrics_history)
-    n_cols = min(3, n_metrics)
-    n_rows = (n_metrics + n_cols - 1) // n_cols
+    n_metrics: int = len(metrics_history)
+    n_cols: int = min(3, n_metrics)
+    n_rows: int = (n_metrics + n_cols - 1) // n_cols
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
-    if n_metrics == 1:
-        axes = [axes]
-    elif n_rows == 1 and n_cols == 1:
-        axes = [axes]
+    fig, axes_raw = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    axes: list[Any]
+    if n_metrics == 1 or n_rows == 1 and n_cols == 1:
+        axes = [axes_raw]
     elif n_rows == 1 or n_cols == 1:
-        axes = list(axes)
+        axes = list(axes_raw)
     else:
-        axes = list(axes.flatten())
+        axes = list(np.array(axes_raw).flatten())
 
     for i, (metric_name, values) in enumerate(metrics_history.items()):
         epochs = range(1, len(values) + 1)
-        axes[i].plot(epochs, values, "b-", linewidth=2)
-        axes[i].set_xlabel("Epoch")
-        axes[i].set_ylabel(metric_name)
-        axes[i].set_title(f"{metric_name} over Time")
-        axes[i].grid(True, alpha=0.3)
+        _ = axes[i].plot(epochs, values, "b-", linewidth=2)
+        _ = axes[i].set_xlabel("Epoch")
+        _ = axes[i].set_ylabel(metric_name)
+        _ = axes[i].set_title(f"{metric_name} over Time")
+        _ = axes[i].grid(True, alpha=0.3)
 
         if "loss" in metric_name.lower():
-            axes[i].set_yscale("log")
+            _ = axes[i].set_yscale("log")
 
     # Hide empty subplots
     for i in range(n_metrics, len(axes)):
-        axes[i].set_visible(False)
+        _ = axes[i].set_visible(False)
 
-    plt.tight_layout()
+    _ = plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        _ = plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig

@@ -1,13 +1,17 @@
 """Public API for data utilities."""
 
 from .data_module import GraphDataModule
-from .single_graph_data_module import SingleGraphDataModule
 from .dataset import AdjacencyMatrixDataset, GraphDataset, PermutedAdjacencyDataset
 from .dataset_wrappers import (
     ANUDatasetWrapper,
     ClassicalGraphsWrapper,
     NXGraphWrapperWrapper,
     create_dataset_wrapper,
+)
+from .eigendecomposition import (
+    compute_eigendecomposition,
+    compute_spectral_distance,
+    compute_top_k_eigendecomposition,
 )
 from .noise import (
     add_digress_noise,
@@ -16,18 +20,14 @@ from .noise import (
     random_skew_symmetric_matrix,
 )
 from .noise_generators import (
-    NoiseGenerator,
-    GaussianNoiseGenerator,
     DigressNoiseGenerator,
+    GaussianNoiseGenerator,
+    NoiseGenerator,
     RotationNoiseGenerator,
     create_noise_generator,
 )
 from .sbm import generate_block_sizes, generate_sbm_adjacency
-from .eigendecomposition import (
-    compute_eigendecomposition,
-    compute_top_k_eigendecomposition,
-    compute_spectral_distance,
-)
+from .single_graph_data_module import SingleGraphDataModule
 
 __all__ = [
     # Data Modules
@@ -39,7 +39,7 @@ __all__ = [
     "PermutedAdjacencyDataset",
     # Dataset Wrappers
     "ANUDatasetWrapper",
-    "ClassicalGraphsWrapper", 
+    "ClassicalGraphsWrapper",
     "NXGraphWrapperWrapper",
     "create_dataset_wrapper",
     # Noise functions

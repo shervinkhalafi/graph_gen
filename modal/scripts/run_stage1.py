@@ -56,7 +56,8 @@ def main():
 
     if args.local:
         # Local execution for testing
-        from tmgg_modal.stages.stage1 import generate_stage1_configs
+        from tmgg_modal.stages.stage1 import generate_stage1_configs  # pyright: ignore[reportImplicitRelativeImport]
+
         configs = generate_stage1_configs()
         print(f"Generated {len(configs)} configurations for Stage 1")
         if args.dry_run:
@@ -67,9 +68,11 @@ def main():
         return
 
     # Modal execution
-    from tmgg_modal.stages.stage1 import run_stage1
+    from tmgg_modal.stages.stage1 import run_stage1  # pyright: ignore[reportImplicitRelativeImport]
 
-    print(f"Starting Stage 1 on Modal with parallelism={args.parallelism}, gpu={args.gpu}")
+    print(
+        f"Starting Stage 1 on Modal with parallelism={args.parallelism}, gpu={args.gpu}"
+    )
     result = run_stage1.remote(
         parallelism=args.parallelism,
         gpu_type=args.gpu,

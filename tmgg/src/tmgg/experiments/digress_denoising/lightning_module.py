@@ -1,6 +1,6 @@
 """PyTorch Lightning module for Digress GraphTransformer-based denoising."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -18,23 +18,23 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         use_eigenvectors: bool = False,
         node_feature_dim: int = 20,
         n_layers: int = 4,
-        hidden_mlp_dims: Optional[Dict[str, int]] = None,
-        hidden_dims: Optional[Dict[str, int]] = None,
-        output_dims: Optional[Dict[str, int]] = None,
+        hidden_mlp_dims: dict[str, int] | None = None,
+        hidden_dims: dict[str, int] | None = None,
+        output_dims: dict[str, int] | None = None,
         learning_rate: float = 0.001,
         weight_decay: float = 0.0,
         optimizer_type: str = "adam",
         amsgrad: bool = False,
         loss_type: str = "MSE",
-        scheduler_config: Optional[Dict[str, Any]] = None,
-        noise_levels: Optional[List[float]] = None,
+        scheduler_config: dict[str, Any] | None = None,
+        noise_levels: list[float] | None = None,
         noise_type: str = "Digress",
         rotation_k: int = 20,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         # Config-only params (used for experiment naming, not model behavior)
-        digress_arch: Optional[str] = None,
-        digress_mode: Optional[str] = None,
-        model_type: Optional[str] = None,
+        digress_arch: str | None = None,
+        digress_mode: str | None = None,
+        model_type: str | None = None,
     ):
         # Store before super().__init__ since _make_model is called there
         self._use_eigenvectors = use_eigenvectors
@@ -88,9 +88,9 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         self,
         *args,
         n_layers: int = 4,
-        hidden_mlp_dims: Optional[Dict[str, int]] = None,
-        hidden_dims: Optional[Dict[str, int]] = None,
-        output_dims: Optional[Dict[str, int]] = None,
+        hidden_mlp_dims: dict[str, int] | None = None,
+        hidden_dims: dict[str, int] | None = None,
+        output_dims: dict[str, int] | None = None,
         node_feature_dim: int = 20,
         use_eigenvectors: bool = False,
         **kwargs,

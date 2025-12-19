@@ -1,18 +1,13 @@
 """Data generation and manipulation utilities for graph denoising experiments."""
 
 import numpy as np
-import torch
-from torch.utils.data import Dataset
-from scipy.linalg import expm
-from typing import List, Tuple, Optional, Union
-import random
 
 
 def generate_sbm_adjacency(
-    block_sizes: List[int],
+    block_sizes: list[int],
     p: float,
     q: float,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """
     Generate an adjacency matrix for a stochastic block model with variable block sizes.
@@ -70,18 +65,18 @@ def generate_block_sizes(
     max_blocks: int = 4,
     min_size: int = 2,
     max_size: int = 15,
-) -> List[List[int]]:
+) -> list[list[int]]:
     """
     Generate all valid block size partitions for n nodes.
-    
+
     This function finds all ways to partition n nodes into blocks where:
     - The number of blocks is between min_blocks and max_blocks (inclusive)
     - Each block has size between min_size and max_size (inclusive)
     - The sum of all block sizes equals n
-    
+
     The algorithm uses recursive backtracking to explore all valid partitions.
     For each position, it calculates the valid range of sizes based on:
-    - Minimum size: Must be at least min_size, but also large enough that 
+    - Minimum size: Must be at least min_size, but also large enough that
       remaining blocks can fit within max_size constraint
     - Maximum size: Must be at most max_size, but also small enough that
       remaining blocks can satisfy min_size constraint
@@ -96,7 +91,7 @@ def generate_block_sizes(
     Returns:
         List of valid block size partitions, where each partition is a list
         of integers summing to n
-        
+
     Example:
         >>> generate_block_sizes(6, min_blocks=2, max_blocks=3, min_size=2, max_size=4)
         [[2, 4], [3, 3], [4, 2], [2, 2, 2]]
@@ -109,11 +104,11 @@ def generate_block_sizes(
         def generate_partitions(remaining, blocks_left, current_partition):
             """
             Recursively generate partitions for remaining nodes.
-            
+
             The key insight: we must ensure that after choosing a size for the
             current block, the remaining nodes can still be validly partitioned
             into the remaining blocks while respecting all constraints.
-            
+
             Args:
                 remaining: Number of nodes left to partition
                 blocks_left: Number of blocks left to create (including current)
@@ -127,7 +122,7 @@ def generate_block_sizes(
                 return
 
             # Calculate valid size range for current block
-            
+
             # LOWER BOUND rationale:
             # - Obviously need at least min_size nodes
             # - But also: if we take too few nodes now, the remaining blocks might
@@ -137,9 +132,9 @@ def generate_block_sizes(
             # - Example: 20 nodes, 2 blocks left, max_size=15
             #   Current must be at least 20-1*15=5, or the last block would need >15
             start = max(min_size, remaining - (blocks_left - 1) * max_size)
-            
+
             # UPPER BOUND rationale:
-            # - Obviously can't exceed max_size  
+            # - Obviously can't exceed max_size
             # - But also: if we take too many nodes now, the remaining blocks might
             #   not have enough nodes to satisfy their min_size requirements
             # - Best case: all other blocks take min_size. Then current block

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pytorch_lightning.callbacks.progress.progress_bar import ProgressBar
 from rich import get_console, reconfigure
@@ -35,22 +35,26 @@ class StepTimeColumn(ProgressColumn):
 
     max_refresh = 0.5
 
-    def __init__(self, style: Union[str, Style] = "dim") -> None:
+    def __init__(self, style: str | Style = "dim") -> None:
         self.style = style
         super().__init__()
 
     def render(self, task: Task) -> Text:
         elapsed = task.finished_time if task.finished else task.elapsed
         remaining = task.time_remaining
-        elapsed_str = "-:--:--" if elapsed is None else str(timedelta(seconds=int(elapsed)))
-        remaining_str = "-:--:--" if remaining is None else str(timedelta(seconds=int(remaining)))
+        elapsed_str = (
+            "-:--:--" if elapsed is None else str(timedelta(seconds=int(elapsed)))
+        )
+        remaining_str = (
+            "-:--:--" if remaining is None else str(timedelta(seconds=int(remaining)))
+        )
         return Text(f"{elapsed_str} • {remaining_str}", style=self.style)
 
 
 class StepCountColumn(ProgressColumn):
     """Column showing completed/total steps with zero-padding for stable width."""
 
-    def __init__(self, style: Union[str, Style] = "") -> None:
+    def __init__(self, style: str | Style = "") -> None:
         self.style = style
         super().__init__()
 
@@ -66,7 +70,7 @@ class StepCountColumn(ProgressColumn):
 class StepSpeedColumn(ProgressColumn):
     """Column showing steps per second."""
 
-    def __init__(self, style: Union[str, Style] = "dim") -> None:
+    def __init__(self, style: str | Style = "dim") -> None:
         self.style = style
         super().__init__()
 
@@ -80,7 +84,7 @@ class MetricsColumn(ProgressColumn):
 
     def __init__(
         self,
-        style: Union[str, Style] = "italic",
+        style: str | Style = "italic",
         metrics_format: str = ".4f",
     ) -> None:
         self._style = style
@@ -97,7 +101,7 @@ class MetricsColumn(ProgressColumn):
         for name, value in self._metrics.items():
             if isinstance(value, float):
                 parts.append(f"{name}: {value:{self._metrics_format}}")
-            elif isinstance(value, (int, str)):
+            elif isinstance(value, int | str):
                 parts.append(f"{name}: {value}")
         return Text(" ".join(parts), style=self._style)
 
@@ -106,13 +110,13 @@ class MetricsColumn(ProgressColumn):
 class StepProgressBarTheme:
     """Theme for step-based progress bar styling."""
 
-    description: Union[str, Style] = "bold blue"
-    progress_bar: Union[str, Style] = "#6206E0"
-    progress_bar_finished: Union[str, Style] = "#6206E0"
-    step_count: Union[str, Style] = ""
-    time: Union[str, Style] = "dim"
-    speed: Union[str, Style] = "dim"
-    metrics: Union[str, Style] = "italic"
+    description: str | Style = "bold blue"
+    progress_bar: str | Style = "#6206E0"
+    progress_bar_finished: str | Style = "#6206E0"
+    step_count: str | Style = ""
+    time: str | Style = "dim"
+    speed: str | Style = "dim"
+    metrics: str | Style = "italic"
     metrics_format: str = ".4f"
 
 
@@ -158,18 +162,18 @@ class StepProgressBar(ProgressBar):
         self._theme = theme or StepProgressBarTheme()
         self._console_kwargs = console_kwargs or {}
 
-        self._console: Optional[Console] = None
+        self._console: Console | None = None
         self._enabled: bool = True
-        self.progress: Optional[Progress] = None
+        self.progress: Progress | None = None
         self._progress_stopped: bool = False
-        self._metric_component: Optional[MetricsColumn] = None
+        self._metric_component: MetricsColumn | None = None
 
         # Progress bar task IDs
-        self.train_progress_bar_id: Optional[TaskID] = None
-        self.val_sanity_progress_bar_id: Optional[TaskID] = None
-        self.val_progress_bar_id: Optional[TaskID] = None
-        self.test_progress_bar_id: Optional[TaskID] = None
-        self.predict_progress_bar_id: Optional[TaskID] = None
+        self.train_progress_bar_id: TaskID | None = None
+        self.val_sanity_progress_bar_id: TaskID | None = None
+        self.val_progress_bar_id: TaskID | None = None
+        self.test_progress_bar_id: TaskID | None = None
+        self.predict_progress_bar_id: TaskID | None = None
 
     @property
     def refresh_rate(self) -> int:
@@ -216,7 +220,10 @@ class StepProgressBar(ProgressBar):
                 self._console.clear_live()
         else:
             # Older Rich versions use _live attribute
-            if hasattr(self._console, "_live") and self._console._live is not None:
+            if (
+                hasattr(self._console, "_live")
+                and getattr(self._console, "_live", None) is not None
+            ):
                 self._console.clear_live()
 
         self._metric_component = MetricsColumn(
@@ -260,7 +267,7 @@ class StepProgressBar(ProgressBar):
         steps_per_epoch = self.total_train_batches
         if steps_per_epoch <= 0:
             return 0
-        return (trainer.max_steps + steps_per_epoch - 1) // steps_per_epoch
+        return int((trainer.max_steps + steps_per_epoch - 1) // steps_per_epoch)
 
     def _get_train_description(self, trainer: pl.Trainer) -> str:
         """Generate training phase description with zero-padded epoch."""
@@ -281,7 +288,7 @@ class StepProgressBar(ProgressBar):
         return "Validating"
 
     def _add_task(
-        self, total: Union[int, float], description: str, visible: bool = True
+        self, total: int | float, description: str, visible: bool = True
     ) -> TaskID:
         """Add a new progress task."""
         assert self.progress is not None
@@ -289,7 +296,7 @@ class StepProgressBar(ProgressBar):
         return self.progress.add_task(styled_desc, total=total, visible=visible)
 
     def _update(
-        self, progress_bar_id: Optional[TaskID], current: int, visible: bool = True
+        self, progress_bar_id: TaskID | None, current: int, visible: bool = True
     ) -> None:
         """Update progress bar position."""
         if self.progress is None or not self.is_enabled or progress_bar_id is None:
@@ -299,7 +306,7 @@ class StepProgressBar(ProgressBar):
             return
         self.progress.update(progress_bar_id, completed=current, visible=visible)
 
-    def _should_update(self, current: int, total: Union[int, float]) -> bool:
+    def _should_update(self, current: int, total: int | float) -> bool:
         """Check if progress should be refreshed at this step."""
         return current % self._refresh_rate == 0 or current == total
 
@@ -327,7 +334,7 @@ class StepProgressBar(ProgressBar):
             if key not in items and key in key_patterns:
                 if hasattr(value, "item"):
                     items[key] = value.item()
-                elif isinstance(value, (int, float)):
+                elif isinstance(value, int | float):
                     items[key] = value
 
         # Filter out internal metrics
@@ -340,7 +347,9 @@ class StepProgressBar(ProgressBar):
 
         return {k: v for k, v in items.items() if k in self._metrics_to_show}
 
-    def _update_metrics(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+    def _update_metrics(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
         """Update the metrics column with current values."""
         if not self.is_enabled or self._metric_component is None:
             return
@@ -492,9 +501,7 @@ class StepProgressBar(ProgressBar):
             self._update_metrics(trainer, pl_module)
         self.reset_dataloader_idx_tracker()
 
-    def on_test_start(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ) -> None:
+    def on_test_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         self._init_progress(trainer)
 
     def on_test_batch_start(
@@ -529,9 +536,7 @@ class StepProgressBar(ProgressBar):
         self._update(self.test_progress_bar_id, batch_idx + 1)
         self.refresh()
 
-    def on_test_end(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ) -> None:
+    def on_test_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         self.reset_dataloader_idx_tracker()
 
     def on_predict_start(

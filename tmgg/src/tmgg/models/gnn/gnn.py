@@ -1,6 +1,6 @@
 """Graph Neural Network models for graph denoising."""
 
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -8,10 +8,10 @@ import torch.nn as nn
 from tmgg.models.layers.eigen_embedding import EigenEmbedding
 from tmgg.models.layers.gcn import GraphConvolutionLayer
 
-from ..base import DenoisingModel
+from ..base import DenoisingModel, EmbeddingModel
 
 
-class GNN(DenoisingModel):
+class GNN(EmbeddingModel, DenoisingModel):
     """Standard Graph Neural Network for adjacency matrix reconstruction."""
 
     def __init__(
@@ -49,7 +49,7 @@ class GNN(DenoisingModel):
         self.out_x = nn.Linear(feature_dim_in, feature_dim_out)
         self.out_y = nn.Linear(feature_dim_in, feature_dim_out)
 
-    def forward(self, A: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass returning node embeddings.
 
@@ -81,7 +81,7 @@ class GNN(DenoisingModel):
         Y = self.out_y(Z)
         return X, Y
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get model configuration."""
         return {
             "num_layers": self.num_layers,

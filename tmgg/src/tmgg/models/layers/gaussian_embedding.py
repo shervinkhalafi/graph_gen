@@ -13,7 +13,7 @@ class GaussianEmbedding(nn.Module):
             num_terms: Number of terms in the polynomial expansion
             num_channels: Number of output channels
         """
-        super(GaussianEmbedding, self).__init__()
+        super().__init__()
         self.num_terms = num_terms
         self.num_channels = num_channels
 

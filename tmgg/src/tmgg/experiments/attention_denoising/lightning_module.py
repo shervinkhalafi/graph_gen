@@ -1,6 +1,6 @@
 """PyTorch Lightning module for attention-based denoising."""
 
-from typing import Any, Dict, List, Optional, override
+from typing import Any, override
 
 import torch.nn as nn
 
@@ -16,8 +16,8 @@ class AttentionDenoisingLightningModule(DenoisingLightningModule):
         d_model: int = 20,
         num_heads: int = 8,
         num_layers: int = 8,
-        d_k: Optional[int] = None,
-        d_v: Optional[int] = None,
+        d_k: int | None = None,
+        d_v: int | None = None,
         dropout: float = 0.0,
         bias: bool = True,
         learning_rate: float = 0.001,
@@ -25,11 +25,11 @@ class AttentionDenoisingLightningModule(DenoisingLightningModule):
         optimizer_type: str = "adam",
         amsgrad: bool = False,
         loss_type: str = "MSE",
-        scheduler_config: Optional[Dict[str, Any]] = None,
-        noise_levels: Optional[List[float]] = None,
+        scheduler_config: dict[str, Any] | None = None,
+        noise_levels: list[float] | None = None,
         noise_type: str = "Digress",
         rotation_k: int = 20,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         domain: str = "standard",
     ):
         """
@@ -87,6 +87,8 @@ class AttentionDenoisingLightningModule(DenoisingLightningModule):
         *args: Any,  # pyright: ignore[reportExplicitAny]
         **kwargs: Any,  # pyright: ignore[reportExplicitAny]
     ) -> nn.Module:
+        # Note: domain parameter is accepted by create_model but not used by MultiLayerAttention
+        _ = domain  # Mark as intentionally unused
         return MultiLayerAttention(
             d_model=d_model,
             num_heads=num_heads,
@@ -95,7 +97,6 @@ class AttentionDenoisingLightningModule(DenoisingLightningModule):
             d_v=d_v,
             dropout=dropout,
             bias=bias,
-            domain=domain,
         )
 
     def get_model_name(self) -> str:

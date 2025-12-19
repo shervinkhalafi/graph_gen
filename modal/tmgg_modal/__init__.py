@@ -4,8 +4,8 @@ This package provides Modal-specific implementations for running
 TMGG experiments on cloud GPUs with Tigris S3 storage.
 """
 
-from tmgg_modal.app import app, GPU_CONFIGS
-from tmgg_modal.runner import ModalRunner
-from tmgg_modal.storage import TigrisStorage
+from tmgg_modal.app import app, GPU_CONFIGS  # pyright: ignore[reportImplicitRelativeImport]
+from tmgg_modal.runner import ModalRunner  # pyright: ignore[reportImplicitRelativeImport]
+from tmgg_modal.storage import TigrisStorage  # pyright: ignore[reportImplicitRelativeImport]
 
 __all__ = ["app", "GPU_CONFIGS", "ModalRunner", "TigrisStorage"]

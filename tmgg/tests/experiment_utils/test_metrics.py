@@ -1,14 +1,14 @@
 """Tests for metrics utilities."""
 
-import pytest
 import numpy as np
+import pytest
 import torch
 
 from tmgg.experiment_utils.metrics import (
-    compute_eigenvalue_error,
-    compute_subspace_distance,
-    compute_reconstruction_metrics,
     compute_batch_metrics,
+    compute_eigenvalue_error,
+    compute_reconstruction_metrics,
+    compute_subspace_distance,
 )
 
 
@@ -44,7 +44,12 @@ class TestMetrics:
 
         metrics = compute_reconstruction_metrics(A_true, A_pred)
 
-        expected_keys = ['mse', 'frobenius_error', 'eigenvalue_error', 'subspace_distance']
+        expected_keys = [
+            "mse",
+            "frobenius_error",
+            "eigenvalue_error",
+            "subspace_distance",
+        ]
 
         for key in expected_keys:
             assert key in metrics
@@ -57,11 +62,18 @@ class TestMetrics:
         matrix_size = 5
 
         A_true_batch = torch.eye(matrix_size).unsqueeze(0).repeat(batch_size, 1, 1)
-        A_pred_batch = A_true_batch + 0.1 * torch.randn(batch_size, matrix_size, matrix_size)
+        A_pred_batch = A_true_batch + 0.1 * torch.randn(
+            batch_size, matrix_size, matrix_size
+        )
 
         metrics = compute_batch_metrics(A_true_batch, A_pred_batch)
 
-        expected_keys = ['mse', 'frobenius_error', 'eigenvalue_error', 'subspace_distance']
+        expected_keys = [
+            "mse",
+            "frobenius_error",
+            "eigenvalue_error",
+            "subspace_distance",
+        ]
 
         for key in expected_keys:
             assert key in metrics
@@ -75,8 +87,8 @@ class TestMetrics:
 
         metrics = compute_reconstruction_metrics(A_true, A_pred)
 
-        assert metrics['mse'] < 1e-6
-        assert metrics['frobenius_error'] < 1e-6
+        assert metrics["mse"] < 1e-6
+        assert metrics["frobenius_error"] < 1e-6
 
     def test_tensor_input_handling(self):
         """Test that function handles different tensor types."""
@@ -84,15 +96,15 @@ class TestMetrics:
         A_pred_np = np.eye(5) + 0.1 * np.random.randn(5, 5)
 
         metrics_np = compute_reconstruction_metrics(A_true_np, A_pred_np)
-        assert isinstance(metrics_np['mse'], float)
+        assert isinstance(metrics_np["mse"], float)
 
         A_true_torch = torch.from_numpy(A_true_np).float()
         A_pred_torch = torch.from_numpy(A_pred_np).float()
 
         metrics_torch = compute_reconstruction_metrics(A_true_torch, A_pred_torch)
-        assert isinstance(metrics_torch['mse'], float)
+        assert isinstance(metrics_torch["mse"], float)
 
-        assert abs(metrics_np['mse'] - metrics_torch['mse']) < 1e-5
+        assert abs(metrics_np["mse"] - metrics_torch["mse"]) < 1e-5
 
     def test_batch_dimension_handling(self):
         """Test handling of batch dimensions."""
@@ -106,7 +118,7 @@ class TestMetrics:
 
         metrics_single = compute_reconstruction_metrics(A_true_single, A_pred_single)
 
-        assert abs(metrics_batch['mse'] - metrics_single['mse']) < 1e-5
+        assert abs(metrics_batch["mse"] - metrics_single["mse"]) < 1e-5
 
 
 if __name__ == "__main__":

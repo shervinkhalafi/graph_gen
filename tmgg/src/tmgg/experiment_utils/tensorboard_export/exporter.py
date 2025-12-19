@@ -59,7 +59,7 @@ class ExportResult:
     def summary(self) -> str:
         """Return a summary of the export result."""
         lines = [
-            f"TensorBoard Export Summary",
+            "TensorBoard Export Summary",
             f"{'=' * 40}",
             f"Runs processed: {self.runs_processed}",
             f"Runs failed: {self.runs_failed}",
@@ -154,14 +154,14 @@ class TensorBoardExporter:
             events_df = pd.concat(all_events, ignore_index=True)
         else:
             events_df = pd.DataFrame(
-                columns=["project_id", "run_id", "tag", "step", "wall_time", "value"]
+                columns=["project_id", "run_id", "tag", "step", "wall_time", "value"]  # pyright: ignore[reportArgumentType]
             )
 
         # Combine configs into DataFrame
         if all_configs:
             hparams_df = pd.DataFrame(all_configs)
         else:
-            hparams_df = pd.DataFrame(columns=["project_id", "run_id"])
+            hparams_df = pd.DataFrame(columns=["project_id", "run_id"])  # pyright: ignore[reportArgumentType]
 
         return ExportResult(
             events_df=events_df,

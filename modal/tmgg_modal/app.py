@@ -26,16 +26,16 @@ GPU_CONFIGS = {
 
 # Default timeouts per GPU tier (in seconds)
 DEFAULT_TIMEOUTS = {
-    "debug": 600,      # 10 minutes
+    "debug": 600,  # 10 minutes
     "standard": 1800,  # 30 minutes
-    "fast": 3600,      # 1 hour
-    "multi": 7200,     # 2 hours
-    "h100": 3600,      # 1 hour
+    "fast": 3600,  # 1 hour
+    "multi": 7200,  # 2 hours
+    "h100": 3600,  # 1 hour
 }
 
 # Memory configurations (for non-GPU containers)
 MEMORY_CONFIGS = {
-    "small": 2048,    # 2 GB
-    "medium": 8192,   # 8 GB
-    "large": 32768,   # 32 GB
+    "small": 2048,  # 2 GB
+    "medium": 8192,  # 8 GB
+    "large": 32768,  # 32 GB
 }

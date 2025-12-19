@@ -7,25 +7,24 @@ with Tigris storage for checkpoints and metrics.
 from __future__ import annotations
 
 import logging
-import os
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 import modal
-
-logger = logging.getLogger(__name__)
 from omegaconf import DictConfig, OmegaConf
 
-from tmgg_modal.app import GPU_CONFIGS, DEFAULT_TIMEOUTS, app
-from tmgg_modal.image import create_tmgg_image
-from tmgg_modal.storage import TigrisStorage, get_storage_from_env
-from tmgg_modal.volumes import get_volume_mounts, OUTPUTS_MOUNT
+from tmgg_modal.app import GPU_CONFIGS, DEFAULT_TIMEOUTS, app  # pyright: ignore[reportImplicitRelativeImport]
+from tmgg_modal.image import create_tmgg_image  # pyright: ignore[reportImplicitRelativeImport]
+from tmgg_modal.storage import TigrisStorage, get_storage_from_env  # pyright: ignore[reportImplicitRelativeImport]
+from tmgg_modal.volumes import get_volume_mounts, OUTPUTS_MOUNT  # pyright: ignore[reportImplicitRelativeImport]
+
+logger = logging.getLogger(__name__)
 
 # Import base classes from tmgg
 try:
-    from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult
+    from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult  # pyright: ignore[reportAssignmentType]
 except ImportError:
     # Fallback definitions for when tmgg is not installed
     from dataclasses import dataclass, field
@@ -46,7 +45,7 @@ except ImportError:
 
 # Create experiment image, with fallback for testing
 try:
-    from tmgg_modal.paths import discover_tmgg_path
+    from tmgg_modal.paths import discover_tmgg_path  # pyright: ignore[reportImplicitRelativeImport]
 
     _tmgg_path = discover_tmgg_path()
     experiment_image = create_tmgg_image(_tmgg_path)
@@ -57,15 +56,21 @@ except Exception:
 
 
 # Modal secrets for Tigris storage and W&B
-tigris_secret = modal.Secret.from_name("tigris-credentials", required_keys=[
-    "TMGG_TIGRIS_BUCKET",
-    "TMGG_TIGRIS_ACCESS_KEY",
-    "TMGG_TIGRIS_SECRET_KEY",
-])
+tigris_secret = modal.Secret.from_name(
+    "tigris-credentials",
+    required_keys=[
+        "TMGG_TIGRIS_BUCKET",
+        "TMGG_TIGRIS_ACCESS_KEY",
+        "TMGG_TIGRIS_SECRET_KEY",
+    ],
+)
 
-wandb_secret = modal.Secret.from_name("wandb-credentials", required_keys=[
-    "WANDB_API_KEY",
-])
+wandb_secret = modal.Secret.from_name(
+    "wandb-credentials",
+    required_keys=[
+        "WANDB_API_KEY",
+    ],
+)
 
 
 def _get_timeout_for_gpu(gpu_type: str) -> int:
@@ -78,7 +83,7 @@ def _get_timeout_for_gpu(gpu_type: str) -> int:
     gpu=GPU_CONFIGS["standard"],
     timeout=DEFAULT_TIMEOUTS["standard"],
     secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),
+    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
 )
 def run_single_experiment(config_dict: dict[str, Any]) -> dict[str, Any]:
     """Run a single experiment on Modal.
@@ -108,10 +113,12 @@ def run_single_experiment(config_dict: dict[str, Any]) -> dict[str, Any]:
     config = OmegaConf.create(config_dict)
 
     # Override output directory to use Modal volume
-    config.paths = OmegaConf.create({
-        "output_dir": f"{OUTPUTS_MOUNT}/{run_id}",
-        "results_dir": f"{OUTPUTS_MOUNT}/{run_id}/results",
-    })
+    config.paths = OmegaConf.create(
+        {
+            "output_dir": f"{OUTPUTS_MOUNT}/{run_id}",
+            "results_dir": f"{OUTPUTS_MOUNT}/{run_id}/results",
+        }
+    )
 
     try:
         result = run_experiment(config)
@@ -136,7 +143,9 @@ def run_single_experiment(config_dict: dict[str, Any]) -> dict[str, Any]:
                         checkpoint_uri = storage.upload_checkpoint(
                             checkpoint_path, run_id
                         )
-                        logger.info(f"[{run_id}] Uploaded checkpoint to {checkpoint_uri}")
+                        logger.info(
+                            f"[{run_id}] Uploaded checkpoint to {checkpoint_uri}"
+                        )
                     except Exception as e:
                         storage_warnings.append(
                             f"[{run_id}] Failed to upload checkpoint: {e}"
@@ -204,7 +213,7 @@ def run_single_experiment(config_dict: dict[str, Any]) -> dict[str, Any]:
     gpu=GPU_CONFIGS["fast"],
     timeout=DEFAULT_TIMEOUTS["fast"],
     secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),
+    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
 )
 def run_single_experiment_fast(config_dict: dict[str, Any]) -> dict[str, Any]:
     """Run a single experiment on fast (A100) GPU."""
@@ -263,9 +272,9 @@ class ModalRunner(CloudRunner):
 
         # Select appropriate function based on GPU tier
         if gpu in ("fast", "multi", "h100"):
-            result_dict = run_single_experiment_fast.remote(config_dict)
+            result_dict = run_single_experiment_fast.remote(config_dict)  # pyright: ignore[reportArgumentType]
         else:
-            result_dict = run_single_experiment.remote(config_dict)
+            result_dict = run_single_experiment.remote(config_dict)  # pyright: ignore[reportArgumentType]
 
         return ExperimentResult(**result_dict)
 

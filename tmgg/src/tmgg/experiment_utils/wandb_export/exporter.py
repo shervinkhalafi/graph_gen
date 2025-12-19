@@ -10,7 +10,7 @@ import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 import wandb
@@ -30,7 +30,7 @@ from .rate_limiter import RateLimiter
 from .state import ExportState
 
 if TYPE_CHECKING:
-    from wandb.apis.public import Run
+    from wandb.apis.public.runs import Run
 
 
 @dataclass
@@ -113,54 +113,59 @@ class WandbExporter:
         dict
             Summary with counts of exported, skipped, and failed runs.
         """
-        project_path = (
+        project_path: str = (
             f"{self.config.entity}/{self.config.project}"
             if self.config.entity
             else self.config.project
         )
 
-        logger.info(f"Fetching runs from project: {project_path}")
+        _ = logger.info(f"Fetching runs from project: {project_path}")
         try:
-            runs = self.rate_limiter.call_with_retry(
+            runs: list[Run] = self.rate_limiter.call_with_retry(
                 lambda: list(self.api.runs(project_path))
             )
         except ValueError as e:
             # wandb raises ValueError when project is not found
-            logger.error(f"Project not found: {project_path}")
-            logger.error("Check that the project name and entity are correct.")
+            _ = logger.error(f"Project not found: {project_path}")
+            _ = logger.error("Check that the project name and entity are correct.")
             # Try to list available projects for helpful error message
             try:
-                entity = self.config.entity or self.api.default_entity
-                available = [p.name for p in self.api.projects(entity)]
+                entity: str | None = self.config.entity or self.api.default_entity
+                available: list[str] = [p.name for p in self.api.projects(entity)]
                 if available:
-                    logger.info(f"Available projects for entity '{entity}':")
+                    _ = logger.info(f"Available projects for entity '{entity}':")
                     for proj in available[:10]:
-                        logger.info(f"  - {proj}")
+                        _ = logger.info(f"  - {proj}")
                     if len(available) > 10:
-                        logger.info(f"  ... and {len(available) - 10} more")
+                        _ = logger.info(f"  ... and {len(available) - 10} more")
             except Exception:
                 pass
             raise SystemExit(1) from e
-        logger.info(f"Found {len(runs)} runs in project")
+        _ = logger.info(f"Found {len(runs)} runs in project")
 
         if run_ids:
-            run_ids_set = set(run_ids)
+            run_ids_set: set[str] = set(run_ids)
             runs = [r for r in runs if r.id in run_ids_set]
-            logger.info(f"Filtered to {len(runs)} specified runs")
+            _ = logger.info(f"Filtered to {len(runs)} specified runs")
 
-        summary = {"exported": 0, "skipped": 0, "failed": 0, "errors": []}
+        summary: dict[str, Any] = {
+            "exported": 0,
+            "skipped": 0,
+            "failed": 0,
+            "errors": [],
+        }
 
         # Determine which runs to process
-        runs_to_export = []
+        runs_to_export: list[Run] = []
         for run in runs:
             if not force and self.state.is_completed(run.id):
-                logger.info(f"Skipping completed run: {run.id} ({run.name})")
+                _ = logger.info(f"Skipping completed run: {run.id} ({run.name})")
                 summary["skipped"] += 1
             else:
-                runs_to_export.append(run)
+                _ = runs_to_export.append(run)
 
         if not runs_to_export:
-            logger.info("No runs to export")
+            _ = logger.info("No runs to export")
             return summary
 
         # Export with progress bar
@@ -181,28 +186,28 @@ class WandbExporter:
 
             for run in runs_to_export:
                 if self.state.is_in_progress(run.id):
-                    logger.warning(f"Cleaning up incomplete export for: {run.id}")
-                    self._cleanup_partial(run.id)
+                    _ = logger.warning(f"Cleaning up incomplete export for: {run.id}")
+                    _ = self._cleanup_partial(run.id)
 
                 try:
-                    self._export_run_with_progress(run, progress)
+                    _ = self._export_run_with_progress(run, progress)
                     summary["exported"] += 1
                 except Exception as e:
-                    logger.error(f"Failed to export run {run.id}: {e}")
-                    self.state.mark_failed(run.id, str(e))
+                    _ = logger.error(f"Failed to export run {run.id}: {e}")
+                    _ = self.state.mark_failed(run.id, str(e))
                     summary["failed"] += 1
-                    summary["errors"].append({"run_id": run.id, "error": str(e)})
+                    _ = summary["errors"].append({"run_id": run.id, "error": str(e)})
 
-                progress.advance(overall_task)
+                _ = progress.advance(overall_task)
 
-        logger.info(
+        _ = logger.info(
             f"Export complete: {summary['exported']} exported, "
             f"{summary['skipped']} skipped, {summary['failed']} failed"
         )
 
         # Log output location
-        output_path = self.config.output_dir / self.config.project
-        logger.info(f"Output saved to: {output_path.absolute()}")
+        output_path: Path = self.config.output_dir / self.config.project
+        _ = logger.info(f"Output saved to: {output_path.absolute()}")
 
         return summary
 
@@ -216,27 +221,37 @@ class WandbExporter:
         progress
             Rich Progress instance for display.
         """
-        run_dir = self.config.output_dir / self.config.project / run.id
-        run_dir.mkdir(parents=True, exist_ok=True)
+        run_dir: Path = self.config.output_dir / self.config.project / run.id
+        _ = run_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine components to export
-        components_to_export = ["config", "summary", "metadata", "history", "system_metrics"]
+        components_to_export: list[str] = [
+            "config",
+            "summary",
+            "metadata",
+            "history",
+            "system_metrics",
+        ]
         if not self.config.skip_media:
-            components_to_export.append("media")
+            _ = components_to_export.append("media")
         if not self.config.skip_artifacts:
-            components_to_export.append("artifacts")
+            _ = components_to_export.append("artifacts")
 
         # Per-run progress
-        run_task = progress.add_task(
-            f"  {run.id} ({run.name[:30]}...)" if len(run.name) > 30 else f"  {run.id} ({run.name})",
+        run_task: TaskID = progress.add_task(
+            f"  {run.id} ({run.name[:30]}...)"
+            if len(run.name) > 30
+            else f"  {run.id} ({run.name})",
             total=len(components_to_export),
         )
 
-        self.state.mark_started(run.id, run.path)
+        # run.path is a list like ["entity", "project", "run_id"], convert to string
+        run_path_str = "/".join(str(p) for p in run.path)
+        _ = self.state.mark_started(run.id, run_path_str)
         components: dict[str, bool] = {}
 
         for component in components_to_export:
-            progress.update(run_task, description=f"  {run.id}: {component}")
+            _ = progress.update(run_task, description=f"  {run.id}: {component}")
 
             if component == "config":
                 components["config"] = self._export_config(run, run_dir)
@@ -245,7 +260,9 @@ class WandbExporter:
             elif component == "metadata":
                 components["metadata"] = self._export_metadata(run, run_dir)
             elif component == "history":
-                components["history"] = self._export_history(run, run_dir, progress, run_task)
+                components["history"] = self._export_history(
+                    run, run_dir, progress, run_task
+                )
             elif component == "system_metrics":
                 components["system_metrics"] = self._export_system_metrics(run, run_dir)
             elif component == "media":
@@ -253,16 +270,18 @@ class WandbExporter:
             elif component == "artifacts":
                 components["artifacts"] = self._export_artifacts(run, run_dir)
 
-            progress.advance(run_task)
+            _ = progress.advance(run_task)
 
         # Write completion marker
-        marker_path = run_dir / "_export_complete.marker"
-        marker_path.write_text(json.dumps({"run_id": run.id, "components": components}))
-        logger.info(f"Saved marker: {marker_path}")
+        marker_path: Path = run_dir / "_export_complete.marker"
+        _ = marker_path.write_text(
+            json.dumps({"run_id": run.id, "components": components})
+        )
+        _ = logger.info(f"Saved marker: {marker_path}")
 
-        self.state.mark_completed(run.id, components)
-        progress.update(run_task, description=f"  {run.id}: done", visible=False)
-        logger.info(f"Completed export for run: {run.id} -> {run_dir}")
+        _ = self.state.mark_completed(run.id, components)
+        _ = progress.update(run_task, description=f"  {run.id}: done", visible=False)
+        _ = logger.info(f"Completed export for run: {run.id} -> {run_dir}")
 
     def export_run(self, run: Run) -> None:
         """Export a single run (without progress bar).
@@ -284,43 +303,47 @@ class WandbExporter:
 
     def _export_config(self, run: Run, run_dir: Path) -> bool:
         """Export run configuration to JSON."""
-        config_path = run_dir / "config.json"
+        config_path: Path = run_dir / "config.json"
         try:
-            config_data = self.rate_limiter.call_with_retry(lambda: dict(run.config))
-            config_path.write_text(json.dumps(config_data, indent=2, default=str))
-            logger.info(f"Saved config: {config_path}")
+            config_data: dict[str, Any] = self.rate_limiter.call_with_retry(
+                lambda: dict(run.config)
+            )
+            _ = config_path.write_text(json.dumps(config_data, indent=2, default=str))
+            _ = logger.info(f"Saved config: {config_path}")
             return True
         except Exception as e:
-            logger.error(f"Failed to export config for {run.id}: {e}")
+            _ = logger.error(f"Failed to export config for {run.id}: {e}")
             raise
 
     def _export_summary(self, run: Run, run_dir: Path) -> bool:
         """Export run summary metrics to JSON."""
-        summary_path = run_dir / "summary.json"
+        summary_path: Path = run_dir / "summary.json"
         try:
             # run.summary is a special wandb object, iterate carefully
-            summary_data = {}
-            raw_summary = self.rate_limiter.call_with_retry(lambda: run.summary)
-            for key in raw_summary.keys():
+            summary_data: dict[str, Any] = {}
+            raw_summary: Any = self.rate_limiter.call_with_retry(lambda: run.summary)
+            for key in raw_summary:
                 try:
                     summary_data[key] = raw_summary[key]
                 except Exception as key_err:
-                    logger.warning(f"Failed to access summary key '{key}': {key_err}")
+                    _ = logger.warning(
+                        f"Failed to access summary key '{key}': {key_err}"
+                    )
                     summary_data[key] = f"<error: {key_err}>"
             # Convert any non-serializable values
-            serializable = _make_json_serializable(summary_data)
-            summary_path.write_text(json.dumps(serializable, indent=2, default=str))
-            logger.info(f"Saved summary: {summary_path}")
+            serializable: Any = _make_json_serializable(summary_data)
+            _ = summary_path.write_text(json.dumps(serializable, indent=2, default=str))
+            _ = logger.info(f"Saved summary: {summary_path}")
             return True
         except Exception as e:
-            logger.error(f"Failed to export summary for {run.id}: {e}")
+            _ = logger.error(f"Failed to export summary for {run.id}: {e}")
             raise
 
     def _export_metadata(self, run: Run, run_dir: Path) -> bool:
         """Export run metadata (tags, state, timestamps) to JSON."""
-        metadata_path = run_dir / "metadata.json"
+        metadata_path: Path = run_dir / "metadata.json"
         try:
-            metadata = {
+            metadata: dict[str, Any] = {
                 "id": run.id,
                 "name": run.name,
                 "path": run.path,
@@ -333,11 +356,11 @@ class WandbExporter:
                 "group": getattr(run, "group", None),
                 "job_type": getattr(run, "job_type", None),
             }
-            metadata_path.write_text(json.dumps(metadata, indent=2, default=str))
-            logger.info(f"Saved metadata: {metadata_path}")
+            _ = metadata_path.write_text(json.dumps(metadata, indent=2, default=str))
+            _ = logger.info(f"Saved metadata: {metadata_path}")
             return True
         except Exception as e:
-            logger.error(f"Failed to export metadata for {run.id}: {e}")
+            _ = logger.error(f"Failed to export metadata for {run.id}: {e}")
             raise
 
     def _export_history(
@@ -352,34 +375,36 @@ class WandbExporter:
         Uses scan_history instead of history() to get full data without
         W&B's default subsampling.
         """
-        metrics_dir = run_dir / "metrics"
-        metrics_dir.mkdir(exist_ok=True)
-        history_path = metrics_dir / "history.parquet"
+        metrics_dir: Path = run_dir / "metrics"
+        _ = metrics_dir.mkdir(exist_ok=True)
+        history_path: Path = metrics_dir / "history.parquet"
 
         try:
             # scan_history returns an iterator, collect all records
             # This avoids subsampling that history() does by default
-            records = []
-            scanner = self.rate_limiter.call_with_retry(
+            records: list[dict[str, Any]] = []
+            scanner: Any = self.rate_limiter.call_with_retry(
                 lambda: run.scan_history(page_size=self.config.page_size)
             )
 
             # Collect with progress updates
             for i, record in enumerate(scanner):
-                records.append(record)
+                _ = records.append(record)
                 if progress and task_id and i % 500 == 0:
-                    progress.update(task_id, description=f"  {run.id}: history ({i} rows)")
+                    _ = progress.update(
+                        task_id, description=f"  {run.id}: history ({i} rows)"
+                    )
 
             if not records:
-                logger.info(f"No history records for {run.id}")
+                _ = logger.info(f"No history records for {run.id}")
                 return True
 
-            df = pd.DataFrame(records)
-            df.to_parquet(history_path, index=False)
-            logger.info(f"Saved history ({len(records)} rows): {history_path}")
+            df: pd.DataFrame = pd.DataFrame(records)
+            _ = df.to_parquet(history_path, index=False)
+            _ = logger.info(f"Saved history ({len(records)} rows): {history_path}")
             return True
         except Exception as e:
-            logger.error(f"Failed to export history for {run.id}: {e}")
+            _ = logger.error(f"Failed to export history for {run.id}: {e}")
             raise
 
     def _export_system_metrics(self, run: Run, run_dir: Path) -> bool:
@@ -399,7 +424,11 @@ class WandbExporter:
         # Approach 1: Try to get system metrics from files (full data)
         try:
             files = self.rate_limiter.call_with_retry(lambda: list(run.files()))
-            system_files = [f for f in files if "events" in f.name.lower() or "system" in f.name.lower()]
+            system_files = [
+                f
+                for f in files
+                if "events" in f.name.lower() or "system" in f.name.lower()
+            ]
 
             if system_files:
                 # Download system metrics files
@@ -409,9 +438,13 @@ class WandbExporter:
                 for f in system_files:
                     try:
                         self.rate_limiter.call_with_retry(
-                            lambda file=f: file.download(root=str(system_files_dir), replace=True)
+                            lambda file=f: file.download(
+                                root=str(system_files_dir), replace=True
+                            )
                         )
-                        logger.info(f"Downloaded system file: {system_files_dir / f.name}")
+                        logger.info(
+                            f"Downloaded system file: {system_files_dir / f.name}"
+                        )
                     except Exception as e:
                         logger.debug(f"Could not download {f.name}: {e}")
 
@@ -424,13 +457,22 @@ class WandbExporter:
         for samples in sample_sizes:
             try:
                 logger.debug(f"Trying system metrics with samples={samples}")
-                system_df = self.rate_limiter.call_with_retry(
-                    lambda s=samples: run.history(samples=s, stream="system", pandas=True)
+                # Cast to DataFrame - run.history() with pandas=True returns DataFrame
+                # but wandb's type hints don't capture this
+                system_df = cast(
+                    pd.DataFrame | None,
+                    self.rate_limiter.call_with_retry(
+                        lambda s=samples: run.history(
+                            samples=s, stream="system", pandas=True
+                        )
+                    ),
                 )
 
                 if system_df is not None and not system_df.empty:
                     system_df.to_parquet(system_path, index=False)
-                    logger.info(f"Saved system metrics ({len(system_df)} rows): {system_path}")
+                    logger.info(
+                        f"Saved system metrics ({len(system_df)} rows): {system_path}"
+                    )
                     return True
                 else:
                     logger.info(f"No system metrics for {run.id}")
@@ -471,7 +513,8 @@ class WandbExporter:
             skip_patterns = ["events", "system"]
 
             media_files = [
-                f for f in files
+                f
+                for f in files
                 if f.name not in skip_files
                 and not any(p in f.name.lower() for p in skip_patterns)
             ]
@@ -544,11 +587,11 @@ def _make_json_serializable(obj: Any) -> Any:
     Handles wandb-specific types and numpy arrays.
     """
     # Handle None and basic JSON types first
-    if obj is None or isinstance(obj, (str, int, float, bool)):
+    if obj is None or isinstance(obj, str | int | float | bool):
         return obj
     if isinstance(obj, dict):
         return {str(k): _make_json_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [_make_json_serializable(v) for v in obj]
 
     # Check type name to detect wandb objects (they override __getattr__ badly)
@@ -558,7 +601,7 @@ def _make_json_serializable(obj: Any) -> Any:
     if "SummarySubDict" in type_name or "Summary" in type_name:
         try:
             if hasattr(type(obj), "keys"):
-                return {str(k): _make_json_serializable(obj[k]) for k in obj.keys()}
+                return {str(k): _make_json_serializable(obj[k]) for k in obj}
         except Exception:
             pass
 

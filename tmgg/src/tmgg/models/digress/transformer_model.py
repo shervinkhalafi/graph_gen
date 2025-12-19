@@ -1,17 +1,17 @@
 import math
-from typing import Dict, Any, Optional, NamedTuple
+from typing import Any, NamedTuple, override
 
 import torch
 import torch.nn as nn
+from torch import Tensor
+from torch.nn import functional as F
 from torch.nn.modules.dropout import Dropout
 from torch.nn.modules.linear import Linear
 from torch.nn.modules.normalization import LayerNorm
-from torch.nn import functional as F
-from torch import Tensor
 
-from . import diffusion_utils
 from ..base import DenoisingModel, EmbeddingModel
-from .layers import Xtoy, Etoy, masked_softmax
+from . import diffusion_utils
+from .layers import Etoy, Xtoy, masked_softmax
 
 
 class GraphFeatures(NamedTuple):
@@ -36,11 +36,13 @@ class GraphFeatures(NamedTuple):
         """
         bs, n = node_mask.size()
         mask_diag = node_mask.unsqueeze(-1) * node_mask.unsqueeze(-2)
-        mask_diag = mask_diag * (~torch.eye(n, device=node_mask.device, dtype=torch.bool).unsqueeze(0))
-        
+        mask_diag = mask_diag * (
+            ~torch.eye(n, device=node_mask.device, dtype=torch.bool).unsqueeze(0)
+        )
+
         X_masked = self.X * node_mask.unsqueeze(-1)
         E_masked = self.E * mask_diag.unsqueeze(-1)
-        
+
         return GraphFeatures(X=X_masked, E=E_masked, y=self.y)
 
 
@@ -55,6 +57,29 @@ class XEyTransformerLayer(nn.Module):
     layer_norm_eps: eps value in layer normalizations.
     """
 
+    self_attn: nn.Module
+    linX1: Linear
+    linX2: Linear
+    normX1: LayerNorm
+    normX2: LayerNorm
+    dropoutX1: Dropout
+    dropoutX2: Dropout
+    dropoutX3: Dropout
+    linE1: Linear
+    linE2: Linear
+    normE1: LayerNorm
+    normE2: LayerNorm
+    dropoutE1: Dropout
+    dropoutE2: Dropout
+    dropoutE3: Dropout
+    lin_y1: Linear
+    lin_y2: Linear
+    norm_y1: LayerNorm
+    norm_y2: LayerNorm
+    dropout_y1: Dropout
+    dropout_y2: Dropout
+    dropout_y3: Dropout
+
     def __init__(
         self,
         dx: int,
@@ -66,41 +91,40 @@ class XEyTransformerLayer(nn.Module):
         dim_ffy: int = 2048,
         dropout: float = 0.1,
         layer_norm_eps: float = 1e-5,
-        device=None,
-        dtype=None,
+        device: torch.device | str | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
-        kw = {"device": device, "dtype": dtype}
         super().__init__()
 
-        self.self_attn = NodeEdgeBlock(dx, de, dy, n_head, **kw)
+        self.self_attn = NodeEdgeBlock(dx, de, dy, n_head, device=device, dtype=dtype)
 
-        self.linX1 = Linear(dx, dim_ffX, **kw)
-        self.linX2 = Linear(dim_ffX, dx, **kw)
-        self.normX1 = LayerNorm(dx, eps=layer_norm_eps, **kw)
-        self.normX2 = LayerNorm(dx, eps=layer_norm_eps, **kw)
+        self.linX1 = Linear(dx, dim_ffX, device=device, dtype=dtype)
+        self.linX2 = Linear(dim_ffX, dx, device=device, dtype=dtype)
+        self.normX1 = LayerNorm(dx, eps=layer_norm_eps, device=device, dtype=dtype)
+        self.normX2 = LayerNorm(dx, eps=layer_norm_eps, device=device, dtype=dtype)
         self.dropoutX1 = Dropout(dropout)
         self.dropoutX2 = Dropout(dropout)
         self.dropoutX3 = Dropout(dropout)
 
-        self.linE1 = Linear(de, dim_ffE, **kw)
-        self.linE2 = Linear(dim_ffE, de, **kw)
-        self.normE1 = LayerNorm(de, eps=layer_norm_eps, **kw)
-        self.normE2 = LayerNorm(de, eps=layer_norm_eps, **kw)
+        self.linE1 = Linear(de, dim_ffE, device=device, dtype=dtype)
+        self.linE2 = Linear(dim_ffE, de, device=device, dtype=dtype)
+        self.normE1 = LayerNorm(de, eps=layer_norm_eps, device=device, dtype=dtype)
+        self.normE2 = LayerNorm(de, eps=layer_norm_eps, device=device, dtype=dtype)
         self.dropoutE1 = Dropout(dropout)
         self.dropoutE2 = Dropout(dropout)
         self.dropoutE3 = Dropout(dropout)
 
-        self.lin_y1 = Linear(dy, dim_ffy, **kw)
-        self.lin_y2 = Linear(dim_ffy, dy, **kw)
-        self.norm_y1 = LayerNorm(dy, eps=layer_norm_eps, **kw)
-        self.norm_y2 = LayerNorm(dy, eps=layer_norm_eps, **kw)
+        self.lin_y1 = Linear(dy, dim_ffy, device=device, dtype=dtype)
+        self.lin_y2 = Linear(dim_ffy, dy, device=device, dtype=dtype)
+        self.norm_y1 = LayerNorm(dy, eps=layer_norm_eps, device=device, dtype=dtype)
+        self.norm_y2 = LayerNorm(dy, eps=layer_norm_eps, device=device, dtype=dtype)
         self.dropout_y1 = Dropout(dropout)
         self.dropout_y2 = Dropout(dropout)
         self.dropout_y3 = Dropout(dropout)
 
-        self.activation = F.relu
-
-    def forward(self, X: Tensor, E: Tensor, y, node_mask: Tensor):
+    def forward(
+        self, X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
         """Pass the input through the encoder layer.
         X: (bs, n, d)
         E: (bs, n, n, d)
@@ -120,15 +144,15 @@ class XEyTransformerLayer(nn.Module):
         new_y_d = self.dropout_y1(new_y)
         y = self.norm_y1(y + new_y_d)
 
-        ff_outputX = self.linX2(self.dropoutX2(self.activation(self.linX1(X))))
+        ff_outputX = self.linX2(self.dropoutX2(F.relu(self.linX1(X))))
         ff_outputX = self.dropoutX3(ff_outputX)
         X = self.normX2(X + ff_outputX)
 
-        ff_outputE = self.linE2(self.dropoutE2(self.activation(self.linE1(E))))
+        ff_outputE = self.linE2(self.dropoutE2(F.relu(self.linE1(E))))
         ff_outputE = self.dropoutE3(ff_outputE)
         E = self.normE2(E + ff_outputE)
 
-        ff_output_y = self.lin_y2(self.dropout_y2(self.activation(self.lin_y1(y))))
+        ff_output_y = self.lin_y2(self.dropout_y2(F.relu(self.lin_y1(y))))
         ff_output_y = self.dropout_y3(ff_output_y)
         y = self.norm_y2(y + ff_output_y)
 
@@ -138,9 +162,39 @@ class XEyTransformerLayer(nn.Module):
 class NodeEdgeBlock(nn.Module):
     """Self attention layer that also updates the representations on the edges."""
 
-    def __init__(self, dx, de, dy, n_head, **kwargs):
+    dx: int
+    de: int
+    dy: int
+    df: int
+    n_head: int
+    q: Linear
+    k: Linear
+    v: Linear
+    e_add: Linear
+    e_mul: Linear
+    y_e_mul: Linear
+    y_e_add: Linear
+    y_x_mul: Linear
+    y_x_add: Linear
+    y_y: Linear
+    x_y: Xtoy
+    e_y: Etoy
+    x_out: Linear
+    e_out: Linear
+    y_out: nn.Sequential
+
+    def __init__(
+        self,
+        dx: int,
+        de: int,
+        dy: int,
+        n_head: int,
+        device: torch.device | str | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
         super().__init__()
-        assert dx % n_head == 0, f"dx: {dx} -- nhead: {n_head}"
+        if not dx % n_head == 0:
+            raise AssertionError(f"dx: {dx} -- nhead: {n_head}")
         self.dx = dx
         self.de = de
         self.dy = dy
@@ -148,33 +202,41 @@ class NodeEdgeBlock(nn.Module):
         self.n_head = n_head
 
         # Attention
-        self.q = Linear(dx, dx)
-        self.k = Linear(dx, dx)
-        self.v = Linear(dx, dx)
+        self.q = Linear(dx, dx, device=device, dtype=dtype)
+        self.k = Linear(dx, dx, device=device, dtype=dtype)
+        self.v = Linear(dx, dx, device=device, dtype=dtype)
 
         # FiLM E to X
-        self.e_add = Linear(de, dx)
-        self.e_mul = Linear(de, dx)
+        self.e_add = Linear(de, dx, device=device, dtype=dtype)
+        self.e_mul = Linear(de, dx, device=device, dtype=dtype)
 
         # FiLM y to E
-        self.y_e_mul = Linear(dy, dx)  # Warning: here it's dx and not de
-        self.y_e_add = Linear(dy, dx)
+        self.y_e_mul = Linear(
+            dy, dx, device=device, dtype=dtype
+        )  # Warning: here it's dx and not de
+        self.y_e_add = Linear(dy, dx, device=device, dtype=dtype)
 
         # FiLM y to X
-        self.y_x_mul = Linear(dy, dx)
-        self.y_x_add = Linear(dy, dx)
+        self.y_x_mul = Linear(dy, dx, device=device, dtype=dtype)
+        self.y_x_add = Linear(dy, dx, device=device, dtype=dtype)
 
         # Process y
-        self.y_y = Linear(dy, dy)
+        self.y_y = Linear(dy, dy, device=device, dtype=dtype)
         self.x_y = Xtoy(dx, dy)
         self.e_y = Etoy(de, dy)
 
         # Output layers
-        self.x_out = Linear(dx, dx)
-        self.e_out = Linear(dx, de)
-        self.y_out = nn.Sequential(nn.Linear(dy, dy), nn.ReLU(), nn.Linear(dy, dy))
+        self.x_out = Linear(dx, dx, device=device, dtype=dtype)
+        self.e_out = Linear(dx, de, device=device, dtype=dtype)
+        self.y_out = nn.Sequential(
+            nn.Linear(dy, dy, device=device, dtype=dtype),
+            nn.ReLU(),
+            nn.Linear(dy, dy, device=device, dtype=dtype),
+        )
 
-    def forward(self, X, E, y, node_mask):
+    def forward(
+        self, X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
         """
         :param X: bs, n, d        node features
         :param E: bs, n, n, d     edge features
@@ -282,17 +344,34 @@ class _GraphTransformer(nn.Module):
         node features (e.g., eigenvectors with shape (bs, n, k)).
     """
 
+    n_layers: int
+    input_dims: dict[str, int]
+    hidden_mlp_dims: dict[str, int]
+    hidden_dims: dict[str, int]
+    output_dims: dict[str, int]
+    assume_adjacency_input: bool
+    out_dim_X: int
+    out_dim_E: int
+    out_dim_y: int
+    mlp_in_X: nn.Sequential
+    mlp_in_E: nn.Sequential
+    mlp_in_y: nn.Sequential
+    tf_layers: nn.ModuleList
+    mlp_out_X: nn.Sequential
+    mlp_out_E: nn.Sequential
+    mlp_out_y: nn.Sequential
+
     def __init__(
         self,
         n_layers: int,
-        input_dims: dict,
-        hidden_mlp_dims: dict,
-        hidden_dims: dict,
-        output_dims: dict,
-        act_fn_in: Optional[nn.Module] = None,
-        act_fn_out: Optional[nn.Module] = None,
+        input_dims: dict[str, int],
+        hidden_mlp_dims: dict[str, int],
+        hidden_dims: dict[str, int],
+        output_dims: dict[str, int],
+        act_fn_in: nn.Module | None = None,
+        act_fn_out: nn.Module | None = None,
         assume_adjacency_input: bool = True,
-    ):
+    ) -> None:
         super().__init__()
         self.n_layers = n_layers
         self.input_dims = input_dims
@@ -366,9 +445,9 @@ class _GraphTransformer(nn.Module):
     def forward(
         self,
         X: torch.Tensor,
-        E: Optional[torch.Tensor] = None,
-        y: Optional[torch.Tensor] = None,
-        node_mask: Optional[torch.Tensor] = None,
+        E: torch.Tensor | None = None,
+        y: torch.Tensor | None = None,
+        node_mask: torch.Tensor | None = None,
     ) -> GraphFeatures:
         bs = X.shape[0]
 
@@ -395,35 +474,40 @@ class _GraphTransformer(nn.Module):
         if node_mask is None:
             node_mask = torch.ones(bs, n, device=X.device)
 
+        # At this point E and y are guaranteed to be tensors (type narrowing)
+        assert E is not None
+        assert y is not None
+
         diag_mask = torch.eye(n, device=E.device)
         diag_mask = ~diag_mask.bool()
         diag_mask = diag_mask.unsqueeze(0).unsqueeze(-1).expand(bs, -1, -1, -1)
 
-        X_to_out = X[..., : self.out_dim_X]
-        E_to_out = E[..., : self.out_dim_E]
-        y_to_out = y[..., : self.out_dim_y]
+        X_to_out: torch.Tensor = X[..., : self.out_dim_X]
+        E_to_out: torch.Tensor = E[..., : self.out_dim_E]
+        y_to_out: torch.Tensor = y[..., : self.out_dim_y]
 
         new_E = self.mlp_in_E(E)
         new_E = (new_E + new_E.transpose(1, 2)) / 2
-        features = GraphFeatures(
-            X=self.mlp_in_X(X), E=new_E, y=self.mlp_in_y(y)
-        ).mask(node_mask)
+        features = GraphFeatures(X=self.mlp_in_X(X), E=new_E, y=self.mlp_in_y(y)).mask(
+            node_mask
+        )
         X, E, y = features.X, features.E, features.y
 
         for layer in self.tf_layers:
             X, E, y = layer(X, E, y, node_mask)
 
-        X = self.mlp_out_X(X)
-        E = self.mlp_out_E(E)
-        y = self.mlp_out_y(y)
+        X_out: torch.Tensor = self.mlp_out_X(X)
+        E_out: torch.Tensor = self.mlp_out_E(E)
+        y_out: torch.Tensor = self.mlp_out_y(y)
 
-        X = X + X_to_out
-        E = (E + E_to_out) * diag_mask
-        y = y + y_to_out
+        X_final = X_out + X_to_out
+        E_final = (E_out + E_to_out) * diag_mask
+        y_final = y_out + y_to_out
 
-        E = 1 / 2 * (E + torch.transpose(E, 1, 2))
+        E_symmetric = 1 / 2 * (E_final + torch.transpose(E_final, 1, 2))
 
-        return GraphFeatures(X=X, E=E, y=y).mask(node_mask)
+        return GraphFeatures(X=X_final, E=E_symmetric, y=y_final).mask(node_mask)
+
 
 class GraphTransformer(DenoisingModel):
     """Denoising model wrapper for the DiGress Graph Transformer.
@@ -450,17 +534,24 @@ class GraphTransformer(DenoisingModel):
         node features (e.g., eigenvectors).
     """
 
+    n_layers: int
+    input_dims: dict[str, int]
+    hidden_mlp_dims: dict[str, int]
+    hidden_dims: dict[str, int]
+    output_dims: dict[str, int]
+    transformer: _GraphTransformer
+
     def __init__(
         self,
         n_layers: int,
-        input_dims: dict,
-        hidden_mlp_dims: dict,
-        hidden_dims: dict,
-        output_dims: dict,
-        act_fn_in: Optional[nn.Module] = None,
-        act_fn_out: Optional[nn.Module] = None,
+        input_dims: dict[str, int],
+        hidden_mlp_dims: dict[str, int],
+        hidden_dims: dict[str, int],
+        output_dims: dict[str, int],
+        act_fn_in: nn.Module | None = None,
+        act_fn_out: nn.Module | None = None,
         assume_adjacency_input: bool = True,
-    ):
+    ) -> None:
         super().__init__()
         self.n_layers = n_layers
         self.input_dims = input_dims
@@ -479,6 +570,7 @@ class GraphTransformer(DenoisingModel):
             assume_adjacency_input=assume_adjacency_input,
         )
 
+    @override
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Denoise the input graph.
 
@@ -499,7 +591,8 @@ class GraphTransformer(DenoisingModel):
             return E.squeeze(-1)
         return E
 
-    def get_config(self) -> Dict[str, Any]:
+    @override
+    def get_config(self) -> dict[str, Any]:
         """Return model configuration for serialization/logging."""
         return {
             "n_layers": self.n_layers,
@@ -513,16 +606,23 @@ class GraphTransformer(DenoisingModel):
 class DigressGraphTransformerEmbedding(EmbeddingModel):
     """Embedding model wrapper for the Digress Graph Transformer."""
 
+    n_layers: int
+    input_dims: dict[str, int]
+    hidden_mlp_dims: dict[str, int]
+    hidden_dims: dict[str, int]
+    output_dims: dict[str, int]
+    transformer: _GraphTransformer
+
     def __init__(
         self,
         n_layers: int,
-        input_dims: dict,
-        hidden_mlp_dims: dict,
-        hidden_dims: dict,
-        output_dims: dict,
-        act_fn_in: Optional[nn.Module] = None,
-        act_fn_out: Optional[nn.Module] = None,
-    ):
+        input_dims: dict[str, int],
+        hidden_mlp_dims: dict[str, int],
+        hidden_dims: dict[str, int],
+        output_dims: dict[str, int],
+        act_fn_in: nn.Module | None = None,
+        act_fn_out: nn.Module | None = None,
+    ) -> None:
         super().__init__()
         self.n_layers = n_layers
         self.input_dims = input_dims
@@ -540,6 +640,7 @@ class DigressGraphTransformerEmbedding(EmbeddingModel):
             act_fn_out=act_fn_out,
         )
 
+    @override
     def forward(self, A: torch.Tensor) -> torch.Tensor:
         """Generates node embeddings for the input graph.
 
@@ -552,7 +653,8 @@ class DigressGraphTransformerEmbedding(EmbeddingModel):
         features = self.transformer(X=A)
         return features.X
 
-    def get_config(self) -> Dict[str, Any]:
+    @override
+    def get_config(self) -> dict[str, Any]:
         """Return model configuration for serialization/logging."""
         return {
             "n_layers": self.n_layers,

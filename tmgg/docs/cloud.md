@@ -1,50 +1,143 @@
 # Cloud Execution
 
-This document covers cloud execution using the CloudRunner abstraction and Modal integration.
+TMGG supports cloud execution via Modal, enabling GPU-accelerated experiments without local hardware. This document explains the architecture, setup, and usage.
 
 ## Architecture
 
 ```
-ExperimentCoordinator
+Experiment Runner
     │
-    ├── CloudRunnerFactory (creates runners)
-    │   ├── LocalRunner (built-in, subprocess)
-    │   └── ModalRunner (optional, cloud GPUs)
+    ├── CloudRunnerFactory
+    │   ├── LocalRunner (subprocess, built-in)
+    │   └── ModalRunner (cloud GPUs)
     │
-    └── CloudStorage (result persistence)
+    └── Storage
         ├── LocalStorage
-        └── S3Storage
+        └── TigrisStorage (S3-compatible)
 ```
 
-## CloudRunnerFactory
+The `ModalRunner` deploys experiments to Modal's serverless infrastructure, which provisions GPUs on demand and scales automatically.
 
-The factory pattern allows registering multiple execution backends.
+## Prerequisites
 
-### Basic Usage
+Before using Modal execution, you need:
+
+1. **Modal account**: Sign up at [modal.com](https://modal.com)
+2. **Modal CLI authentication**:
+   ```bash
+   modal token new
+   ```
+3. **Secrets**: Tigris storage credentials and W&B API key (see [Secrets Configuration](#secrets-configuration))
+
+## Secrets Configuration
+
+Modal requires two secret groups for TMGG experiments:
+
+### Required Secrets
+
+| Secret Group | Keys | Purpose |
+|--------------|------|---------|
+| `tigris-credentials` | `TMGG_TIGRIS_BUCKET`, `TMGG_TIGRIS_ACCESS_KEY`, `TMGG_TIGRIS_SECRET_KEY` | Checkpoint and metrics storage |
+| `wandb-credentials` | `WANDB_API_KEY` | Experiment tracking |
+
+### Setting Up Secrets
+
+**Option 1: Via Doppler (recommended)**
+
+If you use Doppler for secrets management, mise creates Modal secrets automatically:
+
+```bash
+mise run modal-secrets
+```
+
+This maps Doppler environment variables to Modal secrets:
+- `TMGG_S3_BUCKET` → `TMGG_TIGRIS_BUCKET`
+- `AWS_ACCESS_KEY_ID` → `TMGG_TIGRIS_ACCESS_KEY`
+- `AWS_SECRET_ACCESS_KEY` → `TMGG_TIGRIS_SECRET_KEY`
+- `WANDB_API_KEY` → `WANDB_API_KEY`
+
+**Option 2: Manual creation**
+
+```bash
+modal secret create tigris-credentials \
+    TMGG_TIGRIS_BUCKET="your-bucket" \
+    TMGG_TIGRIS_ACCESS_KEY="your-key" \
+    TMGG_TIGRIS_SECRET_KEY="your-secret"
+
+modal secret create wandb-credentials \
+    WANDB_API_KEY="your-wandb-key"
+```
+
+## Deployment
+
+Deploy the TMGG Modal app before running experiments:
+
+```bash
+mise run modal-deploy
+```
+
+This command:
+1. Creates/updates Modal secrets from Doppler
+2. Deploys the `tmgg-spectral` app with two functions:
+   - `modal_execute_task` (standard GPU)
+   - `modal_execute_task_fast` (A100 GPU)
+
+For development with hot reload:
+
+```bash
+mise run modal-serve
+```
+
+## Running Experiments
+
+### Single Experiment
 
 ```python
 from tmgg.experiment_utils.cloud import CloudRunnerFactory
 
-# List available backends
-print(CloudRunnerFactory.available_backends())  # ['local', 'modal']
-
-# Create a runner
-runner = CloudRunnerFactory.create("local")
-
-# Run an experiment
-result = runner.run_experiment(config, gpu_type="standard", timeout_seconds=3600)
+runner = CloudRunnerFactory.create("modal")
+result = runner.run_experiment(config, gpu_type="standard")
 ```
 
-### Available Backends
+### Via Hydra CLI
 
-| Backend | Description | Installation |
-|---------|-------------|--------------|
-| `local` | Subprocess execution | Built-in |
-| `modal` | Cloud GPUs via Modal | `pip install tmgg-modal` |
+```bash
+uv run tmgg-stage2 run_on_modal=true
+```
+
+### Sweeps
+
+```python
+from tmgg.experiment_utils.cloud import CloudRunnerFactory
+
+runner = CloudRunnerFactory.create("modal")
+results = runner.run_sweep(
+    configs,
+    gpu_type="standard",
+    parallelism=4,
+    timeout_seconds=1800,
+)
+```
+
+## GPU Tiers
+
+| Tier | GPU | Default Timeout | Typical Use |
+|------|-----|-----------------|-------------|
+| `debug` | T4 | 10 minutes | Quick tests |
+| `standard` | A10G | 30 minutes | Most experiments |
+| `fast` | A100-40GB | 1 hour | Large models, fast iteration |
+| `multi` | A100-40GB × 2 | 2 hours | DiGress, multi-GPU training |
+| `h100` | H100 | 1 hour | Maximum throughput |
+
+Select a tier via the `gpu_type` parameter:
+
+```python
+result = runner.run_experiment(config, gpu_type="fast")
+```
 
 ## LocalRunner
 
-The default runner executes experiments in a subprocess. No additional setup required.
+The default runner executes experiments in a subprocess on your local machine:
 
 ```python
 from tmgg.experiment_utils.cloud import CloudRunnerFactory
@@ -53,66 +146,20 @@ runner = CloudRunnerFactory.create("local", output_dir="./results")
 result = runner.run_experiment(config)
 ```
 
-### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `output_dir` | Path | `./outputs` | Output directory for results |
-
-## ModalRunner
-
-Executes experiments on Modal cloud infrastructure with GPU support.
-
-### Setup
-
-1. Install the Modal package:
-   ```bash
-   pip install tmgg-modal
-   ```
-
-2. Authenticate with Modal:
-   ```bash
-   modal token new
-   ```
-
-3. The runner auto-registers when `tmgg_modal` is available.
-
-### Usage
-
-```python
-from tmgg.experiment_utils.cloud import CloudRunnerFactory
-
-runner = CloudRunnerFactory.create("modal")
-result = runner.run_experiment(
-    config,
-    gpu_type="A10G",
-    timeout_seconds=3600
-)
-```
-
-### GPU Types
-
-| GPU Type | Description |
-|----------|-------------|
-| `standard` | Default GPU (T4 or similar) |
-| `A10G` | NVIDIA A10G |
-| `A100` | NVIDIA A100 |
+No additional setup required.
 
 ## ExperimentCoordinator
 
-Manages multi-experiment runs with configuration generation and result aggregation.
-
-### Basic Usage
+The coordinator manages multi-experiment runs with configuration generation and result aggregation:
 
 ```python
 from tmgg.experiment_utils.cloud import ExperimentCoordinator
 
 coordinator = ExperimentCoordinator(
-    backend="local",  # or "modal"
+    backend="modal",
     base_config_path=Path("exp_configs/"),
 )
 
-# Run a stage
 result = coordinator.run_stage(
     stage_config,
     base_config,
@@ -121,18 +168,9 @@ result = coordinator.run_stage(
 )
 ```
 
-### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `backend` | str | "local" | Execution backend |
-| `storage` | CloudStorage | LocalStorage | Result storage |
-| `base_config_path` | Path | None | Path to config directory |
-| `cache_dir` | Path | `./cache` | Local cache directory |
-
 ### Running Sweeps
 
-The coordinator generates all combinations of architectures, datasets, hyperparameters, and seeds:
+The coordinator generates combinations of architectures, datasets, hyperparameters, and seeds:
 
 ```python
 from tmgg.experiment_utils.cloud import ExperimentCoordinator, StageConfig
@@ -152,64 +190,9 @@ coordinator = ExperimentCoordinator(backend="modal")
 result = coordinator.run_stage(stage, base_config, parallelism=8)
 ```
 
-## StageConfig
+## Result Types
 
-Configuration for experimental stages.
-
-### Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | str | Stage identifier |
-| `architectures` | list[str] | Model config paths |
-| `datasets` | list[str] | Data config paths |
-| `hyperparameter_space` | dict | Parameters to sweep |
-| `num_trials` | int | Bayesian optimization trials |
-| `seeds` | list[int] | Random seeds |
-| `gpu_type` | str | GPU tier |
-| `timeout_seconds` | int | Max runtime per experiment |
-
-### Loading from YAML
-
-```python
-from tmgg.experiment_utils.cloud import StageConfig
-from pathlib import Path
-
-stage = StageConfig.from_yaml(Path("exp_configs/stages/stage1_poc.yaml"))
-```
-
-## StageResult
-
-Aggregated results from a stage run.
-
-### Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `stage_name` | str | Stage identifier |
-| `experiments` | list[ExperimentResult] | Individual results |
-| `best_config` | dict | Configuration with best val loss |
-| `best_metrics` | dict | Metrics from best run |
-| `summary` | dict | Aggregated statistics |
-| `started_at` | str | Start timestamp |
-| `completed_at` | str | End timestamp |
-
-### Summary Statistics
-
-```python
-result.summary = {
-    "total_experiments": 24,
-    "completed": 22,
-    "failed": 2,
-    "success_rate": 0.917,
-    "mean_duration_seconds": 342.5,
-    "total_duration_seconds": 7535.0,
-}
-```
-
-## ExperimentResult
-
-Result from a single experiment run.
+### ExperimentResult
 
 ```python
 @dataclass
@@ -223,42 +206,71 @@ class ExperimentResult:
     duration_seconds: float
 ```
 
-## Resuming Experiments
+### StageResult
 
-The coordinator supports resuming interrupted sweeps:
+```python
+@dataclass
+class StageResult:
+    stage_name: str
+    experiments: list[ExperimentResult]
+    best_config: dict
+    best_metrics: dict
+    summary: dict
+    started_at: str
+    completed_at: str
+```
+
+The summary contains aggregate statistics:
+
+```python
+result.summary = {
+    "total_experiments": 24,
+    "completed": 22,
+    "failed": 2,
+    "success_rate": 0.917,
+    "mean_duration_seconds": 342.5,
+    "total_duration_seconds": 7535.0,
+}
+```
+
+## Resuming Interrupted Sweeps
+
+The coordinator tracks completed experiments and skips them on resume:
 
 ```python
 result = coordinator.run_stage(
     stage_config,
     base_config,
-    resume=True,  # Skip completed experiments
+    resume=True,
 )
 ```
 
-Completed experiments are tracked via storage and skipped on resume.
+## Troubleshooting
 
-## Custom Backends
+### "Modal app not deployed"
 
-To add a custom execution backend:
+Run `mise run modal-deploy` to deploy the app.
 
-```python
-from tmgg.experiment_utils.cloud import CloudRunner, CloudRunnerFactory
+### "Function not hydrated"
 
-class MyCloudRunner(CloudRunner):
-    def run_experiment(self, config, gpu_type="standard", timeout_seconds=3600):
-        # Implementation
-        return ExperimentResult(...)
+The deployment check uses `modal.Function.from_name()` to verify deployment. Ensure the app name matches (`tmgg-spectral`).
 
-    def run_sweep(self, configs, gpu_type, parallelism, timeout_seconds):
-        # Implementation
-        return [ExperimentResult(...), ...]
+### SyntaxError in Modal container
 
-    def get_status(self, run_id):
-        return "running"  # or "completed", "failed"
+The Modal image uses Python 3.12. Ensure your code doesn't use features beyond 3.12.
 
-    def cancel(self, run_id):
-        return True
+### Image build timeout
 
-# Register
-CloudRunnerFactory.register("mycloud", MyCloudRunner)
+Large dependencies (PyTorch, etc.) are installed via `uv_pip_install` for faster builds. If builds still timeout, check Modal's status page.
+
+### Secrets not found
+
+Verify secrets exist:
+```bash
+modal secret list
+```
+
+Recreate if needed:
+```bash
+mise run modal-secrets
 ```

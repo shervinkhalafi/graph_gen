@@ -20,27 +20,34 @@ Usage:
     uv run python scripts/debug_constant_noise.py --model baselines --eps 0.1
 """
 
-import argparse
-from pathlib import Path
-import sys
+from __future__ import annotations
 
+import argparse
+import sys
+from collections.abc import Callable
+from pathlib import Path
+
+import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
 
 # Add src to path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tmgg.models.spectral_denoisers import LinearPE, GraphFilterBank, SelfAttentionDenoiser
-from tmgg.models.baselines import LinearBaseline, MLPBaseline
-from tmgg.experiment_utils.data import add_digress_noise, GraphDataModule
 from tmgg.experiment_utils import DebugCallback
+from tmgg.experiment_utils.data import add_digress_noise
+from tmgg.models.baselines import LinearBaseline, MLPBaseline
+from tmgg.models.spectral_denoisers import (
+    GraphFilterBank,
+    LinearPE,
+    SelfAttentionDenoiser,
+)
 
 
-def create_model(model_type: str, max_nodes: int = 32, k: int = 8):
+def create_model(model_type: str, max_nodes: int = 32, k: int = 8) -> torch.nn.Module:
     """Create model by type name."""
-    models = {
+    models: dict[str, Callable[[], torch.nn.Module]] = {
         "linear_pe": lambda: LinearPE(k=k, max_nodes=max_nodes),
         "filter_bank": lambda: GraphFilterBank(k=k, polynomial_degree=5),
         "self_attention": lambda: SelfAttentionDenoiser(k=k, d_k=64),
@@ -48,34 +55,39 @@ def create_model(model_type: str, max_nodes: int = 32, k: int = 8):
         "mlp_baseline": lambda: MLPBaseline(max_nodes=max_nodes, hidden_dim=256),
     }
     if model_type not in models:
-        raise ValueError(f"Unknown model type: {model_type}. Valid: {list(models.keys())}")
+        raise ValueError(
+            f"Unknown model type: {model_type}. Valid: {list(models.keys())}"
+        )
     return models[model_type]()
 
 
 class DebugLightningModule(pl.LightningModule):
     """Minimal Lightning module for debugging with constant noise."""
 
+    model: torch.nn.Module
+    eps: float
+    learning_rate: float
+
     def __init__(
         self,
         model: torch.nn.Module,
         eps: float = 0.1,
         learning_rate: float = 1e-3,
-    ):
+    ) -> None:
         super().__init__()
         self.model = model
         self.eps = eps
         self.learning_rate = learning_rate
         self.save_hyperparameters(ignore=["model"])
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(
+        self, batch: torch.Tensor, batch_idx: int
+    ) -> dict[str, torch.Tensor]:
         # Add constant noise
-        if self.eps > 0:
-            batch_noisy = add_digress_noise(batch, p=self.eps)
-        else:
-            batch_noisy = batch  # Identity task
+        batch_noisy = add_digress_noise(batch, p=self.eps) if self.eps > 0 else batch
 
         # Forward pass
         logits = self(batch_noisy)
@@ -84,23 +96,23 @@ class DebugLightningModule(pl.LightningModule):
         # Log detailed stats
         with torch.no_grad():
             probs = torch.sigmoid(logits)
-            self.log_dict({
-                "train_loss": loss,
-                "logit_mean": logits.mean(),
-                "logit_std": logits.std(),
-                "logit_abs_mean": logits.abs().mean(),
-                "pred_mean": probs.mean(),
-                "pred_std": probs.std(),
-                "mae": (probs - batch).abs().mean(),
-            }, prog_bar=True)
+            self.log_dict(
+                {
+                    "train_loss": loss,
+                    "logit_mean": logits.mean(),
+                    "logit_std": logits.std(),
+                    "logit_abs_mean": logits.abs().mean(),
+                    "pred_mean": probs.mean(),
+                    "pred_std": probs.std(),
+                    "mae": (probs - batch).abs().mean(),
+                },
+                prog_bar=True,
+            )
 
         return {"loss": loss, "logits": logits}
 
-    def validation_step(self, batch, batch_idx):
-        if self.eps > 0:
-            batch_noisy = add_digress_noise(batch, p=self.eps)
-        else:
-            batch_noisy = batch
+    def validation_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
+        batch_noisy = add_digress_noise(batch, p=self.eps) if self.eps > 0 else batch
 
         logits = self(batch_noisy)
         loss = F.binary_cross_entropy_with_logits(logits, batch)
@@ -110,15 +122,18 @@ class DebugLightningModule(pl.LightningModule):
             preds = (probs > 0.5).float()
             accuracy = (preds == batch).float().mean()
 
-        self.log_dict({
-            "val_loss": loss,
-            "val_accuracy": accuracy,
-            "val_pred_mean": probs.mean(),
-        }, prog_bar=True)
+        self.log_dict(
+            {
+                "val_loss": loss,
+                "val_accuracy": accuracy,
+                "val_pred_mean": probs.mean(),
+            },
+            prog_bar=True,
+        )
 
         return loss
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.AdamW(
             self.parameters(),
             lr=self.learning_rate,
@@ -133,7 +148,7 @@ def run_debug_experiment(
     batch_size: int = 16,
     learning_rate: float = 1e-3,
     num_nodes: int = 32,
-):
+) -> DebugLightningModule:
     """Run a single debug experiment."""
     print(f"\n{'='*60}")
     print(f"Model: {model_type}, Noise: eps={eps}")
@@ -151,29 +166,27 @@ def run_debug_experiment(
     )
 
     # Create simple data (random graphs)
-    torch.manual_seed(42)
-    train_graphs = []
+    _ = torch.manual_seed(42)
+    train_graphs: list[torch.Tensor] = []
     for _ in range(100):
         A = (torch.rand(num_nodes, num_nodes) > 0.5).float()
         A = (A + A.T) / 2
-        A.fill_diagonal_(0)
+        _ = A.fill_diagonal_(0)
         train_graphs.append(A)
     train_data = torch.stack(train_graphs)
 
-    val_graphs = []
+    val_graphs: list[torch.Tensor] = []
     for _ in range(20):
         A = (torch.rand(num_nodes, num_nodes) > 0.5).float()
         A = (A + A.T) / 2
-        A.fill_diagonal_(0)
+        _ = A.fill_diagonal_(0)
         val_graphs.append(A)
     val_data = torch.stack(val_graphs)
 
     train_loader = torch.utils.data.DataLoader(
         train_data, batch_size=batch_size, shuffle=True
     )
-    val_loader = torch.utils.data.DataLoader(
-        val_data, batch_size=batch_size
-    )
+    val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size)
 
     # Create trainer with debug callback
     logger = TensorBoardLogger("debug_logs", name=f"{model_type}_eps{eps}")
@@ -190,17 +203,14 @@ def run_debug_experiment(
     )
 
     # Train
-    trainer.fit(pl_module, train_loader, val_loader)
+    _ = trainer.fit(pl_module, train_loader, val_loader)
 
     # Final evaluation
     print(f"\nFinal Results for {model_type}:")
-    pl_module.eval()
+    _ = pl_module.eval()
     with torch.no_grad():
         sample = val_data[:4]
-        if eps > 0:
-            sample_noisy = add_digress_noise(sample, p=eps)
-        else:
-            sample_noisy = sample
+        sample_noisy = add_digress_noise(sample, p=eps) if eps > 0 else sample
 
         logits = pl_module(sample_noisy)
         probs = torch.sigmoid(logits)
@@ -216,14 +226,22 @@ def run_debug_experiment(
     return pl_module
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Debug training with constant noise")
     parser.add_argument(
         "--model",
         type=str,
         default="linear_pe",
-        choices=["linear_pe", "filter_bank", "self_attention",
-                 "linear_baseline", "mlp_baseline", "all", "baselines", "spectral"],
+        choices=[
+            "linear_pe",
+            "filter_bank",
+            "self_attention",
+            "linear_baseline",
+            "mlp_baseline",
+            "all",
+            "baselines",
+            "spectral",
+        ],
         help="Model type to test",
     )
     parser.add_argument("--eps", type=float, default=0.1, help="Noise level")
@@ -235,9 +253,15 @@ def main():
     args = parser.parse_args()
 
     # Determine which models to run
+    models: list[str]
     if args.model == "all":
-        models = ["linear_pe", "filter_bank", "self_attention",
-                  "linear_baseline", "mlp_baseline"]
+        models = [
+            "linear_pe",
+            "filter_bank",
+            "self_attention",
+            "linear_baseline",
+            "mlp_baseline",
+        ]
     elif args.model == "baselines":
         models = ["linear_baseline", "mlp_baseline"]
     elif args.model == "spectral":
@@ -246,7 +270,7 @@ def main():
         models = [args.model]
 
     # Run experiments
-    results = {}
+    results: dict[str, DebugLightningModule] = {}
     for model_type in models:
         module = run_debug_experiment(
             model_type=model_type,
@@ -259,9 +283,9 @@ def main():
         results[model_type] = module
 
     # Summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("SUMMARY")
-    print("="*60)
+    print("=" * 60)
     for model_type, module in results.items():
         print(f"\n{model_type}:")
         with torch.no_grad():

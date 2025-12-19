@@ -32,7 +32,10 @@ visualization_interval: 5000  # steps between logging visualizations
 evaluation:
   visualization_interval: ${visualization_interval}
 
-# Paths
+# Paths configuration
+# - Local execution: Hydra resolves ${hydra:runtime.output_dir} automatically
+# - Remote execution (Modal/Ray): prepare_config_for_remote() sets these to None,
+#   then execute_task() resolves from TMGG_OUTPUT_BASE env var and run_id
 paths:
   output_dir: ${hydra:runtime.output_dir}
   results_dir: ${paths.output_dir}/results

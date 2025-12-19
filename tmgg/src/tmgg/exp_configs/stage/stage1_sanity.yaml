@@ -17,6 +17,9 @@ defaults:
 # Stage identifier
 stage: stage1_sanity
 
+# Modal cloud execution (off by default, use run_on_modal=true to enable)
+run_on_modal: false
+
 # Fixed noise mode: same noisy input every training step
 fixed_noise_seed: 42
 

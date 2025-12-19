@@ -7,7 +7,6 @@ from Modal secrets.
 
 import os
 from pathlib import Path
-from typing import Any
 
 try:
     from tmgg.experiment_utils.cloud.storage import S3Storage

@@ -1,6 +1,6 @@
 """PyTorch Lightning module for GNN-based denoising."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -24,11 +24,11 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
         optimizer_type: str = "adam",
         amsgrad: bool = False,
         loss_type: str = "MSE",
-        scheduler_config: Optional[Dict[str, Any]] = None,
-        noise_levels: Optional[List[float]] = None,
+        scheduler_config: dict[str, Any] | None = None,
+        noise_levels: list[float] | None = None,
         noise_type: str = "Digress",
         rotation_k: int = 20,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ):
         """
         Initialize the Lightning module.
@@ -115,12 +115,15 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
             Reconstructed adjacency matrix
         """
         model_output = self.model(x)
-        
+
         # Handle different return types from different GNN models
         if isinstance(model_output, tuple):
             # Standard GNN and GNNSymmetric return (embeddings, adjacency) or (x_embed, y_embed)
             # For standard GNN, we need to reconstruct adjacency from embeddings
-            if hasattr(self.model, 'model_type') and self.model.model_type == "GNNSymmetric":
+            if (
+                hasattr(self.model, "model_type")
+                and getattr(self.model, "model_type") == "GNNSymmetric"  # noqa: B009
+            ):
                 # GNNSymmetric returns (reconstructed_adjacency, embeddings)
                 return model_output[0]
             else:

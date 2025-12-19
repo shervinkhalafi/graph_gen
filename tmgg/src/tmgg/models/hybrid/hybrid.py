@@ -1,6 +1,6 @@
 """Hybrid models combining GNN embeddings with transformer denoising."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import torch
 
@@ -21,7 +21,7 @@ class SequentialDenoisingModel(DenoisingModel):
     def __init__(
         self,
         embedding_model: EmbeddingModel,
-        denoising_model: Optional[DenoisingModel] = None,
+        denoising_model: DenoisingModel | None = None,
     ):
         """
         Initialize the sequential denoising model.
@@ -46,7 +46,7 @@ class SequentialDenoisingModel(DenoisingModel):
         """
         # Generate embeddings using GNN
         if hasattr(self.embedding_model, "forward") and callable(
-            getattr(self.embedding_model, "forward")
+            self.embedding_model.forward
         ):
             # For GNN models that return (X, Y) embeddings
             X, Y = self.embedding_model(x)
@@ -97,7 +97,7 @@ class SequentialDenoisingModel(DenoisingModel):
         # The calling model should handle the transformation
         return A_recon
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get configuration for both embedding and denoising components."""
         config = {
             "model_type": "SequentialDenoisingModel",
@@ -114,7 +114,7 @@ class SequentialDenoisingModel(DenoisingModel):
 
 
 def create_sequential_model(
-    gnn_config: Dict[str, Any], transformer_config: Optional[Dict[str, Any]] = None
+    gnn_config: dict[str, Any], transformer_config: dict[str, Any] | None = None
 ) -> SequentialDenoisingModel:
     """
     Factory function to create a sequential denoising model.
@@ -151,4 +151,5 @@ def create_sequential_model(
             bias=transformer_config.get("bias", True),
         )
 
+    # GNN produces (X, Y) embeddings and implements both EmbeddingModel and DenoisingModel
     return SequentialDenoisingModel(embedding_model, denoising_model)

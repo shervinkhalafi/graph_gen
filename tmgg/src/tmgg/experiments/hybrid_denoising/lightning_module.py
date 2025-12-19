@@ -1,6 +1,6 @@
 """PyTorch Lightning module for hybrid GNN+Transformer denoising."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch.nn as nn
 
@@ -22,8 +22,8 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         use_transformer: bool = True,
         transformer_num_layers: int = 4,
         transformer_num_heads: int = 4,
-        transformer_d_k: Optional[int] = None,
-        transformer_d_v: Optional[int] = None,
+        transformer_d_k: int | None = None,
+        transformer_d_v: int | None = None,
         transformer_dropout: float = 0.0,
         transformer_bias: bool = True,
         # Training configuration
@@ -32,11 +32,11 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         optimizer_type: str = "adam",
         amsgrad: bool = False,
         loss_type: str = "BCE",
-        scheduler_config: Optional[Dict[str, Any]] = None,
-        noise_levels: Optional[List[float]] = None,
+        scheduler_config: dict[str, Any] | None = None,
+        noise_levels: list[float] | None = None,
         noise_type: str = "Digress",
         rotation_k: int = 20,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ):
         """
         Initialize the Lightning module.
@@ -97,8 +97,8 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         use_transformer: bool = True,
         transformer_num_layers: int = 4,
         transformer_num_heads: int = 4,
-        transformer_d_k: Optional[int] = None,
-        transformer_d_v: Optional[int] = None,
+        transformer_d_k: int | None = None,
+        transformer_d_v: int | None = None,
         transformer_dropout: float = 0.0,
         transformer_bias: bool = True,
         **kwargs,

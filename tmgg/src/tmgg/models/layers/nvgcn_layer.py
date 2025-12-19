@@ -40,7 +40,7 @@ class NodeVarGraphConvolutionLayer(nn.Module):
     """
 
     def __init__(
-        self, num_terms: int, num_channels_in: int, num_channels_out: int = None
+        self, num_terms: int, num_channels_in: int, num_channels_out: int | None = None
     ):
         """Initialize the graph convolution layer.
 

@@ -2,6 +2,12 @@
 
 # Default configuration: TensorBoard on S3/Tigris + WandB
 # Missing credentials will gracefully skip that logger
+#
+# Note on remote execution (Modal/Ray):
+# This entire logger config is REMOVED during prepare_config_for_remote() because
+# it contains ${oc.env:...} interpolations that cannot be resolved at serialization
+# time. The worker's create_loggers() reconstructs appropriate loggers based on
+# environment variables available at runtime.
 
 logger:
   - tensorboard:

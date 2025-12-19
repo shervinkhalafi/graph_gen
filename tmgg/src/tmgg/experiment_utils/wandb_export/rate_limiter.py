@@ -5,22 +5,25 @@ Implements exponential backoff with jitter to handle W&B API rate limits.
 
 from __future__ import annotations
 
+import logging
 import time
 from functools import wraps
-from typing import TYPE_CHECKING, TypeVar, ParamSpec
+from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
 import requests
 from tenacity import (
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential_jitter,
-    retry_if_exception_type,
-    before_sleep_log,
 )
-from loguru import logger
+
+# Use standard library logger for tenacity compatibility
+_std_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from typing import Callable
+    from collections.abc import Callable
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -63,7 +66,7 @@ def create_retry_decorator(
         stop=stop_after_attempt(max_retries),
         wait=wait_exponential_jitter(initial=min_wait, max=max_wait, jitter=2),
         retry=retry_if_exception_type((requests.exceptions.HTTPError, ConnectionError)),
-        before_sleep=before_sleep_log(logger, "WARNING"),
+        before_sleep=before_sleep_log(_std_logger, logging.WARNING),
         reraise=True,
     )
 

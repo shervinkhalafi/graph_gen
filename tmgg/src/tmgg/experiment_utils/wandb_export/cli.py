@@ -5,7 +5,6 @@ Provides command-line interface for exporting W&B project data to local files.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 

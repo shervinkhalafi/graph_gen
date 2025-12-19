@@ -7,19 +7,19 @@ Tests two configurations:
 Both use the small 4-layer architecture from digress_sbm_small.yaml.
 """
 
+import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
-import numpy as np
 
-from tmgg.models.digress.transformer_model import GraphTransformer
-from tmgg.experiment_utils.data import add_digress_noise
 from tmgg.experiment_utils import generate_sbm_adjacency
-
+from tmgg.experiment_utils.data import add_digress_noise
+from tmgg.models.digress.transformer_model import GraphTransformer
 
 # =============================================================================
 # MODEL FACTORY
 # =============================================================================
+
 
 def create_digress_small(n_nodes: int = 16) -> GraphTransformer:
     """Create small DiGress model matching digress_sbm_small.yaml config."""
@@ -36,6 +36,7 @@ def create_digress_small(n_nodes: int = 16) -> GraphTransformer:
 # TARGET GENERATION (same as test_learning_sanity.py)
 # =============================================================================
 
+
 def create_block_diagonal_target(n: int = 16, num_blocks: int = 4) -> torch.Tensor:
     """Create block diagonal matrix - dense within blocks, no inter-block edges."""
     A = torch.zeros(1, n, n)
@@ -49,12 +50,14 @@ def create_block_diagonal_target(n: int = 16, num_blocks: int = 4) -> torch.Tens
 
 
 def create_sbm_target(
-    block_sizes: list = [4, 4, 4, 4],
+    block_sizes: list | None = None,
     p: float = 0.8,
     q: float = 0.1,
     seed: int = 42,
 ) -> torch.Tensor:
     """Create SBM graph with community structure."""
+    if block_sizes is None:
+        block_sizes = [4, 4, 4, 4]
     rng = np.random.default_rng(seed)
     A_np = generate_sbm_adjacency(block_sizes, p=p, q=q, rng=rng)
     A = torch.tensor(A_np, dtype=torch.float32).unsqueeze(0)
@@ -64,6 +67,7 @@ def create_sbm_target(
 # =============================================================================
 # LEVEL 1: CONSTANT NOISE MEMORIZATION - DIGRESS
 # =============================================================================
+
 
 class TestDigressLevel1ConstantNoiseMemorization:
     """LEVEL 1: Can DiGress memorize a fixed input→output mapping?
@@ -108,9 +112,9 @@ class TestDigressLevel1ConstantNoiseMemorization:
             predictions = (torch.sigmoid(logits) > 0.5).float()
             accuracy = (predictions == A_clean).float().mean().item()
 
-        assert accuracy > 0.99, (
-            f"DiGress (official LR) failed Level 1 on {target_type}: {accuracy:.1%}"
-        )
+        assert (
+            accuracy > 0.99
+        ), f"DiGress (official LR) failed Level 1 on {target_type}: {accuracy:.1%}"
 
     def test_digress_high_lr_memorization(self, fixed_sample):
         """DiGress with high LR settings (Adam, LR=1e-2) on fixed input."""
@@ -130,14 +134,15 @@ class TestDigressLevel1ConstantNoiseMemorization:
             predictions = (torch.sigmoid(logits) > 0.5).float()
             accuracy = (predictions == A_clean).float().mean().item()
 
-        assert accuracy > 0.99, (
-            f"DiGress (high LR) failed Level 1 on {target_type}: {accuracy:.1%}"
-        )
+        assert (
+            accuracy > 0.99
+        ), f"DiGress (high LR) failed Level 1 on {target_type}: {accuracy:.1%}"
 
 
 # =============================================================================
 # LEVEL 2: FRESH NOISE GENERALIZATION - DIGRESS
 # =============================================================================
+
 
 class TestDigressLevel2FreshNoiseGeneralization:
     """LEVEL 2: Can DiGress generalize denoising with fresh noise each step?"""
@@ -179,9 +184,9 @@ class TestDigressLevel2FreshNoiseGeneralization:
             predictions = (torch.sigmoid(logits) > 0.5).float()
             accuracy = (predictions == A_clean).float().mean().item()
 
-        assert accuracy > 0.70, (
-            f"DiGress (official LR) failed Level 2 on {target_type}: {accuracy:.1%}"
-        )
+        assert (
+            accuracy > 0.70
+        ), f"DiGress (official LR) failed Level 2 on {target_type}: {accuracy:.1%}"
 
     def test_digress_high_lr_generalization(self, structured_sample):
         """DiGress with high LR settings on fresh noise each step."""
@@ -205,14 +210,15 @@ class TestDigressLevel2FreshNoiseGeneralization:
             predictions = (torch.sigmoid(logits) > 0.5).float()
             accuracy = (predictions == A_clean).float().mean().item()
 
-        assert accuracy > 0.70, (
-            f"DiGress (high LR) failed Level 2 on {target_type}: {accuracy:.1%}"
-        )
+        assert (
+            accuracy > 0.70
+        ), f"DiGress (high LR) failed Level 2 on {target_type}: {accuracy:.1%}"
 
 
 # =============================================================================
 # QUICK SANITY: SINGLE STEP LOSS REDUCTION
 # =============================================================================
+
 
 class TestDigressSingleStepLearning:
     """Quick check that one optimizer step reduces loss."""
@@ -225,10 +231,13 @@ class TestDigressSingleStepLearning:
         A_noisy = add_digress_noise(A_clean, p=0.1)
         return A_noisy, A_clean
 
-    @pytest.mark.parametrize("optimizer_type,lr", [
-        ("official", 0.0002),
-        ("high_lr", 1e-2),
-    ])
+    @pytest.mark.parametrize(
+        "optimizer_type,lr",
+        [
+            ("official", 0.0002),
+            ("high_lr", 1e-2),
+        ],
+    )
     def test_single_step_reduces_loss(self, optimizer_type, lr, training_data):
         """Verify one optimizer step reduces loss."""
         A_noisy, A_clean = training_data

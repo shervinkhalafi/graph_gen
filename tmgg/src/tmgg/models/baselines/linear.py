@@ -4,7 +4,7 @@ A minimal model that learns a direct linear transformation of the adjacency matr
 Initialized at identity to enable learning from a reasonable starting point.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -78,7 +78,7 @@ class LinearBaseline(DenoisingModel):
 
         return out
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Return model configuration."""
         return {
             "model_type": "LinearBaseline",

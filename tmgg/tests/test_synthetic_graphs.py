@@ -1,17 +1,16 @@
 """Tests for synthetic graph generators."""
 
-import pytest
 import numpy as np
-import networkx as nx
+import pytest
 
 from tmgg.experiment_utils.data.synthetic_graphs import (
-    generate_watts_strogatz_graphs,
-    generate_random_geometric_graphs,
-    generate_configuration_model_graphs,
-    generate_regular_graphs,
-    generate_erdos_renyi_graphs,
-    generate_tree_graphs,
     SyntheticGraphDataset,
+    generate_configuration_model_graphs,
+    generate_erdos_renyi_graphs,
+    generate_random_geometric_graphs,
+    generate_regular_graphs,
+    generate_tree_graphs,
+    generate_watts_strogatz_graphs,
 )
 
 

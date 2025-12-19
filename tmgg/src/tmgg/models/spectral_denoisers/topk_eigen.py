@@ -5,8 +5,6 @@ symmetric adjacency matrices, with sign normalization to resolve eigenvector
 sign ambiguity.
 """
 
-from typing import Tuple
-
 import torch
 import torch.nn as nn
 
@@ -43,9 +41,7 @@ class TopKEigenLayer(nn.Module):
             raise ValueError(f"k must be positive, got {k}")
         self.k = k
 
-    def forward(
-        self, A: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Extract top-k eigenvectors from adjacency matrices.
 
         Parameters
@@ -136,9 +132,7 @@ class TopKEigenLayer(nn.Module):
         # Get the sign of the first nonzero entry
         # Where mask is True, take the sign; elsewhere 0
         first_signs = torch.where(
-            first_nonzero_mask,
-            torch.sign(V),
-            torch.zeros_like(V)
+            first_nonzero_mask, torch.sign(V), torch.zeros_like(V)
         )
         # Sum over n dimension to get the sign for each eigenvector
         sign_multipliers = first_signs.sum(dim=1)  # (batch, k)
@@ -148,6 +142,7 @@ class TopKEigenLayer(nn.Module):
         zero_eigenvector_mask = sign_multipliers == 0
         if zero_eigenvector_mask.any():
             import warnings
+
             warnings.warn(
                 "Zero eigenvector detected in sign normalization; may indicate k > rank(A) "
                 "or numerical issues in eigendecomposition.",
@@ -155,9 +150,7 @@ class TopKEigenLayer(nn.Module):
                 stacklevel=2,
             )
         sign_multipliers = torch.where(
-            zero_eigenvector_mask,
-            torch.ones_like(sign_multipliers),
-            sign_multipliers
+            zero_eigenvector_mask, torch.ones_like(sign_multipliers), sign_multipliers
         )
 
         # Apply sign correction

@@ -13,9 +13,7 @@ CONFIG_PATH = str(TMGG_ROOT / "exp_configs")
 
 
 @hydra.main(  # pyright: ignore[reportAny]
-    version_base="1.3", 
-    config_path=CONFIG_PATH, 
-    config_name="grid_search_base"
+    version_base="1.3", config_path=CONFIG_PATH, config_name="grid_search_base"
 )
 def main(config: DictConfig):
     """

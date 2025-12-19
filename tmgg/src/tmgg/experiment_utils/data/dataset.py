@@ -1,11 +1,10 @@
 """Data generation and manipulation utilities for graph denoising experiments."""
 
+from collections.abc import Sequence
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from scipy.linalg import expm
-from typing import List, Tuple, Optional, Union
-import random
 
 
 class GraphDataset(Dataset):
@@ -18,9 +17,9 @@ class GraphDataset(Dataset):
 
     def __init__(
         self,
-        adjacency_matrices: Union[
-            np.ndarray, torch.Tensor, List[Union[np.ndarray, torch.Tensor]]
-        ],
+        adjacency_matrices: (
+            np.ndarray | torch.Tensor | Sequence[np.ndarray | torch.Tensor]
+        ),
         num_samples: int,
         apply_permutation: bool = True,
         return_original_idx: bool = False,
@@ -35,14 +34,14 @@ class GraphDataset(Dataset):
             return_original_idx: Whether to return the index of the original matrix
         """
         # Convert to list if single matrix provided
-        if not isinstance(adjacency_matrices, list):
+        if isinstance(adjacency_matrices, np.ndarray | torch.Tensor):
             adjacency_matrices = [adjacency_matrices]
 
         # Convert all matrices to torch tensors
         self.adjacency_matrices = []
-        assert len(adjacency_matrices) > 0, (
-            f"{adjacency_matrices=} {num_samples=} {apply_permutation=} {return_original_idx=}"
-        )
+        assert (
+            len(adjacency_matrices) > 0
+        ), f"{adjacency_matrices=} {num_samples=} {apply_permutation=} {return_original_idx=}"
         for mat in adjacency_matrices:
             if isinstance(mat, np.ndarray):
                 mat = torch.tensor(mat, dtype=torch.float32)
@@ -58,7 +57,7 @@ class GraphDataset(Dataset):
     def __len__(self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx: int) -> Union[torch.Tensor, Tuple[torch.Tensor, int]]:
+    def __getitem__(self, idx: int) -> torch.Tensor | tuple[torch.Tensor, int]:
         """
         Get a sample from the dataset.
 
@@ -67,10 +66,11 @@ class GraphDataset(Dataset):
             If return_original_idx is True: (permuted adjacency matrix, original matrix index)
         """
         # Choose a matrix (round-robin if fewer samples than matrices)
+        matrix_idx: int
         if self.num_matrices == 1:
             matrix_idx = 0
         else:
-            matrix_idx = torch.randint(0, self.num_matrices, (1,)).item()
+            matrix_idx = int(torch.randint(0, self.num_matrices, (1,)).item())
 
         adjacency_matrix = self.adjacency_matrices[matrix_idx]
 

@@ -1,9 +1,10 @@
-import torch as pt
-import numpy as np
-import networkx as nx
 import random
-from torch.utils.data import Dataset
+
+import networkx as nx
+import numpy as np
+import torch as pt
 import torch.distributions as td
+from torch.utils.data import Dataset
 
 
 class CassicalGraphs(Dataset):
@@ -21,16 +22,16 @@ class CassicalGraphs(Dataset):
             ps = np.random.rand(self.n_graphs) * 0.9
             self.A = [
                 nx.to_numpy_array(nx.fast_gnp_random_graph(n, p))
-                for n, p in zip(node_N, ps)
+                for n, p in zip(node_N, ps, strict=False)
             ]
-            node_N = np.array(node_N).astype(np.float)
+            node_N = np.array(node_N).astype(np.float64)
             self.X = np.stack([node_N, ps], -1)
         elif self.model == "BA":
-            Ns = np.array(node_N).astype(np.float)
+            Ns = np.array(node_N).astype(np.float64)
             ms = np.floor(np.random.rand(self.n_graphs) * 0.9 * Ns).astype(np.int32)
             self.A = [
                 nx.to_numpy_array(nx.barabasi_albert_graph(n, int(m)))
-                for n, m in zip(node_N, ms)
+                for n, m in zip(node_N, ms, strict=False)
             ]
             self.X = np.stack([Ns, ms], -1)
         else:

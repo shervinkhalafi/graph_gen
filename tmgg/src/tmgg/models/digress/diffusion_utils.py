@@ -1,23 +1,30 @@
-import torch
-from torch.nn import functional as F
-import numpy as np
 import math
+from typing import Any
+
+import numpy as np
+import torch
+from numpy.typing import NDArray
+from torch.nn import functional as F
 
 
 class PlaceHolder:
-    def __init__(self, X, E, y):
+    X: torch.Tensor
+    E: torch.Tensor
+    y: torch.Tensor
+
+    def __init__(self, X: torch.Tensor, E: torch.Tensor, y: torch.Tensor) -> None:
         self.X = X
         self.E = E
         self.y = y
 
-    def type_as(self, x: torch.Tensor):
+    def type_as(self, x: torch.Tensor) -> "PlaceHolder":
         """Changes the device and dtype of X, E, y."""
         self.X = self.X.type_as(x)
         self.E = self.E.type_as(x)
         self.y = self.y.type_as(x)
         return self
 
-    def mask(self, node_mask, collapse=False):
+    def mask(self, node_mask: torch.Tensor, collapse: bool = False) -> "PlaceHolder":
         x_mask = node_mask.unsqueeze(-1)  # bs, n, 1
         e_mask1 = x_mask.unsqueeze(2)  # bs, n, 1, 1
         e_mask2 = x_mask.unsqueeze(1)  # bs, 1, n, 1
@@ -31,33 +38,37 @@ class PlaceHolder:
         else:
             self.X = self.X * x_mask
             self.E = self.E * e_mask1 * e_mask2
-            assert torch.allclose(self.E, torch.transpose(self.E, 1, 2))
+            _ = torch.allclose(self.E, torch.transpose(self.E, 1, 2))
         return self
 
 
-def sum_except_batch(x):
+def sum_except_batch(x: torch.Tensor) -> torch.Tensor:
     return x.reshape(x.size(0), -1).sum(dim=-1)
 
 
-def assert_correctly_masked(variable, node_mask):
-    assert (variable * (1 - node_mask.long())).abs().max().item() < 1e-4, (
-        "Variables not masked properly."
-    )
+def assert_correctly_masked(variable: torch.Tensor, node_mask: torch.Tensor) -> None:
+    max_val = (variable * (1 - node_mask.long())).abs().max().item()
+    if not max_val < 1e-4:
+        raise AssertionError("Variables not masked properly.")
 
 
-def sample_gaussian(size):
+def sample_gaussian(size: torch.Size | tuple[int, ...]) -> torch.Tensor:
     x = torch.randn(size)
     return x
 
 
-def sample_gaussian_with_mask(size, node_mask):
+def sample_gaussian_with_mask(
+    size: torch.Size | tuple[int, ...], node_mask: torch.Tensor
+) -> torch.Tensor:
     x = torch.randn(size)
     x = x.type_as(node_mask.float())
     x_masked = x * node_mask
     return x_masked
 
 
-def clip_noise_schedule(alphas2, clip_value=0.001):
+def clip_noise_schedule(
+    alphas2: NDArray[np.floating[Any]], clip_value: float = 0.001
+) -> NDArray[np.floating[Any]]:
     """
     For a noise schedule given by alpha^2, this clips alpha_t / alpha_t-1. This may help improve stability during
     sampling.
@@ -72,7 +83,9 @@ def clip_noise_schedule(alphas2, clip_value=0.001):
     return alphas2
 
 
-def cosine_beta_schedule(timesteps, s=0.008, raise_to_power: float = 1):
+def cosine_beta_schedule(
+    timesteps: int, s: float = 0.008, raise_to_power: float = 1
+) -> NDArray[np.floating[Any]]:
     """
     cosine schedule
     as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
@@ -92,7 +105,9 @@ def cosine_beta_schedule(timesteps, s=0.008, raise_to_power: float = 1):
     return alphas_cumprod
 
 
-def cosine_beta_schedule_discrete(timesteps, s=0.008):
+def cosine_beta_schedule_discrete(
+    timesteps: int, s: float = 0.008
+) -> NDArray[np.floating[Any]]:
     """Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ."""
     steps = timesteps + 2
     x = np.linspace(0, steps, steps)
@@ -104,7 +119,9 @@ def cosine_beta_schedule_discrete(timesteps, s=0.008):
     return betas.squeeze()
 
 
-def custom_beta_schedule_discrete(timesteps, average_num_nodes=50, s=0.008):
+def custom_beta_schedule_discrete(
+    timesteps: int, average_num_nodes: int = 50, s: float = 0.008
+) -> NDArray[np.floating[Any]]:
     """Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ."""
     steps = timesteps + 2
     x = np.linspace(0, steps, steps)
@@ -114,7 +131,8 @@ def custom_beta_schedule_discrete(timesteps, average_num_nodes=50, s=0.008):
     alphas = alphas_cumprod[1:] / alphas_cumprod[:-1]
     betas = 1 - alphas
 
-    assert timesteps >= 100
+    if not timesteps >= 100:
+        raise AssertionError(f"timesteps must be >= 100, got {timesteps}")
 
     p = 4 / 5  # 1 - 1 / num_edge_classes
     num_edges = average_num_nodes * (average_num_nodes - 1) / 2
@@ -127,7 +145,7 @@ def custom_beta_schedule_discrete(timesteps, average_num_nodes=50, s=0.008):
     return np.array(betas)
 
 
-def gaussian_KL(q_mu, q_sigma):
+def gaussian_KL(q_mu: torch.Tensor, q_sigma: torch.Tensor) -> torch.Tensor:
     """Computes the KL distance between a normal distribution and the standard normal.
     Args:
         q_mu: Mean of distribution q.
@@ -137,55 +155,64 @@ def gaussian_KL(q_mu, q_sigma):
     Returns:
         The KL distance, summed over all dimensions except the batch dim.
     """
-    return sum_except_batch(
-        (torch.log(1 / q_sigma) + 0.5 * (q_sigma**2 + q_mu**2) - 0.5)
-    )
+    return sum_except_batch(torch.log(1 / q_sigma) + 0.5 * (q_sigma**2 + q_mu**2) - 0.5)
 
 
-def cdf_std_gaussian(x):
+def cdf_std_gaussian(x: torch.Tensor) -> torch.Tensor:
     return 0.5 * (1.0 + torch.erf(x / math.sqrt(2)))
 
 
-def SNR(gamma):
+def SNR(gamma: torch.Tensor) -> torch.Tensor:
     """Computes signal to noise ratio (alpha^2/sigma^2) given gamma."""
     return torch.exp(-gamma)
 
 
-def inflate_batch_array(array, target_shape):
+def inflate_batch_array(
+    array: torch.Tensor, target_shape: torch.Size | tuple[int, ...]
+) -> torch.Tensor:
     """
     Inflates the batch array (array) with only a single axis (i.e. shape = (batch_size,), or possibly more empty
     axes (i.e. shape (batch_size, 1, ..., 1)) to match the target shape.
     """
-    target_shape = (array.size(0),) + (1,) * (len(target_shape) - 1)
-    return array.view(target_shape)
+    target_shape_tuple: tuple[int, ...] = (array.size(0),) + (1,) * (
+        len(target_shape) - 1
+    )
+    return array.view(target_shape_tuple)
 
 
-def sigma(gamma, target_shape):
+def sigma(
+    gamma: torch.Tensor, target_shape: torch.Size | tuple[int, ...]
+) -> torch.Tensor:
     """Computes sigma given gamma."""
     return inflate_batch_array(torch.sqrt(torch.sigmoid(gamma)), target_shape)
 
 
-def alpha(gamma, target_shape):
+def alpha(
+    gamma: torch.Tensor, target_shape: torch.Size | tuple[int, ...]
+) -> torch.Tensor:
     """Computes alpha given gamma."""
     return inflate_batch_array(torch.sqrt(torch.sigmoid(-gamma)), target_shape)
 
 
-def check_mask_correct(variables, node_mask):
-    for i, variable in enumerate(variables):
+def check_mask_correct(variables: list[torch.Tensor], node_mask: torch.Tensor) -> None:
+    for _, variable in enumerate(variables):
         if len(variable) > 0:
             assert_correctly_masked(variable, node_mask)
 
 
-def check_tensor_same_size(*args):
+def check_tensor_same_size(*args: torch.Tensor) -> None:
     for i, arg in enumerate(args):
         if i == 0:
             continue
-        assert args[0].size() == arg.size()
+        if not args[0].size() == arg.size():
+            raise AssertionError(
+                f"Tensors have different sizes: {args[0].size()} != {arg.size()}"
+            )
 
 
 def sigma_and_alpha_t_given_s(
     gamma_t: torch.Tensor, gamma_s: torch.Tensor, target_size: torch.Size
-):
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Computes sigma t given s, using gamma_t and gamma_s. Used during sampling.
 
@@ -210,11 +237,16 @@ def sigma_and_alpha_t_given_s(
     return sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s
 
 
-def reverse_tensor(x):
+def reverse_tensor(x: torch.Tensor) -> torch.Tensor:
     return x[torch.arange(x.size(0) - 1, -1, -1)]
 
 
-def sample_feature_noise(X_size, E_size, y_size, node_mask):
+def sample_feature_noise(
+    X_size: torch.Size | tuple[int, ...],
+    E_size: torch.Size | tuple[int, ...],
+    y_size: torch.Size | tuple[int, ...],
+    node_mask: torch.Tensor,
+) -> PlaceHolder:
     """Standard normal noise for all features.
     Output size: X.size(), E.size(), y.size()"""
     # TODO: How to change this for the multi-gpu case?
@@ -235,12 +267,19 @@ def sample_feature_noise(X_size, E_size, y_size, node_mask):
     epsE = epsE * upper_triangular_mask
     epsE = epsE + torch.transpose(epsE, 1, 2)
 
-    assert (epsE == torch.transpose(epsE, 1, 2)).all()
+    if not (epsE == torch.transpose(epsE, 1, 2)).all():
+        raise AssertionError("Edge noise is not symmetric")
 
     return PlaceHolder(X=epsX, E=epsE, y=epsy).mask(node_mask)
 
 
-def sample_normal(mu_X, mu_E, mu_y, sigma, node_mask):
+def sample_normal(
+    mu_X: torch.Tensor,
+    mu_E: torch.Tensor,
+    mu_y: torch.Tensor,
+    sigma: torch.Tensor,
+    node_mask: torch.Tensor,
+) -> PlaceHolder:
     """Samples from a Normal distribution."""
     # TODO: change for multi-gpu case
     eps = sample_feature_noise(
@@ -252,7 +291,12 @@ def sample_normal(mu_X, mu_E, mu_y, sigma, node_mask):
     return PlaceHolder(X=X, E=E, y=y)
 
 
-def check_issues_norm_values(gamma, norm_val1, norm_val2, num_stdevs=8):
+def check_issues_norm_values(
+    gamma: torch.nn.Module,
+    norm_val1: float,
+    norm_val2: float,
+    num_stdevs: int = 8,
+) -> None:
     """Check if 1 / norm_value is still larger than 10 * standard deviation."""
     zeros = torch.zeros((1, 1))
     gamma_0 = gamma(zeros)
@@ -266,7 +310,9 @@ def check_issues_norm_values(gamma, norm_val1, norm_val2, num_stdevs=8):
         )
 
 
-def sample_discrete_features(probX, probE, node_mask):
+def sample_discrete_features(
+    probX: torch.Tensor, probE: torch.Tensor, node_mask: torch.Tensor
+) -> PlaceHolder:
     """Sample features from multinomial distribution with given probabilities (probX, probE, proby)
     :param probX: bs, n, dx_out        node features
     :param probE: bs, n, n, de_out     edge features
@@ -302,7 +348,13 @@ def sample_discrete_features(probX, probE, node_mask):
     return PlaceHolder(X=X_t, E=E_t, y=torch.zeros(bs, 0).type_as(X_t))
 
 
-def compute_posterior_distribution(M, M_t, Qt_M, Qsb_M, Qtb_M):
+def compute_posterior_distribution(
+    M: torch.Tensor,
+    M_t: torch.Tensor,
+    Qt_M: torch.Tensor,
+    Qsb_M: torch.Tensor,
+    Qtb_M: torch.Tensor,
+) -> torch.Tensor:
     """M: X or E
     Compute xt @ Qt.T * x0 @ Qsb / x0 @ Qtb @ xt.T
     """
@@ -328,7 +380,9 @@ def compute_posterior_distribution(M, M_t, Qt_M, Qsb_M, Qtb_M):
     return prob
 
 
-def compute_batched_over0_posterior_distribution(X_t, Qt, Qsb, Qtb):
+def compute_batched_over0_posterior_distribution(
+    X_t: torch.Tensor, Qt: torch.Tensor, Qsb: torch.Tensor, Qtb: torch.Tensor
+) -> torch.Tensor:
     """M: X or E
     Compute xt @ Qt.T * x0 @ Qsb / x0 @ Qtb @ xt.T for each possible value of x0
     X_t: bs, n, dt          or bs, n, n, dt
@@ -362,7 +416,13 @@ def compute_batched_over0_posterior_distribution(X_t, Qt, Qsb, Qtb):
     return out
 
 
-def mask_distributions(true_X, true_E, pred_X, pred_E, node_mask):
+def mask_distributions(
+    true_X: torch.Tensor,
+    true_E: torch.Tensor,
+    pred_X: torch.Tensor,
+    pred_E: torch.Tensor,
+    node_mask: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Set masked rows to arbitrary distributions, so it doesn't contribute to loss
     :param true_X: bs, n, dx_out
@@ -399,7 +459,17 @@ def mask_distributions(true_X, true_E, pred_X, pred_E, node_mask):
     return true_X, true_E, pred_X, pred_E
 
 
-def posterior_distributions(X, E, y, X_t, E_t, y_t, Qt, Qsb, Qtb):
+def posterior_distributions(
+    X: torch.Tensor,
+    E: torch.Tensor,
+    y: torch.Tensor,
+    X_t: torch.Tensor,
+    E_t: torch.Tensor,
+    y_t: torch.Tensor,
+    Qt: PlaceHolder,
+    Qsb: PlaceHolder,
+    Qtb: PlaceHolder,
+) -> PlaceHolder:
     prob_X = compute_posterior_distribution(
         M=X, M_t=X_t, Qt_M=Qt.X, Qsb_M=Qsb.X, Qtb_M=Qtb.X
     )  # (bs, n, dx)
@@ -410,12 +480,13 @@ def posterior_distributions(X, E, y, X_t, E_t, y_t, Qt, Qsb, Qtb):
     return PlaceHolder(X=prob_X, E=prob_E, y=y_t)
 
 
-def sample_discrete_feature_noise(limit_dist, node_mask):
+def sample_discrete_feature_noise(
+    limit_dist: PlaceHolder, node_mask: torch.Tensor
+) -> PlaceHolder:
     """Sample from the limit distribution of the diffusion process"""
     bs, n_max = node_mask.shape
     x_limit = limit_dist.X[None, None, :].expand(bs, n_max, -1)
     e_limit = limit_dist.E[None, None, None, :].expand(bs, n_max, n_max, -1)
-    y_limit = limit_dist.y[None, :].expand(bs, -1)
     U_X = x_limit.flatten(end_dim=-2).multinomial(1).reshape(bs, n_max)
     U_E = e_limit.flatten(end_dim=-2).multinomial(1).reshape(bs, n_max, n_max)
     U_y = torch.empty((bs, 0))
@@ -436,6 +507,7 @@ def sample_discrete_feature_noise(limit_dist, node_mask):
     U_E = U_E * upper_triangular_mask
     U_E = U_E + torch.transpose(U_E, 1, 2)
 
-    assert (U_E == torch.transpose(U_E, 1, 2)).all()
+    if not (torch.transpose(U_E, 1, 2) == U_E).all():
+        raise AssertionError("Edge noise is not symmetric")
 
     return PlaceHolder(X=U_X, E=U_E, y=U_y).mask(node_mask)

@@ -17,13 +17,10 @@ def create_base_image() -> modal.Image:
     modal.Image
         Base image with Python 3.11 and system packages.
     """
-    return (
-        modal.Image.debian_slim(python_version="3.11")
-        .apt_install(
-            "git",
-            "build-essential",
-            "libffi-dev",
-        )
+    return modal.Image.debian_slim(python_version="3.11").apt_install(
+        "git",
+        "build-essential",
+        "libffi-dev",
     )
 
 
@@ -44,12 +41,9 @@ def create_pytorch_image(cuda_version: str = "12.1") -> modal.Image:
     cuda_suffix = cuda_version.replace(".", "")
     torch_index = f"https://download.pytorch.org/whl/cu{cuda_suffix}"
 
-    return (
-        create_base_image()
-        .pip_install(
-            f"torch>=2.0.0 --index-url {torch_index}",
-            "torchvision",
-        )
+    return create_base_image().pip_install(
+        f"torch>=2.0.0 --index-url {torch_index}",
+        "torchvision",
     )
 
 
@@ -129,16 +123,19 @@ def create_experiment_image(
     image = create_tmgg_image(tmgg_path)
 
     # Set environment variables for experiment tracking
-    image = image.env({
-        "WANDB_MODE": "online",
-        "PYTHONUNBUFFERED": "1",
-    })
+    image = image.env(
+        {
+            "WANDB_MODE": "online",
+            "PYTHONUNBUFFERED": "1",
+        }
+    )
 
     return image
 
 
 # Pre-built images for common configurations
 # These can be referenced directly in Modal functions
+
 
 # Development image (uses local TMGG)
 def get_dev_image(tmgg_path: Path) -> modal.Image:

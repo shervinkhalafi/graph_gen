@@ -1,0 +1,41 @@
+[tools]
+python = "3.12"
+uv = "latest"
+
+[env]
+# Ensure uv uses the mise-managed Python
+UV_PYTHON_PREFERENCE = "managed"
+
+[tasks.modal-secrets]
+description = "Create/update Modal secrets from Doppler env vars"
+run = """
+echo "Creating Modal secrets from Doppler environment..."
+
+# Tigris/S3 credentials (map Doppler names to Modal expected names)
+uv run modal secret create tigris-credentials --force \
+    TMGG_TIGRIS_BUCKET="$TMGG_S3_BUCKET" \
+    TMGG_TIGRIS_ACCESS_KEY="$AWS_ACCESS_KEY_ID" \
+    TMGG_TIGRIS_SECRET_KEY="$AWS_SECRET_ACCESS_KEY"
+
+# W&B credentials
+uv run modal secret create wandb-credentials --force \
+    WANDB_API_KEY="$WANDB_API_KEY"
+
+echo "Modal secrets created successfully"
+"""
+
+[tasks.modal-deploy]
+description = "Deploy TMGG Modal app to Modal cloud"
+depends = ["modal-secrets"]
+run = """
+# Log outside project to avoid "modified during build" error
+LOGDIR="/tmp/tmgg-modal-logs"
+LOGFILE="$LOGDIR/modal-deploy-$(date +%Y%m%d-%H%M%S).log"
+mkdir -p "$LOGDIR"
+echo "Logging to $LOGFILE"
+MODAL_LOGLEVEL=DEBUG uv run modal deploy -m tmgg.modal.runner 2>&1 | tee "$LOGFILE"
+"""
+
+[tasks.modal-serve]
+description = "Run Modal app in development mode (hot-reload)"
+run = "uv run modal serve -m tmgg.modal.runner"
