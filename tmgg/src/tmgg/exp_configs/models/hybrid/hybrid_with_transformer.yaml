@@ -20,7 +20,7 @@ transformer_bias: true
 
 # Model-specific training configuration
 learning_rate: 0.005
-loss_type: "BCE"
+loss_type: "BCEWithLogits"
 scheduler_config:
   type: "cosine_warmup"
   warmup_fraction: 0.02

@@ -2,21 +2,23 @@
 
 from typing import Any
 
-import torch
 import torch.nn as nn
 
 from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
 from tmgg.models.digress.transformer_model import GraphTransformer
-from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
 
 
 class DigressDenoisingLightningModule(DenoisingLightningModule):
-    """PyTorch Lightning module for Digress GraphTransformer-based graph denoising."""
+    """PyTorch Lightning module for Digress GraphTransformer-based graph denoising.
+
+    Eigenvector extraction (when use_eigenvectors=True) is handled internally
+    by the GraphTransformer model, matching the architecture of spectral denoisers.
+    """
 
     def __init__(
         self,
         use_eigenvectors: bool = False,
-        node_feature_dim: int = 20,
+        k: int = 20,
         n_layers: int = 4,
         hidden_mlp_dims: dict[str, int] | None = None,
         hidden_dims: dict[str, int] | None = None,
@@ -35,14 +37,20 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         digress_arch: str | None = None,
         digress_mode: str | None = None,
         model_type: str | None = None,
+        # Legacy parameter name (deprecated, use k instead)
+        node_feature_dim: int | None = None,
     ):
+        # Handle legacy parameter name
+        if node_feature_dim is not None:
+            k = node_feature_dim
+
         # Store before super().__init__ since _make_model is called there
         self._use_eigenvectors = use_eigenvectors
-        self._node_feature_dim = node_feature_dim
+        self._k = k
 
         super().__init__(
             use_eigenvectors=use_eigenvectors,
-            node_feature_dim=node_feature_dim,
+            k=k,
             n_layers=n_layers,
             hidden_mlp_dims=hidden_mlp_dims,
             hidden_dims=hidden_dims,
@@ -59,30 +67,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             seed=seed,
         )
 
-        # Initialize eigenvector layer if using eigenvector features
-        if use_eigenvectors:
-            self.eigen_layer = TopKEigenLayer(k=node_feature_dim)
-        else:
-            self.eigen_layer = None
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass, optionally using eigenvector features.
-
-        Parameters
-        ----------
-        x
-            Noisy adjacency matrix of shape (batch, n, n).
-
-        Returns
-        -------
-        torch.Tensor
-            Denoised adjacency matrix.
-        """
-        if self._use_eigenvectors and self.eigen_layer is not None:
-            # Extract eigenvectors as node features
-            V, _ = self.eigen_layer(x)  # V: (batch, n, k)
-            return self.model(V)
-        return self.model(x)
+    # forward() is inherited from base class - model handles eigenvector extraction
 
     def _make_model(
         self,
@@ -91,7 +76,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         hidden_mlp_dims: dict[str, int] | None = None,
         hidden_dims: dict[str, int] | None = None,
         output_dims: dict[str, int] | None = None,
-        node_feature_dim: int = 20,
+        k: int = 20,
         use_eigenvectors: bool = False,
         **kwargs,
     ) -> nn.Module:
@@ -107,12 +92,11 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             Transformer dimensions. Defaults to {"dx": 128, "de": 32, "dy": 128, "n_head": 4}.
         output_dims
             Output dimensions. Defaults to {"X": 0, "E": 1, "y": 0}.
-        node_feature_dim
-            Dimension of node features when use_eigenvectors=True.
+        k
+            Number of eigenvectors to extract when use_eigenvectors=True.
         use_eigenvectors
-            If True, model receives eigenvector features (bs, n, k) from forward().
-            If False, model receives adjacency matrix (bs, n, n) directly.
-            This sets assume_adjacency_input=not use_eigenvectors on the model.
+            If True, model extracts eigenvectors from adjacency internally.
+            If False, model receives adjacency matrix directly.
         """
         if hidden_mlp_dims is None:
             hidden_mlp_dims = {"X": 256, "E": 64, "y": 256}
@@ -121,7 +105,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         if output_dims is None:
             output_dims = {"X": 0, "E": 1, "y": 0}
         input_dims = {
-            "X": node_feature_dim if use_eigenvectors else 1,
+            "X": k if use_eigenvectors else 1,
             "E": 1,
             "y": 0,
         }
@@ -132,7 +116,8 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             hidden_mlp_dims=hidden_mlp_dims,
             hidden_dims=hidden_dims,
             output_dims=output_dims,
-            assume_adjacency_input=not use_eigenvectors,
+            use_eigenvectors=use_eigenvectors,
+            k=k if use_eigenvectors else None,
         )
 
     def get_model_name(self) -> str:

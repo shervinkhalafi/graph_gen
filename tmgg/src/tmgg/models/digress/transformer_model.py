@@ -528,10 +528,16 @@ class GraphTransformer(DenoisingModel):
         Activation function for input MLPs. Defaults to ReLU.
     act_fn_out
         Activation function for output MLPs. Defaults to ReLU.
+    use_eigenvectors
+        If True, extracts top-k eigenvectors from adjacency input and uses them
+        as node features. The model will handle graphs smaller than k by padding.
+    k
+        Number of eigenvectors to extract when use_eigenvectors=True. Required
+        if use_eigenvectors is True.
     assume_adjacency_input
-        If True, assumes input is an adjacency matrix (bs, n, n) and extracts
-        node/edge features automatically. Set to False when passing pre-computed
-        node features (e.g., eigenvectors).
+        Deprecated: use use_eigenvectors instead. If True, assumes input is an
+        adjacency matrix (bs, n, n) and extracts node/edge features automatically.
+        Set to False when passing pre-computed node features.
     """
 
     n_layers: int
@@ -540,6 +546,7 @@ class GraphTransformer(DenoisingModel):
     hidden_dims: dict[str, int]
     output_dims: dict[str, int]
     transformer: _GraphTransformer
+    eigen_layer: nn.Module | None
 
     def __init__(
         self,
@@ -550,6 +557,8 @@ class GraphTransformer(DenoisingModel):
         output_dims: dict[str, int],
         act_fn_in: nn.Module | None = None,
         act_fn_out: nn.Module | None = None,
+        use_eigenvectors: bool = False,
+        k: int | None = None,
         assume_adjacency_input: bool = True,
     ) -> None:
         super().__init__()
@@ -558,6 +567,20 @@ class GraphTransformer(DenoisingModel):
         self.hidden_mlp_dims = hidden_mlp_dims
         self.hidden_dims = hidden_dims
         self.output_dims = output_dims
+
+        # Eigenvector extraction (like spectral denoisers)
+        self._use_eigenvectors = use_eigenvectors
+        self._k = k
+        if use_eigenvectors:
+            if k is None:
+                raise ValueError("k must be specified when use_eigenvectors=True")
+            from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
+
+            self.eigen_layer = TopKEigenLayer(k=k)
+            # When using eigenvectors, transformer receives node features not adjacency
+            assume_adjacency_input = False
+        else:
+            self.eigen_layer = None
 
         self.transformer = _GraphTransformer(
             n_layers=n_layers,
@@ -577,14 +600,26 @@ class GraphTransformer(DenoisingModel):
         Parameters
         ----------
         x
-            If assume_adjacency_input=True: adjacency matrix (bs, n, n).
-            If assume_adjacency_input=False: node features (bs, n, d_in).
+            Adjacency matrix of shape (bs, n, n). When use_eigenvectors=True,
+            eigenvectors are extracted internally and used as node features.
 
         Returns
         -------
         torch.Tensor
             Edge logits of shape (bs, n, n).
         """
+        # Extract eigenvectors if configured (like spectral denoisers)
+        if self._use_eigenvectors and self.eigen_layer is not None:
+            V, _ = self.eigen_layer(x)  # (batch, n, actual_k)
+
+            # Pad if graph smaller than k (matches SpectralDenoiser behavior)
+            actual_k = V.shape[-1]
+            if self._k is not None and actual_k < self._k:
+                pad_size = self._k - actual_k
+                V = torch.nn.functional.pad(V, (0, pad_size))
+
+            x = V  # Pass eigenvectors as node features
+
         features = self.transformer(X=x)
         E = features.E
         if E.shape[-1] == 1:
@@ -600,6 +635,8 @@ class GraphTransformer(DenoisingModel):
             "hidden_mlp_dims": self.hidden_mlp_dims,
             "hidden_dims": self.hidden_dims,
             "output_dims": self.output_dims,
+            "use_eigenvectors": self._use_eigenvectors,
+            "k": self._k,
         }
 
 

@@ -22,7 +22,7 @@ seed: 42
 
 # Model-specific architecture parameters
 use_eigenvectors: true
-node_feature_dim: 50  # Match spectral k=50 for n=50 graph
+k: 50  # Number of eigenvectors (padded if graph < k)
 n_layers: 4
 hidden_mlp_dims:
   X: 256

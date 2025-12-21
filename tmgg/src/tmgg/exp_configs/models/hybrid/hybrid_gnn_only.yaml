@@ -24,4 +24,4 @@ transformer_bias: true
 
 # Override base config values for this specific model
 learning_rate: 0.005
-loss_type: "BCE"  # Override base MSE with BCE
+loss_type: "BCEWithLogits"  # Override base MSE with BCEWithLogits

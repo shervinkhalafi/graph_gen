@@ -125,7 +125,8 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
     except ImportError:
         pass
 
+    best_score = trainer.checkpoint_callback.best_model_score
     return {
         "best_model_path": best_model_path,
-        "best_val_loss": trainer.checkpoint_callback.best_model_score.item(),
+        "best_val_loss": best_score.item() if best_score is not None else None,
     }
