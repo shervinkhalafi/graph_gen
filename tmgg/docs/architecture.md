@@ -19,7 +19,7 @@ src/tmgg/
 │   ├── hybrid_denoising/
 │   ├── digress_denoising/
 │   ├── spectral_denoising/
-│   └── stages/                # Multi-stage experiment framework
+│   └── stages/                # Stage runners
 ├── experiment_utils/          # Shared infrastructure
 │   ├── data/                  # Data loading, generation, noise
 │   ├── cloud/                 # Cloud execution backends
@@ -32,7 +32,7 @@ src/tmgg/
     ├── models/                # Model configurations
     ├── data/                  # Data configurations
     ├── base/                  # Trainer, logger configs
-    └── stages/                # Stage definitions
+    └── stage/                 # Stage definitions
 ```
 
 ## Core Abstractions

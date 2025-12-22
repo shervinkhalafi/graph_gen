@@ -153,7 +153,7 @@ class DenoisingModel(BaseModel):
             return A
 
     @abstractmethod
-    def forward(self, x: torch.Tensor) -> torch.Tensor | tuple:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for denoising.
 
         Parameters

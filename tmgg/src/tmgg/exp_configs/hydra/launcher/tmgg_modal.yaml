@@ -1,0 +1,8 @@
+# @package hydra.launcher
+# Modal cloud execution via TmggLauncher
+_target_: tmgg.hydra_plugins.tmgg_launcher.TmggLauncher
+use_modal: true
+use_ray: false
+gpu_type: a10g
+parallelism: 8
+timeout_seconds: 3600

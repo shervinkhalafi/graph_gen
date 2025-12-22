@@ -2,6 +2,8 @@
 
 _target_: tmgg.experiments.attention_denoising.lightning_module.AttentionDenoisingLightningModule
 
+model_type: multi_layer_attention
+
 # Model-specific architecture parameters
 d_model: 20
 num_heads: 8

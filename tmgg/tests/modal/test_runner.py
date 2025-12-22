@@ -325,7 +325,7 @@ class TestDeploymentCheck:
 
         # Verify it tried to look up and hydrate
         mock_modal.Function.from_name.assert_called_with(
-            "tmgg-spectral", "run_single_experiment"
+            "tmgg-spectral", "modal_execute_task"
         )
         mock_fn.hydrate.assert_called_once()
 

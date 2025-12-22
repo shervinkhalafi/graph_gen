@@ -2,7 +2,7 @@
 # Use with Hydra multirun to sweep hyperparameters
 
 defaults:
-  - model: grid_attention_4k  # Default model, will be overridden
+  - models/spectral/filter_bank@model  # Default model, will be overridden
   - data: grid_gaussian  # Default data config, will be overridden
   - base/trainer/default@trainer
   - base/logger/grid_wandb@logger
@@ -13,12 +13,37 @@ experiment_name: "grid_search_4k_params"
 seed: 42
 sanity_check: false
 
+# Optimizer settings
+learning_rate: 0.001  # Will be swept
+weight_decay: 1e-4
+optimizer_type: adamw
+
+# Scheduler
+scheduler_config:
+  type: cosine_warmup
+  warmup_fraction: 0.02
+  decay_fraction: 0.8
+
+# Loss function
+loss_type: BCEWithLogits
+
+# Noise configuration
+noise_type: digress
+noise_levels: [0.1]
+eval_noise_levels: null
+fixed_noise_seed: null
+
+# Sync data module noise settings with model (prevents hparam conflict)
+data:
+  noise_type: ${noise_type}
+  noise_levels: ${noise_levels}
+
 # Override model parameters with data config values
 model:
-  noise_type: ${data.noise_type}
-  noise_levels: ${data.noise_levels}
+  noise_type: ${noise_type}
+  noise_levels: ${noise_levels}
   seed: ${seed}
-  learning_rate: ${learning_rate}  # Will be swept in grid search
+  learning_rate: ${learning_rate}
 
 # Training configuration
 trainer:
@@ -59,7 +84,6 @@ paths:
   results_dir: ${paths.output_dir}/results
 
 # Grid search parameters (to be swept)
-learning_rate: 0.001  # Will be overridden
 noise_level: 0.1      # Will be overridden
 model_name: "unknown" # Will be set based on model choice
 

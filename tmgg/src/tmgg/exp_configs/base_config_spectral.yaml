@@ -1,86 +1,13 @@
 # Base configuration for spectral denoising experiments
 #
+# Inherits shared training settings from base_config_training.yaml
+#
 # Run with: uv run tmgg-spectral
 # Override: uv run tmgg-spectral model.k=16
 
 defaults:
+  - base_config_training
   - models/spectral/linear_pe@model
-  - data: sbm_default
-  - base/trainer/default@trainer
-  - base/logger/default
-  - base/callbacks/default
-  - base/progress_bar/default
   - _self_
 
-# Experiment identification
 experiment_name: "spectral_denoising"
-sanity_check: false
-
-# Optimizer settings (per experimental design)
-learning_rate: 1e-3
-weight_decay: 1e-4
-optimizer_type: adamw
-
-# Learning rate scheduler with warmup
-# Uses fractions of total training - automatically adjusts to batch_size and epochs.
-# warmup_fraction: linear warmup from 0 to LR over this fraction of training
-# decay_fraction: LR reaches 0 at this fraction, stays at 0 after (clamped)
-scheduler_config:
-  type: cosine_warmup
-  warmup_fraction: 0.02    # 2% of training (~1-2 epochs typical)
-  decay_fraction: 0.8      # LR reaches 0 at 80% of training
-
-# Loss function (models output logits, BCEWithLogits applies sigmoid internally)
-loss_type: BCEWithLogits
-
-# Noise configuration
-noise_type: digress
-noise_levels: [0.01, 0.05, 0.1, 0.2, 0.3]
-eval_noise_levels: null  # Noise levels for evaluation. null = use noise_levels
-fixed_noise_seed: null  # Set to int for constant noise (sanity check mode)
-
-# Sync data module noise_levels with model (prevents hparam conflict)
-data:
-  noise_levels: ${noise_levels}
-
-# Visualization settings (step-based)
-visualization_interval: 5000  # steps between logging visualizations
-
-# Random seed for reproducibility
-seed: 42
-
-# Training resumption: set true to ignore existing checkpoints and start fresh
-force_fresh: false
-
-# Stage identifier for multi-stage experiments (stage1_poc, stage2_validation, etc.)
-# Set automatically by stage runners; null when running experiments directly
-stage: null
-
-# Sweep mode settings (for multi-experiment runs via tmgg-stageN sweep=true)
-sweep: false
-parallelism: 4
-resume: true
-
-# Modal cloud execution (opt-in, use run_on_modal=true to enable)
-run_on_modal: false
-detach: false  # Fire-and-forget mode: spawn experiments and exit immediately
-
-# Evaluation settings (step-based)
-evaluation:
-  visualization_interval: ${visualization_interval}
-
-# Paths configuration
-# - Local execution: Hydra resolves ${hydra:runtime.output_dir} automatically
-# - Remote execution (Modal/Ray): prepare_config_for_remote() sets these to None,
-#   then execute_task() resolves from TMGG_OUTPUT_BASE env var and run_id
-paths:
-  output_dir: ${hydra:runtime.output_dir}
-  results_dir: ${paths.output_dir}/results
-
-# Hydra output directory (version-based for checkpoint resumption)
-hydra:
-  run:
-    dir: outputs/v${tmgg_version:}/${experiment_name}
-  sweep:
-    dir: outputs/sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}
-    subdir: ${hydra.job.num}

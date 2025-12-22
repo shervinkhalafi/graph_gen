@@ -18,7 +18,7 @@ logger:
       default_hp_metric: false
   - wandb:
       project: tmgg-${oc.select:stage,default}
-      name: ${experiment_name}
+      name: ${oc.select:stage,default}_${model.model_type}_lr${learning_rate}
       tags: []
       save_dir: ${paths.output_dir}
       entity: graph_denoise_team

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, override
 
 import torch
 import torch.nn as nn
@@ -46,45 +46,47 @@ class NodeVarGNN(DenoisingModel):
         self.out_x = nn.Linear(feature_dim, feature_dim)
         self.out_y = nn.Linear(feature_dim, feature_dim)
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
+    @override
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass returning reconstructed adjacency matrix.
 
         Args:
-            A: Input adjacency matrix
+            x: Input adjacency matrix
 
         Returns:
             Reconstructed adjacency matrix
         """
-        Z = self.embedding_layer(A)
+        z = self.embedding_layer(x)
         # Take only the first feature_dim columns from eigenvectors
         # But ensure we don't exceed the available columns
-        actual_feature_dim = min(Z.shape[2], self.feature_dim)
-        Z = Z[:, :, :actual_feature_dim]
+        actual_feature_dim = min(z.shape[2], self.feature_dim)
+        z = z[:, :, :actual_feature_dim]
 
         # If we have fewer features than expected, pad with zeros
         if actual_feature_dim < self.feature_dim:
             padding = torch.zeros(
-                Z.shape[0],
-                Z.shape[1],
+                z.shape[0],
+                z.shape[1],
                 self.feature_dim - actual_feature_dim,
-                device=Z.device,
-                dtype=Z.dtype,
+                device=z.device,
+                dtype=z.dtype,
             )
-            Z = torch.cat([Z, padding], dim=2)
+            z = torch.cat([z, padding], dim=2)
 
         # NOTE: Dynamic layer recreation removed. The redesigned
         # NodeVarGraphConvolutionLayer uses node-agnostic parameters,
         # supporting any graph size without re-creating layers.
 
         for layer in self.layers:
-            Z = layer(A, Z)
-        X = self.out_x(Z)
-        Y = self.out_y(Z)
-        outer = torch.bmm(X, Y.transpose(1, 2))
+            z = layer(x, z)
+        emb_x = self.out_x(z)
+        emb_y = self.out_y(z)
+        outer = torch.bmm(emb_x, emb_y.transpose(1, 2))
         # Return raw logits per base class contract; use predict() for probabilities
         return outer
 
+    @override
     def get_config(self) -> dict[str, Any]:
         """Get model configuration."""
         return {

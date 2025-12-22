@@ -72,9 +72,9 @@ class TestEndToEndTraining:
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
-                # Forward pass
-                X, Y = model(batch_noisy)
-                A_pred = torch.sigmoid(torch.bmm(X, Y.transpose(1, 2)))
+                # Forward pass - GNN returns adjacency logits directly
+                logits = model(batch_noisy)
+                A_pred = torch.sigmoid(logits)
 
                 # Compute loss
                 loss = criterion(A_pred, batch)
@@ -100,8 +100,8 @@ class TestEndToEndTraining:
             test_batch = adjacency_matrices[0].unsqueeze(0)
             test_noisy = add_digress_noise(test_batch, p=0.1)
 
-            X, Y = model(test_noisy.float())
-            A_pred = torch.sigmoid(torch.bmm(X, Y.transpose(1, 2)))
+            logits = model(test_noisy.float())
+            A_pred = torch.sigmoid(logits)
 
             assert A_pred.shape == test_batch.shape
             assert torch.all(A_pred >= 0) and torch.all(A_pred <= 1)
@@ -203,8 +203,9 @@ class TestEndToEndTraining:
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
-                # Forward pass
-                A_pred = model(batch_noisy)
+                # Forward pass - model returns logits, apply sigmoid for probabilities
+                logits = model(batch_noisy)
+                A_pred = torch.sigmoid(logits)
 
                 # Compute loss
                 loss = criterion(A_pred, batch)
@@ -230,7 +231,8 @@ class TestEndToEndTraining:
             test_batch = adjacency_matrices[0].unsqueeze(0)
             test_noisy = add_gaussian_noise(test_batch, eps=0.1)
 
-            A_pred = model(test_noisy.float())
+            logits = model(test_noisy.float())
+            A_pred = torch.sigmoid(logits)
 
             assert A_pred.shape == test_batch.shape
             assert torch.all(A_pred >= 0) and torch.all(A_pred <= 1)
@@ -262,8 +264,9 @@ class TestEndToEndTraining:
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
-                # Forward pass
-                A_pred, _ = model(batch_noisy)
+                # Forward pass - GNN returns adjacency logits directly
+                logits = model(batch_noisy)
+                A_pred = torch.sigmoid(logits)
 
                 # Compute loss
                 loss = criterion(A_pred, batch)
@@ -280,7 +283,8 @@ class TestEndToEndTraining:
 
             for eps in noise_levels:
                 test_noisy = add_digress_noise(test_batch, p=eps)
-                A_pred, _ = model(test_noisy.float())
+                logits = model(test_noisy.float())
+                A_pred = torch.sigmoid(logits)
 
                 assert A_pred.shape == test_batch.shape
                 assert torch.all(A_pred >= 0) and torch.all(A_pred <= 1)
@@ -353,8 +357,8 @@ class TestEndToEndTraining:
         batch_noisy = add_digress_noise(batch, p=0.1).float()
         batch = batch.float()
 
-        X, Y = model(batch_noisy)
-        output = torch.sigmoid(torch.bmm(X, Y.transpose(1, 2)))
+        logits = model(batch_noisy)
+        output = torch.sigmoid(logits)
         loss = torch.mean((output - batch) ** 2)
         loss.backward()
 
@@ -419,40 +423,84 @@ class TestEndToEndTraining:
             grad_ratio >= 0.5
         ), f"Only {grad_ratio:.1%} of parameters have meaningful gradients"
 
-    @pytest.mark.xfail(
-        reason="Without eigenvalue regularization, near-degenerate eigenvalues "
-        "cause gradient terms 1/(λ_i - λ_j) to explode, resulting in "
-        "near-zero gradients after normalization."
-    )
     def test_gradient_flow_without_regularization(
         self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
     ) -> None:
-        """Demonstrate gradient issues without regularization.
+        """Verify model parameter gradients work regardless of eigenvalue degeneracy.
 
-        This test documents that eigendecomposition breaks gradient flow when
-        eigenvalues are close together. Use eigenvalue_reg > 0 in practice.
+        The eigendecomposition backward pass has 1/(λ_i - λ_j) terms that produce NaN
+        when computing ∂V/∂A (gradient of eigenvectors w.r.t. input matrix). However,
+        for training a neural network that uses eigenvectors, we only need ∂L/∂W
+        (gradient w.r.t. model weights), which does NOT involve the ∂V/∂A path.
+
+        The gradient path for model parameters is:
+            Loss → output → GNN layers → eigenvectors (V)
+        The weights receive gradients from how they transform V, not from how A produces V.
+
+        Therefore, eigenvalue degeneracy does NOT cause NaN in model parameter gradients,
+        and eigenvalue_reg is not strictly necessary for standard training. It may still
+        help with numerical stability in edge cases or if input gradients are needed.
         """
         dataloader, _ = training_data
 
-        # Model without regularization
+        # Model without regularization - gradients still work due to gradient path
         model = GNN(num_layers=2, feature_dim_out=5, eigenvalue_reg=0.0)
         _ = model.float()
 
         batch = next(iter(dataloader))
-        batch_noisy = add_digress_noise(batch, p=0.1).float()
         batch = batch.float()
 
-        X, Y = model(batch_noisy)
-        output = torch.sigmoid(torch.bmm(X, Y.transpose(1, 2)))
+        logits = model(batch)
+        output = torch.sigmoid(logits)
         loss = torch.mean((output - batch) ** 2)
         loss.backward()
 
-        # Without regularization, some gradients will be near-zero
+        # Model parameter gradients are valid even with degenerate eigenvalues
         for name, param in model.named_parameters():
             if param.requires_grad and param.grad is not None:
+                assert not torch.isnan(param.grad).any(), f"NaN gradient for {name}"
                 assert not torch.allclose(
                     param.grad, torch.zeros_like(param.grad), atol=1e-10
                 ), f"Zero gradient for {name}"
+
+    def test_input_gradient_nan_with_degenerate_eigenvalues(
+        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+    ) -> None:
+        """Document that input gradients (∂V/∂A) DO have NaN with degeneracy.
+
+        While model parameter gradients work fine (see test_gradient_flow_without_regularization),
+        the gradient of eigenvectors with respect to the input matrix contains 1/(λ_i - λ_j)
+        terms that become NaN when eigenvalues are exactly equal.
+
+        This test verifies this behavior as documentation. In practice, this only matters
+        if you need input gradients (e.g., for adversarial attacks on graph structure).
+        For standard training, input gradients are not used.
+        """
+        # Create a perfect block-diagonal matrix with exactly degenerate eigenvalues
+        # Two K_5 complete graphs have eigenvalues: -1 (8 times), 4 (2 times)
+        block = torch.ones((5, 5)) - torch.eye(5)
+        A = torch.block_diag(block, block).float()
+
+        # Enable gradient tracking on input
+        batch = A.unsqueeze(0).requires_grad_(True)
+
+        eigenvalues, V = torch.linalg.eigh(batch)
+
+        # Verify eigenvalues are degenerate
+        unique_eigs = torch.unique(eigenvalues.round(decimals=3))
+        assert (
+            len(unique_eigs) == 2
+        ), f"Expected 2 unique eigenvalues, got {len(unique_eigs)}"
+
+        # Backprop through eigenvectors
+        loss = V.sum()
+        loss.backward()
+
+        # Input gradient should have NaN due to 1/(λ_i - λ_j) singularity
+        assert batch.grad is not None
+        assert torch.isnan(
+            batch.grad
+        ).any(), "Expected NaN in input gradient due to eigenvalue degeneracy"
 
 
 if __name__ == "__main__":

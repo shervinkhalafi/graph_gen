@@ -113,10 +113,7 @@ uv run tmgg-attention logger=wandb
 | `tmgg-hybrid` | GNN + Transformer hybrid |
 | `tmgg-digress` | DiGress transformer model |
 | `tmgg-spectral` | Spectral positional encoding models |
-| `tmgg-stage1` | Stage 1: Proof of concept (4.4 GPU-hours) |
-| `tmgg-stage1-sanity` | Stage 1 Sanity: Constant noise memorization |
-| `tmgg-stage1-5` | Stage 1.5: Cross-dataset validation |
-| `tmgg-stage2` to `tmgg-stage5` | Later stage experiments |
+| `tmgg-experiment` | Unified stage runner (e.g., `+stage=stage1_poc`) |
 | `tmgg-grid-search` | Hyperparameter grid search |
 | `tmgg-wandb-export` | Export W&B metrics to CSV |
 | `tmgg-tb-export` | Export TensorBoard metrics |
@@ -163,7 +160,7 @@ tmgg/
 │       ├── base_config_*.yaml
 │       ├── models/
 │       ├── data/
-│       └── stages/
+│       └── stage/
 ├── tests/                   # Test suite
 └── docs/                    # Detailed documentation
 ```

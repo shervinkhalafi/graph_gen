@@ -1,34 +1,13 @@
 # @package data
-# Single-graph protocol for Stage 1 experiments
-# Train, val, and test all use the SAME graph with varying noise only
+# Single-graph protocol for Stochastic Block Model (SBM) graphs
 
-_target_: tmgg.experiment_utils.data.SingleGraphDataModule
+defaults:
+  - single_graph_base
 
-# Graph type and parameters
 graph_type: sbm
 n: 50
 
-# SBM parameters
-p_intra: 0.7
-p_inter: 0.05
+# SBM community structure parameters
+p_intra: 0.7   # Edge probability within blocks
+p_inter: 0.05  # Edge probability between blocks
 num_blocks: 3
-
-# Stage 1 protocol: same graph for all splits
-same_graph_all_splits: true
-
-# Random seed for graph generation
-train_seed: 42
-val_test_seed: 123  # Only used when same_graph_all_splits=False
-
-# Number of samples per split (noise realizations)
-num_train_samples: 1000
-num_val_samples: 100
-num_test_samples: 100
-
-# Dataloader parameters
-batch_size: 16
-num_workers: 4
-
-# Noise configuration - single level per experiment (override via hyperparameters)
-noise_levels: [0.1]
-noise_type: digress

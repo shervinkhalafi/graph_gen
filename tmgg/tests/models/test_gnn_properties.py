@@ -231,15 +231,15 @@ class TestGNNProperties:
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=10), params=gnn_params())
     @settings(max_examples=20)
     def test_gnn_output_shapes(self, A: torch.Tensor, params: dict[str, int]) -> None:
-        """Test that GNN produces correct output shapes."""
+        """Test that GNN produces correct output shapes (adjacency logits)."""
         model = GNN(**params)
 
         try:
-            X, Y = model(A)
+            logits = model(A)
 
             batch_size, num_nodes, _ = A.shape
-            assert X.shape == (batch_size, num_nodes, params["feature_dim_out"])
-            assert Y.shape == (batch_size, num_nodes, params["feature_dim_out"])
+            # forward() returns adjacency logits
+            assert logits.shape == (batch_size, num_nodes, num_nodes)
         except EigenDecompositionError:
             pass  # Expected for some matrices
 
@@ -253,7 +253,7 @@ class TestGNNProperties:
         model = GNNSymmetric(num_layers=2, feature_dim_out=5)
 
         try:
-            logits, X = model(A)
+            logits = model(A)
 
             # Check shape
             assert logits.shape == A.shape
@@ -386,10 +386,9 @@ class TestGNNErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         try:
-            X, Y = model(A)
+            logits = model(A)
             # Model should handle this by padding or truncating
-            assert X.shape == (1, 5, 5)
-            assert Y.shape == (1, 5, 5)
+            assert logits.shape == (1, 5, 5)
         except EigenDecompositionError:
             pass  # Also acceptable
 

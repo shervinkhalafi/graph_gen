@@ -1,19 +1,21 @@
-"""CLI entry points for experimental stages.
+"""Unified CLI entry point for TMGG experiments.
 
-Each stage function is decorated with @hydra.main to provide a
-standalone entry point that can be invoked via:
-    tmgg-stage1 [overrides]
-    tmgg-stage1-sanity [overrides]
-    etc.
+Replaces individual stage entry points with a single command that accepts
+stage overrides via Hydra's config groups:
 
-Stage configs are loaded via Hydra's config groups. Each CLI command
-automatically injects +stage=<stage_name> to compose the stage config
-on top of base_config_spectral.
+    tmgg-experiment +stage=stage1_poc
+    tmgg-experiment +stage=stage2_validation
+    tmgg-experiment +stage=stage1_poc --multirun model=...
+
+For sweeps, use Hydra's native --multirun with the custom TmggLauncher:
+
+    tmgg-experiment +stage=stage1_poc --multirun \\
+        hydra/launcher=tmgg_modal \\
+        model=models/spectral/linear_pe,models/spectral/filter_bank
 """
 
-import sys
-from functools import wraps
 from pathlib import Path
+from typing import Any
 
 import hydra
 from omegaconf import DictConfig
@@ -27,47 +29,19 @@ TMGG_ROOT = Path(__file__).parent.parent.parent
 CONFIG_PATH = str(TMGG_ROOT / "exp_configs")
 
 
-def _inject_stage_override(stage_name: str):
-    """Decorator that injects +stage=<stage_name> into CLI args before Hydra runs.
+def _run_stage(cfg: DictConfig, stage_name: str) -> dict[str, Any]:
+    """Stage execution logic for sweep mode.
 
-    This allows each CLI command (tmgg-stage1, tmgg-stage1-sanity, etc.) to
-    automatically load its corresponding stage config without requiring the
-    user to specify it manually.
-    """
-
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Inject stage override if not already present
-            stage_override = f"+stage={stage_name}"
-            if stage_override not in sys.argv:
-                # Check if any stage override is already specified
-                has_stage = any(
-                    arg.startswith("+stage=") or arg.startswith("stage=")
-                    for arg in sys.argv
-                )
-                if not has_stage:
-                    sys.argv.append(stage_override)
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
-
-
-def _run_stage(cfg: DictConfig, stage_name: str) -> dict:
-    """Common stage execution logic.
-
-    Runs the stage either locally (default) or via Modal
-    if run_on_modal=true is specified in config.
+    When sweep=true, uses the ExperimentCoordinator to run a full sweep
+    defined in the stage config.
 
     Parameters
     ----------
     cfg
-        Hydra configuration with optional settings:
+        Hydra configuration with settings:
         - sweep: bool - Run full sweep (default: False)
         - run_on_modal: bool - Use Modal GPUs (default: False)
-        - detach: bool - Fire-and-forget, don't wait for results (default: False)
+        - detach: bool - Fire-and-forget (default: False)
         - parallelism: int - Max concurrent experiments (default: 4)
         - resume: bool - Skip completed experiments (default: True)
     stage_name
@@ -80,7 +54,7 @@ def _run_stage(cfg: DictConfig, stage_name: str) -> dict:
     """
     # Check if running in sweep mode or single experiment mode
     if cfg.get("sweep", False):
-        # Use stage name from config if available (allows override via +stage=...)
+        # Use stage name from config if available
         actual_stage_name = cfg.get("stage", stage_name)
         stage_config_path = (
             TMGG_ROOT / "exp_configs" / "stage" / f"{actual_stage_name}.yaml"
@@ -93,9 +67,8 @@ def _run_stage(cfg: DictConfig, stage_name: str) -> dict:
         )
 
         # Initialize coordinator with runner
-        # CloudRunner type is compatible at runtime (both implement the same interface)
         coordinator = ExperimentCoordinator(
-            runner=runner_instance,  # pyright: ignore[reportArgumentType]
+            runner=runner_instance,
             base_config_path=Path(CONFIG_PATH),
         )
 
@@ -141,183 +114,51 @@ def _run_stage(cfg: DictConfig, stage_name: str) -> dict:
         return run_experiment(cfg)
 
 
-@_inject_stage_override("stage1_poc")
 @hydra.main(
     version_base=None,
     config_path=CONFIG_PATH,
     config_name="base_config_spectral",
 )
-def stage1(cfg: DictConfig) -> dict:
-    """Stage 1: Proof of Concept.
+def main(cfg: DictConfig) -> dict[str, Any]:
+    """Unified experiment entry point.
 
-    Validates that spectral PE architectures can denoise graphs.
-    Tests Linear PE, Graph Filter + Sigmoid, Self-Attention on SBM n=50.
-
-    Budget: 4.4 GPU-hours
+    Runs a single experiment or coordinates a sweep based on configuration.
+    Stage configs are loaded via Hydra's config groups using +stage=<name>.
 
     Usage
     -----
     Single experiment:
-        tmgg-stage1
+        tmgg-experiment +stage=stage1_poc
 
-    Full sweep:
-        tmgg-stage1 sweep=true
+    Single experiment with model override:
+        tmgg-experiment +stage=stage1_poc model=models/spectral/filter_bank
 
-    With overrides:
-        tmgg-stage1 model.k=16 learning_rate=5e-4
+    Sweep (using stage's _sweep_config):
+        tmgg-experiment +stage=stage1_poc sweep=true
+
+    Multirun via Hydra (local):
+        tmgg-experiment +stage=stage1_poc --multirun \\
+            model=models/spectral/linear_pe,models/spectral/filter_bank
+
+    Multirun via Modal:
+        tmgg-experiment +stage=stage1_poc --multirun \\
+            hydra/launcher=tmgg_modal \\
+            model=models/spectral/linear_pe,models/spectral/filter_bank
+
+    Parameters
+    ----------
+    cfg
+        Hydra configuration composed from base config + stage override.
+
+    Returns
+    -------
+    dict
+        Experiment results.
     """
-    return _run_stage(cfg, "stage1_poc")
-
-
-@_inject_stage_override("stage1_sanity")
-@hydra.main(
-    version_base=None,
-    config_path=CONFIG_PATH,
-    config_name="base_config_spectral",
-)
-def stage1_sanity(cfg: DictConfig) -> dict:
-    """Stage 1 Sanity Check: Constant Noise Memorization.
-
-    Tests whether models can memorize a fixed noisy→clean mapping.
-    Uses fixed_noise_seed to ensure identical noise every training step.
-    Expected: ~99% accuracy if architecture and gradient flow work.
-
-    This validates:
-    - Model has sufficient capacity to represent the mapping
-    - Gradient flow works correctly through all layers
-    - Optimizer can update weights in the right direction
-
-    If this fails, something fundamental is broken.
-
-    Budget: < 20 GPU-minutes
-
-    Usage
-    -----
-    Single experiment:
-        tmgg-stage1-sanity
-
-    Full sweep:
-        tmgg-stage1-sanity sweep=true
-
-    With overrides:
-        tmgg-stage1-sanity model.k=8 learning_rate=5e-3
-    """
-    return _run_stage(cfg, "stage1_sanity")
-
-
-@_inject_stage_override("stage1_5_crossdata")
-@hydra.main(
-    version_base=None,
-    config_path=CONFIG_PATH,
-    config_name="base_config_spectral",
-)
-def stage1_5(cfg: DictConfig) -> dict:
-    """Stage 1.5: Cross-Dataset Validation.
-
-    Validates single-graph denoising across diverse graph families:
-    - Synthetic: ER, d-regular, tree, ring of cliques, LFR
-    - PyG benchmarks: QM9, ENZYMES, PROTEINS
-
-    Uses high LR / zero weight decay settings matching stage 1.
-
-    Budget: ~20 GPU-hours
-
-    Usage
-    -----
-    Single experiment:
-        tmgg-stage1-5
-
-    Full sweep:
-        tmgg-stage1-5 sweep=true
-
-    With specific dataset:
-        tmgg-stage1-5 data=data/er_single_graph
-    """
-    return _run_stage(cfg, "stage1_5_crossdata")
-
-
-@_inject_stage_override("stage2_validation")
-@hydra.main(
-    version_base=None,
-    config_path=CONFIG_PATH,
-    config_name="base_config_spectral",
-)
-def stage2(cfg: DictConfig) -> dict:
-    """Stage 2: Core Validation.
-
-    Validates generalization across configurations and compares with DiGress.
-    Tests best architectures on multiple SBM configs.
-
-    Budget: 166.5 GPU-hours
-
-    Usage
-    -----
-    Single experiment:
-        tmgg-stage2
-
-    Full sweep:
-        tmgg-stage2 sweep=true
-
-    With specific architecture:
-        tmgg-stage2 model=models/spectral/filter_bank_nonlinear
-    """
-    return _run_stage(cfg, "stage2_validation")
-
-
-@_inject_stage_override("stage3_diversity")
-@hydra.main(
-    version_base=None,
-    config_path=CONFIG_PATH,
-    config_name="base_config_spectral",
-)
-def stage3(cfg: DictConfig) -> dict:
-    """Stage 3: Dataset Diversity (future work).
-
-    Validates across all graph families.
-
-    Budget: 400 GPU-hours (beyond initial 200h budget)
-
-    Note: This stage is deferred to future work per experimental design.
-    """
-    return _run_stage(cfg, "stage3_diversity")
-
-
-@_inject_stage_override("stage4_benchmarks")
-@hydra.main(
-    version_base=None,
-    config_path=CONFIG_PATH,
-    config_name="base_config_spectral",
-)
-def stage4(cfg: DictConfig) -> dict:
-    """Stage 4: Real-World Benchmarks (future work).
-
-    Validates on practical benchmark datasets (QM9, ENZYMES, PROTEINS).
-
-    Budget: 300 GPU-hours (beyond initial 200h budget)
-
-    Note: This stage is deferred to future work per experimental design.
-    """
-    return _run_stage(cfg, "stage4_benchmarks")
-
-
-@_inject_stage_override("stage5_full")
-@hydra.main(
-    version_base=None,
-    config_path=CONFIG_PATH,
-    config_name="base_config_spectral",
-)
-def stage5(cfg: DictConfig) -> dict:
-    """Stage 5: Full Validation (future work).
-
-    Comprehensive ablations and robustness analysis for publication.
-
-    Budget: 1500 GPU-hours (beyond initial 200h budget)
-
-    Note: This stage is deferred to future work per experimental design.
-    """
-    return _run_stage(cfg, "stage5_full")
+    # Get stage name from config (set via +stage=<name>)
+    stage_name = cfg.get("stage", "stage1_poc")
+    return _run_stage(cfg, stage_name)
 
 
 if __name__ == "__main__":
-    # Default to stage1 when run directly
-    stage1()
+    main()

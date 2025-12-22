@@ -11,7 +11,7 @@ from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
 from tmgg.models.attention import MultiLayerAttention
-from tmgg.models.base import DenoisingModel, EmbeddingModel
+from tmgg.models.base import DenoisingModel
 from tmgg.models.gnn import GNN
 from tmgg.models.hybrid import SequentialDenoisingModel, create_sequential_model
 from tmgg.models.layers import EigenDecompositionError
@@ -120,8 +120,11 @@ def hybrid_config(draw: DrawFn) -> tuple[dict[str, int], dict[str, Any]]:
     return gnn_config, transformer_config
 
 
-class MockEmbeddingModel(EmbeddingModel):
-    """Mock embedding model for testing."""
+class MockEmbeddingModel(nn.Module):
+    """Mock embedding model for testing.
+
+    Has embeddings() method compatible with SequentialDenoisingModel.
+    """
 
     feature_dim: int
     weight: nn.Parameter
@@ -132,7 +135,8 @@ class MockEmbeddingModel(EmbeddingModel):
         # Use learnable parameters to ensure gradient flow
         self.weight = nn.Parameter(torch.randn(feature_dim, feature_dim))
 
-    def forward(self, A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def embeddings(self, A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute embeddings from adjacency matrix."""
         batch_size, num_nodes, _ = A.shape
         # Use input A to maintain gradient connection
         A_sum = A.sum(dim=-1, keepdim=True)  # (batch_size, num_nodes, 1)
@@ -143,6 +147,11 @@ class MockEmbeddingModel(EmbeddingModel):
         X = base @ self.weight
         Y = base @ self.weight.T
         return X, Y
+
+    def forward(self, A: torch.Tensor) -> torch.Tensor:
+        """Compute adjacency logits from adjacency matrix."""
+        X, Y = self.embeddings(A)
+        return torch.bmm(X, Y.transpose(1, 2))
 
     def get_config(self) -> dict[str, int]:
         return {"feature_dim": self.feature_dim}
@@ -348,29 +357,27 @@ class TestHybridModelErrorHandling:
     """Test error handling scenarios for hybrid models."""
 
     def test_embedding_model_wrong_output_format(self) -> None:
-        """Test handling when embedding model doesn't return (X, Y) tuple."""
+        """Test handling when embedding model doesn't have embeddings() method."""
 
-        class BadEmbeddingModel(EmbeddingModel):
+        class BadEmbeddingModel(nn.Module):
             def forward(self, A: torch.Tensor) -> torch.Tensor:
-                return torch.randn(
-                    A.shape[0], A.shape[1], 5
-                )  # Single tensor, not tuple
+                return torch.randn(A.shape[0], A.shape[1], 5)  # No embeddings() method
 
             def get_config(self) -> dict[str, Any]:
                 return {}
 
         embedding_model = BadEmbeddingModel()
-        model = SequentialDenoisingModel(embedding_model, None)
+        model = SequentialDenoisingModel(embedding_model, None)  # type: ignore[arg-type]
 
         A = torch.eye(5).unsqueeze(0)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="embeddings"):
             _ = model(A)
 
-    @patch.object(GNN, "forward")
-    def test_gnn_eigendecomposition_failure(self, mock_forward: MagicMock) -> None:
+    @patch.object(GNN, "embeddings")
+    def test_gnn_eigendecomposition_failure(self, mock_embeddings: MagicMock) -> None:
         """Test handling of eigendecomposition failures in GNN."""
-        mock_forward.side_effect = EigenDecompositionError(
+        mock_embeddings.side_effect = EigenDecompositionError(
             0, torch.eye(5), Exception("Mock failure")
         )
 

@@ -6,6 +6,8 @@ defaults:
 
 _target_: tmgg.experiments.hybrid_denoising.lightning_module.HybridDenoisingLightningModule
 
+model_type: hybrid_gnn
+
 # Model-specific architecture parameters
 # GNN configuration
 gnn_num_layers: 2

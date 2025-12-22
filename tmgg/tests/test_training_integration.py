@@ -124,8 +124,10 @@ class TestTrainingPipeline:
             loss_type=minimal_config.loss_type,
         )
 
-        loss = module.training_step(sample_adjacency_matrices, batch_idx=0)  # pyright: ignore[reportArgumentType]
+        result = module.training_step(sample_adjacency_matrices, batch_idx=0)  # pyright: ignore[reportArgumentType]
 
+        # training_step returns dict with 'loss' key
+        loss = result["loss"]
         assert torch.isfinite(loss)  # pyright: ignore[reportArgumentType]
         assert loss > 0  # pyright: ignore[reportOperatorIssue]
 
@@ -206,9 +208,10 @@ class TestTrainingPipeline:
         original_training_step = module.training_step
 
         def tracking_training_step(batch, batch_idx):
-            loss = original_training_step(batch, batch_idx)
-            losses.append(loss.item())  # pyright: ignore[reportAttributeAccessIssue]
-            return loss
+            result = original_training_step(batch, batch_idx)
+            # training_step returns dict with 'loss' key
+            losses.append(result["loss"].item())  # pyright: ignore[reportAttributeAccessIssue]
+            return result
 
         module.training_step = tracking_training_step  # pyright: ignore[reportAttributeAccessIssue]
 

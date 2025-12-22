@@ -32,6 +32,13 @@ try:
 except ImportError:
     _RAY_AVAILABLE = False
 
+# SlurmRunner (requires SLURM cluster access)
+from tmgg.experiment_utils.cloud.slurm_runner import (  # noqa: F401
+    SlurmConfig,
+    SlurmRunner,
+    SlurmSpawnedTask,
+)
+
 __all__ = [
     "CloudRunner",
     "ExperimentResult",
@@ -41,6 +48,10 @@ __all__ = [
     "LocalStorage",
     "S3Storage",
     "ExperimentCoordinator",
+    # SLURM
+    "SlurmRunner",
+    "SlurmConfig",
+    "SlurmSpawnedTask",
 ]
 
 if _RAY_AVAILABLE:

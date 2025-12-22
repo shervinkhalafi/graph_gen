@@ -1,57 +1,65 @@
 """Hybrid models combining GNN embeddings with transformer denoising."""
 
-from typing import Any
+from typing import Any, override
 
 import torch
+import torch.nn as nn
 
 from ..attention import MultiLayerAttention
-from ..base import DenoisingModel, EmbeddingModel
+from ..base import DenoisingModel
 from ..gnn import GNN
 
 
 class SequentialDenoisingModel(DenoisingModel):
-    """
-    Sequential model combining GNN embeddings with attention-based denoising.
+    """Sequential model combining GNN embeddings with attention-based denoising.
 
-    This model first generates embeddings using a GNN, then applies
-    a transformer to denoise these embeddings, and finally reconstructs
-    the adjacency matrix.
+    First generates embeddings using a GNN, then applies a transformer
+    to denoise these embeddings, and finally reconstructs the adjacency matrix.
     """
+
+    embedding_model: nn.Module
+    denoising_model: DenoisingModel | None
 
     def __init__(
         self,
-        embedding_model: EmbeddingModel,
+        embedding_model: nn.Module,
         denoising_model: DenoisingModel | None = None,
-    ):
-        """
-        Initialize the sequential denoising model.
+    ) -> None:
+        """Initialize the sequential denoising model.
 
-        Args:
-            embedding_model: GNN model for generating embeddings
-            denoising_model: Optional transformer model for denoising embeddings
+        Parameters
+        ----------
+        embedding_model
+            Model for generating embeddings (must have embeddings() method
+            returning (X, Y) tuple of tensors).
+        denoising_model
+            Optional transformer model for denoising embeddings.
         """
         super().__init__()
         self.embedding_model = embedding_model
         self.denoising_model = denoising_model
 
+    @override
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass combining GNN embedding and transformer denoising.
+        """Combine GNN embedding and transformer denoising.
 
-        Args:
-            x: Input adjacency matrix
+        Parameters
+        ----------
+        x
+            Input adjacency matrix of shape (batch, n, n).
 
-        Returns:
-            Reconstructed adjacency matrix
+        Returns
+        -------
+        torch.Tensor
+            Adjacency logits (pre-sigmoid) of shape (batch, n, n).
         """
-        # Generate embeddings using GNN
-        if hasattr(self.embedding_model, "forward") and callable(
-            self.embedding_model.forward
-        ):
-            # For GNN models that return (X, Y) embeddings
-            X, Y = self.embedding_model(x)
-        else:
-            raise ValueError("Embedding model must return (X, Y) embeddings")
+        # Generate embeddings using GNN's embeddings() method
+        if not hasattr(self.embedding_model, "embeddings"):
+            raise ValueError(
+                "Embedding model must have embeddings() method returning (X, Y) tuple"
+            )
+        # Duck-typed access to embeddings method - hasattr check above ensures safety
+        X, Y = self.embedding_model.embeddings(x)  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
 
         # Concatenate embeddings
         Z = torch.cat([X, Y], dim=2)  # Shape: (batch_size, num_nodes, 2*feature_dim)
@@ -97,13 +105,19 @@ class SequentialDenoisingModel(DenoisingModel):
         # The calling model should handle the transformation
         return A_recon
 
-    def get_config(self) -> dict[str, Any]:
+    @override
+    def get_config(self) -> dict[str, object]:
         """Get configuration for both embedding and denoising components."""
-        config = {
+        embedding_config: object
+        if hasattr(self.embedding_model, "get_config"):
+            # Duck-typed access - hasattr check ensures safety
+            embedding_config = self.embedding_model.get_config()  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
+        else:
+            embedding_config = str(type(self.embedding_model))
+
+        config: dict[str, object] = {
             "model_type": "SequentialDenoisingModel",
-            "embedding_model": self.embedding_model.get_config()
-            if hasattr(self.embedding_model, "get_config")
-            else str(type(self.embedding_model)),
+            "embedding_model": embedding_config,
             "has_denoising": self.denoising_model is not None,
         }
         if self.denoising_model is not None and hasattr(

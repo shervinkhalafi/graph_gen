@@ -49,14 +49,9 @@ tmgg-digress = "tmgg.experiments.digress_denoising.runner:main"
 tmgg-gnn = "tmgg.experiments.gnn_denoising.runner:main"
 tmgg-hybrid = "tmgg.experiments.hybrid_denoising.runner:main"
 tmgg-grid-search = "tmgg.experiments.grid_search_runner:main"
-# Stage-specific runners (spectral denoising experiments)
-tmgg-stage1 = "tmgg.experiments.stages.runner:stage1"
-tmgg-stage1-sanity = "tmgg.experiments.stages.runner:stage1_sanity"
-tmgg-stage1-5 = "tmgg.experiments.stages.runner:stage1_5"
-tmgg-stage2 = "tmgg.experiments.stages.runner:stage2"
-tmgg-stage3 = "tmgg.experiments.stages.runner:stage3"
-tmgg-stage4 = "tmgg.experiments.stages.runner:stage4"
-tmgg-stage5 = "tmgg.experiments.stages.runner:stage5"
+# Unified experiment runner (replaces tmgg-stage1..5)
+# Usage: tmgg-experiment +stage=stage1_poc
+tmgg-experiment = "tmgg.experiments.stages.runner:main"
 # Spectral denoising (generic entry point)
 tmgg-spectral = "tmgg.experiments.spectral_denoising.runner:main"
 # W&B data export utility

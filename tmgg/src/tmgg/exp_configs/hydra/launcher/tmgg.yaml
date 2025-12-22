@@ -1,0 +1,8 @@
+# @package hydra.launcher
+# Local execution via TmggLauncher
+_target_: tmgg.hydra_plugins.tmgg_launcher.TmggLauncher
+use_modal: false
+use_ray: false
+gpu_type: debug
+parallelism: 4
+timeout_seconds: 3600

@@ -102,7 +102,7 @@ result = runner.run_experiment(config, gpu_type="standard")
 ### Via Hydra CLI
 
 ```bash
-uv run tmgg-stage2 run_on_modal=true
+uv run tmgg-experiment +stage=stage2_validation run_on_modal=true
 ```
 
 ### Sweeps

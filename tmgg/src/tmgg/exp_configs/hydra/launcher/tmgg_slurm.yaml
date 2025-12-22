@@ -1,0 +1,33 @@
+# @package hydra.launcher
+# SLURM cluster execution via Ray symmetric-run
+#
+# Usage:
+#   tmgg-experiment +stage=stage1_poc hydra/launcher=tmgg_slurm
+#
+# See docs/slurm.md for detailed configuration and troubleshooting.
+
+_target_: tmgg.hydra_plugins.tmgg_launcher.TmggLauncher
+
+# Backend selection
+use_modal: false
+use_ray: false
+use_slurm: true
+
+# General settings
+gpu_type: debug  # Not used for SLURM (GPU allocation via slurm_gpus_per_task)
+parallelism: 4   # Not used for SLURM (SLURM handles scheduling)
+timeout_seconds: 28800  # 8 hours
+
+# SLURM-specific settings
+slurm_partition: gpu          # SLURM partition to submit to
+slurm_nodes: 4                # Number of nodes
+slurm_cpus_per_task: 8        # CPUs per node
+slurm_gpus_per_task: 1        # GPUs per node
+slurm_time_limit: "08:00:00"  # Job time limit (HH:MM:SS)
+slurm_mem_per_cpu: "4GB"      # Memory per CPU
+
+# Environment setup commands (module loads, conda activate, etc.)
+# Uncomment and customize for your cluster:
+slurm_setup_commands: []
+  # - "module load cuda/12.1"
+  # - "source ~/.bashrc && conda activate tmgg"

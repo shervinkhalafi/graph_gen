@@ -177,8 +177,9 @@ class TestPlottingFunctions:
         )
 
         assert isinstance(fig, Figure)
-        # Should have 4 rows x 3 columns = 12 subplots (clean, noisy, denoised, delta)
-        assert len(fig.axes) == 12
+        # Should have 5 rows x 3 columns = 15 subplots
+        # (clean, noisy, denoised, predicted, delta)
+        assert len(fig.axes) == 15
 
         plt.close(fig)
 
