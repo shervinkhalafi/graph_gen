@@ -17,7 +17,7 @@ Invariants:
 
 The CLI runners tested cover all experiment types:
     - Experiment runners: attention, digress, gnn, hybrid, spectral, grid-search
-    - Stage runners: stage1 through stage5, stage1-sanity, stage1-5
+    - Unified experiment runner: tmgg-experiment +stage=<stage_name>
 """
 
 import subprocess
@@ -41,17 +41,15 @@ EXPERIMENT_RUNNERS = [
     ("tmgg-grid-search", "grid_search_base"),
 ]
 
-STAGE_RUNNERS = [
-    ("tmgg-stage1", "stage1_poc"),
-    ("tmgg-stage1-sanity", "stage1_sanity"),
-    ("tmgg-stage1-5", "stage1_5_crossdata"),
-    ("tmgg-stage2", "stage2_validation"),
-    ("tmgg-stage3", "stage3_diversity"),
-    ("tmgg-stage4", "stage4_benchmarks"),
-    ("tmgg-stage5", "stage5_full"),
+# Stage configs tested via unified tmgg-experiment CLI
+STAGE_CONFIGS = [
+    "stage1_poc",
+    "stage1_sanity",
+    "stage2_validation",
+    "stage3_diversity",
+    "stage4_benchmarks",
+    "stage5_full",
 ]
-
-ALL_RUNNERS = EXPERIMENT_RUNNERS + STAGE_RUNNERS
 
 
 @pytest.mark.integration
@@ -87,29 +85,28 @@ class TestExperimentRunners:
 
 @pytest.mark.integration
 @pytest.mark.slow
-class TestStageRunners:
-    """Tests for stage-specific CLI runners (stage1, stage2, etc.)."""
+class TestUnifiedExperimentRunner:
+    """Tests for the unified tmgg-experiment CLI with stage configs."""
 
-    @pytest.mark.parametrize("runner_cmd,stage_config", STAGE_RUNNERS)
-    def test_stage_runner_executes_brief_training(
-        self, runner_cmd: str, stage_config: str, tmp_path: Path
+    @pytest.mark.parametrize("stage_config", STAGE_CONFIGS)
+    def test_stage_executes_brief_training(
+        self, stage_config: str, tmp_path: Path
     ) -> None:
-        """Verify stage runner completes 2 training steps without error.
+        """Verify tmgg-experiment with stage override completes training.
 
-        Stage runners use the same underlying run_experiment function but
-        inject stage-specific config overrides. This test ensures each
-        stage config composes correctly with the base spectral config.
+        The unified CLI uses +stage=<name> to compose stage configs on top
+        of base_config_spectral.
         """
         overrides = get_quick_training_overrides(tmp_path)
         # Ensure single-experiment mode (not sweep)
         overrides.append("sweep=false")
-        cmd = ["uv", "run", runner_cmd, *overrides]
+        cmd = ["uv", "run", "tmgg-experiment", f"+stage={stage_config}", *overrides]
 
         try:
             result = run_cli_command(cmd, timeout=120)
         except subprocess.TimeoutExpired as e:
             pytest.fail(
-                f"Stage runner {runner_cmd} timed out after 120s.\n"
+                f"Stage {stage_config} timed out after 120s.\n"
                 f"stdout: {e.stdout}\nstderr: {e.stderr}"
             )
 
@@ -142,15 +139,11 @@ class TestRunnerImports:
         assert callable(spectral.main)
         assert callable(grid_search_runner.main)
 
-    def test_stage_runner_imports(self) -> None:
-        """Verify stage runner module imports without error."""
+    def test_unified_runner_imports(self) -> None:
+        """Verify unified stage runner module imports without error."""
         from tmgg.experiments.stages import runner
 
-        # Verify all stage functions exist
-        assert callable(runner.stage1)
-        assert callable(runner.stage1_sanity)
-        assert callable(runner.stage1_5)
-        assert callable(runner.stage2)
-        assert callable(runner.stage3)
-        assert callable(runner.stage4)
-        assert callable(runner.stage5)
+        # Verify the unified main function exists
+        assert callable(runner.main)
+        # Verify internal _run_stage helper exists
+        assert callable(runner._run_stage)

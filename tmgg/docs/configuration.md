@@ -24,9 +24,13 @@ exp_configs/
 │   ├── sbm_default.yaml           # SBM with n=20
 │   ├── legacy_match.yaml          # Legacy denoising replication
 │   └── ...
-└── stages/
+└── stage/
     ├── stage1_poc.yaml            # Proof of concept
-    └── stage2_validation.yaml     # Validation
+    ├── stage1_sanity.yaml         # Constant noise memorization
+    ├── stage2_validation.yaml     # Cross-dataset validation
+    ├── stage3_diversity.yaml      # Dataset diversity (future)
+    ├── stage4_benchmarks.yaml     # Real-world benchmarks (future)
+    └── stage5_full.yaml           # Full validation (future)
 ```
 
 Each base config composes defaults from subdirectories:

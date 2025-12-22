@@ -31,6 +31,7 @@ class AttentionDenoisingLightningModule(DenoisingLightningModule):
         rotation_k: int = 20,
         seed: int | None = None,
         domain: str = "standard",
+        model_type: str | None = None,  # For wandb naming, not used for dispatch
     ):
         """
         Initialize the Lightning module.

@@ -37,6 +37,7 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         noise_type: str = "Digress",
         rotation_k: int = 20,
         seed: int | None = None,
+        model_type: str | None = None,  # For wandb naming, not used for dispatch
     ):
         """
         Initialize the Lightning module.

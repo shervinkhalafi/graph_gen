@@ -304,7 +304,6 @@ class TestStageConfigComposition:
     STAGE_CONFIGS = [
         "stage1_poc",
         "stage1_sanity",
-        "stage1_5_crossdata",
         "stage2_validation",
         "stage3_diversity",
         "stage4_benchmarks",

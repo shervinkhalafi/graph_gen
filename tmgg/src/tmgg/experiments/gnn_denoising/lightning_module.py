@@ -105,33 +105,17 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
         return "GNN"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute adjacency logits from input.
+
+        Parameters
+        ----------
+        x
+            Input adjacency matrix of shape (batch, n, n).
+
+        Returns
+        -------
+        torch.Tensor
+            Adjacency logits (pre-sigmoid) of shape (batch, n, n).
         """
-        Forward pass through the GNN model.
-
-        Args:
-            x: Input adjacency matrix
-
-        Returns:
-            Reconstructed adjacency matrix
-        """
-        model_output = self.model(x)
-
-        # Handle different return types from different GNN models
-        if isinstance(model_output, tuple):
-            # Standard GNN and GNNSymmetric return (embeddings, adjacency) or (x_embed, y_embed)
-            # For standard GNN, we need to reconstruct adjacency from embeddings
-            if (
-                hasattr(self.model, "model_type")
-                and getattr(self.model, "model_type") == "GNNSymmetric"  # noqa: B009
-            ):
-                # GNNSymmetric returns (reconstructed_adjacency, embeddings)
-                return model_output[0]
-            else:
-                # Standard GNN returns (X_embeddings, Y_embeddings)
-                # We need to reconstruct adjacency matrix from these embeddings
-                X, Y = model_output
-                # Simple reconstruction: A_reconstructed = X @ Y.T
-                return torch.bmm(X, Y.transpose(-2, -1))
-        else:
-            # NodeVarGNN returns adjacency matrix directly
-            return model_output
+        # All GNN models now return adjacency logits directly
+        return self.model(x)

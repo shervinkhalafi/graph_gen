@@ -252,16 +252,16 @@ class TestIssue8SigmoidConsistency:
         assert output.shape == (2, 5, 10)
 
     def test_gnn_symmetric_returns_logits(self):
-        """GNNSymmetric.forward() should return (logits, embeddings)."""
+        """GNNSymmetric.forward() should return adjacency logits."""
         model = GNNSymmetric(
             num_layers=1, num_terms=2, feature_dim_in=10, feature_dim_out=5
         )
         A = torch.eye(8).unsqueeze(0)
 
-        output, X = model(A)
+        output = model(A)
 
+        # forward() returns adjacency logits (single tensor)
         assert output.shape == (1, 8, 8)
-        assert X.shape == (1, 8, 5)
 
 
 class TestIssue9DivisionGuards:

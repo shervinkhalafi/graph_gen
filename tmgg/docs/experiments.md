@@ -177,8 +177,8 @@ The stage system runs systematic experiments across architectures and datasets w
 **Success criteria**: ≥15% improvement over Linear PE baseline on val_loss.
 
 ```bash
-uv run tmgg-stage1              # Single run
-uv run tmgg-stage1 sweep=true   # Full sweep
+uv run tmgg-experiment +stage=stage1_poc              # Single run
+uv run tmgg-experiment +stage=stage1_poc sweep=true   # Full sweep
 ```
 
 ### Stage 1 Sanity: Constant Noise Memorization
@@ -201,20 +201,25 @@ uv run tmgg-stage1 sweep=true   # Full sweep
 If this stage fails, something fundamental is broken in the architecture or optimizer.
 
 ```bash
-uv run tmgg-stage1-sanity
+uv run tmgg-experiment +stage=stage1_sanity
 ```
 
-### Stage 1.5: Cross-Dataset Validation
+### Stage 2: Cross-Dataset Validation
 
 **Budget**: ~19 GPU-hours
 
-**Purpose**: Validate single-graph denoising across diverse graph families to ensure generalization beyond SBM.
+**Purpose**: Validate denoising across diverse graph families, with two protocols controlled by `cross_graph`:
+
+| Protocol | `cross_graph` | Description |
+|----------|---------------|-------------|
+| Single-graph | `false` (default) | Train/val/test use the same graph, only noise varies |
+| Cross-graph | `true` | Train/val/test use different graphs (generalization test) |
 
 **Architectures**:
 - Linear PE, Filter Bank, Self-Attention (high LR=1e-2, AMSGrad, weight_decay=1e-12)
 - DiGress variants (official and high LR)
 
-**Datasets** (9 graph types, single-graph protocol):
+**Datasets** (9 graph types):
 - Synthetic: Erdős-Rényi, d-regular, tree, ring of cliques, LFR, SBM
 - PyG benchmarks: QM9, ENZYMES, PROTEINS
 
@@ -222,41 +227,14 @@ uv run tmgg-stage1-sanity
 - noise_levels: [0.01, 0.1, 0.2]
 - 4 trials per configuration, 3 seeds
 
-```bash
-uv run tmgg-stage1-5              # Single run
-uv run tmgg-stage1-5 sweep=true   # Full sweep
-```
-
-### Stage 2: Core Validation
-
-**Budget**: 166.5 GPU-hours
-
-**Purpose**: Validate generalization across SBM configurations and compare with DiGress baseline.
-
-**Architectures**: Filter Bank, Self-Attention, DiGress (both variants)
-
-**Datasets**:
-- SBM n=50 (p_in=0.7, p_out=0.05, k=2)
-- SBM n=100 (p_in=0.7, p_out=0.05, k=3)
-
-**Hyperparameter sweep**:
-- learning_rate: [1e-3, 1e-2]
-- model.k: [50, 100] (matching dataset sizes)
-- noise_levels: [0.01, 0.05, 0.1, 0.2, 0.3]
-- 12 trials per configuration, 3 seeds
-- 45-minute timeout per run
-
-**Testing protocols**:
-- Single-graph: 1000 noise samples, separate val/test seeds
-- Multi-graph: 100 graphs, 70/10/20 train/val/test split
-
 **Success criteria**:
 - reconstruction_error < 0.05
 - generalization_gap < 0.15
-- Match or exceed DiGress baseline
 
 ```bash
-uv run tmgg-stage2 sweep=true parallelism=8
+uv run tmgg-experiment +stage=stage2_validation                      # Single-graph (default)
+uv run tmgg-experiment +stage=stage2_validation cross_graph=true     # Cross-graph
+uv run tmgg-experiment +stage=stage2_validation sweep=true           # Full sweep
 ```
 
 ### Stage 3: Dataset Diversity
@@ -282,7 +260,7 @@ uv run tmgg-stage2 sweep=true parallelism=8
 - 8 trials, 5 seeds
 
 ```bash
-uv run tmgg-stage3 sweep=true
+uv run tmgg-experiment +stage=stage3_diversity sweep=true
 ```
 
 ### Stage 4: Real-World Benchmarks
@@ -301,7 +279,7 @@ uv run tmgg-stage3 sweep=true
 - 60-minute timeout, fast GPU tier
 
 ```bash
-uv run tmgg-stage4 sweep=true
+uv run tmgg-experiment +stage=stage4_benchmarks sweep=true
 ```
 
 ### Stage 5: Full Validation
@@ -325,7 +303,7 @@ uv run tmgg-stage4 sweep=true
 - Significance level: 0.05
 
 ```bash
-uv run tmgg-stage5 sweep=true
+uv run tmgg-experiment +stage=stage5_full sweep=true
 ```
 
 ### Stage Configuration
@@ -340,10 +318,11 @@ defaults:
 
 stage: stage1_poc
 
-# Optimizer settings
+# Optimizer settings (harmonized across stages)
 learning_rate: 1e-2
-weight_decay: 0.0
-optimizer_type: adam
+weight_decay: 1e-12
+optimizer_type: adamw
+amsgrad: true
 scheduler_config:
   type: none
 
@@ -351,6 +330,7 @@ model:
   k: 50
 
 noise_levels: [0.1]
+eval_noise_levels: [0.1]
 
 # Sweep metadata (used by coordinator when sweep=true)
 _sweep_config:
@@ -358,6 +338,8 @@ _sweep_config:
     - models/spectral/linear_pe
     - models/spectral/filter_bank
     - models/spectral/self_attention
+    - models/digress/digress_sbm_small
+    - models/digress/digress_sbm_small_highlr
   hyperparameter_space:
     learning_rate: [1e-3, 1e-2]
     noise_levels:

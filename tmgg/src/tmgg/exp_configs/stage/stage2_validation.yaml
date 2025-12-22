@@ -1,11 +1,12 @@
 # @package _global_
-# Stage 2: Cross-Dataset Validation with Separate Graphs
-#
-# Identical to stage1_5_crossdata, except:
-# - same_graph_all_splits: false (train/val/test use different graphs)
+# Stage 2: Cross-Dataset Validation (unified single-graph and cross-graph protocols)
 #
 # Budget: ~19 GPU-hours (5 architectures x 9 datasets x 3 noise levels x 3 seeds)
-# Goal: Validate generalization to unseen graph structures
+# Goal: Validate denoising across diverse graph families
+#
+# Two protocols controlled by cross_graph parameter:
+# - cross_graph=false (default): Train/val/test use SAME graph (single-graph protocol)
+# - cross_graph=true: Train/val/test use DIFFERENT graphs (generalization test)
 #
 # Spectral models: high LR (1e-2) + amsgrad + tiny weight decay
 # DiGress: official settings (LR=0.0002, amsgrad, weight_decay=1e-12)
@@ -13,19 +14,21 @@
 defaults:
   - override /data: er_single_graph
 
-# Stage 2 protocol: use different graphs for val/test
-data:
-  same_graph_all_splits: false
-  val_test_seed: 100  # val uses 100, test uses 1100
-
 # Stage identifier
 stage: stage2_validation
+
+# Protocol toggle: set cross_graph=true via CLI for cross-graph validation
+cross_graph: false
 
 # Modal cloud execution (off by default, use run_on_modal=true to enable)
 run_on_modal: false
 
-# Spectral models: high LR + amsgrad + tiny weight decay
-# DiGress overrides these via its own config
+# Data protocol settings (computed from cross_graph)
+data:
+  same_graph_all_splits: ${not_:${cross_graph}}
+  val_test_seed: ${if_:${cross_graph},100,123}
+
+# Optimizer settings (harmonized across all stages)
 learning_rate: 1e-2
 weight_decay: 1e-12
 optimizer_type: adamw

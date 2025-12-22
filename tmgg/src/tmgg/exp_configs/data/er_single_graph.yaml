@@ -1,32 +1,9 @@
 # @package data
 # Single-graph protocol for Erdős-Rényi graphs
-# Train, val, and test all use the SAME graph with varying noise only
 
-_target_: tmgg.experiment_utils.data.SingleGraphDataModule
+defaults:
+  - single_graph_base
 
-# Graph type and parameters
 graph_type: erdos_renyi
 n: 50
-
-# ER parameters
 p: 0.1  # Edge probability
-
-# Stage 1 protocol: same graph for all splits
-same_graph_all_splits: true
-
-# Random seed for graph generation
-train_seed: 42
-val_test_seed: 123
-
-# Number of samples per split (noise realizations)
-num_train_samples: 1000
-num_val_samples: 100
-num_test_samples: 100
-
-# Dataloader parameters
-batch_size: 16
-num_workers: 4
-
-# Noise configuration
-noise_levels: [0.1]
-noise_type: digress

@@ -2,7 +2,7 @@
 # The pre-commit-config.yaml must be at git root for pre-commit to find it.
 # Copy or symlink this to the parent directory, or run hooks manually:
 #   cd tmgg && uv run ruff check --fix src/
-#   cd tmgg && uv run basedpyright
+#   cd tmgg && uv run basedpyright --project pyproject.toml
 #   cd tmgg && uv run tach check
 
 repos:
@@ -21,7 +21,7 @@ repos:
       # basedpyright type checking
       - id: basedpyright
         name: basedpyright
-        entry: bash -c 'cd tmgg && uv run basedpyright'
+        entry: bash -c 'cd tmgg && uv run basedpyright --project pyproject.toml'
         language: system
         types: [python]
         pass_filenames: false

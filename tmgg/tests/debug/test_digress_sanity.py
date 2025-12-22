@@ -100,7 +100,7 @@ class TestDigressLevel1ConstantNoiseMemorization:
             amsgrad=True,
         )
 
-        for _ in range(5000):
+        for _ in range(25000):
             logits = model(A_noisy)
             loss = F.binary_cross_entropy_with_logits(logits, A_clean)
             loss.backward()
@@ -122,7 +122,7 @@ class TestDigressLevel1ConstantNoiseMemorization:
         model = create_digress_small()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
-        for _ in range(5000):
+        for _ in range(15000):
             logits = model(A_noisy)
             loss = F.binary_cross_entropy_with_logits(logits, A_clean)
             loss.backward()

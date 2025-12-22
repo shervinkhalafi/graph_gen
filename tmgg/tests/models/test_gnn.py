@@ -46,7 +46,7 @@ class TestGNNModels:
     """Test GNN model classes."""
 
     def test_gnn_forward(self):
-        """Test standard GNN forward pass."""
+        """Test standard GNN forward pass returns adjacency logits."""
         batch_size = 2
         num_nodes = 5
         num_layers = 2
@@ -62,13 +62,31 @@ class TestGNNModels:
         )
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        X, Y = model(A)
+        logits = model(A)
+
+        # forward() returns adjacency logits (single tensor)
+        assert logits.shape == (batch_size, num_nodes, num_nodes)
+
+        # predict() applies sigmoid to get probabilities in [0, 1]
+        probs = model.predict(logits)
+        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+
+    def test_gnn_embeddings(self):
+        """Test GNN embeddings() method for hybrid model use."""
+        batch_size = 2
+        num_nodes = 5
+        feature_dim_out = 10
+
+        model = GNN(num_layers=2, feature_dim_out=feature_dim_out)
+
+        A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
+        X, Y = model.embeddings(A)
 
         assert X.shape == (batch_size, num_nodes, feature_dim_out)
         assert Y.shape == (batch_size, num_nodes, feature_dim_out)
 
     def test_gnn_symmetric_forward(self):
-        """Test symmetric GNN forward pass.
+        """Test symmetric GNN forward pass returns adjacency logits.
 
         forward() returns raw logits; predict() returns probabilities in [0, 1].
         """
@@ -80,10 +98,10 @@ class TestGNNModels:
         model = GNNSymmetric(num_layers=num_layers, feature_dim_out=feature_dim_out)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        logits, X = model(A)
+        logits = model(A)
 
+        # forward() returns adjacency logits (single tensor)
         assert logits.shape == (batch_size, num_nodes, num_nodes)
-        assert X.shape == (batch_size, num_nodes, feature_dim_out)
 
         # predict() applies sigmoid to get probabilities in [0, 1]
         probs = model.predict(logits)
