@@ -71,6 +71,14 @@ def main() -> None:
         action="store_true",
         help="Wait for result instead of fire-and-forget",
     )
+    parser.add_argument(
+        "--wandb-entity",
+        help="W&B entity (team/username) to log runs to",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        help="W&B project name to log runs to",
+    )
 
     args = parser.parse_args()
 
@@ -81,9 +89,21 @@ def main() -> None:
     config_data = load_config(args.config)
     run_id = config_data.get("run_id", args.config.stem)
 
+    # Get the actual config (might be nested under "config" key or be the whole dict)
+    actual_config = config_data.get("config", config_data)
+
+    # Inject _wandb_config if entity or project specified
+    if args.wandb_entity or args.wandb_project:
+        wandb_cfg = actual_config.get("_wandb_config", {})
+        if args.wandb_entity:
+            wandb_cfg["entity"] = args.wandb_entity
+        if args.wandb_project:
+            wandb_cfg["project"] = args.wandb_project
+        actual_config["_wandb_config"] = wandb_cfg
+
     # Build task input dict
     task_dict: dict[str, Any] = {
-        "config": config_data.get("config", config_data),
+        "config": actual_config,
         "run_id": run_id,
         "gpu_tier": args.gpu,
         "timeout_seconds": args.timeout or config_data.get("timeout_seconds", 3600),

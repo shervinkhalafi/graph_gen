@@ -1,12 +1,12 @@
 # Bug Report: 19 Stage 1 Experiments Fail Before W&B Logging
 
 **Date**: 2026-01-05
-**Severity**: Medium
-**Status**: Open
+**Severity**: Low (data exists, only entity misrouting)
+**Status**: Resolved - runs found in wrong entity (2026-01-05 15:30 CET)
 
 ## Summary
 
-19 out of 108 Stage 1 experiments consistently fail before logging to W&B. They spawn successfully on Modal but terminate without creating W&B runs.
+19 out of 108 Stage 1 experiments appeared to be missing from `graph_denoise_team/spectral_denoising`. Investigation revealed all 19 runs completed successfully but logged to `igorkraw/spectral_denoising` instead due to entity routing issues during the original batch launch.
 
 ## Affected Configurations
 
@@ -82,3 +82,34 @@ fc-01KE6XT3DFJ7YT3K3STNM80EXX  stage1_self_attention_lr1e-4_wd1e-2_k8_s2
 - `src/tmgg/modal/cli/launch_sweep.py` - Batch launcher
 - `src/tmgg/modal/runner.py` - Modal function definitions
 - `configs/stage1/2026-01-05/` - Generated configs
+
+## Resolution
+
+### Root Cause: Entity Routing Race Condition
+
+The 19 runs were NOT missing - they completed successfully but logged to the wrong W&B entity. All runs exist in `igorkraw/spectral_denoising` instead of `graph_denoise_team/spectral_denoising`.
+
+**Why this happened**: During the original batch launch of 108 experiments, some runs started before `_wandb_config` injection completed, causing them to fall back to the WANDB_API_KEY owner's default entity.
+
+### Verification via W&B API (2026-01-05 15:30 CET)
+
+All 19 runs confirmed present in `igorkraw/spectral_denoising` with `state: finished`:
+
+| Category | Expected | Found | Status |
+|----------|----------|-------|--------|
+| filter_bank_lr1e-3_wd1e-2 | 6 | 6 | ✓ |
+| filter_bank_lr1e-3_wd1e-3 | 6 | 6 | ✓ |
+| filter_bank_lr1e-4_wd1e-2 | 4 | 4 | ✓ |
+| linear_pe_lr1e-4_wd1e-2_k8_s1 | 1 | 1 | ✓ |
+| self_attention_lr1e-4_wd1e-2_k8 | 2 | 2 | ✓ |
+| **Total** | **19** | **19** | **All found** |
+
+### Data Location
+
+For analysis, use runs from BOTH projects:
+- **Primary**: `graph_denoise_team/spectral_denoising` (89 runs)
+- **Secondary**: `igorkraw/spectral_denoising` (19 runs from original batch)
+
+### Prevention
+
+The `spawn_single.py` script was updated to accept `--wandb-entity` and `--wandb-project` flags to avoid similar issues in future single-experiment spawns.

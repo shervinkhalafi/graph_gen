@@ -1,24 +1,26 @@
 # Stage 2: Core Validation
-# Budget: ~166.5 GPU-hours
-# Validates generalization across configurations and compares with DiGress
+# Budget: ~70 GPU-hours (reduced from original 166.5)
+# Validates best Stage 1 settings across datasets and compares with DiGress
+# Stage 1 findings: linear_pe + lr1e-3 dominates, k=8/16 both good
 
 name: stage2_validation
 base_config: base_config_spectral
 
 architectures:
-  - models/spectral/filter_bank_nonlinear
-  - models/spectral/self_attention
-  - models/digress/digress_transformer
+  - models/spectral/linear_pe        # Winner from Stage 1
+  - models/spectral/self_attention   # Runner-up for comparison
+  - models/digress/digress_transformer  # Baseline comparison
 
 datasets:
-  - data/sbm_default
-  # - data/sbm_n100  # Uncomment when config exists
+  - sbm_default
+  # - sbm_n100  # Uncomment when config exists
 
 hyperparameters:
-  learning_rate: [1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
-  weight_decay: [1e-1, 1e-2, 1e-3]
+  # Narrowed based on Stage 1 results: lr1e-3 won clearly
+  learning_rate: [5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]  # Both performed well in Stage 1
   # + prefix needed for Hydra struct mode
-  "+model.k": [4, 8, 16, 32]
+  "+model.k": [8, 16, 32]  # Stage 1 showed k=8,16 good, test k=32 too
 
 seeds: [1, 2, 3]
 
