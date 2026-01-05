@@ -1,7 +1,9 @@
 """PyTorch Lightning data module for graph data."""
 
+from __future__ import annotations
+
 import random
-from typing import Any, override
+from typing import Any, Protocol, override
 
 import pytorch_lightning as pl
 import torch
@@ -32,12 +34,28 @@ SYNTHETIC_GRAPH_TYPES = {"d_regular", "regular", "lfr", "tree", "erdos_renyi", "
 PYG_DATASETS = {"qm9", "enzymes", "proteins"}
 
 
+class SampledDatasetProtocol(Protocol):
+    """Protocol for datasets that expose num_samples attribute."""
+
+    num_samples: int
+
+    def __getitem__(self, idx: int) -> torch.Tensor: ...
+
+    def __len__(self) -> int: ...
+
+
 class GraphDataModule(pl.LightningDataModule):
-    """PyTorch Lightning data module for various graph datasets."""
+    """PyTorch Lightning data module for various graph datasets.
+
+    For SBM datasets, prepare_data() must be called before setup() to generate
+    the partition structure. For other dataset types, prepare_data() is optional
+    (used only for pre-downloading).
+    """
 
     dataset_name: str
     dataset_config: dict[str, Any]
     num_samples_per_graph: int
+    val_samples_per_graph: int
     batch_size: int
     num_workers: int
     pin_memory: bool
@@ -55,6 +73,7 @@ class GraphDataModule(pl.LightningDataModule):
         dataset_name: str,
         dataset_config: dict[str, Any],
         num_samples_per_graph: int = 1000,
+        val_samples_per_graph: int | None = None,
         batch_size: int = 100,
         num_workers: int = 4,
         pin_memory: bool = True,
@@ -69,7 +88,9 @@ class GraphDataModule(pl.LightningDataModule):
         Args:
             dataset_name: Name of the dataset to use (e.g., "sbm", "classical").
             dataset_config: Dictionary of parameters for the chosen dataset.
-            num_samples_per_graph: Number of samples (permutations) per graph.
+            num_samples_per_graph: Number of samples (permutations) per graph for training.
+            val_samples_per_graph: Number of samples per graph for validation/test.
+                Defaults to num_samples_per_graph // 2 if not specified.
             batch_size: Batch size for data loaders.
             num_workers: Number of worker processes for data loading.
             pin_memory: Whether to pin memory for faster GPU transfer.
@@ -83,6 +104,11 @@ class GraphDataModule(pl.LightningDataModule):
         self.dataset_name = dataset_name
         self.dataset_config = dataset_config
         self.num_samples_per_graph = num_samples_per_graph
+        self.val_samples_per_graph = (
+            val_samples_per_graph
+            if val_samples_per_graph is not None
+            else num_samples_per_graph // 2
+        )
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -223,8 +249,14 @@ class GraphDataModule(pl.LightningDataModule):
         wrapper_cls = DATASET_WRAPPERS[self.dataset_name]
         dataset_wrapper = wrapper_cls(**self.dataset_config)
         all_matrices = dataset_wrapper.get_adjacency_matrices()
-        dtypes = [x.dtype for x in all_matrices]
-        assert all(x == torch.float for x in dtypes), f"{dtypes=}"
+        invalid_dtypes = [
+            (i, m.dtype) for i, m in enumerate(all_matrices) if m.dtype != torch.float
+        ]
+        if invalid_dtypes:
+            raise TypeError(
+                f"Dataset wrapper returned matrices with invalid dtypes: {invalid_dtypes}. "
+                f"Expected torch.float."
+            )
 
         random.shuffle(all_matrices)
 
@@ -358,7 +390,7 @@ class GraphDataModule(pl.LightningDataModule):
         if self.val_adjacency_matrices is None:
             raise RuntimeError("Call setup() before accessing dataloaders")
         return self._create_dataloader(
-            self.val_adjacency_matrices, self.num_samples_per_graph // 2, shuffle=False
+            self.val_adjacency_matrices, self.val_samples_per_graph, shuffle=False
         )
 
     @override
@@ -367,7 +399,7 @@ class GraphDataModule(pl.LightningDataModule):
         if self.test_adjacency_matrices is None:
             raise RuntimeError("Call setup() before accessing dataloaders")
         return self._create_dataloader(
-            self.test_adjacency_matrices, self.num_samples_per_graph // 2, shuffle=False
+            self.test_adjacency_matrices, self.val_samples_per_graph, shuffle=False
         )
 
     def get_sample_adjacency_matrix(self, stage: str = "train") -> torch.Tensor:

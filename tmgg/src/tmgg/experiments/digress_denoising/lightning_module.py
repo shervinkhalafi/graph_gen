@@ -39,6 +39,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         model_type: str | None = None,
         # Legacy parameter name (deprecated, use k instead)
         node_feature_dim: int | None = None,
+        **kwargs: Any,  # pyright: ignore[reportExplicitAny]
     ):
         # Handle legacy parameter name
         if node_feature_dim is not None:
@@ -65,6 +66,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             noise_type=noise_type,
             rotation_k=rotation_k,
             seed=seed,
+            **kwargs,
         )
 
     # forward() is inherited from base class - model handles eigenvector extraction

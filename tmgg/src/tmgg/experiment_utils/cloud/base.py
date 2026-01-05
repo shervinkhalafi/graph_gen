@@ -74,6 +74,7 @@ class CloudRunner(ABC):
         config: DictConfig,
         gpu_type: str = "debug",
         timeout_seconds: int = 3600,
+        additional_tags: list[str] | None = None,
     ) -> ExperimentResult:
         """Run a single experiment with the given configuration.
 
@@ -85,6 +86,8 @@ class CloudRunner(ABC):
             GPU tier to request ('debug', 'standard', 'fast', 'multi').
         timeout_seconds
             Maximum runtime before the job is killed.
+        additional_tags
+            Extra W&B tags to add to this experiment.
 
         Returns
         -------
@@ -98,8 +101,8 @@ class CloudRunner(ABC):
         self,
         configs: list[DictConfig],
         gpu_type: str = "debug",
-        parallelism: int = 4,
         timeout_seconds: int = 3600,
+        additional_tags: list[str] | None = None,
     ) -> list[ExperimentResult]:
         """Run multiple experiments in parallel.
 
@@ -109,10 +112,10 @@ class CloudRunner(ABC):
             List of Hydra configurations for each experiment.
         gpu_type
             GPU tier to request for all experiments.
-        parallelism
-            Maximum number of concurrent experiments.
         timeout_seconds
             Maximum runtime per experiment.
+        additional_tags
+            Extra W&B tags to add to all experiments.
 
         Returns
         -------
@@ -162,8 +165,9 @@ class CloudRunner(ABC):
     def spawn_experiment(
         self,
         config: DictConfig,  # noqa: ARG002
-        gpu_type: str = "debug",  # noqa: ARG002
-        timeout_seconds: int = 3600,  # noqa: ARG002
+        gpu_type: str | None = None,  # noqa: ARG002
+        timeout_seconds: int | None = None,  # noqa: ARG002
+        additional_tags: list[str] | None = None,  # noqa: ARG002
     ) -> SpawnedTask:
         """Spawn a single experiment without waiting for results.
 
@@ -178,6 +182,8 @@ class CloudRunner(ABC):
             GPU tier to request ('debug', 'standard', 'fast', 'multi').
         timeout_seconds
             Maximum runtime before the job is killed.
+        additional_tags
+            Extra W&B tags to add to this experiment.
 
         Returns
         -------
@@ -197,8 +203,9 @@ class CloudRunner(ABC):
     def spawn_sweep(
         self,
         configs: list[DictConfig],  # noqa: ARG002
-        gpu_type: str = "debug",  # noqa: ARG002
-        timeout_seconds: int = 3600,  # noqa: ARG002
+        gpu_type: str | None = None,  # noqa: ARG002
+        timeout_seconds: int | None = None,  # noqa: ARG002
+        additional_tags: list[str] | None = None,  # noqa: ARG002
     ) -> list[SpawnedTask]:
         """Spawn multiple experiments without waiting for results.
 
@@ -213,6 +220,8 @@ class CloudRunner(ABC):
             GPU tier to request for all experiments.
         timeout_seconds
             Maximum runtime per experiment.
+        additional_tags
+            Extra W&B tags to add to all experiments.
 
         Returns
         -------
@@ -262,11 +271,13 @@ class LocalRunner(CloudRunner):
         config: DictConfig,
         gpu_type: str = "debug",
         timeout_seconds: int = 3600,
+        additional_tags: list[str] | None = None,
     ) -> ExperimentResult:
         """Run experiment locally in current process."""
         import time
         import uuid
 
+        _ = additional_tags  # LocalRunner doesn't support W&B tags
         from tmgg.experiment_utils.run_experiment import run_experiment
 
         run_id = str(uuid.uuid4())[:8]
@@ -302,10 +313,11 @@ class LocalRunner(CloudRunner):
         self,
         configs: list[DictConfig],
         gpu_type: str = "debug",
-        parallelism: int = 4,
         timeout_seconds: int = 3600,
+        additional_tags: list[str] | None = None,
     ) -> list[ExperimentResult]:
         """Run experiments sequentially (no parallelism in local mode)."""
+        _ = additional_tags  # LocalRunner doesn't support W&B tags
         return [
             self.run_experiment(config, gpu_type, timeout_seconds) for config in configs
         ]

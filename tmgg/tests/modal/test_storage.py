@@ -249,6 +249,66 @@ class TestLocalStorageOperations:
         assert storage.exists("exists.txt") is True
 
 
+class TestTigrisStoragePathPrefix:
+    """Test TigrisStorage path_prefix functionality for run isolation.
+
+    Test rationale:
+        Path prefix enables running fresh experiment sweeps without deleting
+        prior results. Keys like `metrics/{run_id}.json` become
+        `{prefix}/metrics/{run_id}.json`, so filter_configs_by_status only
+        sees results under that prefix.
+    """
+
+    @pytest.fixture
+    def env(self):
+        return {
+            "TMGG_TIGRIS_BUCKET": "test-bucket",
+            "TMGG_TIGRIS_ACCESS_KEY": "test-key",
+            "TMGG_TIGRIS_SECRET_KEY": "test-secret",
+        }
+
+    def test_full_key_without_path_prefix(self, env):
+        """Without path_prefix, keys use only bucket prefix."""
+        with patch.dict(os.environ, env, clear=True):
+            from tmgg.modal.storage import TigrisStorage
+
+            storage = TigrisStorage(prefix="experiments")
+            key = storage._full_key("metrics/run-1.json")
+
+            assert key == "experiments/metrics/run-1.json"
+
+    def test_full_key_with_path_prefix(self, env):
+        """With path_prefix, keys include both bucket and path prefixes."""
+        with patch.dict(os.environ, env, clear=True):
+            from tmgg.modal.storage import TigrisStorage
+
+            storage = TigrisStorage(prefix="experiments", path_prefix="2025-01-05")
+            key = storage._full_key("metrics/run-1.json")
+
+            assert key == "experiments/2025-01-05/metrics/run-1.json"
+
+    def test_full_key_with_empty_path_prefix(self, env):
+        """Empty path_prefix should not add extra slashes."""
+        with patch.dict(os.environ, env, clear=True):
+            from tmgg.modal.storage import TigrisStorage
+
+            storage = TigrisStorage(prefix="experiments", path_prefix="")
+            key = storage._full_key("metrics/run-1.json")
+
+            assert key == "experiments/metrics/run-1.json"
+            assert "//" not in key
+
+    def test_get_storage_from_env_passes_path_prefix(self, env):
+        """get_storage_from_env should pass path_prefix to TigrisStorage."""
+        with patch.dict(os.environ, env, clear=True):
+            from tmgg.modal.storage import get_storage_from_env
+
+            storage = get_storage_from_env(path_prefix="my-prefix")
+
+            assert storage is not None
+            assert storage.path_prefix == "my-prefix"
+
+
 class TestTigrisStorageCheckpoints:
     """Test TigrisStorage checkpoint-specific methods."""
 

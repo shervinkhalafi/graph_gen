@@ -6,9 +6,8 @@ Budget: 4.4 GPU-hours
 
 from __future__ import annotations
 
+import re
 from typing import Any
-
-from omegaconf import OmegaConf
 
 from tmgg.modal.app import app
 from tmgg.modal.runner import (
@@ -18,6 +17,32 @@ from tmgg.modal.runner import (
     wandb_secret,
 )
 from tmgg.modal.storage import get_storage_from_env
+
+
+def validate_prefix(prefix: str) -> str:
+    """Validate prefix contains only alphanumeric, dash, underscore.
+
+    Parameters
+    ----------
+    prefix
+        Storage path prefix to validate.
+
+    Returns
+    -------
+    str
+        The validated prefix (unchanged if valid).
+
+    Raises
+    ------
+    ValueError
+        If prefix contains invalid characters.
+    """
+    if prefix and not re.match(r"^[a-zA-Z0-9_-]+$", prefix):
+        raise ValueError(
+            f"Invalid prefix '{prefix}': must contain only alphanumeric, dash, underscore"
+        )
+    return prefix
+
 
 # Stage 1 configuration
 STAGE1_ARCHITECTURES = [
@@ -29,7 +54,8 @@ STAGE1_ARCHITECTURES = [
 STAGE1_HYPERPARAMETERS = {
     "learning_rate": [1e-4, 5e-4, 1e-3],
     "weight_decay": [1e-2, 1e-3],
-    "model.k": [8, 16],
+    # Use + prefix to force-add model.k (struct mode blocks plain override)
+    "+model.k": [8, 16],
 }
 
 STAGE1_SEEDS = [1, 2, 3]
@@ -38,33 +64,20 @@ STAGE1_SEEDS = [1, 2, 3]
 def generate_stage1_configs() -> list[dict[str, Any]]:
     """Generate all experiment configurations for Stage 1.
 
+    Uses Hydra composition to properly resolve config defaults and interpolations.
+
     Returns
     -------
     list[dict]
-        List of configuration dictionaries.
+        List of configuration dictionaries with all values resolved.
     """
     import itertools
 
-    from tmgg.modal.paths import get_exp_configs_path
+    from omegaconf import OmegaConf
+
+    from tmgg.modal.config_compose import compose_config
 
     configs = []
-
-    # Load base config using robust path resolution
-    exp_configs = get_exp_configs_path()
-    if exp_configs is not None:
-        base_config_path = exp_configs / "base_config_spectral.yaml"
-        if base_config_path.exists():
-            base_config = OmegaConf.load(base_config_path)
-        else:
-            raise FileNotFoundError(
-                f"Base config not found at {base_config_path}. "
-                "Ensure tmgg exp_configs are properly set up."
-            )
-    else:
-        raise RuntimeError(
-            "Could not find tmgg package. Set TMGG_PATH or ensure "
-            "modal/ and tmgg/ are siblings."
-        )
 
     # Generate hyperparameter combinations
     hp_keys = list(STAGE1_HYPERPARAMETERS.keys())
@@ -74,19 +87,14 @@ def generate_stage1_configs() -> list[dict[str, Any]]:
     for arch in STAGE1_ARCHITECTURES:
         for hp_combo in hp_combos:
             for seed in STAGE1_SEEDS:
-                config = OmegaConf.create(
-                    OmegaConf.to_container(base_config, resolve=True)
-                )
-
-                # Set architecture
-                config.model = arch
-
-                # Set hyperparameters
+                # Build Hydra overrides for this config variant
+                overrides = [f"model={arch}"]
                 for key, value in zip(hp_keys, hp_combo, strict=False):
-                    OmegaConf.update(config, key, value)
+                    overrides.append(f"{key}={value}")
+                overrides.append(f"seed={seed}")
 
-                # Set seed
-                config.seed = seed
+                # Compose config with Hydra (resolves all defaults and interpolations)
+                config = compose_config("base_config_spectral", overrides)
 
                 # Generate run ID
                 arch_name = arch.split("/")[-1]
@@ -94,9 +102,12 @@ def generate_stage1_configs() -> list[dict[str, Any]]:
                 wd_str = f"wd{hp_combo[1]:.0e}".replace("e-0", "e-")
                 k_str = f"k{hp_combo[2]}"
                 run_id = f"stage1_{arch_name}_{lr_str}_{wd_str}_{k_str}_s{seed}"
-                config.run_id = run_id
 
-                configs.append(OmegaConf.to_container(config, resolve=True))
+                # Convert to dict and add run_id
+                config_dict = OmegaConf.to_container(config, resolve=True)
+                config_dict["run_id"] = run_id  # type: ignore[index]
+
+                configs.append(config_dict)
 
     return configs
 
@@ -107,30 +118,36 @@ def generate_stage1_configs() -> list[dict[str, Any]]:
     timeout=3600,  # 1 hour for orchestration
 )
 def run_stage1(
-    parallelism: int = 4,
     gpu_type: str = "debug",
     dry_run: bool = False,
+    additional_tags: list[str] | None = None,
+    path_prefix: str = "",
 ) -> dict[str, Any]:
     """Run Stage 1: Proof of Concept experiments on Modal.
 
     Parameters
     ----------
-    parallelism
-        Maximum concurrent experiments.
     gpu_type
         GPU tier for experiments.
     dry_run
         If True, print configs without running.
+    additional_tags
+        Extra W&B tags to add to all experiments.
+    path_prefix
+        Storage path prefix for run isolation (e.g., "2025-01-05").
 
     Returns
     -------
     dict
         Stage results summary.
     """
+    _ = additional_tags  # TODO: Integrate with TaskInput when stage1 is refactored
     from datetime import datetime
 
     configs = generate_stage1_configs()
     print(f"Stage 1: Generated {len(configs)} experiment configurations")
+    if path_prefix:
+        print(f"Using storage prefix: {path_prefix}")
 
     if dry_run:
         print("Dry run - configurations:")
@@ -147,7 +164,7 @@ def run_stage1(
         summarize_status_map,
     )
 
-    storage = get_storage_from_env()
+    storage = get_storage_from_env(path_prefix=path_prefix)
     configs, status_map = filter_configs_by_status(
         storage,
         configs,
@@ -160,7 +177,7 @@ def run_stage1(
         print("All experiments completed!")
         return {"status": "completed", "message": "All experiments already done"}
 
-    print(f"Running {len(configs)} experiments with parallelism={parallelism}")
+    print(f"Running {len(configs)} experiments")
     started_at = datetime.now().isoformat()
 
     # Run experiments in parallel using Modal's map
@@ -242,19 +259,26 @@ def run_stage1(
 
 @app.local_entrypoint()
 def main(
-    parallelism: int = 4,
     gpu: str = "standard",
     dry_run: bool = False,
+    additional_tags: str = "",
+    prefix: str = "",
 ):
     """Local entry point for Stage 1.
 
     Usage
     -----
-    modal run tmgg_modal/stages/stage1.py --parallelism 4 --gpu standard
+    modal run tmgg_modal/stages/stage1.py --gpu standard
+    modal run tmgg_modal/stages/stage1.py --additional-tags "experiment,v2"
+    modal run tmgg_modal/stages/stage1.py --prefix 2025-01-05
     """
+    # Validate prefix before sending to Modal
+    path_prefix = validate_prefix(prefix)
+    tags = [t.strip() for t in additional_tags.split(",") if t.strip()]
     result = run_stage1.remote(
-        parallelism=parallelism,
         gpu_type=gpu,
         dry_run=dry_run,
+        additional_tags=tags or None,
+        path_prefix=path_prefix,
     )
     print(f"Stage 1 result: {result}")

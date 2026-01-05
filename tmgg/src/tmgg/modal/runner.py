@@ -23,13 +23,13 @@ from typing import TYPE_CHECKING, Any
 import modal
 from omegaconf import DictConfig
 
-from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult
+from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult, SpawnedTask
 from tmgg.experiment_utils.task import (
     TaskInput,
     execute_task,
     prepare_config_for_remote,
 )
-from tmgg.modal.app import DEFAULT_TIMEOUTS, GPU_CONFIGS, app
+from tmgg.modal.app import DEFAULT_SCALEDOWN_WINDOW, DEFAULT_TIMEOUTS, GPU_CONFIGS, app
 from tmgg.modal.image import create_tmgg_image
 from tmgg.modal.storage import TigrisStorage, get_storage_from_env
 from tmgg.modal.volumes import get_volume_mounts
@@ -120,7 +120,7 @@ def _get_timeout_for_gpu(gpu_type: str) -> int:
     image=experiment_image,
     gpu=GPU_CONFIGS["standard"],
     timeout=DEFAULT_TIMEOUTS["standard"],
-    scaledown_window=2,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[tigris_secret, wandb_secret],
     volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
 )
@@ -156,7 +156,7 @@ def modal_execute_task(task_dict: dict[str, Any]) -> dict[str, Any]:
     image=experiment_image,
     gpu=GPU_CONFIGS["fast"],
     timeout=DEFAULT_TIMEOUTS["fast"],
-    scaledown_window=2,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[tigris_secret, wandb_secret],
     volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
 )
@@ -170,7 +170,7 @@ def modal_execute_task_fast(task_dict: dict[str, Any]) -> dict[str, Any]:
     image=experiment_image,
     gpu=GPU_CONFIGS["debug"],
     timeout=DEFAULT_TIMEOUTS["debug"],
-    scaledown_window=2,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[tigris_secret, wandb_secret],
     volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
 )
@@ -186,11 +186,11 @@ run_single_experiment_fast = modal_execute_task_fast
 
 
 @dataclass
-class SpawnedTask:
+class ModalSpawnedTask:
     """Handle for a spawned Modal task.
 
     Provides the run_id for tracking and methods to wait for completion
-    or check status via storage.
+    or check status via storage. Implements the SpawnedTask protocol.
 
     Attributes
     ----------
@@ -258,13 +258,14 @@ class ModalRunner(CloudRunner):
 
         self.gpu_type = gpu_type
         self.storage = storage or get_storage_from_env()
-        self._active_runs: dict[str, SpawnedTask] = {}
+        self._active_runs: dict[str, ModalSpawnedTask] = {}
 
     def _create_task_input(
         self,
         config: DictConfig,
         gpu_tier: str,
         timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
     ) -> TaskInput:
         """Create a TaskInput from a Hydra config.
 
@@ -276,6 +277,8 @@ class ModalRunner(CloudRunner):
             GPU tier for execution.
         timeout_seconds
             Optional timeout override.
+        additional_tags
+            Extra W&B tags to add to this experiment.
 
         Returns
         -------
@@ -292,6 +295,7 @@ class ModalRunner(CloudRunner):
             run_id=run_id,
             gpu_tier=gpu_tier,
             timeout_seconds=timeout,
+            additional_tags=additional_tags or [],
         )
 
     def _select_modal_function(self, gpu_tier: str) -> modal.Function:
@@ -322,6 +326,7 @@ class ModalRunner(CloudRunner):
         config: DictConfig,
         gpu_type: str | None = None,
         timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
     ) -> SpawnedTask:
         """Spawn a single experiment without waiting for results.
 
@@ -336,6 +341,8 @@ class ModalRunner(CloudRunner):
             GPU tier override.
         timeout_seconds
             Timeout override.
+        additional_tags
+            Extra W&B tags to add to this experiment.
 
         Returns
         -------
@@ -343,14 +350,16 @@ class ModalRunner(CloudRunner):
             Handle with run_id for tracking.
         """
         gpu = gpu_type or self.gpu_type
-        task_input = self._create_task_input(config, gpu, timeout_seconds)
+        task_input = self._create_task_input(
+            config, gpu, timeout_seconds, additional_tags
+        )
         task_dict = asdict(task_input)
 
         # Use spawn() for detached execution
         modal_fn = self._select_modal_function(gpu)
         function_call = modal_fn.spawn(task_dict)
 
-        spawned = SpawnedTask(
+        spawned = ModalSpawnedTask(
             run_id=task_input.run_id,
             gpu_tier=gpu,
             function_call=function_call,
@@ -365,6 +374,7 @@ class ModalRunner(CloudRunner):
         configs: list[DictConfig],
         gpu_type: str | None = None,
         timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
     ) -> list[SpawnedTask]:
         """Spawn multiple experiments without waiting for results.
 
@@ -379,6 +389,8 @@ class ModalRunner(CloudRunner):
             GPU tier for all experiments.
         timeout_seconds
             Timeout per experiment.
+        additional_tags
+            Extra W&B tags to add to all experiments.
 
         Returns
         -------
@@ -389,7 +401,7 @@ class ModalRunner(CloudRunner):
         spawned_tasks: list[SpawnedTask] = []
 
         for config in configs:
-            task = self.spawn_experiment(config, gpu, timeout_seconds)
+            task = self.spawn_experiment(config, gpu, timeout_seconds, additional_tags)
             spawned_tasks.append(task)
 
         logger.info(f"Spawned {len(spawned_tasks)} experiments on {gpu} GPU (detached)")
@@ -404,6 +416,7 @@ class ModalRunner(CloudRunner):
         config: DictConfig,
         gpu_type: str | None = None,
         timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
     ) -> ExperimentResult:
         """Run a single experiment and wait for results.
 
@@ -415,6 +428,8 @@ class ModalRunner(CloudRunner):
             GPU tier override.
         timeout_seconds
             Timeout override.
+        additional_tags
+            Extra W&B tags to add to this experiment.
 
         Returns
         -------
@@ -422,7 +437,9 @@ class ModalRunner(CloudRunner):
             Result of the experiment.
         """
         gpu = gpu_type or self.gpu_type
-        task_input = self._create_task_input(config, gpu, timeout_seconds)
+        task_input = self._create_task_input(
+            config, gpu, timeout_seconds, additional_tags
+        )
         task_dict = asdict(task_input)
 
         # Use remote() for blocking execution
@@ -436,8 +453,8 @@ class ModalRunner(CloudRunner):
         self,
         configs: list[DictConfig],
         gpu_type: str | None = None,
-        parallelism: int = 4,
         timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
     ) -> list[ExperimentResult]:
         """Run multiple experiments in parallel and wait for all results.
 
@@ -447,10 +464,10 @@ class ModalRunner(CloudRunner):
             List of configurations.
         gpu_type
             GPU tier for all experiments.
-        parallelism
-            Maximum concurrent experiments (handled by Modal).
         timeout_seconds
             Timeout per experiment.
+        additional_tags
+            Extra W&B tags to add to all experiments.
 
         Returns
         -------
@@ -459,7 +476,8 @@ class ModalRunner(CloudRunner):
         """
         gpu = gpu_type or self.gpu_type
         task_inputs = [
-            self._create_task_input(c, gpu, timeout_seconds) for c in configs
+            self._create_task_input(c, gpu, timeout_seconds, additional_tags)
+            for c in configs
         ]
         task_dicts = [asdict(t) for t in task_inputs]
 
@@ -508,7 +526,7 @@ class ModalRunner(CloudRunner):
         """
         if not self.storage:
             return (
-                self._active_runs.get(run_id, SpawnedTask(run_id, "")).gpu_tier
+                self._active_runs.get(run_id, ModalSpawnedTask(run_id, "")).gpu_tier
                 and "running"
                 or "unknown"
             )

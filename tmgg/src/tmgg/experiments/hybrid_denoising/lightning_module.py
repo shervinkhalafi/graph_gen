@@ -38,6 +38,7 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         rotation_k: int = 20,
         seed: int | None = None,
         model_type: str | None = None,  # For wandb naming, not used for dispatch
+        **kwargs: Any,  # pyright: ignore[reportExplicitAny]
     ):
         """
         Initialize the Lightning module.
@@ -84,6 +85,7 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
             noise_type=noise_type,
             rotation_k=rotation_k,
             seed=seed,
+            **kwargs,
         )
 
     def _make_model(

@@ -14,6 +14,10 @@ GraphFilterBank
     Spectral polynomial filter: W = Σ Λ^ℓ H^{(ℓ)}
 SelfAttentionDenoiser
     Scaled dot-product attention: Â = Q K^T / √d_k
+SelfAttentionDenoiserWithMLP
+    Attention with MLP post-processing: Â = MLP(Q K^T / √d_k)
+MultiLayerSelfAttentionDenoiser
+    Stacked transformer blocks on eigenvectors with residual connections
 
 Layers
 ------
@@ -29,7 +33,11 @@ SpectralDenoiser
 from tmgg.models.spectral_denoisers.base_spectral import SpectralDenoiser
 from tmgg.models.spectral_denoisers.filter_bank import GraphFilterBank
 from tmgg.models.spectral_denoisers.linear_pe import LinearPE
-from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
+from tmgg.models.spectral_denoisers.self_attention import (
+    MultiLayerSelfAttentionDenoiser,
+    SelfAttentionDenoiser,
+    SelfAttentionDenoiserWithMLP,
+)
 from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
 
 __all__ = [
@@ -41,4 +49,6 @@ __all__ = [
     "LinearPE",
     "GraphFilterBank",
     "SelfAttentionDenoiser",
+    "SelfAttentionDenoiserWithMLP",
+    "MultiLayerSelfAttentionDenoiser",
 ]

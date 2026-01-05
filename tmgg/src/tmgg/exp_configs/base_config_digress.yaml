@@ -15,4 +15,7 @@ model:
   noise_type: ${data.noise_type}
   noise_levels: ${data.noise_levels}
   seed: ${seed}
+  # Spectral delta logging (from base_config_training)
+  log_spectral_deltas: ${log_spectral_deltas}
+  spectral_k: ${spectral_k}
 

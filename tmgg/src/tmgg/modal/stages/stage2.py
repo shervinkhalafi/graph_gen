@@ -6,9 +6,8 @@ Budget: 166.5 GPU-hours
 
 from __future__ import annotations
 
+import copy
 from typing import Any
-
-from omegaconf import OmegaConf
 
 from tmgg.modal.app import app
 from tmgg.modal.runner import (
@@ -18,9 +17,10 @@ from tmgg.modal.runner import (
     tigris_secret,
     wandb_secret,
 )
+from tmgg.modal.stages.stage1 import validate_prefix
 from tmgg.modal.storage import get_storage_from_env
 
-# Stage 2 configuration
+# Stage 2 configuration (module-level defaults)
 STAGE2_ARCHITECTURES = [
     "models/spectral/filter_bank_nonlinear",
     "models/spectral/self_attention",
@@ -32,10 +32,11 @@ STAGE2_DATASETS = [
     # "data/sbm_n100",  # Uncomment when config exists
 ]
 
-STAGE2_HYPERPARAMETERS = {
+STAGE2_DEFAULT_HYPERPARAMETERS = {
     "learning_rate": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3],
     "weight_decay": [1e-1, 1e-2, 1e-3],
-    "model.k": [4, 8, 16, 32],
+    # Use + prefix to force-add model.k (struct mode blocks plain override)
+    "+model.k": [4, 8, 16, 32],
 }
 
 STAGE2_SEEDS = [1, 2, 3]
@@ -46,70 +47,53 @@ def generate_stage2_configs(
 ) -> list[dict[str, Any]]:
     """Generate experiment configurations for Stage 2.
 
+    Uses Hydra composition to properly resolve config defaults and interpolations.
+
     Parameters
     ----------
     best_stage1_config
-        Best configuration from Stage 1 to include.
+        Best configuration from Stage 1 to narrow hyperparameter search.
 
     Returns
     -------
     list[dict]
-        List of configuration dictionaries.
+        List of configuration dictionaries with all values resolved.
     """
     import itertools
 
-    from tmgg.modal.paths import get_exp_configs_path
+    from omegaconf import OmegaConf
+
+    from tmgg.modal.config_compose import compose_config
 
     configs = []
 
-    # Load base config using robust path resolution
-    exp_configs = get_exp_configs_path()
-    if exp_configs is not None:
-        base_config_path = exp_configs / "base_config_spectral.yaml"
-        if base_config_path.exists():
-            base_config = OmegaConf.load(base_config_path)
-        else:
-            raise FileNotFoundError(
-                f"Base config not found at {base_config_path}. "
-                "Ensure tmgg exp_configs are properly set up."
-            )
-    else:
-        raise RuntimeError(
-            "Could not find tmgg package. Set TMGG_PATH or ensure "
-            "modal/ and tmgg/ are siblings."
-        )
+    # Copy default hyperparameters to avoid mutating module-level dict
+    hyperparameters = copy.deepcopy(STAGE2_DEFAULT_HYPERPARAMETERS)
 
-    # Use best config from Stage 1 if available
+    # Narrow hyperparameter search around Stage 1 best if available
     if best_stage1_config:
-        # Narrow hyperparameter search around best values
         best_lr = best_stage1_config.get("learning_rate", 1e-4)
         best_wd = best_stage1_config.get("weight_decay", 1e-2)
-        STAGE2_HYPERPARAMETERS["learning_rate"] = [best_lr / 5, best_lr, best_lr * 5]
-        STAGE2_HYPERPARAMETERS["weight_decay"] = [best_wd / 10, best_wd, best_wd * 10]
+        hyperparameters["learning_rate"] = [best_lr / 5, best_lr, best_lr * 5]
+        hyperparameters["weight_decay"] = [best_wd / 10, best_wd, best_wd * 10]
 
     # Generate hyperparameter combinations
-    hp_keys = list(STAGE2_HYPERPARAMETERS.keys())
-    hp_values = [STAGE2_HYPERPARAMETERS[k] for k in hp_keys]
+    hp_keys = list(hyperparameters.keys())
+    hp_values = [hyperparameters[k] for k in hp_keys]
     hp_combos = list(itertools.product(*hp_values))
 
     for arch in STAGE2_ARCHITECTURES:
         for dataset in STAGE2_DATASETS:
             for hp_combo in hp_combos:
                 for seed in STAGE2_SEEDS:
-                    config = OmegaConf.create(
-                        OmegaConf.to_container(base_config, resolve=True)
-                    )
-
-                    # Set architecture and dataset
-                    config.model = arch
-                    config.data = dataset
-
-                    # Set hyperparameters
+                    # Build Hydra overrides for this config variant
+                    overrides = [f"model={arch}", f"data={dataset}"]
                     for key, value in zip(hp_keys, hp_combo, strict=False):
-                        OmegaConf.update(config, key, value)
+                        overrides.append(f"{key}={value}")
+                    overrides.append(f"seed={seed}")
 
-                    # Set seed
-                    config.seed = seed
+                    # Compose config with Hydra (resolves all defaults and interpolations)
+                    config = compose_config("base_config_spectral", overrides)
 
                     # Generate run ID
                     arch_name = arch.split("/")[-1]
@@ -118,9 +102,12 @@ def generate_stage2_configs(
                     wd_str = f"wd{hp_combo[1]:.0e}".replace("e-0", "e-")
                     k_str = f"k{hp_combo[2]}"
                     run_id = f"stage2_{arch_name}_{data_name}_{lr_str}_{wd_str}_{k_str}_s{seed}"
-                    config.run_id = run_id
 
-                    configs.append(OmegaConf.to_container(config, resolve=True))
+                    # Convert to dict and add run_id
+                    config_dict = OmegaConf.to_container(config, resolve=True)
+                    config_dict["run_id"] = run_id  # type: ignore[index]
+
+                    configs.append(config_dict)
 
     return configs
 
@@ -131,41 +118,57 @@ def generate_stage2_configs(
     timeout=7200,  # 2 hours for orchestration
 )
 def run_stage2(
-    parallelism: int = 4,
     gpu_type: str = "debug",
     use_stage1_best: bool = True,
     dry_run: bool = False,
+    additional_tags: list[str] | None = None,
+    path_prefix: str = "",
+    stage1_prefix: str = "",
 ) -> dict[str, Any]:
     """Run Stage 2: Core Validation experiments on Modal.
 
     Parameters
     ----------
-    parallelism
-        Maximum concurrent experiments.
     gpu_type
         GPU tier for experiments.
     use_stage1_best
         If True, use Stage 1 best config to narrow search.
     dry_run
         If True, print configs without running.
+    additional_tags
+        Extra W&B tags to add to all experiments.
+    path_prefix
+        Storage path prefix for Stage 2 results (e.g., "2025-01-05").
+    stage1_prefix
+        Storage path prefix for Stage 1 results. Defaults to path_prefix.
 
     Returns
     -------
     dict
         Stage results summary.
     """
+    _ = additional_tags  # TODO: Integrate with TaskInput when stage2 is refactored
     from datetime import datetime
+
+    # Resolve stage1_prefix: defaults to path_prefix if not specified
+    effective_stage1_prefix = stage1_prefix or path_prefix
+    if path_prefix:
+        print(f"Using storage prefix: {path_prefix}")
+    if effective_stage1_prefix and effective_stage1_prefix != path_prefix:
+        print(f"Using Stage 1 prefix: {effective_stage1_prefix}")
 
     # Load Stage 1 best config if requested
     best_stage1 = None
     if use_stage1_best:
-        storage = get_storage_from_env()
-        if storage:
+        stage1_storage = get_storage_from_env(path_prefix=effective_stage1_prefix)
+        if stage1_storage:
             try:
-                stage1_summary = storage.download_metrics("stage1_poc_summary")
+                stage1_summary = stage1_storage.download_metrics("stage1_poc_summary")
                 best_run_id = stage1_summary.get("best_run_id")
                 if best_run_id:
-                    best_result = storage.download_metrics(f"results/{best_run_id}")
+                    best_result = stage1_storage.download_metrics(
+                        f"results/{best_run_id}"
+                    )
                     best_stage1 = best_result.get("config")
                     print(f"Using Stage 1 best config: {best_run_id}")
             except Exception as e:
@@ -189,7 +192,7 @@ def run_stage2(
         summarize_status_map,
     )
 
-    storage = get_storage_from_env()
+    storage = get_storage_from_env(path_prefix=path_prefix)
     configs, status_map = filter_configs_by_status(
         storage,
         configs,
@@ -202,7 +205,7 @@ def run_stage2(
         print("All experiments completed!")
         return {"status": "completed", "message": "All experiments already done"}
 
-    print(f"Running {len(configs)} experiments with parallelism={parallelism}")
+    print(f"Running {len(configs)} experiments")
     started_at = datetime.now().isoformat()
 
     # Select function based on GPU tier
@@ -283,21 +286,33 @@ def run_stage2(
 
 @app.local_entrypoint()
 def main(
-    parallelism: int = 4,
     gpu: str = "standard",
     use_stage1_best: bool = True,
     dry_run: bool = False,
+    additional_tags: str = "",
+    prefix: str = "",
+    stage1_prefix: str = "",
 ):
     """Local entry point for Stage 2.
 
     Usage
     -----
-    modal run tmgg_modal/stages/stage2.py --parallelism 4 --gpu fast
+    modal run tmgg_modal/stages/stage2.py --gpu fast
+    modal run tmgg_modal/stages/stage2.py --additional-tags "experiment,v2"
+    modal run tmgg_modal/stages/stage2.py --prefix 2025-01-05
+    modal run tmgg_modal/stages/stage2.py --prefix 2025-01-05 --stage1-prefix 2025-01-04
     """
+    # Validate prefixes before sending to Modal
+    path_prefix = validate_prefix(prefix)
+    s1_prefix = validate_prefix(stage1_prefix)
+
+    tags = [t.strip() for t in additional_tags.split(",") if t.strip()]
     result = run_stage2.remote(
-        parallelism=parallelism,
         gpu_type=gpu,
         use_stage1_best=use_stage1_best,
         dry_run=dry_run,
+        additional_tags=tags or None,
+        path_prefix=path_prefix,
+        stage1_prefix=s1_prefix,
     )
     print(f"Stage 2 result: {result}")

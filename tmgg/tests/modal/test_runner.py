@@ -80,7 +80,8 @@ GPU_CONFIGS = _app_module.GPU_CONFIGS
 DEFAULT_TIMEOUTS = _app_module.DEFAULT_TIMEOUTS
 ModalRunner = _runner_module.ModalRunner
 ModalNotDeployedError = _runner_module.ModalNotDeployedError
-SpawnedTask = _runner_module.SpawnedTask
+ModalSpawnedTask = _runner_module.ModalSpawnedTask
+SpawnedTask = _cloud_base_module.SpawnedTask  # Protocol for isinstance checks
 check_modal_deployment = _runner_module.check_modal_deployment
 create_runner = _runner_module.create_runner
 modal_execute_task = _runner_module.modal_execute_task
@@ -455,27 +456,29 @@ class TestGPUConfigs:
             assert timeout <= 86400, f"Timeout for {tier} too long"
 
 
-class TestSpawnedTask:
-    """Tests for SpawnedTask dataclass.
+class TestModalSpawnedTask:
+    """Tests for ModalSpawnedTask dataclass.
 
     Test rationale:
-        SpawnedTask is the handle returned by spawn_experiment() that allows
+        ModalSpawnedTask is the handle returned by spawn_experiment() that allows
         tracking experiment status. It must be serializable (for persistence)
-        and contain all necessary tracking information.
+        and contain all necessary tracking information. It implements the
+        SpawnedTask protocol.
     """
 
     def test_spawned_task_creation(self):
-        """SpawnedTask should be creatable with required fields."""
-        task = SpawnedTask(run_id="test-123", gpu_tier="standard")
+        """ModalSpawnedTask should be creatable with required fields."""
+        task = ModalSpawnedTask(run_id="test-123", gpu_tier="standard")
 
         assert task.run_id == "test-123"
         assert task.gpu_tier == "standard"
         assert task.function_call is None  # Optional
+        assert isinstance(task, SpawnedTask)  # Implements protocol
 
     def test_spawned_task_with_function_call(self):
-        """SpawnedTask should accept optional function_call handle."""
+        """ModalSpawnedTask should accept optional function_call handle."""
         mock_call = MagicMock()
-        task = SpawnedTask(
+        task = ModalSpawnedTask(
             run_id="test-456",
             gpu_tier="fast",
             function_call=mock_call,

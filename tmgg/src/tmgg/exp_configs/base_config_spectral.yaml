@@ -11,3 +11,14 @@ defaults:
   - _self_
 
 experiment_name: "spectral_denoising"
+
+# Override model parameters with data config values
+# Note: k inherits from model config groups (linear_pe, self_attention, etc.)
+# Additional model fields are merged on top of the defaults-loaded config
+model:
+  noise_type: ${data.noise_type}
+  noise_levels: ${data.noise_levels}
+  seed: ${seed}
+  # Spectral delta logging (from base_config_training)
+  log_spectral_deltas: ${log_spectral_deltas}
+  spectral_k: ${spectral_k}

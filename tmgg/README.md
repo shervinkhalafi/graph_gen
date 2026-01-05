@@ -117,6 +117,10 @@ uv run tmgg-attention logger=wandb
 | `tmgg-grid-search` | Hyperparameter grid search |
 | `tmgg-wandb-export` | Export W&B metrics to CSV |
 | `tmgg-tb-export` | Export TensorBoard metrics |
+| `tmgg-modal-stage1` | Modal stage 1 runner |
+| `tmgg-modal-stage2` | Modal stage 2 runner |
+| `tmgg-eigenstructure` | Eigenstructure study (collect, analyze, noised, compare) |
+| `tmgg-embedding-study` | Embedding dimension study (run, analyze) |
 
 All commands support Hydra overrides:
 
@@ -141,6 +145,7 @@ tmgg/
 │   │   ├── gnn/             # Graph neural networks
 │   │   ├── hybrid/          # GNN + Transformer combinations
 │   │   ├── layers/          # Shared layers (GCN, MHA, Eigen)
+│   │   ├── embeddings/      # Graph embedding dimension analysis
 │   │   └── spectral_denoisers/
 │   ├── experiments/         # Experiment runners
 │   │   ├── attention_denoising/
@@ -152,6 +157,8 @@ tmgg/
 │   ├── experiment_utils/    # Shared infrastructure
 │   │   ├── data/            # Data loading and generation
 │   │   ├── cloud/           # Cloud execution (Modal)
+│   │   ├── eigenstructure_study/  # Eigenstructure analysis tools
+│   │   ├── embedding_study/       # Embedding dimension study
 │   │   ├── base_lightningmodule.py
 │   │   ├── run_experiment.py
 │   │   ├── metrics.py
@@ -211,6 +218,22 @@ uv run pytest --cov=tmgg --cov-report=html
 
 # Run specific test file
 uv run pytest tests/test_integration.py -v
+```
+
+## Code Quality
+
+Pre-commit hooks enforce code quality. The hooks are defined in `.pre-commit-config.yaml` but require setup at the git root (parent directory in this monorepo). Run checks manually:
+
+```bash
+# Linting and formatting
+uv run ruff check --fix src/
+uv run ruff format src/
+
+# Type checking
+uv run basedpyright --project pyproject.toml
+
+# Module boundary enforcement
+uv run tach check
 ```
 
 ## License

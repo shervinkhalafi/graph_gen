@@ -25,13 +25,18 @@ GPU_CONFIGS = {
 }
 
 # Default timeouts per GPU tier (in seconds)
+# Set to 24 hours to avoid premature termination during long experiments
 DEFAULT_TIMEOUTS = {
-    "debug": 600,  # 10 minutes
-    "standard": 1800,  # 30 minutes
-    "fast": 3600,  # 1 hour
-    "multi": 7200,  # 2 hours
-    "h100": 3600,  # 1 hour
+    "debug": 86400,  # 24 hours
+    "standard": 86400,  # 24 hours
+    "fast": 86400,  # 24 hours
+    "multi": 86400,  # 24 hours
+    "h100": 86400,  # 24 hours
 }
+
+# How long containers stay warm after completing a task (in seconds)
+# Higher values improve container reuse during sweeps but cost more
+DEFAULT_SCALEDOWN_WINDOW = 60
 
 # Memory configurations (for non-GPU containers)
 MEMORY_CONFIGS = {

@@ -47,12 +47,15 @@ class TaskInput:
         GPU tier for this experiment ('debug', 'standard', 'fast', 'multi', 'h100').
     timeout_seconds
         Maximum runtime before the task is considered timed out.
+    additional_tags
+        Extra W&B tags to merge with config-defined tags at execution time.
     """
 
     config: dict[str, Any]
     run_id: str
     gpu_tier: str = "standard"
     timeout_seconds: int = 3600
+    additional_tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -309,6 +312,13 @@ def execute_task(
 
     # Ensure run_id is set (should already be, but be explicit)
     config.run_id = run_id
+
+    # Merge additional_tags into W&B config
+    if task.additional_tags:
+        if "_wandb_config" not in config:
+            config._wandb_config = OmegaConf.create({"tags": []})
+        existing_tags = list(config._wandb_config.get("tags", []))
+        config._wandb_config.tags = existing_tags + task.additional_tags
 
     # Get storage for result uploads (if storage getter provided)
     storage = get_storage() if get_storage else None

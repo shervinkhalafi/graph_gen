@@ -20,16 +20,18 @@ transformer_d_v: 10
 transformer_dropout: 0.0
 transformer_bias: true
 
-# Model-specific training configuration
-learning_rate: 0.005
-loss_type: "BCEWithLogits"
+# Training parameters (inherit from base_config_training.yaml)
+learning_rate: ${learning_rate}
+loss_type: ${loss_type}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
 scheduler_config:
   type: "cosine_warmup"
   warmup_fraction: 0.02
   decay_fraction: 0.8
 rotation_k: 20
 
-# These will be overridden by data config
-noise_type: "digress"
-noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
-seed: 42
+# These are overridden by base_config_hybrid.yaml
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+seed: ${seed}

@@ -24,6 +24,8 @@ transformer_d_v: 10
 transformer_dropout: 0.0
 transformer_bias: true
 
-# Override base config values for this specific model
-learning_rate: 0.005
-loss_type: "BCEWithLogits"  # Override base MSE with BCEWithLogits
+# Training parameters (inherit from base_config_training.yaml)
+learning_rate: ${learning_rate}
+loss_type: ${loss_type}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}

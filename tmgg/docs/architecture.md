@@ -12,6 +12,15 @@ src/tmgg/
 │   ├── gnn/                   # Graph neural networks
 │   ├── hybrid/                # GNN + Transformer combinations
 │   ├── layers/                # Shared layers (GCN, MHA, EigenEmbedding)
+│   ├── embeddings/            # Graph embedding dimension analysis
+│   │   ├── base.py            # GraphEmbedding base class
+│   │   ├── lpca.py            # Logistic PCA embeddings
+│   │   ├── dot_product.py     # Dot product embeddings
+│   │   ├── dot_threshold.py   # Threshold-based dot product
+│   │   ├── distance_threshold.py
+│   │   ├── orthogonal.py      # Orthogonal representations
+│   │   ├── dimension_search.py  # Binary search for min dimension
+│   │   └── fitters/           # Gradient and spectral fitting
 │   └── spectral_denoisers/    # Spectral positional encoding models
 ├── experiments/               # Experiment runners
 │   ├── attention_denoising/   # Each has lightning_module.py + runner.py
@@ -23,6 +32,8 @@ src/tmgg/
 ├── experiment_utils/          # Shared infrastructure
 │   ├── data/                  # Data loading, generation, noise
 │   ├── cloud/                 # Cloud execution backends
+│   ├── eigenstructure_study/  # Eigenstructure analysis tools
+│   ├── embedding_study/       # Embedding dimension study
 │   ├── base_lightningmodule.py
 │   ├── run_experiment.py
 │   ├── metrics.py

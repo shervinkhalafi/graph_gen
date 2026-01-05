@@ -20,6 +20,7 @@ class MultiHeadAttention(nn.Module):
         d_v: int | None = None,
         dropout: float = 0.0,
         bias: bool = False,
+        use_residual: bool = True,
     ):
         """
         Initialize the Multi-Head Attention module.
@@ -31,8 +32,10 @@ class MultiHeadAttention(nn.Module):
             d_v: Dimension of values (default: d_model // num_heads)
             dropout: Dropout probability
             bias: Whether to use bias in linear layers
+            use_residual: Whether to apply residual connection before layer norm
         """
         super().__init__()
+        self.use_residual = use_residual
 
         self.num_heads = num_heads
         self.d_model = d_model
@@ -124,9 +127,12 @@ class MultiHeadAttention(nn.Module):
         # Apply output projection
         output = self.W_o(context)
 
-        # Apply dropout and residual connection
+        # Apply dropout and optional residual connection
         output = self.dropout(output)
-        output = self.layer_norm(output + residual)
+        if self.use_residual:
+            output = self.layer_norm(output + residual)
+        else:
+            output = self.layer_norm(output)
 
         # Combine attention scores from different heads using learned weights
         # Use attention weights (after softmax) instead of raw scores for output

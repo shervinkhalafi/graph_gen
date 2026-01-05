@@ -19,6 +19,12 @@ from .data import (
     random_skew_symmetric_matrix,
 )
 from .debug_callback import DebugCallback
+from .exceptions import (
+    CheckpointMismatchError,
+    ConfigurationError,
+    DataModuleStateError,
+    ExperimentUtilsError,
+)
 from .metrics import (
     compute_accuracy,
     compute_batch_metrics,
@@ -91,4 +97,9 @@ __all__ = [
     "DebugCallback",
     # Checkpoint utilities
     "load_checkpoint_with_fallback",
+    # Exceptions
+    "ExperimentUtilsError",
+    "ConfigurationError",
+    "CheckpointMismatchError",
+    "DataModuleStateError",
 ]

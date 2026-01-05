@@ -13,7 +13,9 @@ from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
     LinearPE,
+    MultiLayerSelfAttentionDenoiser,
     SelfAttentionDenoiser,
+    SelfAttentionDenoiserWithMLP,
 )
 
 
@@ -32,6 +34,8 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         - "linear_pe": Linear positional encoding
         - "filter_bank": Graph filter bank with spectral polynomial
         - "self_attention": Query-key attention on eigenvectors
+        - "self_attention_mlp": Self-attention with MLP post-processing
+        - "multilayer_self_attention": Stacked transformer blocks on eigenvectors
     k : int
         Number of eigenvectors to use.
     max_nodes : int, optional
@@ -42,6 +46,22 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         Polynomial degree for filter bank. Default 5.
     d_k : int, optional
         Key dimension for self-attention. Default 64.
+    mlp_hidden_dim : int, optional
+        Hidden dimension for MLP (self_attention_mlp only). Default 128.
+    mlp_num_layers : int, optional
+        Number of MLP layers (self_attention_mlp only). Default 2.
+    d_model : int, optional
+        Hidden dimension for multilayer_self_attention. Default 64.
+    num_heads : int, optional
+        Attention heads for multilayer_self_attention. Default 4.
+    num_layers : int, optional
+        Transformer blocks for multilayer_self_attention. Default 2.
+    use_mlp : bool, optional
+        Include MLP in transformer blocks. Default True.
+    transformer_mlp_hidden_dim : int, optional
+        MLP hidden dim in transformer blocks. Defaults to 4*d_model.
+    dropout : float, optional
+        Dropout probability for multilayer_self_attention. Default 0.0.
     learning_rate : float, optional
         Learning rate. Default 1e-4.
     weight_decay : float, optional
@@ -66,6 +86,8 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         "linear_pe",
         "filter_bank",
         "self_attention",
+        "self_attention_mlp",
+        "multilayer_self_attention",
     }
 
     def __init__(
@@ -76,6 +98,16 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         use_bias: bool = True,
         polynomial_degree: int = 5,
         d_k: int = 64,
+        mlp_hidden_dim: int = 128,
+        mlp_num_layers: int = 2,
+        # MultiLayerSelfAttention parameters
+        d_model: int = 64,
+        num_heads: int = 4,
+        num_layers: int = 2,
+        use_mlp: bool = True,
+        transformer_mlp_hidden_dim: int | None = None,
+        dropout: float = 0.0,
+        # Optimizer parameters
         learning_rate: float = 1e-4,
         weight_decay: float = 1e-2,
         optimizer_type: str = "adamw",
@@ -93,6 +125,15 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         self._use_bias = use_bias
         self._polynomial_degree = polynomial_degree
         self._d_k = d_k
+        self._mlp_hidden_dim = mlp_hidden_dim
+        self._mlp_num_layers = mlp_num_layers
+        # MultiLayerSelfAttention
+        self._d_model = d_model
+        self._num_heads = num_heads
+        self._num_layers = num_layers
+        self._use_mlp = use_mlp
+        self._transformer_mlp_hidden_dim = transformer_mlp_hidden_dim
+        self._dropout = dropout
 
         super().__init__(
             learning_rate=learning_rate,
@@ -125,6 +166,23 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
                 k=self._k,
                 d_k=self._d_k,
             )
+        elif self._model_type == "self_attention_mlp":
+            return SelfAttentionDenoiserWithMLP(
+                k=self._k,
+                d_k=self._d_k,
+                mlp_hidden_dim=self._mlp_hidden_dim,
+                mlp_num_layers=self._mlp_num_layers,
+            )
+        elif self._model_type == "multilayer_self_attention":
+            return MultiLayerSelfAttentionDenoiser(
+                k=self._k,
+                d_model=self._d_model,
+                num_heads=self._num_heads,
+                num_layers=self._num_layers,
+                use_mlp=self._use_mlp,
+                mlp_hidden_dim=self._transformer_mlp_hidden_dim,
+                dropout=self._dropout,
+            )
         else:
             raise ValueError(f"Unknown model type: {self._model_type}")
 
@@ -140,6 +198,11 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
             "linear_pe": "Linear PE",
             "filter_bank": f"Filter Bank (K={self._polynomial_degree})",
             "self_attention": f"Self-Attention (d_k={self._d_k})",
+            "self_attention_mlp": f"Self-Attention+MLP (d_k={self._d_k}, h={self._mlp_hidden_dim})",
+            "multilayer_self_attention": (
+                f"MultiLayer-SA (L={self._num_layers}, d={self._d_model}, "
+                f"h={self._num_heads}, mlp={self._use_mlp})"
+            ),
         }
         return name_map.get(self._model_type, self._model_type)
 

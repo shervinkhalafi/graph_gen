@@ -37,6 +37,7 @@ dependencies = [
   "torch-geometric>=2.5.0",  # PyG for benchmark datasets (QM9, ENZYMES, etc.)
   "modal>=0.64.0",           # Modal cloud execution (required for ModalRunner)
   "boto3>=1.26.0",           # S3-compatible storage for Tigris/AWS
+  "safetensors>=0.4.0",      # Fast tensor serialization for eigenstructure study
 ]
 
 [project.optional-dependencies]
@@ -44,7 +45,6 @@ test = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
 ray = ["ray[default]>=2.10.0"]  # Optional: local distributed execution with Ray
 
 [project.scripts]
-tmgg-attention = "tmgg.experiments.attention_denoising.runner:main"
 tmgg-digress = "tmgg.experiments.digress_denoising.runner:main"
 tmgg-gnn = "tmgg.experiments.gnn_denoising.runner:main"
 tmgg-hybrid = "tmgg.experiments.hybrid_denoising.runner:main"
@@ -61,6 +61,10 @@ tmgg-tb-export = "tmgg.experiment_utils.tensorboard_export.cli:main"
 # Modal stage runners (for direct Modal execution)
 tmgg-modal-stage1 = "tmgg.modal.stages.stage1:main"
 tmgg-modal-stage2 = "tmgg.modal.stages.stage2:main"
+# Eigenstructure study CLI
+tmgg-eigenstructure = "tmgg.experiment_utils.eigenstructure_study.cli:main"
+# Embedding dimension study CLI
+tmgg-embedding-study = "tmgg.experiment_utils.embedding_study.cli:main"
 
 [build-system]
 requires = ["hatchling"]

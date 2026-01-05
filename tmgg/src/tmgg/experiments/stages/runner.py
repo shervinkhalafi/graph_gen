@@ -102,7 +102,6 @@ def _run_stage(cfg: DictConfig, stage_name: str) -> dict[str, Any]:
         result = coordinator.run_stage(
             stage_config,
             cfg,
-            parallelism=cfg.get("parallelism", 4),
             resume=cfg.get("resume", True),
         )
 

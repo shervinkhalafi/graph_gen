@@ -16,7 +16,7 @@ Invariants:
     - No exception tracebacks in stderr
 
 The CLI runners tested cover all experiment types:
-    - Experiment runners: attention, digress, gnn, hybrid, spectral, grid-search
+    - Experiment runners: digress, gnn, hybrid, spectral, grid-search
     - Unified experiment runner: tmgg-experiment +stage=<stage_name>
 """
 
@@ -33,7 +33,6 @@ from tests.integration_utils import (
 
 # All CLI runners to test with their expected base config
 EXPERIMENT_RUNNERS = [
-    ("tmgg-attention", "base_config_attention"),
     ("tmgg-digress", "base_config_digress"),
     ("tmgg-gnn", "base_config_gnn"),
     ("tmgg-hybrid", "base_config_hybrid"),
@@ -125,14 +124,12 @@ class TestRunnerImports:
     def test_experiment_runner_imports(self) -> None:
         """Verify experiment runner modules import without error."""
         from tmgg.experiments import grid_search_runner
-        from tmgg.experiments.attention_denoising import runner as attention
         from tmgg.experiments.digress_denoising import runner as digress
         from tmgg.experiments.gnn_denoising import runner as gnn
         from tmgg.experiments.hybrid_denoising import runner as hybrid
         from tmgg.experiments.spectral_denoising import runner as spectral
 
         # Verify each has a main function
-        assert callable(attention.main)
         assert callable(digress.main)
         assert callable(gnn.main)
         assert callable(hybrid.main)

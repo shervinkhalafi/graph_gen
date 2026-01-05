@@ -396,3 +396,62 @@ uv run tmgg-attention trainer.deterministic=true
 ```
 
 The full configuration is saved in `outputs/.../config.yaml` for reproduction.
+
+## Analysis Tools
+
+Beyond training experiments, the framework provides CLI tools for spectral analysis.
+
+### Eigenstructure Study
+
+Analyze graph eigenstructure and how it changes under noise. CLI: `tmgg-eigenstructure`
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `collect` | Compute eigendecompositions for a dataset |
+| `analyze` | Run spectral analysis on collected data |
+| `noised` | Collect decompositions for noised graphs |
+| `compare` | Compare original vs noised eigenstructure |
+
+**Default output:** `results/eigenstructure_study/`
+
+```bash
+# Collect eigendecompositions for SBM graphs
+uv run tmgg-eigenstructure collect -d sbm \
+    -c '{"num_nodes": 50, "p_intra": 0.8, "q_inter": 0.1, "num_partitions": 100}'
+
+# Analyze collected data
+uv run tmgg-eigenstructure analyze -i results/eigenstructure_study
+
+# Add noise and compare
+uv run tmgg-eigenstructure noised -i results/eigenstructure_study \
+    -t gaussian -n 0.01,0.05,0.1
+
+uv run tmgg-eigenstructure compare \
+    -i results/eigenstructure_study \
+    -n results/eigenstructure_study/noised
+```
+
+### Embedding Dimension Study
+
+Find minimal embedding dimensions for exact graph reconstruction. CLI: `tmgg-embedding-study`
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `run` | Run dimension search on datasets |
+| `analyze` | Analyze existing study results |
+
+**Default output:** `results/embedding_study/`
+
+```bash
+# Run study on SBM graphs
+uv run tmgg-embedding-study run --datasets sbm --output results/embedding_study
+
+# Analyze results
+uv run tmgg-embedding-study analyze --input results/embedding_study/embedding_study.json
+```
+
+Results are stored as JSON (statistics) and safetensors (embeddings).

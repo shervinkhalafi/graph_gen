@@ -270,6 +270,52 @@ Standard multi-head attention layer.
 
 **Location:** `src/tmgg/models/layers/mha_layer.py`
 
+## Graph Embeddings
+
+The embeddings module provides tools for analyzing minimal embedding dimensions for exact graph reconstruction. Given a graph, it finds the smallest dimension d such that the graph can be perfectly reconstructed from node embeddings.
+
+**Location:** `src/tmgg/models/embeddings/`
+
+### Embedding Types
+
+| Type | Symmetric | Asymmetric | Reconstruction |
+|------|-----------|------------|----------------|
+| LPCA | `LPCASymmetric` | `LPCAAsymmetric` | A ≈ σ(X·Xᵀ) |
+| Dot Product | `DotProductSymmetric` | `DotProductAsymmetric` | A ≈ X·Xᵀ |
+| Dot Threshold | `DotThresholdSymmetric` | `DotThresholdAsymmetric` | A_ij = 1 iff xᵢ·xⱼ > τ |
+| Distance Threshold | `DistanceThresholdSymmetric` | — | A_ij = 1 iff ‖xᵢ-xⱼ‖ < τ |
+| Orthogonal | `OrthogonalRepSymmetric` | — | A_ij = 1 iff |xᵢ·xⱼ| > ε |
+
+### Fitters
+
+Two fitting strategies are available:
+
+- **Gradient**: Adam optimizer with BCE/MSE loss, temperature annealing for threshold models
+- **Spectral**: SVD-based closed-form solution for dot product, initialization for others
+
+### Dimension Search
+
+`DimensionSearcher` finds the minimal embedding dimension via binary search:
+
+```python
+from tmgg.models.embeddings.dimension_search import DimensionSearcher, EmbeddingType
+
+searcher = DimensionSearcher(
+    tol_fnorm=0.01,      # Frobenius norm tolerance
+    tol_accuracy=0.99,   # Edge accuracy threshold
+    fitter="both",       # "gradient", "spectral", or "both"
+)
+
+result = searcher.find_min_dimension(
+    adjacency,
+    EmbeddingType.DOT_PRODUCT_SYMMETRIC,
+)
+print(f"Min dimension: {result.min_dimension}")
+print(f"Final accuracy: {result.final_accuracy}")
+```
+
+The search starts at ceil(√n) and first searches downward if successful, then upward if needed.
+
 ## Domain Transformations
 
 Models support two domain transformations, configured via the `domain` parameter:

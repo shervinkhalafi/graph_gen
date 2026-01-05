@@ -69,6 +69,7 @@ def create_sbm_target(
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestDigressLevel1ConstantNoiseMemorization:
     """LEVEL 1: Can DiGress memorize a fixed input→output mapping?
 
@@ -156,6 +157,7 @@ class TestDigressLevel1ConstantNoiseMemorization:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestDigressLevel2FreshNoiseGeneralization:
     """LEVEL 2: Can DiGress generalize denoising with fresh noise each step?"""
 

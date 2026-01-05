@@ -1,0 +1,25 @@
+# Stage 2: Core Validation
+# Budget: ~166.5 GPU-hours
+# Validates generalization across configurations and compares with DiGress
+
+name: stage2_validation
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/filter_bank_nonlinear
+  - models/spectral/self_attention
+  - models/digress/digress_transformer
+
+datasets:
+  - data/sbm_default
+  # - data/sbm_n100  # Uncomment when config exists
+
+hyperparameters:
+  learning_rate: [1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
+  weight_decay: [1e-1, 1e-2, 1e-3]
+  # + prefix needed for Hydra struct mode
+  "+model.k": [4, 8, 16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage2_{arch}_{data}_{lr}_{wd}_{k}_s{seed}"

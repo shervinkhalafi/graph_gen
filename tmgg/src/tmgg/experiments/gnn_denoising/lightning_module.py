@@ -29,6 +29,7 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
         noise_type: str = "Digress",
         rotation_k: int = 20,
         seed: int | None = None,
+        **kwargs: Any,  # pyright: ignore[reportExplicitAny]
     ):
         """
         Initialize the Lightning module.
@@ -63,6 +64,7 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
             noise_type=noise_type,
             rotation_k=rotation_k,
             seed=seed,
+            **kwargs,
         )
 
     def _make_model(

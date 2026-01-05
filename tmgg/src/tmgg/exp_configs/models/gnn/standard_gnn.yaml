@@ -9,16 +9,18 @@ num_terms: 4
 feature_dim_in: 20
 feature_dim_out: 20
 
-# Common parameters
-learning_rate: 0.001
-loss_type: "MSE"
+# Training parameters (inherit from base_config_training.yaml)
+learning_rate: ${learning_rate}
+loss_type: ${loss_type}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
 scheduler_config:
   type: "cosine_warmup"
   warmup_fraction: 0.02
   decay_fraction: 0.8
 rotation_k: 20
 
-# These will be overridden by data config
-noise_type: "digress"
-noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
-seed: 42
+# These are overridden by base_config_gnn.yaml
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+seed: ${seed}

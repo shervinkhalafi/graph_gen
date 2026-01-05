@@ -1,5 +1,7 @@
 """Utilities for loading checkpoints with mismatched hyperparameters."""
 
+from __future__ import annotations
+
 import inspect
 import warnings
 from pathlib import Path
@@ -7,6 +9,8 @@ from typing import TypeVar
 
 import pytorch_lightning as pl
 import torch
+
+from tmgg.experiment_utils.exceptions import CheckpointMismatchError
 
 T = TypeVar("T", bound=pl.LightningModule)
 
@@ -16,14 +20,15 @@ def load_checkpoint_with_fallback[T: pl.LightningModule](
     checkpoint_path: str | Path,
     strict: bool = True,
     map_location: str | torch.device | None = None,
+    allow_unknown_hparams: bool = False,
     **override_kwargs,
 ) -> T:
     """
     Load a LightningModule from checkpoint with fallback for mismatched hyperparameters.
 
     When checkpoint contains hyperparameters that module's __init__ no longer accepts,
-    filters them out and retries loading. This handles backwards compatibility when
-    module signatures change between code versions.
+    raises an error by default. Set allow_unknown_hparams=True to filter them with a
+    warning instead.
 
     Parameters
     ----------
@@ -35,6 +40,9 @@ def load_checkpoint_with_fallback[T: pl.LightningModule](
         Whether to strictly enforce state_dict key matching.
     map_location
         Device to map tensors to during loading.
+    allow_unknown_hparams
+        If True, filter unknown hyperparameters with a warning instead of raising.
+        Defaults to False for strict behavior.
     **override_kwargs
         Additional kwargs to pass to __init__, overriding checkpoint values.
 
@@ -45,6 +53,8 @@ def load_checkpoint_with_fallback[T: pl.LightningModule](
 
     Raises
     ------
+    CheckpointMismatchError
+        If checkpoint contains unknown hyperparameters and allow_unknown_hparams=False.
     TypeError
         If loading fails for reasons other than unexpected keyword arguments.
     """
@@ -87,12 +97,14 @@ def load_checkpoint_with_fallback[T: pl.LightningModule](
             removed_keys.append(key)
 
     if removed_keys:
-        warnings.warn(
-            f"Checkpoint '{checkpoint_path}' has hyperparameters not accepted by "
-            f"{module_class.__name__}.__init__. Filtered: {removed_keys}",
-            UserWarning,
-            stacklevel=2,
+        message = (
+            f"Checkpoint '{checkpoint_path}' contains hyperparameters not accepted by "
+            f"{module_class.__name__}.__init__: {removed_keys}. "
+            f"Set allow_unknown_hparams=True to filter them."
         )
+        if not allow_unknown_hparams:
+            raise CheckpointMismatchError(message)
+        warnings.warn(message, UserWarning, stacklevel=2)
 
     # Instantiate with filtered hparams and load state dict
     final_hparams = {**filtered_hparams, **override_kwargs}

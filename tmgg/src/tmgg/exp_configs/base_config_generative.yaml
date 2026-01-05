@@ -1,0 +1,76 @@
+# Base configuration for generative graph modeling experiments
+#
+# Run with: python -m tmgg.experiments.generative.runner
+# Override: python -m tmgg.experiments.generative.runner model.model_type=gnn
+
+defaults:
+  - base/trainer/default@trainer
+  - base/logger/default
+  - base/callbacks/default
+  - base/progress_bar/default
+  - _self_
+
+experiment_name: "generative_graph"
+
+# Random seed
+seed: 42
+
+# Model configuration
+model:
+  _target_: tmgg.experiments.generative.lightning_module.GenerativeLightningModule
+  model_type: self_attention
+  model_config:
+    k: 8
+    d_k: 64
+  num_diffusion_steps: 100
+  noise_schedule: cosine
+  noise_type: digress
+  loss_type: MSE
+  mmd_kernel: gaussian
+  mmd_sigma: 1.0
+  eval_num_samples: 100
+  learning_rate: ${learning_rate}
+  weight_decay: ${weight_decay}
+  optimizer_type: ${optimizer_type}
+
+# Data configuration
+data:
+  _target_: tmgg.experiments.generative.datamodule.GraphDistributionDataModule
+  dataset_type: sbm
+  num_nodes: 50
+  num_graphs: 1000
+  train_ratio: 0.8
+  val_ratio: 0.1
+  batch_size: 32
+  num_workers: 0
+  seed: ${seed}
+  dataset_config:
+    num_blocks: 2
+    p_in: 0.7
+    p_out: 0.1
+  noise_levels: ${noise_levels}
+
+# Training settings
+learning_rate: 1e-3
+weight_decay: 1e-4
+optimizer_type: adamw
+
+# Noise levels (for compatibility)
+noise_levels: [0.1, 0.3, 0.5]
+
+# Training resumption
+force_fresh: false
+sanity_check: false
+
+# Paths
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results
+
+# Hydra output
+hydra:
+  run:
+    dir: outputs/generative/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/generative/sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

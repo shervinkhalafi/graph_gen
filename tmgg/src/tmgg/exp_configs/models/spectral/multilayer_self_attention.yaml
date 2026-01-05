@@ -1,0 +1,38 @@
+# Multilayer Self-Attention denoiser with transformer blocks
+# V → project → L×(attention + residual + [MLP + residual]) → Q,K → Â
+
+_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+
+model_type: multilayer_self_attention
+
+# Number of eigenvectors (input dimension)
+k: 8
+
+# Transformer architecture
+d_model: 64
+num_heads: 4
+num_layers: 2
+
+# MLP in transformer blocks
+use_mlp: true
+transformer_mlp_hidden_dim: null  # defaults to 4 * d_model
+
+# Regularization
+dropout: 0.0
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
+
+# Loss
+loss_type: ${loss_type}

@@ -310,7 +310,6 @@ class ExperimentCoordinator:
         self,
         stage: StageConfig,
         base_config: DictConfig,
-        parallelism: int = 4,
         resume: bool = True,
     ) -> StageResult:
         """Execute all experiments in a stage.
@@ -321,8 +320,6 @@ class ExperimentCoordinator:
             Stage configuration.
         base_config
             Base Hydra configuration.
-        parallelism
-            Maximum concurrent experiments.
         resume
             If True, skip experiments with existing results.
 
@@ -347,7 +344,6 @@ class ExperimentCoordinator:
         results = self.runner.run_sweep(
             configs,
             gpu_type=stage.gpu_type,
-            parallelism=parallelism,
             timeout_seconds=stage.timeout_seconds,
         )
 

@@ -25,13 +25,16 @@ class TigrisStorage:
 
     DEFAULT_ENDPOINT = "https://fly.storage.tigris.dev"
 
-    def __init__(self, prefix: str = "tmgg-experiments"):
+    def __init__(self, prefix: str = "tmgg-experiments", path_prefix: str = ""):
         """Initialize Tigris storage from environment variables.
 
         Parameters
         ----------
         prefix
-            Key prefix for all objects. Default "tmgg-experiments".
+            Bucket-level key prefix for all objects. Default "tmgg-experiments".
+        path_prefix
+            Secondary path prefix for run isolation (e.g., "2025-01-05").
+            Inserted between bucket prefix and object paths.
 
         Raises
         ------
@@ -59,6 +62,7 @@ class TigrisStorage:
 
         self.region = "auto"  # Tigris handles region automatically
         self.prefix = prefix
+        self.path_prefix = path_prefix
         self._client = None
 
     @property
@@ -77,10 +81,13 @@ class TigrisStorage:
         return self._client
 
     def _full_key(self, key: str) -> str:
-        """Add prefix to key."""
-        if self.prefix:
-            return f"{self.prefix}/{key}"
-        return key
+        """Construct full S3 key from relative key.
+
+        Combines bucket prefix, path prefix, and key into a single path.
+        Empty components are filtered out.
+        """
+        parts = [self.prefix, self.path_prefix, key]
+        return "/".join(p for p in parts if p)
 
     def upload_file(self, local_path: Path, remote_key: str) -> str:
         """Upload a local file to Tigris.
@@ -276,8 +283,13 @@ class TigrisStorage:
         return uploaded
 
 
-def get_storage_from_env() -> TigrisStorage | None:
+def get_storage_from_env(path_prefix: str = "") -> TigrisStorage | None:
     """Create TigrisStorage if environment is configured.
+
+    Parameters
+    ----------
+    path_prefix
+        Secondary path prefix for run isolation (e.g., "2025-01-05").
 
     Returns
     -------
@@ -285,6 +297,6 @@ def get_storage_from_env() -> TigrisStorage | None:
         Storage instance if configured, None otherwise.
     """
     try:
-        return TigrisStorage()
+        return TigrisStorage(path_prefix=path_prefix)
     except ValueError:
         return None

@@ -1,0 +1,23 @@
+# Stage 1: Proof of Concept
+# Budget: ~4.4 GPU-hours
+# Tests Linear PE, Graph Filter + Sigmoid, Self-Attention on SBM n=50
+
+name: stage1_poc
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/linear_pe
+  - models/spectral/filter_bank
+  - models/spectral/self_attention
+
+# datasets not specified = use base config default (sbm n=50)
+
+hyperparameters:
+  learning_rate: [1e-4, 5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  # + prefix needed for Hydra struct mode
+  "+model.k": [8, 16]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage1_{arch}_{lr}_{wd}_{k}_s{seed}"

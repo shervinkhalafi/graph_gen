@@ -49,6 +49,12 @@ data:
 # Visualization settings (step-based)
 visualization_interval: 5000  # steps between logging visualizations
 
+# Spectral delta logging (for eigenstructure tracking during training)
+# When enabled, logs eigengap delta, algebraic connectivity delta,
+# eigenvalue drift, and subspace distance for noisy→clean and denoised→clean.
+log_spectral_deltas: false  # Set true to enable spectral delta metrics
+spectral_k: 4               # Number of top eigenvectors for subspace comparison
+
 # Random seed for reproducibility
 seed: 42
 

@@ -22,6 +22,7 @@ class MultiLayerAttention(DenoisingModel):
         d_v: int | None = None,
         dropout: float = 0.0,
         bias: bool = False,
+        use_residual: bool = True,
     ):
         """
         Initialize the Multi-Layer Attention module.
@@ -34,6 +35,7 @@ class MultiLayerAttention(DenoisingModel):
             d_v: Dimension of values (default: d_model // num_heads)
             dropout: Dropout probability
             bias: Whether to use bias in linear layers
+            use_residual: Whether to apply residual connections in attention layers
         """
         super().__init__()
 
@@ -44,6 +46,7 @@ class MultiLayerAttention(DenoisingModel):
         self.d_v = d_v if d_v is not None else d_model // num_heads
         self.dropout = dropout
         self.bias = bias
+        self.use_residual = use_residual
 
         # Create stack of attention layers
         self.layers = nn.ModuleList(
@@ -55,6 +58,7 @@ class MultiLayerAttention(DenoisingModel):
                     d_v=self.d_v,
                     dropout=dropout,
                     bias=bias,
+                    use_residual=use_residual,
                 )
                 for _ in range(num_layers)
             ]
@@ -92,4 +96,5 @@ class MultiLayerAttention(DenoisingModel):
             "d_v": self.d_v,
             "dropout": self.dropout,
             "bias": self.bias,
+            "use_residual": self.use_residual,
         }

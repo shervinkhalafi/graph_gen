@@ -2,6 +2,8 @@
 # then just change model (define setup hook?) since we want to study architectures
 """Base Lightning module for denoising experiments."""
 
+from __future__ import annotations
+
 import abc
 from abc import abstractmethod
 from collections import defaultdict
@@ -20,6 +22,7 @@ from tmgg.experiment_utils import (
     create_graph_denoising_figure,
     create_noise_generator,
 )
+from tmgg.experiment_utils.exceptions import ConfigurationError
 from tmgg.experiment_utils.logging import log_figure
 
 
@@ -76,13 +79,14 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         amsgrad: bool = False,
         loss_type: str = "MSE",
         scheduler_config: dict[str, Any] | None = None,
-        noise_levels: list[float] | None = None,
         eval_noise_levels: list[float] | None = None,
         noise_type: str = "Digress",
         rotation_k: int = 20,
         seed: int | None = None,
         visualization_interval: int = 5000,
-        fixed_noise_seed: int | None = None,
+        spectral_k: int = 4,
+        log_spectral_deltas: bool = False,
+        log_rotation_angles: bool = False,
         **kwargs,
     ):
         """
@@ -100,21 +104,22 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                 - T_warmup: Warmup steps (for cosine_warmup)
                 - T_0, T_mult: CosineAnnealingWarmRestarts params
                 - step_size, gamma: StepLR params
-            noise_levels: List of noise levels to sample from during training
             eval_noise_levels: List of noise levels for evaluation. If None, uses
-                noise_levels (same as training).
+                the datamodule's noise_levels (same as training).
             noise_type: Type of noise to use ("Gaussian", "Rotation", "Digress")
             rotation_k: Dimension for rotation noise skew matrix (number of eigenvectors)
             seed: Random seed for reproducible noise generation
             visualization_interval: Steps between logging visualizations (default: 5000)
-            fixed_noise_seed: If set, pre-computes and caches noise patterns for each
-                (batch_idx, eps) pair. The cached noisy batch is reused across epochs,
-                enabling constant noise memorization tests. Set to None for fresh noise.
+            spectral_k: Number of top eigenvectors for subspace comparison in spectral
+                delta metrics. Only used when log_spectral_deltas=True.
+            log_spectral_deltas: If True, compute and log spectral delta metrics during
+                validation/test. Tracks eigengap delta, algebraic connectivity delta,
+                eigenvalue drift, and subspace distance for noisy→clean and denoised→clean.
+            log_rotation_angles: If True (and log_spectral_deltas=True), also compute
+                Procrustes rotation angle and residual metrics.
         """
         super().__init__()
-        # Exclude noise_levels to avoid hparam conflict with datamodule
-        # (datamodule is the authoritative source for noise_levels)
-        _ = self.save_hyperparameters(ignore=["noise_levels"])
+        _ = self.save_hyperparameters()
 
         # Model (typed as Protocol for methods, but actual impl is nn.Module subclass)
         self.model: _DenoisingModelProtocol = self._make_model(
@@ -124,7 +129,6 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             learning_rate=learning_rate,
             loss_type=loss_type,
             scheduler_config=scheduler_config,
-            noise_levels=noise_levels,
             noise_type=noise_type,
             rotation_k=rotation_k,
             seed=seed,
@@ -137,8 +141,8 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         elif loss_type == "BCEWithLogits":
             self.criterion = nn.BCEWithLogitsLoss()
         else:
-            raise ValueError(
-                f"Unknown loss type: {loss_type}. Use 'MSE' or 'BCEWithLogits'."
+            raise ConfigurationError(
+                f"Unknown loss_type: {loss_type}. Use 'MSE' or 'BCEWithLogits'."
             )
 
         # Store configuration
@@ -147,7 +151,6 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         self.optimizer_type: str = optimizer_type.lower()
         self.amsgrad: bool = amsgrad
         self.scheduler_config: dict[str, Any] | None = scheduler_config
-        self._noise_levels_override: list[float] | None = noise_levels
         self._eval_noise_levels_override: list[float] | None = eval_noise_levels
         self.noise_type: str = noise_type
         self.visualization_interval: int = visualization_interval
@@ -163,36 +166,33 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         self.train_metrics: list[Any] = []
         self.val_metrics: list[Any] = []
 
-        # Fixed noise mode for sanity check (constant noise memorization)
-        self.fixed_noise_seed: int | None = fixed_noise_seed
-        self._noise_cache: dict[tuple[int, float], torch.Tensor] = {}
-        self._clean_cache: dict[int, torch.Tensor] = {}
+        # Spectral delta logging configuration
+        self.spectral_k: int = spectral_k
+        self.log_spectral_deltas: bool = log_spectral_deltas
+        self.log_rotation_angles: bool = log_rotation_angles
 
     @property
     def noise_levels(self) -> list[float]:
-        """Get noise levels from datamodule or override.
+        """Get noise levels from the datamodule (authoritative source).
 
-        Returns the noise levels to use for training and evaluation. Prefers
-        the datamodule's noise_levels when attached to a trainer, but falls
-        back to the override value (or default) during standalone usage.
+        Raises
+        ------
+        RuntimeError
+            If not attached to a trainer with a datamodule that has noise_levels.
         """
-        # Try to get noise_levels from trainer's datamodule
-        # Note: Lightning's trainer property raises RuntimeError when not attached
-        try:
-            trainer = self.trainer
-            if trainer is not None:
-                datamodule = getattr(trainer, "datamodule", None)
-                if datamodule is not None:
-                    noise_levels = getattr(datamodule, "noise_levels", None)
-                    if noise_levels is not None:
-                        return cast(list[float], noise_levels)
-        except RuntimeError:
-            pass  # Not attached to trainer yet
-
-        # Fall back to override or default
-        if self._noise_levels_override is not None:
-            return self._noise_levels_override
-        return [0.01, 0.05, 0.1, 0.2, 0.3]  # Default fallback
+        dm = self.datamodule
+        if dm is None:
+            raise RuntimeError(
+                "Cannot access noise_levels: not attached to trainer with datamodule. "
+                "Ensure the module is attached to a trainer before accessing noise_levels."
+            )
+        levels = getattr(dm, "noise_levels", None)
+        if levels is None:
+            raise RuntimeError(
+                f"Datamodule {type(dm).__name__} does not have noise_levels attribute. "
+                "Ensure your DataModule provides 'noise_levels'."
+            )
+        return cast(list[float], levels)
 
     @property
     def eval_noise_levels(self) -> list[float]:
@@ -205,16 +205,25 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             return self._eval_noise_levels_override
         return self.noise_levels  # Default: same as training
 
-    def _get_datamodule(self) -> pl.LightningDataModule | None:
-        """Safely get the datamodule from the trainer.
+    @property
+    def datamodule(self) -> pl.LightningDataModule | None:
+        """Access the trainer's datamodule, if attached.
 
         Returns None if no trainer is attached or if the trainer has no datamodule.
         Uses getattr to avoid pyright errors with Lightning's incomplete type stubs.
         """
-        trainer = self.trainer
-        if trainer is None:
+        if self.trainer is None:
             return None
-        return cast(pl.LightningDataModule | None, getattr(trainer, "datamodule", None))
+        return cast(
+            pl.LightningDataModule | None, getattr(self.trainer, "datamodule", None)
+        )
+
+    def _get_datamodule(self) -> pl.LightningDataModule | None:
+        """Safely get the datamodule from the trainer.
+
+        Deprecated: Use the `datamodule` property instead.
+        """
+        return self.datamodule
 
     @abstractmethod
     def _make_model(self, *args: Any, **kwargs: Any) -> _DenoisingModelProtocol:  # pyright: ignore[reportExplicitAny, reportAny]
@@ -317,7 +326,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         _ = super().setup(stage)
 
         # Validate datamodule provides required attributes
-        dm = self._get_datamodule()
+        dm = self.datamodule
         if dm is None:
             return  # Skip validation if no trainer/datamodule
 
@@ -348,7 +357,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
 
             # Estimate steps per epoch for readable output
             steps_per_epoch: int = 1
-            dm = self._get_datamodule()
+            dm = self.datamodule
             if dm is not None:
                 try:
                     train_loader = dm.train_dataloader()
@@ -392,11 +401,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         return output
 
     def _apply_noise(self, batch: torch.Tensor, eps: float) -> torch.Tensor:
-        """Apply noise to batch, with optional caching for sanity check mode.
-
-        In normal mode (fixed_noise_seed=None), generates fresh noise each call.
-        In sanity check mode (fixed_noise_seed set), generates ONE noise pattern
-        and broadcasts it to all graphs in all batches.
+        """Apply noise to batch.
 
         Parameters
         ----------
@@ -410,83 +415,29 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         torch.Tensor
             Noisy adjacency matrices, same shape as input.
         """
-        if self.fixed_noise_seed is None:
-            noisy_batch: torch.Tensor = self.noise_generator.add_noise(batch, eps)
-            return noisy_batch
-
-        # Sanity check mode: use SINGLE noise pattern for all batches
-        B, N, _ = batch.shape
-        cache_key: tuple[int, float] = (N, eps)
-
-        if cache_key not in self._noise_cache:
-            # Generate noise for ONE graph with fixed seed
-            # Use cached clean graph to ensure consistent (clean, noisy) pair
-            clean_graph: torch.Tensor = self._get_cached_clean(batch)
-            _ = torch.manual_seed(self.fixed_noise_seed)
-            _ = np.random.seed(self.fixed_noise_seed)
-            self._noise_cache[cache_key] = self.noise_generator.add_noise(
-                clean_graph, eps
-            ).detach()
-
-        # Broadcast to batch size
-        cached: torch.Tensor = self._noise_cache[cache_key].to(batch.device)
-        return cached.expand(B, -1, -1)
-
-    def _get_cached_clean(self, batch: torch.Tensor) -> torch.Tensor:
-        """Get cached clean graph for fixed noise mode.
-
-        Caches the first clean graph seen for each graph size N.
-        All subsequent calls return this same graph, ensuring the model
-        always trains on the same (noisy, clean) pair.
-        """
-        B, N, _ = batch.shape
-        if N not in self._clean_cache:
-            self._clean_cache[N] = batch[:1].clone().detach()
-        cached_clean: torch.Tensor = self._clean_cache[N]
-        return cached_clean
-
-    def _get_fixed_target(self, batch: torch.Tensor) -> torch.Tensor:
-        """Get target for fixed noise mode.
-
-        Returns the cached clean graph broadcasted to batch size.
-        This ensures the target matches the cached noisy input.
-        """
-        B, N, _ = batch.shape
-        cached: torch.Tensor = self._get_cached_clean(batch).to(batch.device)
-        return cached.expand(B, -1, -1)
+        return self.noise_generator.add_noise(batch, eps)
 
     @override
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> dict[str, Any]:
         """Execute single training step with noise application.
-
-        In normal mode: noise is sampled fresh for each batch.
-        In sanity check mode (fixed_noise_seed set): uses cached noise patterns
-        so the model sees identical noisy inputs across epochs.
 
         Parameters
         ----------
         batch
             Batch of clean adjacency matrices, shape (B, N, N).
         batch_idx
-            Index of current batch. Used as cache key in fixed noise mode.
+            Index of current batch.
 
         Returns
         -------
         dict
             Dictionary with 'loss' (required by Lightning) and 'logits' for debugging.
         """
-        # In fixed noise mode, use first noise level; else sample randomly
-        eps: float
-        target: torch.Tensor
-        if self.fixed_noise_seed is not None:
-            eps = self.noise_levels[0]
-            # Use cached clean graph as target (matches cached noisy input)
-            target = self._get_fixed_target(batch)
-        else:
-            eps = float(np.random.choice(self.noise_levels))
-            target = batch
+        # Sample noise level randomly from training noise levels
+        eps: float = float(np.random.choice(self.noise_levels))
+        target: torch.Tensor = batch
 
-        # Add noise (cached in fixed noise mode, fresh otherwise)
+        # Add noise
         batch_noisy: torch.Tensor = self._apply_noise(batch, eps)
 
         # Forward pass using noisy adjacency matrix
@@ -505,29 +456,24 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             train_acc: torch.Tensor = (predictions == target).float().mean()
 
         # Log metrics
-        _ = self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        _ = self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         _ = self.log(
-            "train_accuracy", train_acc, on_step=True, on_epoch=True, prog_bar=True
+            "train/accuracy", train_acc, on_step=True, on_epoch=True, prog_bar=True
         )
-        _ = self.log("train_noise_level", eps, on_step=False, on_epoch=True)
+        _ = self.log("train/noise_level", eps, on_step=False, on_epoch=True)
 
         # Return dict with loss and logits for debugging callbacks
         return {"loss": loss, "logits": output}
 
     def _val_or_test(self, mode: str, batch: torch.Tensor) -> dict[str, torch.Tensor]:
-        # In fixed noise mode, use cached clean graph as target
-        target: torch.Tensor
-        if self.fixed_noise_seed is not None:
-            target = self._get_fixed_target(batch)
-        else:
-            target = batch
+        target: torch.Tensor = batch
 
         # Evaluate across all eval noise levels
         mode_loss_mean: float = 0.0
         batch_metrics_mean: defaultdict[str, float] = defaultdict(lambda: 0.0)
         N: int = len(self.eval_noise_levels)
         for eps in self.eval_noise_levels:
-            # Add noise (cached in fixed noise mode, fresh otherwise)
+            # Add noise
             batch_noisy: torch.Tensor = self._apply_noise(batch, eps)
 
             # Forward pass
@@ -558,6 +504,11 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                 _ = self.log(
                     f"{mode}_{eps}/{metric_name}", value, on_step=False, on_epoch=True
                 )
+
+            # Log spectral delta metrics if enabled
+            if self.log_spectral_deltas:
+                self._log_spectral_deltas(mode, eps, target, batch_noisy, predictions)
+
             mode_loss_mean += mode_loss.item() / N
             for k, v in batch_metrics.items():
                 batch_metrics_mean[k] += v / N
@@ -573,6 +524,68 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             k: torch.tensor(v) for k, v in batch_metrics_mean.items()
         }
         return {f"{mode}_loss": mode_loss_mean_tensor, **batch_metrics_mean_dict}
+
+    def _log_spectral_deltas(
+        self,
+        mode: str,
+        eps: float,
+        A_clean: torch.Tensor,
+        A_noisy: torch.Tensor,
+        A_denoised: torch.Tensor,
+    ) -> None:
+        """Log spectral delta metrics for noisy→clean and denoised→clean comparisons.
+
+        Computes four spectral delta metrics:
+        - eigengap_delta: Relative change in spectral gap
+        - alg_conn_delta: Relative change in algebraic connectivity
+        - eigenvalue_drift: Relative L2 distance of eigenvalues
+        - subspace_distance: Frobenius norm of projection difference
+
+        Parameters
+        ----------
+        mode
+            Logging mode ("val" or "test").
+        eps
+            Noise level.
+        A_clean
+            Clean adjacency matrices, shape (batch, n, n).
+        A_noisy
+            Noisy adjacency matrices, same shape.
+        A_denoised
+            Denoised (predicted) adjacency matrices, same shape.
+        """
+        from tmgg.experiment_utils.spectral_deltas import compute_spectral_deltas
+
+        with torch.no_grad():
+            # Compute spectral deltas: noisy vs clean
+            deltas_noisy = compute_spectral_deltas(
+                A_clean,
+                A_noisy,
+                k=self.spectral_k,
+                compute_rotation=self.log_rotation_angles,
+            )
+            for name, values in deltas_noisy.items():
+                _ = self.log(
+                    f"{mode}_{eps}/noisy_{name}",
+                    values.mean(),
+                    on_step=False,
+                    on_epoch=True,
+                )
+
+            # Compute spectral deltas: denoised vs clean
+            deltas_denoised = compute_spectral_deltas(
+                A_clean,
+                A_denoised,
+                k=self.spectral_k,
+                compute_rotation=self.log_rotation_angles,
+            )
+            for name, values in deltas_denoised.items():
+                _ = self.log(
+                    f"{mode}_{eps}/denoised_{name}",
+                    values.mean(),
+                    on_step=False,
+                    on_epoch=True,
+                )
 
     @override
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> dict[str, torch.Tensor]:
@@ -627,7 +640,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             return
 
         # Require datamodule for visualization
-        dm = self._get_datamodule()
+        dm = self.datamodule
         if dm is None:
             return
 
@@ -779,7 +792,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                 if trainer.max_steps and trainer.max_steps > 0:
                     estimated_total_steps = trainer.max_steps
                 else:
-                    dm = self._get_datamodule()
+                    dm = self.datamodule
                     if dm is not None:
                         # Fallback: compute from epochs (legacy compatibility)
                         try:

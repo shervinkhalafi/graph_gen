@@ -111,7 +111,15 @@ class TestTrainingPipeline:
     def test_training_step_produces_finite_loss(
         self, minimal_config, sample_adjacency_matrices
     ):
-        """Test that training step produces finite loss."""
+        """Test that training step produces finite loss.
+
+        Note: training_step requires noise_levels from the datamodule,
+        so we must attach a trainer with datamodule before calling it.
+        We also mock self.log since it requires an active training loop.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from tmgg.experiment_utils.data.data_module import GraphDataModule
         from tmgg.experiments.spectral_denoising.lightning_module import (
             SpectralDenoisingLightningModule,
         )
@@ -120,11 +128,25 @@ class TestTrainingPipeline:
             model_type=minimal_config.model.model_type,
             k=minimal_config.model.k,
             learning_rate=minimal_config.learning_rate,
-            noise_levels=minimal_config.noise_levels,
             loss_type=minimal_config.loss_type,
         )
 
-        result = module.training_step(sample_adjacency_matrices, batch_idx=0)  # pyright: ignore[reportArgumentType]
+        # Create datamodule with noise_levels (required by training_step)
+        data_module = GraphDataModule(
+            dataset_name="sbm",
+            dataset_config={"num_nodes": 20, "num_graphs": 4},
+            batch_size=4,
+            noise_levels=minimal_config.noise_levels,
+        )
+
+        # Create mock trainer with datamodule
+        mock_trainer = MagicMock(spec=pl.Trainer)
+        mock_trainer.datamodule = data_module
+        module._trainer = mock_trainer  # pyright: ignore[reportPrivateUsage]
+
+        # Mock self.log to avoid MisconfigurationException
+        with patch.object(module, "log", return_value=None):
+            result = module.training_step(sample_adjacency_matrices, batch_idx=0)  # pyright: ignore[reportArgumentType]
 
         # training_step returns dict with 'loss' key
         loss = result["loss"]

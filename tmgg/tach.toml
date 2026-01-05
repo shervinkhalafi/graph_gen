@@ -49,6 +49,13 @@ depends_on = [
 ]
 # Base utilities can use cloud and data submodules
 
+[[modules]]
+path = "tmgg.experiment_utils.embedding_study"
+depends_on = [
+    "tmgg.models",  # Uses embedding models for dimension search
+]
+# Embedding study is research tooling, allowed to use models
+
 # ============================================================
 # RESEARCH MODULES (unchecked for rapid iteration)
 # ============================================================
