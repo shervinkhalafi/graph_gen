@@ -90,6 +90,78 @@ def add_gaussian_noise(A: torch.Tensor | np.ndarray, eps: float) -> torch.Tensor
     return A_noisy
 
 
+def add_logit_noise(
+    A: torch.Tensor | np.ndarray,
+    sigma: float,
+    clamp_eps: float = 1e-6,
+) -> torch.Tensor:
+    """Add Gaussian noise in logit space, returning soft adjacency in (0, 1).
+
+    This noise process operates in the logit (log-odds) space, which provides
+    natural bounds for the resulting noisy adjacency values. The transformation
+    pipeline is:
+
+        A ∈ {0,1}  →  clamp to [ε, 1-ε]  →  logit: L = log(A/(1-A))
+            →  L_noisy = L + N(0, σ²)  →  sigmoid: P = 1/(1+e^{-L_noisy})
+
+    Parameters
+    ----------
+    A
+        Input adjacency matrix (binary or soft). Can be a single matrix (n, n)
+        or a batch (batch_size, n, n).
+    sigma
+        Standard deviation of Gaussian noise in logit space. Typical range is
+        0.5 to 5.0. Higher values cause more aggressive edge perturbation.
+    clamp_eps
+        Small epsilon for clamping to avoid log(0) or log(inf). Default 1e-6.
+
+    Returns
+    -------
+    torch.Tensor
+        Noisy adjacency matrix with values in (0, 1). The output is symmetric
+        if the input was symmetric, since noise is applied symmetrically.
+
+    Notes
+    -----
+    - Unlike flip-based noise (DiGress), this produces soft/continuous outputs
+    - The sigma parameter controls noise severity in log-odds space:
+      - sigma=0.5: mild perturbation, most edges retain original polarity
+      - sigma=2.0: moderate perturbation
+      - sigma=5.0: aggressive perturbation, significant edge flipping
+
+    Examples
+    --------
+    >>> A = torch.eye(5)
+    >>> A_noisy = add_logit_noise(A, sigma=1.0)
+    >>> assert A_noisy.min() > 0 and A_noisy.max() < 1
+    >>> assert torch.allclose(A_noisy, A_noisy.T)  # Symmetric
+    """
+    # Convert to tensor if needed
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+
+    # Clamp for numerical stability (avoid log(0) and log(inf))
+    A_clamped = A.clamp(clamp_eps, 1 - clamp_eps)
+
+    # Transform to logit space: L = log(A / (1 - A))
+    L = torch.logit(A_clamped)
+
+    # Generate symmetric noise (upper triangle mirrored to lower)
+    noise = torch.randn_like(L) * sigma
+
+    if L.dim() == 2:
+        # Single matrix case
+        noise = torch.triu(noise, diagonal=1)
+        noise = noise + noise.T
+    else:
+        # Batch case
+        noise = torch.triu(noise, diagonal=1)
+        noise = noise + noise.transpose(-2, -1)
+
+    # Add noise in logit space and transform back via sigmoid
+    L_noisy = L + noise
+    return torch.sigmoid(L_noisy)
+
+
 def add_digress_noise(
     A: torch.Tensor | np.ndarray,
     p: float,

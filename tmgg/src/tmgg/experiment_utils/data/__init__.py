@@ -16,12 +16,14 @@ from .eigendecomposition import (
 from .noise import (
     add_digress_noise,
     add_gaussian_noise,
+    add_logit_noise,
     add_rotation_noise,
     random_skew_symmetric_matrix,
 )
 from .noise_generators import (
     DigressNoiseGenerator,
     GaussianNoiseGenerator,
+    LogitNoiseGenerator,
     NoiseGenerator,
     RotationNoiseGenerator,
     create_noise_generator,
@@ -45,12 +47,14 @@ __all__ = [
     # Noise functions
     "add_digress_noise",
     "add_gaussian_noise",
+    "add_logit_noise",
     "add_rotation_noise",
     "random_skew_symmetric_matrix",
     # Noise generators
     "NoiseGenerator",
     "GaussianNoiseGenerator",
     "DigressNoiseGenerator",
+    "LogitNoiseGenerator",
     "RotationNoiseGenerator",
     "create_noise_generator",
     # SBM functions

@@ -16,6 +16,11 @@ from tmgg.experiment_utils import (
     generate_sbm_adjacency,
     random_skew_symmetric_matrix,
 )
+from tmgg.experiment_utils.data import (
+    LogitNoiseGenerator,
+    add_logit_noise,
+    create_noise_generator,
+)
 
 
 class TestSBMGeneration:
@@ -241,6 +246,144 @@ class TestNoiseGeneration:
 
         A_rot = add_rotation_noise(A_np, 0.1, random_skew_symmetric_matrix(5))
         assert isinstance(A_rot, torch.Tensor)
+
+
+class TestLogitNoise:
+    """Test logit-space noise generation.
+
+    Test Rationale
+    --------------
+    Logit noise operates in log-odds space, transforming binary adjacencies to
+    continuous probabilities. The key properties we verify are:
+    - Output bounds: values must lie in (0, 1) due to sigmoid activation
+    - Symmetry preservation: noise is applied symmetrically to upper triangle
+    - Numerical stability: edge cases near 0 and 1 are handled via clamping
+    - Batch handling: consistent behavior for single and batched inputs
+    """
+
+    def test_add_logit_noise_output_bounds(self):
+        """Verify output is strictly within (0, 1) interval."""
+        A = torch.eye(5)
+        sigma = 2.0
+
+        A_noisy = add_logit_noise(A, sigma)
+
+        assert A_noisy.min() > 0, "Output should be strictly positive"
+        assert A_noisy.max() < 1, "Output should be strictly less than 1"
+
+    def test_add_logit_noise_symmetry(self):
+        """Verify noisy adjacency remains symmetric."""
+        A = torch.eye(5)
+        sigma = 1.0
+
+        A_noisy = add_logit_noise(A, sigma)
+
+        assert torch.allclose(A_noisy, A_noisy.T), "Output should be symmetric"
+
+    def test_add_logit_noise_batch(self):
+        """Test logit noise with batched input."""
+        batch_size = 3
+        A = torch.eye(5).unsqueeze(0).repeat(batch_size, 1, 1)
+        sigma = 1.0
+
+        A_noisy = add_logit_noise(A, sigma)
+
+        assert A_noisy.shape == (batch_size, 5, 5), "Batch shape should be preserved"
+        assert A_noisy.min() > 0 and A_noisy.max() < 1, "Bounds should hold for batch"
+
+        # Each batch element should be symmetric
+        for i in range(batch_size):
+            assert torch.allclose(A_noisy[i], A_noisy[i].T)
+
+        # Batch elements should differ due to independent noise
+        assert not torch.allclose(A_noisy[0], A_noisy[1])
+
+    def test_add_logit_noise_intensity(self):
+        """Verify sigma controls noise intensity.
+
+        Note: Noise is only applied to off-diagonal elements (upper triangle,
+        mirrored for symmetry). The diagonal remains unperturbed, reflecting
+        that self-loops are typically excluded from noise processes.
+        """
+        A = torch.eye(5)
+
+        A_low = add_logit_noise(A, sigma=0.5)
+        A_high = add_logit_noise(A, sigma=3.0)
+
+        # Extract upper triangular off-diagonal elements (where noise was applied)
+        # Original off-diagonal values were 0.0 -> clamped -> logit -> noise -> sigmoid
+        mask = torch.triu(torch.ones(5, 5, dtype=torch.bool), diagonal=1)
+        offdiag_low = A_low[mask]
+        offdiag_high = A_high[mask]
+
+        # With higher sigma, off-diagonal values should have more variance
+        # (pushed further from their baseline by larger noise)
+        assert (
+            offdiag_high.std() > 0
+        ), "High sigma should produce varied off-diagonal values"
+        # Also check that high sigma produces more variance than low sigma on average
+        # (stochastic, but very likely with sigma 0.5 vs 3.0)
+        assert (
+            offdiag_high.std() >= offdiag_low.std() * 0.5
+        ), "High sigma should have similar or more variance"
+
+    def test_add_logit_noise_numpy_input(self):
+        """Test that numpy arrays are handled correctly."""
+        A_np = np.eye(5)
+        sigma = 1.0
+
+        A_noisy = add_logit_noise(A_np, sigma)
+
+        assert isinstance(A_noisy, torch.Tensor)
+        assert A_noisy.min() > 0 and A_noisy.max() < 1
+
+    def test_add_logit_noise_clamp_eps(self):
+        """Test numerical stability with custom clamp epsilon."""
+        # Binary adjacency matrix
+        A = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+        sigma = 1.0
+
+        # Should work with default clamping
+        A_noisy = add_logit_noise(A, sigma, clamp_eps=1e-6)
+        assert torch.isfinite(A_noisy).all(), "Output should be finite"
+
+        # Custom clamp_eps should also work
+        A_noisy_custom = add_logit_noise(A, sigma, clamp_eps=1e-3)
+        assert torch.isfinite(
+            A_noisy_custom
+        ).all(), "Output should be finite with custom eps"
+
+    def test_logit_noise_generator_class(self):
+        """Test LogitNoiseGenerator wrapper class."""
+        generator = LogitNoiseGenerator(clamp_eps=1e-6)
+
+        assert generator.requires_state is False
+
+        A = torch.eye(5)
+        A_noisy = generator.add_noise(A, eps=1.0)
+
+        assert isinstance(A_noisy, torch.Tensor)
+        assert A_noisy.min() > 0 and A_noisy.max() < 1
+        assert torch.allclose(A_noisy, A_noisy.T)
+
+    def test_create_noise_generator_logit(self):
+        """Test factory function creates LogitNoiseGenerator correctly."""
+        generator = create_noise_generator("logit")
+
+        assert isinstance(generator, LogitNoiseGenerator)
+        assert generator.requires_state is False
+
+        A = torch.eye(5)
+        A_noisy = generator.add_noise(A, eps=1.5)
+
+        assert A_noisy.min() > 0 and A_noisy.max() < 1
+
+    def test_create_noise_generator_logit_with_clamp_eps(self):
+        """Test factory function respects clamp_eps parameter."""
+        generator = create_noise_generator("logit", clamp_eps=1e-4)
+
+        assert isinstance(generator, LogitNoiseGenerator)
+        assert generator.clamp_eps == 1e-4
 
 
 class TestDatasets:

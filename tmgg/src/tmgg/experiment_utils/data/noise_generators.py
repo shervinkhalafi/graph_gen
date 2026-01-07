@@ -12,6 +12,7 @@ import torch
 from .noise import (
     add_digress_noise,
     add_gaussian_noise,
+    add_logit_noise,
     add_rotation_noise,
 )
 
@@ -110,6 +111,55 @@ class RotationNoiseGenerator(NoiseGenerator):
         }
 
 
+class LogitNoiseGenerator(NoiseGenerator):
+    """Logit-space noise generator.
+
+    This generator operates in the log-odds space, providing naturally bounded
+    outputs. The noise is added in logit space and transformed back via sigmoid,
+    ensuring outputs remain in (0, 1).
+
+    Note: This noise type is experimental and not yet used in standard sweeps.
+    The eps parameter for this generator represents the standard deviation in
+    logit space, not a flip probability. Typical values range from 0.5 to 5.0.
+
+    Parameters
+    ----------
+    clamp_eps
+        Small epsilon for clamping input values to avoid numerical issues
+        with log(0) or log(inf). Default 1e-6.
+
+    See Also
+    --------
+    add_logit_noise : The underlying noise function with full documentation.
+    """
+
+    def __init__(self, clamp_eps: float = 1e-6):
+        self.clamp_eps = clamp_eps
+
+    def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
+        """Add noise in logit space.
+
+        Parameters
+        ----------
+        A
+            Input adjacency matrix (binary or soft).
+        eps
+            Standard deviation of Gaussian noise in logit space.
+            Note: This differs from DiGress where eps is flip probability.
+            Typical range: 0.5 to 5.0.
+
+        Returns
+        -------
+        torch.Tensor
+            Noisy adjacency with values in (0, 1).
+        """
+        return add_logit_noise(A, sigma=eps, clamp_eps=self.clamp_eps)
+
+    @property
+    def requires_state(self) -> bool:
+        return False
+
+
 def create_noise_generator(
     noise_type: str, rotation_k: int | None = None, seed: int | None = None, **kwargs
 ) -> NoiseGenerator:
@@ -117,10 +167,11 @@ def create_noise_generator(
     Factory function to create noise generators.
 
     Args:
-        noise_type: Type of noise ("gaussian", "digress", or "rotation")
+        noise_type: Type of noise ("gaussian", "digress", "rotation", or "logit")
         rotation_k: Dimension for rotation noise skew matrix
         seed: Random seed for reproducible noise generation
         **kwargs: Additional arguments (for future extensibility)
+            - clamp_eps: For logit noise, epsilon for numerical stability (default 1e-6)
 
     Returns:
         NoiseGenerator instance
@@ -138,5 +189,8 @@ def create_noise_generator(
         if rotation_k is None:
             raise ValueError("rotation_k parameter is required for rotation noise")
         return RotationNoiseGenerator(k=rotation_k, seed=seed)
+    elif noise_type == "logit":
+        clamp_eps = kwargs.get("clamp_eps", 1e-6)
+        return LogitNoiseGenerator(clamp_eps=clamp_eps)
     else:
         raise ValueError(f"Unknown noise type: {noise_type}")
