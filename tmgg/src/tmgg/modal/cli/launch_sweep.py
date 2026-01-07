@@ -26,9 +26,35 @@ from pathlib import Path
 from typing import Any
 
 import modal
+import wandb
 from tqdm import tqdm
 
 MODAL_APP_NAME = "tmgg-spectral"
+
+
+def get_existing_run_names(entity: str, project: str) -> set[str]:
+    """Fetch existing run names from W&B to skip already-completed experiments.
+
+    Parameters
+    ----------
+    entity
+        W&B entity (team/username).
+    project
+        W&B project name.
+
+    Returns
+    -------
+    set[str]
+        Set of existing run display names (used as run_id in our configs).
+    """
+    api = wandb.Api()
+    try:
+        runs = api.runs(f"{entity}/{project}")
+        # Use displayName if available, otherwise name
+        return {r.name for r in runs}
+    except Exception as e:
+        print(f"Warning: Could not fetch existing runs from W&B: {e}", file=sys.stderr)
+        return set()
 
 
 def get_config_files(config_dir: Path, filter_pattern: str | None = None) -> list[Path]:
@@ -209,11 +235,24 @@ def main() -> None:
         "--wandb-project",
         help="W&B project name to log runs to",
     )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip experiments that already exist in W&B (requires --wandb-entity and --wandb-project)",
+    )
 
     args = parser.parse_args()
 
     if not args.config_dir.is_dir():
         print(f"Error: {args.config_dir} is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate skip-existing requirements
+    if args.skip_existing and not (args.wandb_entity and args.wandb_project):
+        print(
+            "Error: --skip-existing requires --wandb-entity and --wandb-project",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Get config files
@@ -222,6 +261,22 @@ def main() -> None:
     if not configs:
         print("No config files found matching criteria", file=sys.stderr)
         sys.exit(1)
+
+    # Filter out existing runs if requested
+    skipped_count = 0
+    if args.skip_existing:
+        print(
+            f"Checking W&B for existing runs in {args.wandb_entity}/{args.wandb_project}..."
+        )
+        existing_runs = get_existing_run_names(args.wandb_entity, args.wandb_project)
+        print(f"Found {len(existing_runs)} existing runs in W&B")
+
+        original_count = len(configs)
+        configs = [c for c in configs if c.stem not in existing_runs]
+        skipped_count = original_count - len(configs)
+
+        if skipped_count > 0:
+            print(f"Skipping {skipped_count} already-completed experiments")
 
     if args.limit:
         configs = configs[: args.limit]

@@ -13,7 +13,9 @@ architectures:
 
 datasets:
   - sbm_default
-  # - sbm_n100  # Uncomment when config exists
+  - er_spectral       # Erdős-Rényi graphs
+  - tree_spectral     # Random trees
+  - regular_spectral  # d-regular graphs
 
 hyperparameters:
   # Narrowed based on Stage 1 results: lr1e-3 won clearly
