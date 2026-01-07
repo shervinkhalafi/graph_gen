@@ -35,11 +35,14 @@ from .metrics import (
 from .plotting import (
     create_graph_denoising_figure,
     create_graph_denoising_wandb_image,
+    create_network_denoising_figure,
     create_wandb_visualization,
     plot_denoising_results,
     plot_eigenvalue_comparison,
     plot_eigenvalue_denoising,
+    plot_graph_denoising_combined,
     plot_graph_denoising_comparison,
+    plot_graph_network_comparison,
     plot_noise_level_comparison,
     plot_training_curves,
 )
@@ -78,8 +81,11 @@ __all__ = [
     "compute_batch_metrics",
     # Plotting
     "plot_graph_denoising_comparison",
+    "plot_graph_network_comparison",
+    "plot_graph_denoising_combined",
     "create_graph_denoising_wandb_image",
     "create_graph_denoising_figure",
+    "create_network_denoising_figure",
     "plot_training_curves",
     "plot_denoising_results",
     "plot_noise_level_comparison",

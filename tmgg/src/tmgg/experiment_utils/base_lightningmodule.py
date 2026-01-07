@@ -20,6 +20,7 @@ from pytorch_lightning.loggers import Logger
 from tmgg.experiment_utils import (
     compute_batch_metrics,
     create_graph_denoising_figure,
+    create_network_denoising_figure,
     create_noise_generator,
 )
 from tmgg.experiment_utils.exceptions import ConfigurationError
@@ -702,6 +703,36 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                 import traceback
 
                 _ = traceback.print_exc()
+
+            # Log node-link network visualization for small graphs
+            n_nodes: int = (
+                A_sample.shape[0] if A_sample.ndim == 2 else A_sample.shape[-1]
+            )
+            if n_nodes <= 50:
+                try:
+                    network_fig = create_network_denoising_figure(
+                        A_clean=A_sample,
+                        noise_fn=cast(Any, self.noise_generator.add_noise),
+                        denoise_fn=denoise_fn,
+                        noise_level=eps,
+                        noise_type=noise_type,
+                        title_prefix=f"{self.get_model_name()} - ",
+                        layout="spring",
+                        show_edge_diff=True,
+                    )
+                    if network_fig is not None:
+                        network_plot_name: str = (
+                            f"{stage}_network_{noise_type}_eps_{eps:.3f}"
+                        )
+                        _ = log_figure(
+                            cast(list[Logger], self.loggers),
+                            network_plot_name,
+                            network_fig,
+                            global_step=self.global_step,
+                        )
+                        _ = print(f"Logged network plot: {network_plot_name}")
+                except Exception as e:
+                    _ = print(f"Failed to create/log network plot for eps={eps}: {e}")
 
         # Also create multi-noise visualization
         try:
