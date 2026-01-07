@@ -19,6 +19,17 @@ SelfAttentionDenoiserWithMLP
 MultiLayerSelfAttentionDenoiser
     Stacked transformer blocks on eigenvectors with residual connections
 
+Shrinkage Wrappers (Experimental)
+---------------------------------
+StrictShrinkageWrapper
+    SVD-based shrinkage with sigmoid gating: S_mod = sigmoid(α) * S
+RelaxedShrinkageWrapper
+    FiLM-style modulation: S_mod = scale * S + shift
+
+Note: Shrinkage wrappers are experimental and not yet used in standard
+experiment sweeps. They wrap an inner SpectralDenoiser to extract features
+for predicting shrinkage coefficients.
+
 Layers
 ------
 TopKEigenLayer
@@ -38,6 +49,12 @@ from tmgg.models.spectral_denoisers.self_attention import (
     SelfAttentionDenoiser,
     SelfAttentionDenoiserWithMLP,
 )
+from tmgg.models.spectral_denoisers.shrinkage_wrapper import (
+    RelaxedShrinkageWrapper,
+    ShrinkageSVDLayer,
+    ShrinkageWrapper,
+    StrictShrinkageWrapper,
+)
 from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
 
 __all__ = [
@@ -51,4 +68,9 @@ __all__ = [
     "SelfAttentionDenoiser",
     "SelfAttentionDenoiserWithMLP",
     "MultiLayerSelfAttentionDenoiser",
+    # Shrinkage wrappers (experimental)
+    "ShrinkageWrapper",
+    "StrictShrinkageWrapper",
+    "RelaxedShrinkageWrapper",
+    "ShrinkageSVDLayer",
 ]

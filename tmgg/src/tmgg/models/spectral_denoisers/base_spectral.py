@@ -108,3 +108,43 @@ class SpectralDenoiser(DenoisingModel, ABC):
             "model_class": self.__class__.__name__,
             "k": self.k,
         }
+
+    def get_features(self, A: torch.Tensor) -> torch.Tensor:
+        """Extract learned features for each node.
+
+        This method provides access to internal representations learned by
+        the model, intended for use by wrapper architectures like
+        ShrinkageWrapper that need to aggregate features for graph-level
+        predictions.
+
+        The default implementation extracts eigenvectors, which may be
+        overridden by subclasses to return richer learned representations
+        (e.g., Q/K projections from attention).
+
+        Parameters
+        ----------
+        A : torch.Tensor
+            Adjacency matrix of shape (batch, n, n) or (n, n).
+
+        Returns
+        -------
+        torch.Tensor
+            Node features of shape (batch, n, feature_dim) or (n, feature_dim).
+            The feature_dim depends on the model architecture.
+
+        Notes
+        -----
+        Subclasses with learnable projections (e.g., SelfAttentionDenoiser)
+        should override this to return the projected features, enabling
+        wrapper architectures to leverage learned representations.
+        """
+        # Default: return eigenvectors
+        V, _Lambda = self.eigen_layer(A)
+
+        # Pad to k if needed
+        actual_k = V.shape[-1]
+        if actual_k < self.k:
+            pad_size = self.k - actual_k
+            V = torch.nn.functional.pad(V, (0, pad_size))
+
+        return V

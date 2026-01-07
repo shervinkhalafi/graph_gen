@@ -117,6 +117,33 @@ class SelfAttentionDenoiser(SpectralDenoiser):
         config["d_k"] = self.d_k
         return config
 
+    def get_features(self, A: torch.Tensor) -> torch.Tensor:
+        """Extract key projections as node features.
+
+        Returns the K = V @ W_K projections, which capture learned
+        representations of node similarity for adjacency reconstruction.
+
+        Parameters
+        ----------
+        A : torch.Tensor
+            Adjacency matrix of shape (batch, n, n) or (n, n).
+
+        Returns
+        -------
+        torch.Tensor
+            Key features of shape (batch, n, d_k) or (n, d_k).
+        """
+        # Extract and pad eigenvectors
+        V, _Lambda = self.eigen_layer(A)
+        actual_k = V.shape[-1]
+        if actual_k < self.k:
+            pad_size = self.k - actual_k
+            V = torch.nn.functional.pad(V, (0, pad_size))
+
+        # Return key projections
+        K = torch.matmul(V, self.W_K)
+        return K
+
 
 class SelfAttentionDenoiserWithMLP(SpectralDenoiser):
     """Self-Attention denoiser with MLP post-processing.
@@ -227,6 +254,28 @@ class SelfAttentionDenoiserWithMLP(SpectralDenoiser):
         config["mlp_hidden_dim"] = self.mlp_hidden_dim
         config["mlp_num_layers"] = self.mlp_num_layers
         return config
+
+    def get_features(self, A: torch.Tensor) -> torch.Tensor:
+        """Extract key projections as node features.
+
+        Parameters
+        ----------
+        A : torch.Tensor
+            Adjacency matrix of shape (batch, n, n) or (n, n).
+
+        Returns
+        -------
+        torch.Tensor
+            Key features of shape (batch, n, d_k) or (n, d_k).
+        """
+        V, _Lambda = self.eigen_layer(A)
+        actual_k = V.shape[-1]
+        if actual_k < self.k:
+            pad_size = self.k - actual_k
+            V = torch.nn.functional.pad(V, (0, pad_size))
+
+        K = torch.matmul(V, self.W_K)
+        return K
 
 
 class _TransformerBlock(nn.Module):
@@ -458,3 +507,44 @@ class MultiLayerSelfAttentionDenoiser(SpectralDenoiser):
         config["mlp_hidden_dim"] = self.mlp_hidden_dim
         config["dropout"] = self.dropout
         return config
+
+    def get_features(self, A: torch.Tensor) -> torch.Tensor:
+        """Extract key projections after transformer layers.
+
+        Returns K = W_K(h) where h is the output of the transformer stack,
+        providing the most refined learned representation for each node.
+
+        Parameters
+        ----------
+        A : torch.Tensor
+            Adjacency matrix of shape (batch, n, n) or (n, n).
+
+        Returns
+        -------
+        torch.Tensor
+            Key features of shape (batch, n, d_model) or (n, d_model).
+        """
+        # Extract and pad eigenvectors
+        V, _Lambda = self.eigen_layer(A)
+        actual_k = V.shape[-1]
+        if actual_k < self.k:
+            pad_size = self.k - actual_k
+            V = torch.nn.functional.pad(V, (0, pad_size))
+
+        unbatched = V.ndim == 2
+        v = V.unsqueeze(0) if unbatched else V
+
+        # Project to hidden dimension
+        h = self.input_proj(v)  # (batch, n, d_model)
+
+        # Pass through transformer blocks
+        for layer in self.layers:
+            h = layer(h)
+
+        # Return key projections
+        K = self.W_K(h)
+
+        if unbatched:
+            K = K.squeeze(0)
+
+        return K
