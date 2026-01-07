@@ -1,0 +1,26 @@
+# Stage 1-B: Shrinkage Wrapper Comparison
+# Tests shrinkage wrappers vs self_attention baseline on SBM n=50
+# Reuses Stage 1 hyperparameter grid and infrastructure
+#
+# Architectures compared:
+# - self_attention: baseline (the only model with get_features() support)
+# - self_attention_strict_shrinkage: sigmoid-gated shrinkage (S_mod = alpha * S)
+# - self_attention_relaxed_shrinkage: FiLM-style modulation (S_mod = scale * S + shift)
+
+name: stage1b_shrinkage
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/self_attention              # Baseline
+  - models/spectral/self_attention_strict_shrinkage
+  - models/spectral/self_attention_relaxed_shrinkage
+
+# Same hyperparameter grid as Stage 1
+hyperparameters:
+  learning_rate: [1e-4, 5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [8, 16]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage1b_{arch}_{lr}_{wd}_{k}_s{seed}"

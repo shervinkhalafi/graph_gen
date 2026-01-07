@@ -14,8 +14,10 @@ from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
     LinearPE,
     MultiLayerSelfAttentionDenoiser,
+    RelaxedShrinkageWrapper,
     SelfAttentionDenoiser,
     SelfAttentionDenoiserWithMLP,
+    StrictShrinkageWrapper,
 )
 
 
@@ -88,6 +90,8 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         "self_attention",
         "self_attention_mlp",
         "multilayer_self_attention",
+        "self_attention_strict_shrinkage",
+        "self_attention_relaxed_shrinkage",
     }
 
     def __init__(
@@ -107,6 +111,11 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         use_mlp: bool = True,
         transformer_mlp_hidden_dim: int | None = None,
         dropout: float = 0.0,
+        # Shrinkage wrapper parameters
+        shrinkage_max_rank: int = 50,
+        shrinkage_aggregation: str = "mean",
+        shrinkage_hidden_dim: int = 128,
+        shrinkage_mlp_layers: int = 2,
         # Optimizer parameters
         learning_rate: float = 1e-4,
         weight_decay: float = 1e-2,
@@ -134,6 +143,11 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         self._use_mlp = use_mlp
         self._transformer_mlp_hidden_dim = transformer_mlp_hidden_dim
         self._dropout = dropout
+        # Shrinkage wrapper
+        self._shrinkage_max_rank = shrinkage_max_rank
+        self._shrinkage_aggregation = shrinkage_aggregation
+        self._shrinkage_hidden_dim = shrinkage_hidden_dim
+        self._shrinkage_mlp_layers = shrinkage_mlp_layers
 
         super().__init__(
             learning_rate=learning_rate,
@@ -182,6 +196,24 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
                 use_mlp=self._use_mlp,
                 mlp_hidden_dim=self._transformer_mlp_hidden_dim,
                 dropout=self._dropout,
+            )
+        elif self._model_type == "self_attention_strict_shrinkage":
+            inner = SelfAttentionDenoiser(k=self._k, d_k=self._d_k)
+            return StrictShrinkageWrapper(
+                inner_model=inner,
+                max_rank=self._shrinkage_max_rank,
+                aggregation=self._shrinkage_aggregation,
+                hidden_dim=self._shrinkage_hidden_dim,
+                mlp_layers=self._shrinkage_mlp_layers,
+            )
+        elif self._model_type == "self_attention_relaxed_shrinkage":
+            inner = SelfAttentionDenoiser(k=self._k, d_k=self._d_k)
+            return RelaxedShrinkageWrapper(
+                inner_model=inner,
+                max_rank=self._shrinkage_max_rank,
+                aggregation=self._shrinkage_aggregation,
+                hidden_dim=self._shrinkage_hidden_dim,
+                mlp_layers=self._shrinkage_mlp_layers,
             )
         else:
             raise ValueError(f"Unknown model type: {self._model_type}")

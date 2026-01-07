@@ -1,0 +1,36 @@
+# Self-Attention with Strict Shrinkage wrapper
+# Uses sigmoid gating to enforce S_mod = alpha * S where alpha in [0, 1]
+# Guarantees singular values can only decrease (energy removal)
+
+_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+
+model_type: self_attention_strict_shrinkage
+
+# Number of eigenvectors (for inner SelfAttentionDenoiser)
+k: 8
+
+# Key dimension (for inner SelfAttentionDenoiser)
+d_k: 64
+
+# Shrinkage wrapper parameters
+shrinkage_max_rank: 50
+shrinkage_aggregation: mean
+shrinkage_hidden_dim: 128
+shrinkage_mlp_layers: 2
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
+
+# Loss
+loss_type: ${loss_type}
