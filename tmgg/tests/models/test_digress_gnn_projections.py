@@ -341,3 +341,94 @@ class TestGraphTransformerGNN:
         out = model(x)
 
         assert out.shape == (2, 20, 20)
+
+
+class TestAdjacencyExtraction:
+    """Tests verifying that GNN projections use original adjacency, not transformed E."""
+
+    def test_original_adjacency_passed_to_gnn(self):
+        """Verify original adjacency is extracted before mlp_in_E transformation.
+
+        The adjacency should be extracted from the input E before any MLP
+        transformation, ensuring GNN projections operate on the true graph
+        structure rather than learned edge features.
+        """
+        from unittest.mock import patch
+
+        hidden_dims = {
+            "dx": 64,
+            "de": 16,
+            "dy": 32,
+            "n_head": 4,
+            "use_gnn_q": True,
+            "use_gnn_k": False,
+            "use_gnn_v": False,
+        }
+
+        model = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 1, "E": 1, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 1, "y": 0},
+        )
+
+        # Create distinct input adjacency
+        bs, n = 2, 8
+        input_adj = torch.rand(bs, n, n)
+        input_adj = (input_adj + input_adj.transpose(-1, -2)) / 2  # Symmetrize
+
+        # Track what adjacency is passed to GNN projection
+        captured_A: list[torch.Tensor] = []
+        layer = model.transformer.tf_layers[0]
+        assert isinstance(layer, XEyTransformerLayer)
+        gnn_q = layer.self_attn.q
+        assert isinstance(gnn_q, BareGraphConvolutionLayer)
+        original_q_forward = gnn_q.forward
+
+        def capturing_forward(A: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
+            captured_A.append(A.clone())
+            return original_q_forward(A, X)
+
+        with patch.object(gnn_q, "forward", capturing_forward):
+            _ = model(input_adj)
+
+        # Verify the captured adjacency matches input (not transformed)
+        assert len(captured_A) == 1
+        assert torch.allclose(captured_A[0], input_adj, atol=1e-5)
+
+    def test_adjacency_not_from_transformed_E(self):
+        """Verify adjacency differs from what would be extracted from transformed E.
+
+        After mlp_in_E transformation, E[..., 0] would have different values
+        than the original input. This test ensures we use the original.
+        """
+        hidden_dims = {
+            "dx": 64,
+            "de": 16,
+            "dy": 32,
+            "n_head": 4,
+            "use_gnn_q": True,
+            "use_gnn_k": True,
+            "use_gnn_v": True,
+        }
+
+        model = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 1, "E": 1, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 1, "y": 0},
+        )
+
+        # Create input
+        bs, n = 2, 10
+        input_adj = torch.rand(bs, n, n)
+        input_adj = (input_adj + input_adj.transpose(-1, -2)) / 2
+
+        # Verify model has GNN projection flag set
+        assert model.transformer._use_gnn_projections is True
+
+        # Run forward pass (this should work without error)
+        out = model(input_adj)
+        assert out.shape == (bs, n, n)

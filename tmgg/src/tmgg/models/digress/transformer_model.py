@@ -139,17 +139,23 @@ class XEyTransformerLayer(nn.Module):
         self.dropout_y3 = Dropout(dropout)
 
     def forward(
-        self, X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor
+        self,
+        X: Tensor,
+        E: Tensor,
+        y: Tensor,
+        node_mask: Tensor,
+        A: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Pass the input through the encoder layer.
         X: (bs, n, d)
         E: (bs, n, n, d)
         y: (bs, dy)
         node_mask: (bs, n) Mask for the src keys per batch (optional)
+        A: (bs, n, n) Original adjacency matrix for GNN projections (optional)
         Output: newX, newE, new_y with the same shape.
         """
 
-        newX, newE, new_y = self.self_attn(X, E, y, node_mask=node_mask)
+        newX, newE, new_y = self.self_attn(X, E, y, node_mask=node_mask, A=A)
 
         newX_d = self.dropoutX1(newX)
         X = self.normX1(X + newX_d)
@@ -295,13 +301,19 @@ class NodeEdgeBlock(nn.Module):
         )
 
     def forward(
-        self, X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor
+        self,
+        X: Tensor,
+        E: Tensor,
+        y: Tensor,
+        node_mask: Tensor,
+        A: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """
         :param X: bs, n, d        node features
         :param E: bs, n, n, d     edge features
         :param y: bs, dz           global features
         :param node_mask: bs, n
+        :param A: bs, n, n        original adjacency matrix (optional, for GNN projections)
         :return: newX, newE, new_y with the same shape.
         """
         bs, n, _ = X.shape
@@ -309,12 +321,9 @@ class NodeEdgeBlock(nn.Module):
         e_mask1 = x_mask.unsqueeze(2)  # bs, n, 1, 1
         e_mask2 = x_mask.unsqueeze(1)  # bs, 1, n, 1
 
-        # Extract adjacency from first edge channel for GNN projections
-        A = (
-            E[..., 0]
-            if (self._use_gnn_q or self._use_gnn_k or self._use_gnn_v)
-            else None
-        )
+        # Use provided adjacency if given, otherwise fall back to E[..., 0]
+        if A is None and (self._use_gnn_q or self._use_gnn_k or self._use_gnn_v):
+            A = E[..., 0]
 
         # 1. Map X to keys and queries (GNN projections use adjacency from E)
         Q = (self.q(A, X) if self._use_gnn_q else self.q(X)) * x_mask  # (bs, n, dx)
@@ -482,6 +491,7 @@ class _GraphTransformer(nn.Module):
         use_gnn_k = bool(hidden_dims.get("use_gnn_k", False))
         use_gnn_v = bool(hidden_dims.get("use_gnn_v", False))
         gnn_num_terms = int(hidden_dims.get("gnn_num_terms", 2))
+        self._use_gnn_projections = use_gnn_q or use_gnn_k or use_gnn_v
 
         self.tf_layers = nn.ModuleList(
             [
@@ -563,6 +573,11 @@ class _GraphTransformer(nn.Module):
         E_to_out: torch.Tensor = E[..., : self.out_dim_E]
         y_to_out: torch.Tensor = y[..., : self.out_dim_y]
 
+        # Extract original adjacency BEFORE mlp_in_E transformation (for GNN projections)
+        original_A: torch.Tensor | None = None
+        if self._use_gnn_projections:
+            original_A = E[..., 0].clone()  # Shape: (bs, n, n)
+
         new_E = self.mlp_in_E(E)
         new_E = (new_E + new_E.transpose(1, 2)) / 2
         features = GraphFeatures(X=self.mlp_in_X(X), E=new_E, y=self.mlp_in_y(y)).mask(
@@ -571,7 +586,7 @@ class _GraphTransformer(nn.Module):
         X, E, y = features.X, features.E, features.y
 
         for layer in self.tf_layers:
-            X, E, y = layer(X, E, y, node_mask)
+            X, E, y = layer(X, E, y, node_mask, A=original_A)
 
         X_out: torch.Tensor = self.mlp_out_X(X)
         E_out: torch.Tensor = self.mlp_out_E(E)
