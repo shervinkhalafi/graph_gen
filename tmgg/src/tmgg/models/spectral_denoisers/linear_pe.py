@@ -10,7 +10,10 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from tmgg.models.spectral_denoisers.base_spectral import SpectralDenoiser
+from tmgg.models.spectral_denoisers.base_spectral import (
+    EmbeddingSource,
+    SpectralDenoiser,
+)
 
 
 class LinearPE(SpectralDenoiser):
@@ -77,8 +80,20 @@ class LinearPE(SpectralDenoiser):
         max_nodes: int = 200,
         use_bias: bool = True,
         asymmetric: bool = False,
+        embedding_source: EmbeddingSource = "eigenvector",
+        pearl_num_layers: int = 3,
+        pearl_hidden_dim: int = 64,
+        pearl_input_samples: int = 32,
+        pearl_max_nodes: int = 200,
     ):
-        super().__init__(k=k)
+        super().__init__(
+            k=k,
+            embedding_source=embedding_source,
+            pearl_num_layers=pearl_num_layers,
+            pearl_hidden_dim=pearl_hidden_dim,
+            pearl_input_samples=pearl_input_samples,
+            pearl_max_nodes=pearl_max_nodes,
+        )
         self.max_nodes = max_nodes
         self.use_bias = use_bias
         self.asymmetric = asymmetric
