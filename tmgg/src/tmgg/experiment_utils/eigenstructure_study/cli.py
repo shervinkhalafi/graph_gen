@@ -448,5 +448,293 @@ def compare(
         raise click.ClickException(str(e)) from e
 
 
+@main.command()
+@click.option(
+    "--original-dir",
+    "-i",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Directory with original (Phase 1) decompositions",
+)
+@click.option(
+    "--noised-dir",
+    "-n",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Directory with noised decompositions (optional, for evolution study)",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    default="results/eigenstructure_study",
+    type=click.Path(path_type=Path),
+    help="Output directory for covariance results (default: results/eigenstructure_study)",
+)
+@click.option(
+    "--matrix-type",
+    "-m",
+    default="adjacency",
+    type=click.Choice(["adjacency", "laplacian"]),
+    help="Matrix type for eigenvalue covariance (default: adjacency)",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable debug logging",
+)
+def covariance(
+    original_dir: Path,
+    noised_dir: Path | None,
+    output_dir: Path,
+    matrix_type: str,
+    verbose: bool,
+) -> None:
+    """Compute eigenvalue covariance matrix.
+
+    Computes the k×k covariance matrix of eigenvalues across all graphs,
+    showing how eigenvalue positions covary in the population. High off-diagonal
+    values indicate eigenvalue positions that tend to move together.
+
+    If --noised-dir is provided, also computes covariance evolution showing
+    how the covariance structure changes at each noise level.
+
+    \b
+    Examples:
+        # Covariance for original dataset only
+        tmgg-eigenstructure covariance \\
+            --original-dir ./eigen_data/sbm \\
+            --output-dir ./results/covariance
+
+        # Covariance evolution with noise
+        tmgg-eigenstructure covariance \\
+            --original-dir ./eigen_data/sbm \\
+            --noised-dir ./noised_data/sbm \\
+            --output-dir ./results/covariance \\
+            --matrix-type laplacian
+    """
+    setup_logging(verbose)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if noised_dir is not None and Path(noised_dir).exists():
+            # Compute covariance evolution across noise levels
+            from .noised_collector import NoisedAnalysisComparator
+
+            comparator = NoisedAnalysisComparator(original_dir, noised_dir)
+            evolution = comparator.compute_covariance_evolution(matrix_type)
+
+            # Convert dataclasses to dicts for JSON serialization
+            output_data = {
+                "matrix_type": evolution["matrix_type"],
+                "original": asdict(evolution["original"]),
+                "per_noise_level": [
+                    {
+                        "noise_level": item["noise_level"],
+                        "covariance": asdict(item["covariance"]),
+                        "frobenius_delta_relative": item["frobenius_delta_relative"],
+                        "trace_delta_relative": item["trace_delta_relative"],
+                        "off_diagonal_delta_relative": item[
+                            "off_diagonal_delta_relative"
+                        ],
+                    }
+                    for item in evolution["per_noise_level"]
+                ],
+            }
+
+            output_path = output_dir / "covariance_evolution.json"
+            with open(output_path, "w") as f:
+                json.dump(output_data, f, indent=2)
+
+            click.echo(f"Covariance evolution saved to: {output_path}")
+            click.echo()
+            click.echo("Original covariance summary:")
+            orig = evolution["original"]
+            click.echo(f"  Frobenius norm: {orig.frobenius_norm:.4f}")
+            click.echo(f"  Trace (total variance): {orig.trace:.4f}")
+            click.echo(f"  Off-diagonal ratio: {orig.off_diagonal_ratio:.4f}")
+            click.echo()
+            click.echo("Evolution with noise:")
+            for item in evolution["per_noise_level"]:
+                eps = item["noise_level"]
+                click.echo(
+                    f"  eps={eps:.4f}: "
+                    f"frob_delta={item['frobenius_delta_relative']:+.4f}, "
+                    f"off_diag_delta={item['off_diagonal_delta_relative']:+.4f}"
+                )
+
+        else:
+            # Compute covariance for original dataset only
+            from .analyzer import SpectralAnalyzer
+
+            analyzer = SpectralAnalyzer(original_dir)
+            result = analyzer.compute_eigenvalue_covariance(matrix_type)
+
+            output_path = output_dir / "covariance.json"
+            with open(output_path, "w") as f:
+                json.dump(asdict(result), f, indent=2)
+
+            click.echo(f"Covariance analysis saved to: {output_path}")
+            click.echo()
+            click.echo("Summary:")
+            click.echo(f"  Matrix type: {result.matrix_type}")
+            click.echo(f"  Graphs: {result.num_graphs}")
+            click.echo(f"  Eigenvalues: {result.num_eigenvalues}")
+            click.echo(f"  Frobenius norm: {result.frobenius_norm:.4f}")
+            click.echo(f"  Trace (total variance): {result.trace:.4f}")
+            click.echo(f"  Off-diagonal sum: {result.off_diagonal_sum:.4f}")
+            click.echo(f"  Off-diagonal ratio: {result.off_diagonal_ratio:.4f}")
+            click.echo(f"  Condition number: {result.condition_number:.4f}")
+
+    except Exception as e:
+        logger.exception("Covariance analysis failed")
+        raise click.ClickException(str(e)) from e
+
+
+@main.command("list-remote")
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable debug logging",
+)
+def list_remote(verbose: bool) -> None:
+    """List eigenstructure studies in Modal volume.
+
+    Requires Modal app to be deployed and Modal credentials configured.
+
+    \b
+    Examples:
+        doppler run -- tmgg-eigenstructure list-remote
+    """
+    setup_logging(verbose)
+
+    try:
+        import modal
+
+        # Get reference to deployed function
+        fn = modal.Function.from_name("tmgg-spectral", "eigenstructure_list")
+        studies = fn.remote()
+
+        if not studies:
+            click.echo("No eigenstructure studies found in Modal volume.")
+            return
+
+        click.echo(f"Found {len(studies)} study directories:")
+        click.echo()
+        for study in studies:
+            click.echo(f"  {study['name']}/")
+            if study["has_manifest"]:
+                click.echo(f"    Batches: {study['batch_count']}")
+            if study["noised_levels"]:
+                click.echo(f"    Noised levels: {', '.join(study['noised_levels'])}")
+
+    except modal.exception.NotFoundError:
+        raise click.ClickException(
+            "Modal function not found. Deploy the Modal app first with: "
+            "mise run modal-deploy"
+        ) from None
+    except Exception as e:
+        logger.exception("Failed to list remote studies")
+        raise click.ClickException(str(e)) from e
+
+
+@main.command()
+@click.option(
+    "--remote-path",
+    "-r",
+    required=True,
+    help="Path to study within Modal volume (e.g., 'sbm_study')",
+)
+@click.option(
+    "--local-path",
+    "-l",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Local destination directory",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable debug logging",
+)
+def download(
+    remote_path: str,
+    local_path: Path,
+    verbose: bool,
+) -> None:
+    """Download eigenstructure study from Modal volume.
+
+    Downloads safetensors, metadata, and analysis files from Modal
+    eigenstructure volume to local filesystem.
+
+    Requires Modal app to be deployed and Modal credentials configured.
+
+    \b
+    Examples:
+        doppler run -- tmgg-eigenstructure download \\
+            --remote-path sbm_study \\
+            --local-path ./downloaded/sbm
+
+        doppler run -- tmgg-eigenstructure download \\
+            -r my_experiment/original \\
+            -l ./local_data
+    """
+    setup_logging(verbose)
+
+    try:
+        import modal
+
+        local_path.mkdir(parents=True, exist_ok=True)
+
+        click.echo(f"Downloading from Modal: {remote_path}")
+        click.echo(f"To local: {local_path}")
+
+        # Get references to deployed Modal functions
+        list_files_fn = modal.Function.from_name(
+            "tmgg-spectral", "eigenstructure_list_files"
+        )
+        read_file_fn = modal.Function.from_name(
+            "tmgg-spectral", "eigenstructure_read_file"
+        )
+
+        # List files in remote path
+        files = list_files_fn.remote(remote_path)
+
+        if not files:
+            raise click.ClickException(f"No files found at: {remote_path}")
+
+        click.echo(f"Found {len(files)} files to download")
+
+        # Download each file
+        from tqdm import tqdm
+
+        for file_info in tqdm(files, desc="Downloading"):
+            rel_path = file_info["rel_path"]
+            remote_file_path = file_info["path"]
+
+            local_file_path = local_path / rel_path
+            local_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Download file content
+            content = read_file_fn.remote(remote_file_path)
+
+            with open(local_file_path, "wb") as f:
+                f.write(content)
+
+        click.echo(f"Download complete: {len(files)} files")
+
+    except modal.exception.NotFoundError:
+        raise click.ClickException(
+            "Modal functions not found. Deploy the Modal app first with: "
+            "mise run modal-deploy"
+        ) from None
+    except Exception as e:
+        logger.exception("Download failed")
+        raise click.ClickException(str(e)) from e
+
+
 if __name__ == "__main__":
     main()

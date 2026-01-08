@@ -19,9 +19,16 @@ outputs_volume = modal.Volume.from_name(
     create_if_missing=True,
 )
 
+# Volume for eigenstructure study data (eigendecompositions, analysis results)
+eigenstructure_volume = modal.Volume.from_name(
+    "tmgg-eigenstructure",
+    create_if_missing=True,
+)
+
 # Mount paths within containers
 DATASETS_MOUNT = "/data/datasets"
 OUTPUTS_MOUNT = "/data/outputs"
+EIGENSTRUCTURE_MOUNT = "/data/eigenstructure"
 
 
 def get_volume_mounts() -> dict[str, modal.Volume]:
@@ -35,6 +42,20 @@ def get_volume_mounts() -> dict[str, modal.Volume]:
     return {
         DATASETS_MOUNT: datasets_volume,
         OUTPUTS_MOUNT: outputs_volume,
+        EIGENSTRUCTURE_MOUNT: eigenstructure_volume,
+    }
+
+
+def get_eigenstructure_volume_mounts() -> dict[str, modal.Volume]:
+    """Get volume mount configuration for eigenstructure study functions.
+
+    Returns
+    -------
+    dict
+        Mapping of mount paths to eigenstructure volume.
+    """
+    return {
+        EIGENSTRUCTURE_MOUNT: eigenstructure_volume,
     }
 
 
@@ -126,3 +147,42 @@ def list_cached_datasets() -> list[str]:
         return []
 
     return [d.name for d in datasets_path.iterdir() if d.is_dir()]
+
+
+def list_eigenstructure_studies() -> list[dict[str, str]]:
+    """List all eigenstructure studies in the volume.
+
+    Returns
+    -------
+    list[dict]
+        List of dicts with 'name' and 'path' for each study directory.
+    """
+    from pathlib import Path
+
+    eigen_path = Path(EIGENSTRUCTURE_MOUNT)
+    if not eigen_path.exists():
+        return []
+
+    studies = []
+    for d in eigen_path.iterdir():
+        if d.is_dir():
+            studies.append({"name": d.name, "path": str(d)})
+    return studies
+
+
+def get_eigenstructure_path(study_name: str) -> str:
+    """Get the full path to an eigenstructure study in the volume.
+
+    Parameters
+    ----------
+    study_name
+        Name of the study (relative path within eigenstructure volume).
+
+    Returns
+    -------
+    str
+        Full path to the study directory.
+    """
+    from pathlib import Path
+
+    return str(Path(EIGENSTRUCTURE_MOUNT) / study_name)

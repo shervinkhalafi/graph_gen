@@ -415,6 +415,99 @@ def compute_procrustes_rotation_batch(
     }
 
 
+def compute_eigenvalue_covariance(eigenvalues: torch.Tensor) -> torch.Tensor:
+    """
+    Compute covariance matrix of eigenvalues across graphs.
+
+    Given N graphs each with k eigenvalues, this computes the k×k sample
+    covariance matrix showing how eigenvalue positions covary across the
+    population. High off-diagonal values indicate eigenvalue positions
+    that tend to move together.
+
+    Parameters
+    ----------
+    eigenvalues : torch.Tensor
+        Eigenvalues of shape (N, k) where N = num_graphs, k = num_eigenvalues.
+
+    Returns
+    -------
+    torch.Tensor
+        Sample covariance matrix of shape (k, k).
+
+    Notes
+    -----
+    Uses Bessel correction (N-1 denominator) for unbiased sample covariance.
+    For random graphs from the same generative model, off-diagonal terms
+    reveal structural dependencies in the spectrum.
+    """
+    if eigenvalues.shape[0] < 2:
+        raise ValueError("Need at least 2 graphs to compute covariance")
+
+    # Center the data
+    centered = eigenvalues - eigenvalues.mean(dim=0, keepdim=True)
+    # Compute sample covariance: (X^T X) / (N - 1)
+    return (centered.T @ centered) / (eigenvalues.shape[0] - 1)
+
+
+def compute_covariance_summary(cov: torch.Tensor) -> dict[str, float]:
+    """
+    Compute summary statistics for an eigenvalue covariance matrix.
+
+    Parameters
+    ----------
+    cov : torch.Tensor
+        Covariance matrix of shape (k, k).
+
+    Returns
+    -------
+    dict[str, float]
+        Summary statistics including:
+        - frobenius_norm: Overall magnitude of covariance
+        - trace: Total variance (sum of eigenvalue variances)
+        - condition_number: Numerical conditioning of the covariance
+        - off_diagonal_sum: Sum of off-diagonal terms (total covariation)
+        - off_diagonal_ratio: Fraction of total variance in cross-terms
+        - max_eigenvalue: Largest principal component of the covariance
+        - min_eigenvalue: Smallest principal component
+    """
+    trace = torch.trace(cov).item()
+    off_diag = cov.sum().item() - trace
+
+    # Eigenvalues of covariance matrix (principal component variances)
+    cov_eigenvalues = torch.linalg.eigvalsh(cov)
+
+    return {
+        "frobenius_norm": torch.norm(cov, p="fro").item(),
+        "trace": trace,
+        "condition_number": torch.linalg.cond(cov).item(),
+        "off_diagonal_sum": off_diag,
+        "off_diagonal_ratio": off_diag / (trace + 1e-10) if trace > 0 else 0.0,
+        "max_eigenvalue": cov_eigenvalues.max().item(),
+        "min_eigenvalue": cov_eigenvalues.min().item(),
+    }
+
+
+@dataclass
+class CovarianceResult:
+    """Container for eigenvalue covariance analysis results."""
+
+    matrix_type: str  # "adjacency" or "laplacian"
+    num_graphs: int
+    num_eigenvalues: int
+
+    # Covariance matrix stored as nested list for JSON serialization
+    covariance_matrix: list[list[float]]
+
+    # Summary statistics
+    frobenius_norm: float
+    trace: float
+    condition_number: float
+    off_diagonal_sum: float
+    off_diagonal_ratio: float
+    max_eigenvalue: float
+    min_eigenvalue: float
+
+
 class SpectralAnalyzer:
     """
     Analyze collected eigenstructure data.
@@ -596,3 +689,43 @@ class SpectralAnalyzer:
             "mean_principal_angle_mean": mean_angles_t.mean().item(),
             "mean_principal_angle_std": mean_angles_t.std().item(),
         }
+
+    def compute_eigenvalue_covariance(
+        self, matrix_type: str = "adjacency"
+    ) -> CovarianceResult:
+        """
+        Compute eigenvalue covariance matrix across all graphs.
+
+        Parameters
+        ----------
+        matrix_type : str
+            Either "adjacency" or "laplacian".
+
+        Returns
+        -------
+        CovarianceResult
+            Dataclass with covariance matrix and summary statistics.
+        """
+        all_eigenvalues: list[torch.Tensor] = []
+        key = "eigenvalues_adj" if matrix_type == "adjacency" else "eigenvalues_lap"
+
+        for batch_path in iter_batches(self.input_dir):
+            tensors, _ = load_decomposition_batch(batch_path)
+            all_eigenvalues.append(tensors[key])
+
+        eigenvalues = torch.cat(all_eigenvalues, dim=0)  # (N, k)
+        logger.info(
+            f"Computing {matrix_type} covariance for {eigenvalues.shape[0]} graphs "
+            f"with {eigenvalues.shape[1]} eigenvalues each"
+        )
+
+        cov = compute_eigenvalue_covariance(eigenvalues)
+        summary = compute_covariance_summary(cov)
+
+        return CovarianceResult(
+            matrix_type=matrix_type,
+            num_graphs=eigenvalues.shape[0],
+            num_eigenvalues=eigenvalues.shape[1],
+            covariance_matrix=cov.tolist(),
+            **summary,
+        )

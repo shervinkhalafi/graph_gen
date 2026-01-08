@@ -1120,3 +1120,302 @@ class TestNoisedAnalysisComparatorDeltaMethods:
             assert "alg_conn_delta_rel_mean" in r
             assert "eigenvalue_drift_adj_mean" in r
             assert "subspace_distance_mean" in r
+
+
+class TestCovarianceComputation:
+    """Tests for eigenvalue covariance computation.
+
+    Test rationale:
+    - Covariance matrix should be k×k for k eigenvalues
+    - Covariance matrix should be symmetric (by definition)
+    - IID eigenvalues should have near-diagonal covariance (no cross-correlation)
+    - Correlated eigenvalues should show off-diagonal terms
+    - Noise should typically decorrelate eigenvalues (reduce off-diagonal terms)
+    """
+
+    def test_covariance_shape(self) -> None:
+        """Covariance matrix should be k×k for k eigenvalues."""
+        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+            compute_eigenvalue_covariance,
+        )
+
+        N = 50
+        k = 10
+        eigenvalues = torch.randn(N, k)
+
+        cov = compute_eigenvalue_covariance(eigenvalues)
+
+        assert cov.shape == (k, k)
+
+    def test_covariance_symmetry(self) -> None:
+        """Covariance matrix should be symmetric."""
+        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+            compute_eigenvalue_covariance,
+        )
+
+        N = 100
+        k = 8
+        eigenvalues = torch.randn(N, k)
+
+        cov = compute_eigenvalue_covariance(eigenvalues)
+
+        assert torch.allclose(cov, cov.T, atol=1e-6)
+
+    def test_covariance_iid_is_diagonal(self) -> None:
+        """IID eigenvalues should have near-diagonal covariance.
+
+        When eigenvalue positions are independent, cross-correlation should be
+        near zero. The covariance matrix should be approximately diagonal.
+        """
+        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+            compute_eigenvalue_covariance,
+        )
+
+        torch.manual_seed(42)
+        N = 1000  # Large sample for stable statistics
+        k = 5
+
+        # Generate IID eigenvalues: each position independent
+        eigenvalues = torch.randn(N, k)
+
+        cov = compute_eigenvalue_covariance(eigenvalues)
+
+        # Off-diagonal elements should be small relative to diagonal
+        diag = torch.diag(cov)
+        off_diag_mask = ~torch.eye(k, dtype=torch.bool)
+        off_diag = cov[off_diag_mask]
+
+        # Off-diagonal values should be much smaller than diagonal
+        assert off_diag.abs().mean() < diag.mean() * 0.2
+
+    def test_covariance_correlated_has_off_diagonal(self) -> None:
+        """Correlated eigenvalues should have significant off-diagonal terms.
+
+        When eigenvalue positions are correlated (e.g., larger graphs tend to
+        have larger eigenvalues at all positions), off-diagonal terms should
+        be non-zero.
+        """
+        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+            compute_eigenvalue_covariance,
+        )
+
+        torch.manual_seed(42)
+        N = 500
+        k = 4
+
+        # Generate correlated eigenvalues: all positions shift together
+        base = torch.randn(N, 1)  # Shared component
+        eigenvalues = base.expand(N, k) + 0.1 * torch.randn(N, k)
+
+        cov = compute_eigenvalue_covariance(eigenvalues)
+
+        # Off-diagonal elements should be significant
+        diag = torch.diag(cov)
+        off_diag_mask = ~torch.eye(k, dtype=torch.bool)
+        off_diag = cov[off_diag_mask]
+
+        # Off-diagonal should be substantial (correlated)
+        assert off_diag.mean() > 0.5 * diag.mean()
+
+    def test_covariance_summary_metrics(self) -> None:
+        """Covariance summary should include all expected metrics."""
+        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+            compute_covariance_summary,
+            compute_eigenvalue_covariance,
+        )
+
+        N = 100
+        k = 6
+        eigenvalues = torch.randn(N, k)
+        cov = compute_eigenvalue_covariance(eigenvalues)
+
+        summary = compute_covariance_summary(cov)
+
+        assert "frobenius_norm" in summary
+        assert "trace" in summary
+        assert "condition_number" in summary
+        assert "off_diagonal_sum" in summary
+        assert "off_diagonal_ratio" in summary
+        assert "max_eigenvalue" in summary
+        assert "min_eigenvalue" in summary
+
+        # Basic sanity checks
+        assert summary["frobenius_norm"] > 0
+        assert summary["trace"] > 0  # Variance is positive
+        assert summary["max_eigenvalue"] >= summary["min_eigenvalue"]
+
+    def test_covariance_requires_multiple_graphs(self) -> None:
+        """Covariance computation should require at least 2 graphs."""
+        import pytest
+
+        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+            compute_eigenvalue_covariance,
+        )
+
+        eigenvalues = torch.randn(1, 5)  # Only 1 graph
+
+        with pytest.raises(ValueError, match="at least 2 graphs"):
+            compute_eigenvalue_covariance(eigenvalues)
+
+    def test_spectral_analyzer_covariance(self) -> None:
+        """SpectralAnalyzer should compute covariance from collected data."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+
+            collector = EigenstructureCollector(
+                dataset_name="er",
+                dataset_config={"num_nodes": 8, "num_graphs": 20, "p": 0.3},
+                output_dir=output_dir,
+                batch_size=10,
+                seed=42,
+            )
+            collector.collect()
+
+            analyzer = SpectralAnalyzer(output_dir)
+            result = analyzer.compute_eigenvalue_covariance(matrix_type="adjacency")
+
+            assert result.matrix_type == "adjacency"
+            assert result.num_graphs == 20
+            assert result.num_eigenvalues == 8
+            assert len(result.covariance_matrix) == 8
+            assert len(result.covariance_matrix[0]) == 8
+
+    def test_covariance_evolution_computation(self) -> None:
+        """NoisedAnalysisComparator should compute covariance evolution."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_dir = Path(tmpdir) / "original"
+            noised_dir = Path(tmpdir) / "noised"
+
+            collector = EigenstructureCollector(
+                dataset_name="er",
+                dataset_config={"num_nodes": 8, "num_graphs": 20, "p": 0.3},
+                output_dir=original_dir,
+                batch_size=10,
+                seed=42,
+            )
+            collector.collect()
+
+            noised_collector = NoisedEigenstructureCollector(
+                input_dir=original_dir,
+                output_dir=noised_dir,
+                noise_type="gaussian",
+                noise_levels=[0.1, 0.2],
+                seed=42,
+            )
+            noised_collector.collect()
+
+            comparator = NoisedAnalysisComparator(original_dir, noised_dir)
+            evolution = comparator.compute_covariance_evolution(matrix_type="adjacency")
+
+            assert "original" in evolution
+            assert "per_noise_level" in evolution
+            assert len(evolution["per_noise_level"]) == 2
+
+            # Check delta metrics are present
+            for item in evolution["per_noise_level"]:
+                assert "noise_level" in item
+                assert "covariance" in item
+                assert "frobenius_delta_relative" in item
+                assert "trace_delta_relative" in item
+                assert "off_diagonal_delta_relative" in item
+
+
+class TestCovarianceCLI:
+    """Tests for covariance CLI command."""
+
+    def test_cli_covariance_help(self) -> None:
+        """Covariance subcommand should show help."""
+        from click.testing import CliRunner
+
+        from tmgg.experiment_utils.eigenstructure_study.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["covariance", "--help"])
+        assert result.exit_code == 0
+        assert "--original-dir" in result.output
+        assert "--matrix-type" in result.output
+
+    def test_cli_covariance_original_only(self) -> None:
+        """Covariance command should work with original data only."""
+        from click.testing import CliRunner
+
+        from tmgg.experiment_utils.eigenstructure_study.cli import main
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_dir = Path(tmpdir) / "original"
+            output_dir = Path(tmpdir) / "output"
+
+            # Collect data first
+            collector = EigenstructureCollector(
+                dataset_name="er",
+                dataset_config={"num_nodes": 6, "num_graphs": 10, "p": 0.3},
+                output_dir=original_dir,
+                batch_size=5,
+                seed=42,
+            )
+            collector.collect()
+
+            # Run covariance command
+            result = runner.invoke(
+                main,
+                [
+                    "covariance",
+                    "--original-dir",
+                    str(original_dir),
+                    "--output-dir",
+                    str(output_dir),
+                ],
+            )
+
+            assert result.exit_code == 0
+            assert (output_dir / "covariance.json").exists()
+
+    def test_cli_covariance_with_noise_evolution(self) -> None:
+        """Covariance command should compute evolution with noised data."""
+        from click.testing import CliRunner
+
+        from tmgg.experiment_utils.eigenstructure_study.cli import main
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_dir = Path(tmpdir) / "original"
+            noised_dir = Path(tmpdir) / "noised"
+            output_dir = Path(tmpdir) / "output"
+
+            # Collect original data
+            collector = EigenstructureCollector(
+                dataset_name="er",
+                dataset_config={"num_nodes": 6, "num_graphs": 10, "p": 0.3},
+                output_dir=original_dir,
+                batch_size=5,
+                seed=42,
+            )
+            collector.collect()
+
+            # Collect noised data
+            noised_collector = NoisedEigenstructureCollector(
+                input_dir=original_dir,
+                output_dir=noised_dir,
+                noise_type="gaussian",
+                noise_levels=[0.1],
+                seed=42,
+            )
+            noised_collector.collect()
+
+            # Run covariance command with noised data
+            result = runner.invoke(
+                main,
+                [
+                    "covariance",
+                    "--original-dir",
+                    str(original_dir),
+                    "--noised-dir",
+                    str(noised_dir),
+                    "--output-dir",
+                    str(output_dir),
+                ],
+            )
+
+            assert result.exit_code == 0
+            assert (output_dir / "covariance_evolution.json").exists()

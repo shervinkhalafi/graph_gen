@@ -563,3 +563,108 @@ class NoisedAnalysisComparator:
             results.append(combined)
 
         return results
+
+    def compute_covariance_evolution(
+        self, matrix_type: str = "adjacency"
+    ) -> dict[str, Any]:
+        """
+        Compute eigenvalue covariance at each noise level.
+
+        Tracks how the covariance structure evolves as noise is added:
+        higher noise typically decorrelates eigenvalues, reducing off-diagonal
+        terms relative to the original.
+
+        Parameters
+        ----------
+        matrix_type : str
+            Either "adjacency" or "laplacian".
+
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - original: CovarianceResult for original (clean) graphs
+            - per_noise_level: list of dicts with noise_level, CovarianceResult,
+              and delta from original (Frobenius norm change, correlation change)
+        """
+        from .analyzer import (
+            CovarianceResult,
+            compute_covariance_summary,
+            compute_eigenvalue_covariance,
+        )
+
+        key = "eigenvalues_adj" if matrix_type == "adjacency" else "eigenvalues_lap"
+
+        # Load original eigenvalues
+        orig_eigenvalues: list[torch.Tensor] = []
+        for batch_path in iter_batches(self.original_dir):
+            tensors, _ = load_decomposition_batch(batch_path)
+            orig_eigenvalues.append(tensors[key])
+
+        orig_eig = torch.cat(orig_eigenvalues, dim=0)
+        orig_cov = compute_eigenvalue_covariance(orig_eig)
+        orig_summary = compute_covariance_summary(orig_cov)
+
+        original_result = CovarianceResult(
+            matrix_type=matrix_type,
+            num_graphs=orig_eig.shape[0],
+            num_eigenvalues=orig_eig.shape[1],
+            covariance_matrix=orig_cov.tolist(),
+            **orig_summary,
+        )
+
+        # Compute per noise level
+        per_level_results: list[dict[str, Any]] = []
+
+        for eps in self.get_noise_levels():
+            noised_dir = self.noised_base_dir / f"eps_{eps:.4f}"
+
+            noised_eigenvalues: list[torch.Tensor] = []
+            for batch_path in iter_batches(noised_dir):
+                tensors, _ = load_decomposition_batch(batch_path)
+                noised_eigenvalues.append(tensors[key])
+
+            noised_eig = torch.cat(noised_eigenvalues, dim=0)
+            noised_cov = compute_eigenvalue_covariance(noised_eig)
+            noised_summary = compute_covariance_summary(noised_cov)
+
+            noised_result = CovarianceResult(
+                matrix_type=matrix_type,
+                num_graphs=noised_eig.shape[0],
+                num_eigenvalues=noised_eig.shape[1],
+                covariance_matrix=noised_cov.tolist(),
+                **noised_summary,
+            )
+
+            # Compute delta metrics
+            frob_delta = (
+                torch.norm(noised_cov - orig_cov, p="fro").item()
+                / orig_summary["frobenius_norm"]
+            )
+            trace_delta = (noised_summary["trace"] - orig_summary["trace"]) / (
+                orig_summary["trace"] + 1e-10
+            )
+            off_diag_delta = (
+                noised_summary["off_diagonal_sum"] - orig_summary["off_diagonal_sum"]
+            ) / (abs(orig_summary["off_diagonal_sum"]) + 1e-10)
+
+            per_level_results.append(
+                {
+                    "noise_level": eps,
+                    "covariance": noised_result,
+                    "frobenius_delta_relative": frob_delta,
+                    "trace_delta_relative": trace_delta,
+                    "off_diagonal_delta_relative": off_diag_delta,
+                }
+            )
+
+            logger.info(
+                f"eps={eps}: frob_delta={frob_delta:.4f}, "
+                f"off_diag_delta={off_diag_delta:.4f}"
+            )
+
+        return {
+            "matrix_type": matrix_type,
+            "original": original_result,
+            "per_noise_level": per_level_results,
+        }
