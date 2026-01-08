@@ -10,7 +10,7 @@ from torch.nn.modules.linear import Linear
 from torch.nn.modules.normalization import LayerNorm
 
 from ..base import DenoisingModel, EmbeddingModel
-from ..layers import BareGraphConvolutionLayer
+from ..layers import BareGraphConvolutionLayer, SpectralProjectionLayer
 from . import diffusion_utils
 from .layers import Etoy, Xtoy, masked_softmax
 
@@ -96,6 +96,11 @@ class XEyTransformerLayer(nn.Module):
         use_gnn_k: bool = False,
         use_gnn_v: bool = False,
         gnn_num_terms: int = 2,
+        use_spectral_q: bool = False,
+        use_spectral_k: bool = False,
+        use_spectral_v: bool = False,
+        spectral_k: int = 16,
+        spectral_num_terms: int = 3,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
@@ -110,6 +115,11 @@ class XEyTransformerLayer(nn.Module):
             use_gnn_k=use_gnn_k,
             use_gnn_v=use_gnn_v,
             gnn_num_terms=gnn_num_terms,
+            use_spectral_q=use_spectral_q,
+            use_spectral_k=use_spectral_k,
+            use_spectral_v=use_spectral_v,
+            spectral_k=spectral_k,
+            spectral_num_terms=spectral_num_terms,
             device=device,
             dtype=dtype,
         )
@@ -145,17 +155,36 @@ class XEyTransformerLayer(nn.Module):
         y: Tensor,
         node_mask: Tensor,
         A: Tensor | None = None,
+        V: Tensor | None = None,
+        Lambda: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Pass the input through the encoder layer.
-        X: (bs, n, d)
-        E: (bs, n, n, d)
-        y: (bs, dy)
-        node_mask: (bs, n) Mask for the src keys per batch (optional)
-        A: (bs, n, n) Original adjacency matrix for GNN projections (optional)
-        Output: newX, newE, new_y with the same shape.
-        """
 
-        newX, newE, new_y = self.self_attn(X, E, y, node_mask=node_mask, A=A)
+        Parameters
+        ----------
+        X
+            Node features (bs, n, d).
+        E
+            Edge features (bs, n, n, d).
+        y
+            Global features (bs, dy).
+        node_mask
+            Mask for the src keys per batch (bs, n).
+        A
+            Original adjacency matrix for GNN projections (bs, n, n), optional.
+        V
+            Eigenvectors for spectral projections (bs, n, k), optional.
+        Lambda
+            Eigenvalues for spectral projections (bs, k), optional.
+
+        Returns
+        -------
+        tuple[Tensor, Tensor, Tensor]
+            Updated (X, E, y) with the same shapes.
+        """
+        newX, newE, new_y = self.self_attn(
+            X, E, y, node_mask=node_mask, A=A, V=V, Lambda=Lambda
+        )
 
         newX_d = self.dropoutX1(newX)
         X = self.normX1(X + newX_d)
@@ -184,6 +213,11 @@ class XEyTransformerLayer(nn.Module):
 class NodeEdgeBlock(nn.Module):
     """Self attention layer that also updates the representations on the edges.
 
+    Supports three projection modes for Q/K/V:
+    - Linear: Standard linear projection (default)
+    - GNN: Polynomial graph convolution using adjacency matrix
+    - Spectral: Eigenvalue-polynomial filtering using eigenvectors
+
     Parameters
     ----------
     dx
@@ -202,10 +236,25 @@ class NodeEdgeBlock(nn.Module):
         If True, use polynomial graph convolution for value projection.
     gnn_num_terms
         Number of polynomial terms for GNN projections (default 2).
+    use_spectral_q
+        If True, use spectral filter bank for query projection.
+    use_spectral_k
+        If True, use spectral filter bank for key projection.
+    use_spectral_v
+        If True, use spectral filter bank for value projection.
+    spectral_k
+        Number of eigenvectors for spectral projections (default 16).
+    spectral_num_terms
+        Number of polynomial terms for spectral filter (default 3).
     device
         Device for layer parameters.
     dtype
         Data type for layer parameters.
+
+    Notes
+    -----
+    GNN and spectral projections are mutually exclusive per projection type.
+    For example, use_gnn_q and use_spectral_q cannot both be True.
     """
 
     dx: int
@@ -213,9 +262,9 @@ class NodeEdgeBlock(nn.Module):
     dy: int
     df: int
     n_head: int
-    q: nn.Module  # Linear or BareGraphConvolutionLayer
-    k: nn.Module  # Linear or BareGraphConvolutionLayer
-    v: nn.Module  # Linear or BareGraphConvolutionLayer
+    q: nn.Module  # Linear, BareGraphConvolutionLayer, or SpectralProjectionLayer
+    k: nn.Module  # Linear, BareGraphConvolutionLayer, or SpectralProjectionLayer
+    v: nn.Module  # Linear, BareGraphConvolutionLayer, or SpectralProjectionLayer
     e_add: Linear
     e_mul: Linear
     y_e_mul: Linear
@@ -239,36 +288,65 @@ class NodeEdgeBlock(nn.Module):
         use_gnn_k: bool = False,
         use_gnn_v: bool = False,
         gnn_num_terms: int = 2,
+        use_spectral_q: bool = False,
+        use_spectral_k: bool = False,
+        use_spectral_v: bool = False,
+        spectral_k: int = 16,
+        spectral_num_terms: int = 3,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
         if not dx % n_head == 0:
             raise AssertionError(f"dx: {dx} -- nhead: {n_head}")
+
+        # Validate mutually exclusive projection modes
+        if use_gnn_q and use_spectral_q:
+            raise ValueError("use_gnn_q and use_spectral_q are mutually exclusive")
+        if use_gnn_k and use_spectral_k:
+            raise ValueError("use_gnn_k and use_spectral_k are mutually exclusive")
+        if use_gnn_v and use_spectral_v:
+            raise ValueError("use_gnn_v and use_spectral_v are mutually exclusive")
+
         self.dx = dx
         self.de = de
         self.dy = dy
         self.df = int(dx / n_head)
         self.n_head = n_head
 
-        # Store GNN flags for forward pass
+        # Store projection mode flags for forward pass
         self._use_gnn_q = use_gnn_q
         self._use_gnn_k = use_gnn_k
         self._use_gnn_v = use_gnn_v
+        self._use_spectral_q = use_spectral_q
+        self._use_spectral_k = use_spectral_k
+        self._use_spectral_v = use_spectral_v
 
-        # Attention projections (Linear or GNN)
+        # Attention projections (Linear, GNN, or Spectral)
         if use_gnn_q:
             self.q = BareGraphConvolutionLayer(gnn_num_terms, dx)
+        elif use_spectral_q:
+            self.q = SpectralProjectionLayer(
+                k=spectral_k, out_dim=dx, num_terms=spectral_num_terms
+            )
         else:
             self.q = Linear(dx, dx, device=device, dtype=dtype)
 
         if use_gnn_k:
             self.k = BareGraphConvolutionLayer(gnn_num_terms, dx)
+        elif use_spectral_k:
+            self.k = SpectralProjectionLayer(
+                k=spectral_k, out_dim=dx, num_terms=spectral_num_terms
+            )
         else:
             self.k = Linear(dx, dx, device=device, dtype=dtype)
 
         if use_gnn_v:
             self.v = BareGraphConvolutionLayer(gnn_num_terms, dx)
+        elif use_spectral_v:
+            self.v = SpectralProjectionLayer(
+                k=spectral_k, out_dim=dx, num_terms=spectral_num_terms
+            )
         else:
             self.v = Linear(dx, dx, device=device, dtype=dtype)
 
@@ -307,14 +385,32 @@ class NodeEdgeBlock(nn.Module):
         y: Tensor,
         node_mask: Tensor,
         A: Tensor | None = None,
+        V: Tensor | None = None,
+        Lambda: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
-        """
-        :param X: bs, n, d        node features
-        :param E: bs, n, n, d     edge features
-        :param y: bs, dz           global features
-        :param node_mask: bs, n
-        :param A: bs, n, n        original adjacency matrix (optional, for GNN projections)
-        :return: newX, newE, new_y with the same shape.
+        """Compute attention update for node and edge features.
+
+        Parameters
+        ----------
+        X
+            Node features (bs, n, d).
+        E
+            Edge features (bs, n, n, d).
+        y
+            Global features (bs, dz).
+        node_mask
+            Boolean mask (bs, n).
+        A
+            Original adjacency matrix (bs, n, n), for GNN projections.
+        V
+            Eigenvectors (bs, n, k), for spectral projections.
+        Lambda
+            Eigenvalues (bs, k), for spectral projections.
+
+        Returns
+        -------
+        tuple[Tensor, Tensor, Tensor]
+            Updated (newX, newE, new_y) with the same shapes.
         """
         bs, n, _ = X.shape
         x_mask = node_mask.unsqueeze(-1)  # bs, n, 1
@@ -325,9 +421,34 @@ class NodeEdgeBlock(nn.Module):
         if A is None and (self._use_gnn_q or self._use_gnn_k or self._use_gnn_v):
             A = E[..., 0]
 
-        # 1. Map X to keys and queries (GNN projections use adjacency from E)
-        Q = (self.q(A, X) if self._use_gnn_q else self.q(X)) * x_mask  # (bs, n, dx)
-        K = (self.k(A, X) if self._use_gnn_k else self.k(X)) * x_mask  # (bs, n, dx)
+        # Validate spectral inputs
+        uses_spectral = (
+            self._use_spectral_q or self._use_spectral_k or self._use_spectral_v
+        )
+        if uses_spectral and (V is None or Lambda is None):
+            raise ValueError(
+                "V and Lambda must be provided when using spectral projections"
+            )
+
+        # 1. Map X to keys and queries
+        # - GNN projections use adjacency matrix
+        # - Spectral projections use eigenvectors
+        # - Linear projections use node features directly
+        if self._use_gnn_q:
+            Q = self.q(A, X) * x_mask
+        elif self._use_spectral_q:
+            assert V is not None and Lambda is not None
+            Q = self.q(V, Lambda) * x_mask
+        else:
+            Q = self.q(X) * x_mask  # (bs, n, dx)
+
+        if self._use_gnn_k:
+            K = self.k(A, X) * x_mask
+        elif self._use_spectral_k:
+            assert V is not None and Lambda is not None
+            K = self.k(V, Lambda) * x_mask
+        else:
+            K = self.k(X) * x_mask  # (bs, n, dx)
         diffusion_utils.assert_correctly_masked(Q, x_mask)
         # 2. Reshape to (bs, n, n_head, df) with dx = n_head * df
 
@@ -365,12 +486,20 @@ class NodeEdgeBlock(nn.Module):
         softmax_mask = e_mask2.expand(-1, n, -1, self.n_head)  # bs, n, n, n_head
         attn = masked_softmax(Y, softmax_mask, dim=2)  # bs, n, n, n_head
 
-        V = (self.v(A, X) if self._use_gnn_v else self.v(X)) * x_mask  # bs, n, dx
-        V = V.reshape((V.size(0), V.size(1), self.n_head, self.df))
-        V = V.unsqueeze(1)  # (bs, 1, n, n_head, df)
+        # Compute values (using 'val' to avoid shadowing eigenvector parameter V)
+        if self._use_gnn_v:
+            val = self.v(A, X) * x_mask
+        elif self._use_spectral_v:
+            assert V is not None and Lambda is not None
+            val = self.v(V, Lambda) * x_mask
+        else:
+            val = self.v(X) * x_mask  # bs, n, dx
+
+        val = val.reshape((val.size(0), val.size(1), self.n_head, self.df))
+        val = val.unsqueeze(1)  # (bs, 1, n, n_head, df)
 
         # Compute weighted values
-        weighted_V = attn * V
+        weighted_V = attn * val
         weighted_V = weighted_V.sum(dim=2)
 
         # Send output to input dim
@@ -493,6 +622,25 @@ class _GraphTransformer(nn.Module):
         gnn_num_terms = int(hidden_dims.get("gnn_num_terms", 2))
         self._use_gnn_projections = use_gnn_q or use_gnn_k or use_gnn_v
 
+        # Extract spectral config from hidden_dims
+        use_spectral_q = bool(hidden_dims.get("use_spectral_q", False))
+        use_spectral_k = bool(hidden_dims.get("use_spectral_k", False))
+        use_spectral_v = bool(hidden_dims.get("use_spectral_v", False))
+        spectral_k = int(hidden_dims.get("spectral_k", 16))
+        spectral_num_terms = int(hidden_dims.get("spectral_num_terms", 3))
+        self._use_spectral_projections = (
+            use_spectral_q or use_spectral_k or use_spectral_v
+        )
+        self._spectral_k = spectral_k
+
+        # Create eigen layer if using spectral projections
+        if self._use_spectral_projections:
+            from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
+
+            self.eigen_layer: TopKEigenLayer | None = TopKEigenLayer(k=spectral_k)
+        else:
+            self.eigen_layer = None
+
         self.tf_layers = nn.ModuleList(
             [
                 XEyTransformerLayer(
@@ -506,6 +654,11 @@ class _GraphTransformer(nn.Module):
                     use_gnn_k=use_gnn_k,
                     use_gnn_v=use_gnn_v,
                     gnn_num_terms=gnn_num_terms,
+                    use_spectral_q=use_spectral_q,
+                    use_spectral_k=use_spectral_k,
+                    use_spectral_v=use_spectral_v,
+                    spectral_k=spectral_k,
+                    spectral_num_terms=spectral_num_terms,
                 )
                 for _ in range(n_layers)
             ]
@@ -578,6 +731,24 @@ class _GraphTransformer(nn.Module):
         if self._use_gnn_projections:
             original_A = E[..., 0].clone()  # Shape: (bs, n, n)
 
+        # Extract eigenvectors for spectral projections
+        spectral_V: torch.Tensor | None = None
+        spectral_Lambda: torch.Tensor | None = None
+        if self._use_spectral_projections and self.eigen_layer is not None:
+            # Use edge features as adjacency for eigendecomposition
+            adj_for_eigen = E[..., 0]  # Shape: (bs, n, n)
+            V_tmp, Lambda_tmp = self.eigen_layer(adj_for_eigen)
+
+            # Pad if graph smaller than spectral_k
+            actual_k = V_tmp.shape[-1]
+            if actual_k < self._spectral_k:
+                pad_size = self._spectral_k - actual_k
+                spectral_V = torch.nn.functional.pad(V_tmp, (0, pad_size))
+                spectral_Lambda = torch.nn.functional.pad(Lambda_tmp, (0, pad_size))
+            else:
+                spectral_V = V_tmp
+                spectral_Lambda = Lambda_tmp
+
         new_E = self.mlp_in_E(E)
         new_E = (new_E + new_E.transpose(1, 2)) / 2
         features = GraphFeatures(X=self.mlp_in_X(X), E=new_E, y=self.mlp_in_y(y)).mask(
@@ -586,7 +757,9 @@ class _GraphTransformer(nn.Module):
         X, E, y = features.X, features.E, features.y
 
         for layer in self.tf_layers:
-            X, E, y = layer(X, E, y, node_mask, A=original_A)
+            X, E, y = layer(
+                X, E, y, node_mask, A=original_A, V=spectral_V, Lambda=spectral_Lambda
+            )
 
         X_out: torch.Tensor = self.mlp_out_X(X)
         E_out: torch.Tensor = self.mlp_out_E(E)

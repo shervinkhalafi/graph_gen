@@ -6,6 +6,7 @@ from .masked_softmax import masked_softmax
 from .mha_layer import MultiHeadAttention
 from .nvgcn_layer import NodeVarGraphConvolutionLayer
 from .pearl_embedding import PEARLEmbedding
+from .spectral_projection import SpectralProjectionLayer
 from .XtoY import Xtoy
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "MultiHeadAttention",
     "NodeVarGraphConvolutionLayer",
     "PEARLEmbedding",
+    "SpectralProjectionLayer",
     "Xtoy",
 ]
