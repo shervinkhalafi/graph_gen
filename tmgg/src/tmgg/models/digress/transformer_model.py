@@ -10,6 +10,7 @@ from torch.nn.modules.linear import Linear
 from torch.nn.modules.normalization import LayerNorm
 
 from ..base import DenoisingModel, EmbeddingModel
+from ..layers import BareGraphConvolutionLayer
 from . import diffusion_utils
 from .layers import Etoy, Xtoy, masked_softmax
 
@@ -91,12 +92,27 @@ class XEyTransformerLayer(nn.Module):
         dim_ffy: int = 2048,
         dropout: float = 0.1,
         layer_norm_eps: float = 1e-5,
+        use_gnn_q: bool = False,
+        use_gnn_k: bool = False,
+        use_gnn_v: bool = False,
+        gnn_num_terms: int = 2,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
 
-        self.self_attn = NodeEdgeBlock(dx, de, dy, n_head, device=device, dtype=dtype)
+        self.self_attn = NodeEdgeBlock(
+            dx,
+            de,
+            dy,
+            n_head,
+            use_gnn_q=use_gnn_q,
+            use_gnn_k=use_gnn_k,
+            use_gnn_v=use_gnn_v,
+            gnn_num_terms=gnn_num_terms,
+            device=device,
+            dtype=dtype,
+        )
 
         self.linX1 = Linear(dx, dim_ffX, device=device, dtype=dtype)
         self.linX2 = Linear(dim_ffX, dx, device=device, dtype=dtype)
@@ -160,16 +176,40 @@ class XEyTransformerLayer(nn.Module):
 
 
 class NodeEdgeBlock(nn.Module):
-    """Self attention layer that also updates the representations on the edges."""
+    """Self attention layer that also updates the representations on the edges.
+
+    Parameters
+    ----------
+    dx
+        Node feature dimension.
+    de
+        Edge feature dimension.
+    dy
+        Global feature dimension.
+    n_head
+        Number of attention heads.
+    use_gnn_q
+        If True, use polynomial graph convolution for query projection.
+    use_gnn_k
+        If True, use polynomial graph convolution for key projection.
+    use_gnn_v
+        If True, use polynomial graph convolution for value projection.
+    gnn_num_terms
+        Number of polynomial terms for GNN projections (default 2).
+    device
+        Device for layer parameters.
+    dtype
+        Data type for layer parameters.
+    """
 
     dx: int
     de: int
     dy: int
     df: int
     n_head: int
-    q: Linear
-    k: Linear
-    v: Linear
+    q: nn.Module  # Linear or BareGraphConvolutionLayer
+    k: nn.Module  # Linear or BareGraphConvolutionLayer
+    v: nn.Module  # Linear or BareGraphConvolutionLayer
     e_add: Linear
     e_mul: Linear
     y_e_mul: Linear
@@ -189,6 +229,10 @@ class NodeEdgeBlock(nn.Module):
         de: int,
         dy: int,
         n_head: int,
+        use_gnn_q: bool = False,
+        use_gnn_k: bool = False,
+        use_gnn_v: bool = False,
+        gnn_num_terms: int = 2,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
@@ -201,10 +245,26 @@ class NodeEdgeBlock(nn.Module):
         self.df = int(dx / n_head)
         self.n_head = n_head
 
-        # Attention
-        self.q = Linear(dx, dx, device=device, dtype=dtype)
-        self.k = Linear(dx, dx, device=device, dtype=dtype)
-        self.v = Linear(dx, dx, device=device, dtype=dtype)
+        # Store GNN flags for forward pass
+        self._use_gnn_q = use_gnn_q
+        self._use_gnn_k = use_gnn_k
+        self._use_gnn_v = use_gnn_v
+
+        # Attention projections (Linear or GNN)
+        if use_gnn_q:
+            self.q = BareGraphConvolutionLayer(gnn_num_terms, dx)
+        else:
+            self.q = Linear(dx, dx, device=device, dtype=dtype)
+
+        if use_gnn_k:
+            self.k = BareGraphConvolutionLayer(gnn_num_terms, dx)
+        else:
+            self.k = Linear(dx, dx, device=device, dtype=dtype)
+
+        if use_gnn_v:
+            self.v = BareGraphConvolutionLayer(gnn_num_terms, dx)
+        else:
+            self.v = Linear(dx, dx, device=device, dtype=dtype)
 
         # FiLM E to X
         self.e_add = Linear(de, dx, device=device, dtype=dtype)
@@ -249,9 +309,16 @@ class NodeEdgeBlock(nn.Module):
         e_mask1 = x_mask.unsqueeze(2)  # bs, n, 1, 1
         e_mask2 = x_mask.unsqueeze(1)  # bs, 1, n, 1
 
-        # 1. Map X to keys and queries
-        Q = self.q(X) * x_mask  # (bs, n, dx)
-        K = self.k(X) * x_mask  # (bs, n, dx)
+        # Extract adjacency from first edge channel for GNN projections
+        A = (
+            E[..., 0]
+            if (self._use_gnn_q or self._use_gnn_k or self._use_gnn_v)
+            else None
+        )
+
+        # 1. Map X to keys and queries (GNN projections use adjacency from E)
+        Q = (self.q(A, X) if self._use_gnn_q else self.q(X)) * x_mask  # (bs, n, dx)
+        K = (self.k(A, X) if self._use_gnn_k else self.k(X)) * x_mask  # (bs, n, dx)
         diffusion_utils.assert_correctly_masked(Q, x_mask)
         # 2. Reshape to (bs, n, n_head, df) with dx = n_head * df
 
@@ -289,7 +356,7 @@ class NodeEdgeBlock(nn.Module):
         softmax_mask = e_mask2.expand(-1, n, -1, self.n_head)  # bs, n, n, n_head
         attn = masked_softmax(Y, softmax_mask, dim=2)  # bs, n, n, n_head
 
-        V = self.v(X) * x_mask  # bs, n, dx
+        V = (self.v(A, X) if self._use_gnn_v else self.v(X)) * x_mask  # bs, n, dx
         V = V.reshape((V.size(0), V.size(1), self.n_head, self.df))
         V = V.unsqueeze(1)  # (bs, 1, n, n_head, df)
 
@@ -410,6 +477,12 @@ class _GraphTransformer(nn.Module):
             act_fn_in,
         )
 
+        # Extract GNN config from hidden_dims (defaults ensure backwards compatibility)
+        use_gnn_q = bool(hidden_dims.get("use_gnn_q", False))
+        use_gnn_k = bool(hidden_dims.get("use_gnn_k", False))
+        use_gnn_v = bool(hidden_dims.get("use_gnn_v", False))
+        gnn_num_terms = int(hidden_dims.get("gnn_num_terms", 2))
+
         self.tf_layers = nn.ModuleList(
             [
                 XEyTransformerLayer(
@@ -419,8 +492,12 @@ class _GraphTransformer(nn.Module):
                     n_head=hidden_dims["n_head"],
                     dim_ffX=hidden_dims.get("dim_ffX", 2048),
                     dim_ffE=hidden_dims.get("dim_ffE", 128),
+                    use_gnn_q=use_gnn_q,
+                    use_gnn_k=use_gnn_k,
+                    use_gnn_v=use_gnn_v,
+                    gnn_num_terms=gnn_num_terms,
                 )
-                for i in range(n_layers)
+                for _ in range(n_layers)
             ]
         )
 
