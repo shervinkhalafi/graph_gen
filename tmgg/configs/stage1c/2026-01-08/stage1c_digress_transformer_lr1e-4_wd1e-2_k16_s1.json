@@ -1,0 +1,168 @@
+{
+  "data": {
+    "_target_": "tmgg.experiment_utils.data.GraphDataModule",
+    "num_workers": 4,
+    "pin_memory": true,
+    "batch_size": 100,
+    "val_split": 0.2,
+    "test_split": 0.2,
+    "noise_levels": [
+      0.01,
+      0.05,
+      0.1,
+      0.2,
+      0.3
+    ],
+    "dataset_name": "sbm",
+    "dataset_config": {
+      "num_nodes": 20,
+      "p_intra": 1.0,
+      "q_inter": 0.0,
+      "min_blocks": 2,
+      "max_blocks": 4,
+      "min_block_size": 2,
+      "max_block_size": 15,
+      "num_train_partitions": 10,
+      "num_test_partitions": 10
+    },
+    "num_samples_per_graph": 1000,
+    "noise_type": "digress"
+  },
+  "trainer": {
+    "_target_": "pytorch_lightning.Trainer",
+    "max_steps": 10000,
+    "max_epochs": -1,
+    "accelerator": "auto",
+    "devices": "auto",
+    "precision": 32,
+    "enable_checkpointing": true,
+    "default_root_dir": null,
+    "enable_progress_bar": true,
+    "log_every_n_steps": 1,
+    "val_check_interval": 1000,
+    "check_val_every_n_epoch": null,
+    "gradient_clip_val": 1.0,
+    "gradient_clip_algorithm": "norm",
+    "deterministic": false,
+    "benchmark": true,
+    "fast_dev_run": false,
+    "overfit_batches": 0,
+    "limit_train_batches": 1.0,
+    "limit_val_batches": 1.0,
+    "limit_test_batches": 1.0
+  },
+  "callbacks": {
+    "early_stopping": {
+      "monitor": "val/loss",
+      "mode": "min",
+      "patience": 10,
+      "min_delta": 0.0001
+    },
+    "checkpoint": {
+      "monitor": "val/loss",
+      "mode": "min",
+      "save_top_k": 3,
+      "save_last": true,
+      "filename": "model-step={step:06d}-val_loss={val/loss:.4f}",
+      "auto_insert_metric_name": false,
+      "every_n_train_steps": null
+    }
+  },
+  "base": {
+    "progress_bar": {
+      "progress_bar": {
+        "metrics_to_show": [
+          "train_loss",
+          "val/loss"
+        ],
+        "show_epoch": true,
+        "metrics_format": ".4f"
+      }
+    }
+  },
+  "experiment_name": "digress_default_eigenvec",
+  "sanity_check": false,
+  "learning_rate": 0.0001,
+  "weight_decay": 0.01,
+  "optimizer_type": "adamw",
+  "scheduler_config": {
+    "type": "cosine_warmup",
+    "warmup_fraction": 0.02,
+    "decay_fraction": 0.8
+  },
+  "loss_type": "BCEWithLogits",
+  "noise_type": "digress",
+  "noise_levels": [
+    0.01,
+    0.05,
+    0.1,
+    0.2,
+    0.3
+  ],
+  "eval_noise_levels": null,
+  "fixed_noise_seed": null,
+  "visualization_interval": 5000,
+  "log_spectral_deltas": false,
+  "spectral_k": 4,
+  "seed": 1,
+  "force_fresh": false,
+  "stage": null,
+  "sweep": false,
+  "parallelism": 4,
+  "resume": true,
+  "run_on_modal": false,
+  "detach": false,
+  "evaluation": {
+    "visualization_interval": 5000
+  },
+  "paths": {
+    "output_dir": null,
+    "results_dir": null
+  },
+  "model": {
+    "_target_": "tmgg.experiments.digress_denoising.lightning_module.DigressDenoisingLightningModule",
+    "digress_arch": "default",
+    "digress_mode": "eigenvec",
+    "model_type": "digress_default_eigenvec",
+    "learning_rate": 0.0001,
+    "loss_type": "BCEWithLogits",
+    "weight_decay": 0.01,
+    "optimizer_type": "adamw",
+    "scheduler_config": {
+      "type": "cosine_warmup",
+      "warmup_fraction": 0.02,
+      "decay_fraction": 0.8
+    },
+    "noise_type": "digress",
+    "noise_levels": [
+      0.01,
+      0.05,
+      0.1,
+      0.2,
+      0.3
+    ],
+    "seed": 1,
+    "use_eigenvectors": true,
+    "k": 16,
+    "n_layers": 4,
+    "hidden_mlp_dims": {
+      "X": 256,
+      "E": 64,
+      "y": 256
+    },
+    "hidden_dims": {
+      "dx": 128,
+      "de": 32,
+      "dy": 128,
+      "n_head": 4
+    },
+    "output_dims": {
+      "X": 0,
+      "E": 1,
+      "y": 0
+    },
+    "log_spectral_deltas": false,
+    "spectral_k": 4
+  },
+  "run_id": "stage1c_digress_transformer_lr1e-4_wd1e-2_k16_s1"
+}

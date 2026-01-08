@@ -133,12 +133,8 @@ class SelfAttentionDenoiser(SpectralDenoiser):
         torch.Tensor
             Key features of shape (batch, n, d_k) or (n, d_k).
         """
-        # Extract and pad eigenvectors
-        V, _Lambda = self.eigen_layer(A)
-        actual_k = V.shape[-1]
-        if actual_k < self.k:
-            pad_size = self.k - actual_k
-            V = torch.nn.functional.pad(V, (0, pad_size))
+        # Get embeddings (eigenvectors or PEARL) via base class
+        V = super().get_features(A)
 
         # Return key projections
         K = torch.matmul(V, self.W_K)
@@ -268,11 +264,8 @@ class SelfAttentionDenoiserWithMLP(SpectralDenoiser):
         torch.Tensor
             Key features of shape (batch, n, d_k) or (n, d_k).
         """
-        V, _Lambda = self.eigen_layer(A)
-        actual_k = V.shape[-1]
-        if actual_k < self.k:
-            pad_size = self.k - actual_k
-            V = torch.nn.functional.pad(V, (0, pad_size))
+        # Get embeddings (eigenvectors or PEARL) via base class
+        V = super().get_features(A)
 
         K = torch.matmul(V, self.W_K)
         return K
@@ -524,12 +517,8 @@ class MultiLayerSelfAttentionDenoiser(SpectralDenoiser):
         torch.Tensor
             Key features of shape (batch, n, d_model) or (n, d_model).
         """
-        # Extract and pad eigenvectors
-        V, _Lambda = self.eigen_layer(A)
-        actual_k = V.shape[-1]
-        if actual_k < self.k:
-            pad_size = self.k - actual_k
-            V = torch.nn.functional.pad(V, (0, pad_size))
+        # Get embeddings (eigenvectors or PEARL) via base class
+        V = SpectralDenoiser.get_features(self, A)
 
         unbatched = V.ndim == 2
         v = V.unsqueeze(0) if unbatched else V

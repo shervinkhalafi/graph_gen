@@ -5,6 +5,7 @@ from .gcn import BareGraphConvolutionLayer, GraphConvolutionLayer
 from .masked_softmax import masked_softmax
 from .mha_layer import MultiHeadAttention
 from .nvgcn_layer import NodeVarGraphConvolutionLayer
+from .pearl_embedding import PEARLEmbedding
 from .XtoY import Xtoy
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "masked_softmax",
     "MultiHeadAttention",
     "NodeVarGraphConvolutionLayer",
+    "PEARLEmbedding",
     "Xtoy",
 ]
