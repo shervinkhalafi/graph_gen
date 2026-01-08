@@ -1,0 +1,32 @@
+# Graph Filter Bank denoiser with asymmetric spectral polynomial
+# W_X = Σ Λ^ℓ H_X^{(ℓ)}, W_Y = Σ Λ^ℓ H_Y^{(ℓ)}, Â = V W_X W_Y^T V^T
+
+_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+
+model_type: filter_bank
+
+# Number of eigenvectors
+k: 8
+
+# Polynomial degree K
+polynomial_degree: 5
+
+# Asymmetric reconstruction: separate polynomial coefficients for X and Y
+asymmetric: true
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
+
+# Loss
+loss_type: ${loss_type}

@@ -1,0 +1,41 @@
+# Self-Attention denoiser with PEARL embeddings
+# Uses R-PEARL (random GNN) instead of eigenvectors for O(n) complexity
+#
+# Reference: PEARL: Position Encoding with Adaptable Random Layers (ICLR 2025)
+# https://github.com/ehejin/Pearl-PE
+
+_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+
+model_type: self_attention
+
+# Embedding dimension (output of PEARL)
+k: 8
+
+# Key dimension
+d_k: 64
+
+# Use PEARL embeddings instead of eigenvectors
+# Options: "eigenvector" (default), "pearl_random" (R-PEARL), "pearl_basis" (B-PEARL)
+embedding_source: pearl_random
+
+# PEARL-specific parameters
+pearl_num_layers: 3
+pearl_hidden_dim: 64
+pearl_input_samples: 32  # For R-PEARL: number of random samples
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
+
+# Loss
+loss_type: ${loss_type}
