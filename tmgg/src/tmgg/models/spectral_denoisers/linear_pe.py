@@ -1,7 +1,8 @@
 """Linear Positional Encoding denoiser for graph denoising.
 
 Implements the simplest spectral denoiser: a linear transformation in
-eigenspace with optional node-specific bias correction.
+eigenspace with optional node-specific bias correction. Supports both
+symmetric (VWV^T) and asymmetric (XY^T) reconstruction modes.
 """
 
 from typing import Any
@@ -15,12 +16,19 @@ from tmgg.models.spectral_denoisers.base_spectral import SpectralDenoiser
 class LinearPE(SpectralDenoiser):
     """Linear Positional Encoding denoiser.
 
-    Reconstructs the adjacency matrix as:
+    Reconstructs the adjacency matrix using eigenvector projections with
+    optional asymmetric mode:
+
+    Symmetric mode (default):
         Â = V W V^T + 1 b^T + b 1^T
 
+    Asymmetric mode:
+        X = V W_X,  Y = V W_Y
+        Â = X Y^T + 1 b^T + b 1^T
+
     where V ∈ R^{n×k} are the top-k eigenvectors of the noisy adjacency,
-    W ∈ R^{k×k} is a learnable weight matrix, and b ∈ R^{max_n} is a
-    learnable bias vector capturing node-specific degree corrections.
+    W (or W_X, W_Y) ∈ R^{k×k} are learnable weight matrices, and
+    b ∈ R^{max_n} is a learnable bias vector.
 
     Outputs raw logits. Use model.predict(logits) for [0,1] probabilities.
 
@@ -34,12 +42,19 @@ class LinearPE(SpectralDenoiser):
     use_bias : bool, optional
         Whether to use the node-specific bias term. For multi-graph settings
         with varying sizes, consider setting this to False. Default is True.
+    asymmetric : bool, optional
+        If True, use separate W_X and W_Y weight matrices for asymmetric
+        reconstruction X @ Y.T. Default is False.
 
     Notes
     -----
     The bias term adds a rank-2 correction to the low-rank reconstruction.
     Entry (i, j) receives bias b_i + b_j, which captures node degree effects
     not captured by the top-k eigenspace.
+
+    Asymmetric mode doubles the parameter count but allows the model to learn
+    different row and column embeddings, which can capture asymmetric
+    structure in directed graphs or improve expressiveness.
 
     Examples
     --------
@@ -50,6 +65,10 @@ class LinearPE(SpectralDenoiser):
     >>> predictions = model.predict(logits)  # apply sigmoid
     >>> predictions.shape
     torch.Size([4, 50, 50])
+
+    >>> # Asymmetric mode
+    >>> model_asym = LinearPE(k=8, max_nodes=50, asymmetric=True)
+    >>> logits_asym = model_asym(A_noisy)
     """
 
     def __init__(
@@ -57,14 +76,26 @@ class LinearPE(SpectralDenoiser):
         k: int,
         max_nodes: int = 200,
         use_bias: bool = True,
+        asymmetric: bool = False,
     ):
         super().__init__(k=k)
         self.max_nodes = max_nodes
         self.use_bias = use_bias
+        self.asymmetric = asymmetric
 
-        # Learnable weight matrix W ∈ R^{k×k}
-        self.W = nn.Parameter(torch.empty(k, k))
-        nn.init.xavier_uniform_(self.W)
+        if asymmetric:
+            # Separate weight matrices for X and Y embeddings
+            self.W_X = nn.Parameter(torch.empty(k, k))
+            self.W_Y = nn.Parameter(torch.empty(k, k))
+            nn.init.xavier_uniform_(self.W_X)
+            nn.init.xavier_uniform_(self.W_Y)
+            self.register_parameter("W", None)
+        else:
+            # Single weight matrix W ∈ R^{k×k}
+            self.W = nn.Parameter(torch.empty(k, k))
+            nn.init.xavier_uniform_(self.W)
+            self.register_parameter("W_X", None)
+            self.register_parameter("W_Y", None)
 
         # Learnable bias vector b ∈ R^{max_nodes}
         if use_bias:
@@ -78,7 +109,7 @@ class LinearPE(SpectralDenoiser):
         Lambda: torch.Tensor,
         A: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute V W V^T + bias.
+        """Compute VWV^T (symmetric) or XY^T (asymmetric) + bias.
 
         Parameters
         ----------
@@ -100,11 +131,17 @@ class LinearPE(SpectralDenoiser):
 
         batch_size, n, k = V.shape
 
-        # Core reconstruction: V W V^T
-        # V @ W: (batch, n, k)
-        VW = torch.matmul(V, self.W)
-        # VW @ V^T: (batch, n, n)
-        A_reconstructed = torch.matmul(VW, V.transpose(-1, -2))
+        if self.asymmetric:
+            # Asymmetric reconstruction: X Y^T where X = V W_X, Y = V W_Y
+            assert self.W_X is not None and self.W_Y is not None
+            X = torch.matmul(V, self.W_X)  # (batch, n, k)
+            Y = torch.matmul(V, self.W_Y)  # (batch, n, k)
+            A_reconstructed = torch.matmul(X, Y.transpose(-1, -2))  # (batch, n, n)
+        else:
+            # Symmetric reconstruction: V W V^T
+            assert self.W is not None
+            VW = torch.matmul(V, self.W)  # (batch, n, k)
+            A_reconstructed = torch.matmul(VW, V.transpose(-1, -2))  # (batch, n, n)
 
         # Add bias term if enabled
         if self.use_bias and self.b is not None:
@@ -131,6 +168,7 @@ class LinearPE(SpectralDenoiser):
             {
                 "max_nodes": self.max_nodes,
                 "use_bias": self.use_bias,
+                "asymmetric": self.asymmetric,
             }
         )
         return config
