@@ -1,0 +1,47 @@
+# DiGress GraphTransformer with GNN projections for all Q, K, and V
+# Uses polynomial graph convolution for all attention projections
+
+_target_: tmgg.experiments.digress_denoising.lightning_module.DigressDenoisingLightningModule
+
+# Experiment naming
+digress_arch: "gnn_all"
+digress_mode: "eigenvec"
+model_type: digress_gnn_all_eigenvec
+
+# Training parameters (inherit from base_config_training.yaml)
+learning_rate: ${learning_rate}
+loss_type: ${loss_type}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+scheduler_config:
+  type: "cosine_warmup"
+  warmup_fraction: 0.02
+  decay_fraction: 0.8
+
+# These are overridden by base_config_digress.yaml
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+seed: ${seed}
+
+# Model-specific architecture parameters
+use_eigenvectors: true
+k: 50
+n_layers: 4
+hidden_mlp_dims:
+  X: 256
+  E: 64
+  y: 256
+hidden_dims:
+  dx: 128
+  de: 32
+  dy: 128
+  n_head: 4
+  use_gnn_q: true    # GNN for query projection
+  use_gnn_k: true    # GNN for key projection
+  use_gnn_v: true    # GNN for value projection
+  gnn_num_terms: 2   # Polynomial degree for GNN convolutions
+
+output_dims:
+  X: 0
+  E: 1
+  y: 0

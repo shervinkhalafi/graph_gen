@@ -1,0 +1,31 @@
+# Stage 2-B: Shrinkage Wrapper Validation
+# Tests shrinkage wrappers vs self_attention baseline across multiple datasets
+# Reuses Stage 2 datasets with shrinkage architectures from Stage 1-B
+#
+# Architectures compared:
+# - self_attention: baseline
+# - self_attention_strict_shrinkage: sigmoid-gated shrinkage (S_mod = alpha * S)
+# - self_attention_relaxed_shrinkage: FiLM-style modulation (S_mod = scale * S + shift)
+
+name: stage2b_shrinkage
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/self_attention              # Baseline
+  - models/spectral/self_attention_strict_shrinkage
+  - models/spectral/self_attention_relaxed_shrinkage
+
+datasets:
+  - sbm_default
+  - er_spectral       # Erdős-Rényi graphs
+  - tree_spectral     # Random trees
+  - regular_spectral  # d-regular graphs
+
+hyperparameters:
+  learning_rate: [5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [8, 16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage2b_{arch}_{data}_{lr}_{wd}_{k}_s{seed}"

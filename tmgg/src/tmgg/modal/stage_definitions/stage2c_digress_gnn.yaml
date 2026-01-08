@@ -1,0 +1,33 @@
+# Stage 2-C: DiGress GNN Projection Validation
+# Tests GNN projection variants across multiple datasets
+# Cross-dataset validation of signal processing GNN in attention
+#
+# Architectures compared:
+# - digress_transformer: baseline with linear Q/K/V projections
+# - digress_transformer_gnn_qk: GNN for Q+K, linear for V
+# - digress_transformer_gnn_v: linear for Q+K, GNN for V
+# - digress_transformer_gnn_all: GNN for all projections
+
+name: stage2c_digress_gnn
+base_config: base_config_digress
+
+architectures:
+  - models/digress/digress_transformer         # Baseline (Linear Q/K/V)
+  - models/digress/digress_transformer_gnn_qk  # GNN for Q+K only
+  - models/digress/digress_transformer_gnn_v   # GNN for V only
+  - models/digress/digress_transformer_gnn_all # GNN for all
+
+datasets:
+  - sbm_default
+  - er_spectral       # Erdős-Rényi graphs
+  - tree_spectral     # Random trees
+  - regular_spectral  # d-regular graphs
+
+hyperparameters:
+  learning_rate: [5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage2c_{arch}_{data}_{lr}_{wd}_{k}_s{seed}"
