@@ -1,0 +1,27 @@
+# Stage 1-E: PEARL Embedding Comparison
+# Tests PEARL (GNN-based PE) vs eigenvector baselines on SBM n=50
+#
+# PEARL generates positional encodings via GNN message passing with O(n)
+# complexity, compared to O(n^2) eigendecomposition. R-PEARL uses random
+# node initialization; B-PEARL uses standard basis vectors.
+#
+# Reference: PEARL (ICLR 2025) - https://github.com/ehejin/Pearl-PE
+
+name: stage1e_pearl
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/linear_pe            # Eigenvector baseline
+  - models/spectral/self_attention       # Eigenvector baseline
+  - models/spectral/linear_pe_pearl      # R-PEARL variant
+  - models/spectral/filter_bank_pearl    # R-PEARL variant
+  - models/spectral/self_attention_pearl # R-PEARL variant
+
+hyperparameters:
+  learning_rate: [1e-4, 5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [8, 16]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage1e_{arch}_{lr}_{wd}_{k}_s{seed}"

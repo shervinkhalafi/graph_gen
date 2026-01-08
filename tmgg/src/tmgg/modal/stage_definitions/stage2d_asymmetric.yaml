@@ -1,0 +1,26 @@
+# Stage 2-D: Asymmetric Reconstruction Cross-Dataset Validation
+# Tests asymmetric variants across multiple graph types
+# Validates whether asymmetric mode generalizes beyond SBM
+
+name: stage2d_asymmetric
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/linear_pe              # Symmetric baseline
+  - models/spectral/linear_pe_asymmetric   # Asymmetric variant
+  - models/spectral/filter_bank_asymmetric # Asymmetric variant
+
+datasets:
+  - sbm_default
+  - er_spectral
+  - tree_spectral
+  - regular_spectral
+
+hyperparameters:
+  learning_rate: [5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [8, 16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage2d_{arch}_{data}_{lr}_{wd}_{k}_s{seed}"

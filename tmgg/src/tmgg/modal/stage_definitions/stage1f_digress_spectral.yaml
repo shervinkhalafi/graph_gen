@@ -1,0 +1,24 @@
+# Stage 1-F: DiGress Spectral Projection Comparison
+# Tests spectral filter bank Q/K/V vs linear and GNN baselines on SBM n=50
+#
+# Spectral projections compute Y = V @ W where W = sum_l Lambda^l * H[l],
+# scaling eigenmodes by polynomial of eigenvalues. This is complementary
+# to spatial GNN projections which aggregate over neighborhoods.
+
+name: stage1f_digress_spectral
+base_config: base_config_digress
+
+architectures:
+  - models/digress/digress_transformer             # Linear baseline
+  - models/digress/digress_transformer_gnn_qk      # GNN Q+K
+  - models/digress/digress_transformer_spectral_qk # Spectral Q+K
+  - models/digress/digress_transformer_spectral_all # Spectral Q+K+V
+
+hyperparameters:
+  learning_rate: [1e-4, 5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage1f_{arch}_{lr}_{wd}_{k}_s{seed}"

@@ -1,0 +1,29 @@
+# Stage 2-E: PEARL Embedding Cross-Dataset Validation
+# Tests PEARL variants across multiple graph types
+# Validates whether GNN-based PE generalizes beyond SBM
+#
+# Reference: PEARL (ICLR 2025) - https://github.com/ehejin/Pearl-PE
+
+name: stage2e_pearl
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/linear_pe            # Eigenvector baseline
+  - models/spectral/self_attention       # Eigenvector baseline
+  - models/spectral/linear_pe_pearl      # R-PEARL variant
+  - models/spectral/self_attention_pearl # R-PEARL variant
+
+datasets:
+  - sbm_default
+  - er_spectral
+  - tree_spectral
+  - regular_spectral
+
+hyperparameters:
+  learning_rate: [5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [8, 16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage2e_{arch}_{data}_{lr}_{wd}_{k}_s{seed}"

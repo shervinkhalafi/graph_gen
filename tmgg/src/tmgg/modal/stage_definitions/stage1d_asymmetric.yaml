@@ -1,0 +1,24 @@
+# Stage 1-D: Asymmetric Reconstruction Comparison
+# Tests asymmetric X/Y reconstruction vs symmetric baselines on SBM n=50
+#
+# Asymmetric mode uses separate W_X and W_Y matrices to compute X @ Y.T
+# instead of symmetric V @ W @ V.T. This doubles parameters but allows
+# learning different row/column embeddings.
+
+name: stage1d_asymmetric
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/linear_pe              # Symmetric baseline
+  - models/spectral/filter_bank            # Symmetric baseline
+  - models/spectral/linear_pe_asymmetric   # Asymmetric variant
+  - models/spectral/filter_bank_asymmetric # Asymmetric variant
+
+hyperparameters:
+  learning_rate: [1e-4, 5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [8, 16]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage1d_{arch}_{lr}_{wd}_{k}_s{seed}"

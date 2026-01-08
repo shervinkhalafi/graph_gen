@@ -1,0 +1,26 @@
+# Stage 2-F: DiGress Spectral Projection Cross-Dataset Validation
+# Tests spectral Q/K/V projections across multiple graph types
+# Compares spectral vs GNN vs linear projections for generalization
+
+name: stage2f_digress_spectral
+base_config: base_config_digress
+
+architectures:
+  - models/digress/digress_transformer             # Linear baseline
+  - models/digress/digress_transformer_gnn_qk      # GNN Q+K
+  - models/digress/digress_transformer_spectral_qk # Spectral Q+K
+
+datasets:
+  - sbm_default
+  - er_spectral
+  - tree_spectral
+  - regular_spectral
+
+hyperparameters:
+  learning_rate: [5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage2f_{arch}_{data}_{lr}_{wd}_{k}_s{seed}"
