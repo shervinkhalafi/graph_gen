@@ -24,3 +24,11 @@ wandb_export_full.tar.xz
 data/
 logs/
 .mcp.json
+
+# Large eigenstructure data (stored externally)
+eigenstructure_results_full/enzymes/
+eigenstructure_results_full/er/
+eigenstructure_results_full/proteins/
+eigenstructure_results_full/regular/
+eigenstructure_results_full/sbm/
+eigenstructure_results_full/tree/

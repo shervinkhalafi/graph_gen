@@ -92,3 +92,57 @@ Before running the scripts, ensure:
 ## Configuration
 
 The legacy replication uses the `legacy_match.yaml` config which ensures exact parameter compatibility with the original denoising scripts while leveraging tmgg's superior experiment management.
+
+## Analysis Scripts
+
+Scripts for analyzing W&B experiment data and generating reports.
+
+### `fetch_wandb_runs.py`
+Exports all experiment runs from W&B to JSON format.
+
+```bash
+uv run scripts/fetch_wandb_runs.py
+uv run scripts/fetch_wandb_runs.py --entity graph_denoise_team
+uv run scripts/fetch_wandb_runs.py --output results/wandb_export.json
+```
+
+### `analyze_experiments.py`
+Downloads W&B data, performs hyperparameter importance analysis using Random Forest permutation importance, and generates summary statistics.
+
+```bash
+uv run scripts/analyze_experiments.py                    # Full download + analysis
+uv run scripts/analyze_experiments.py --skip-download    # Use cached data
+uv run scripts/analyze_experiments.py --importance-only  # Only importance analysis
+```
+
+Output files (in `eigenstructure_results_full/`):
+- `all_runs.parquet` - All run data (2013 runs, 344 columns)
+- `importance.csv` - Hyperparameter importance scores
+- `seed_averaged_summary.csv` - Seed-averaged performance by configuration
+
+### `analyze_wandb_runs.py`
+Analyzes exported JSON data with grouping and filtering capabilities.
+
+```bash
+uv run scripts/analyze_wandb_runs.py wandb_runs_export.json
+uv run scripts/analyze_wandb_runs.py wandb_runs_export.json --group-by project
+uv run scripts/analyze_wandb_runs.py wandb_runs_export.json --filter "stage2c"
+```
+
+### `experiment_breakdown.py`
+Generates breakdown tables by semantic groupings (model type, dataset, architecture, etc.).
+
+```bash
+uv run scripts/experiment_breakdown.py                   # Default: full analysis
+uv run scripts/experiment_breakdown.py --mode summary    # Summary table only
+uv run scripts/experiment_breakdown.py --mode comparison # Architecture comparison
+```
+
+### `semantic_analysis.py`
+Performs statistical significance tests (t-tests, Cohen's d) across semantic groupings.
+
+```bash
+uv run scripts/semantic_analysis.py
+uv run scripts/semantic_analysis.py --metric test_acc
+uv run scripts/semantic_analysis.py --output semantic_report.md
+```

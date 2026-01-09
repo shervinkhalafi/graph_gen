@@ -135,6 +135,42 @@ uv run tmgg-gnn trainer.max_steps=50000 model.learning_rate=0.001
 uv run tmgg-attention --multirun model.num_layers=4,8,16
 ```
 
+## Experiment Analysis
+
+Scripts for analyzing W&B experiment results and generating reports:
+
+| Script | Description |
+|--------|-------------|
+| `scripts/fetch_wandb_runs.py` | Fetch runs from W&B to JSON |
+| `scripts/analyze_experiments.py` | Download data, hyperparameter importance analysis |
+| `scripts/analyze_wandb_runs.py` | Analyze exported JSON with grouping/filtering |
+| `scripts/experiment_breakdown.py` | Generate breakdown tables by semantic groupings |
+| `scripts/semantic_analysis.py` | Statistical significance tests across groupings |
+
+```bash
+# Full analysis pipeline
+uv run scripts/analyze_experiments.py
+
+# Use cached data (skip download)
+uv run scripts/analyze_experiments.py --skip-download
+
+# Generate all breakdown reports
+uv run scripts/experiment_breakdown.py --mode full
+```
+
+### Key Findings (Eigenstructure Study)
+
+Analysis of 2013 W&B runs comparing graph denoising approaches:
+
+- **DiGress outperforms Spectral**: Mean MSE 0.087 vs 0.187
+- **Stage2c optimal**: Achieves best results (MSE 0.075)
+- **k=32 optimal**: Higher k (50) doesn't improve performance
+- **Avoid asymmetric attention**: 2.7x worse than symmetric
+- **Architecture choice inconsequential**: GNN variants (gnn_all, gnn_v, gnn_qk) equivalent to default
+- **Filter bank wins on specific datasets**: pyg_enzymes, ring_of_cliques show filter_bank advantage
+
+See `eigenstructure_results_full/analysis_summary.md` for full analysis and `eigenstructure_results_full/architecture_comparison.md` for per-dataset architecture comparison.
+
 ## Project Structure
 
 ```
