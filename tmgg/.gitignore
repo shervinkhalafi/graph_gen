@@ -32,3 +32,4 @@ eigenstructure_results_full/proteins/
 eigenstructure_results_full/regular/
 eigenstructure_results_full/sbm/
 eigenstructure_results_full/tree/
+.env

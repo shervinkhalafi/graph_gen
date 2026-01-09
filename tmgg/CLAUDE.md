@@ -1,2 +1,2 @@
-Unless explicitly specified by the user or confirmed with a question, we never silence pyright errors or warnings, and we never do "graceful fallback", we always _address_ the error/warning, and we always fail loudly and informatively with an exception
-
+- Unless explicitly specified by the user or confirmed with a question, we never silence pyright errors or warnings, and we never do "graceful fallback", we always _address_ the error/warning, and we always fail loudly and informatively with an exception
+- the semantic groupings are modeltype,dataset,asymetric, noiselevels,input embeddings, ablations across the digress components + the hyperparmater settings. the only averaging we allow is across seeds,across hyperparmaters we pick the best (but also report the distribution) and we group by these high level research question comparisons
