@@ -1,16 +1,17 @@
-"""Tests for MMD metrics module.
+"""Tests for MMD metrics module (DiGress-aligned).
 
 Test Rationale
 --------------
 These tests verify the MMD (Maximum Mean Discrepancy) computation for graph
-generation evaluation. MMD measures distributional distance between reference
-and generated graphs using graph-theoretic properties.
+generation evaluation, aligned with DiGress for comparability. MMD measures
+distributional distance between reference and generated graphs.
 
 Key invariants tested:
 1. MMD between identical distributions should be near zero
 2. MMD between different distributions should be positive
-3. Graph statistics should be computed correctly for known graph types
-4. Kernels should satisfy mathematical properties (symmetry, positivity)
+3. Graph statistics (degree, clustering, spectral) computed correctly
+4. Kernels satisfy mathematical properties (symmetry, positivity)
+5. Spectral uses normalized Laplacian (DiGress "spectre")
 """
 
 import networkx as nx
@@ -25,13 +26,12 @@ from tmgg.experiment_utils.mmd_metrics import (
     compute_clustering_histogram,
     compute_degree_histogram,
     compute_graph_statistics,
-    compute_laplacian_histogram,
     compute_mmd,
     compute_mmd_from_adjacencies,
     compute_mmd_metrics,
     compute_spectral_histogram,
     gaussian_kernel,
-    tv_kernel,
+    gaussian_tv_kernel,
 )
 
 
@@ -77,21 +77,38 @@ class TestHistogramComputation:
     def test_clustering_histogram_clique(self):
         """Complete graph should have all clustering coefficients = 1."""
         G = nx.complete_graph(5)
-        hist = compute_clustering_histogram(G, num_bins=10)
+        hist = compute_clustering_histogram(G, num_bins=100)
         # Last bin (near 1.0) should have all mass
         assert hist[-1] > 0 or hist[-2] > 0
 
-    def test_spectral_histogram_shape(self):
-        """Spectral histogram should have correct number of bins."""
+    def test_clustering_histogram_default_bins(self):
+        """Default clustering histogram should have 100 bins (DiGress style)."""
         G = nx.erdos_renyi_graph(20, 0.3, seed=42)
-        hist = compute_spectral_histogram(G, num_bins=15)
-        assert len(hist) == 15
+        hist = compute_clustering_histogram(G)
+        assert len(hist) == 100
 
-    def test_laplacian_histogram_nonnegative(self):
-        """Laplacian eigenvalues should be non-negative."""
+    def test_spectral_histogram_shape(self):
+        """Spectral histogram should have correct number of bins (200 default)."""
         G = nx.erdos_renyi_graph(20, 0.3, seed=42)
-        hist = compute_laplacian_histogram(G, num_bins=20)
-        assert len(hist) == 20
+        hist = compute_spectral_histogram(G)
+        assert len(hist) == 200
+
+    def test_spectral_histogram_custom_bins(self):
+        """Spectral histogram should respect custom bin count."""
+        G = nx.erdos_renyi_graph(20, 0.3, seed=42)
+        hist = compute_spectral_histogram(G, num_bins=50)
+        assert len(hist) == 50
+
+    def test_spectral_histogram_uses_laplacian(self):
+        """Spectral histogram should use normalized Laplacian eigenvalues.
+
+        Normalized Laplacian eigenvalues are in [0, 2], so histogram should
+        have mass only in that range (DiGress spectre metric).
+        """
+        G = nx.erdos_renyi_graph(30, 0.4, seed=42)
+        hist = compute_spectral_histogram(G, num_bins=200)
+        # Histogram is PMF, should sum to 1
+        assert hist.sum() == pytest.approx(1.0, rel=0.01)
 
 
 class TestKernels:
@@ -116,17 +133,32 @@ class TestKernels:
         y = np.array([3, 2, 1])
         assert gaussian_kernel(x, y) == pytest.approx(gaussian_kernel(y, x))
 
-    def test_tv_kernel_identical(self):
-        """TV kernel of identical histograms should be 1."""
+    def test_gaussian_tv_kernel_identical(self):
+        """Gaussian TV kernel of identical histograms should be 1."""
         x = np.array([1, 2, 3, 4, 5])
-        k = tv_kernel(x, x)
+        k = gaussian_tv_kernel(x, x)
         assert k == pytest.approx(1.0)
 
-    def test_tv_kernel_symmetric(self):
-        """TV kernel should be symmetric."""
+    def test_gaussian_tv_kernel_symmetric(self):
+        """Gaussian TV kernel should be symmetric."""
         x = np.array([1, 2, 3])
         y = np.array([3, 2, 1])
-        assert tv_kernel(x, y) == pytest.approx(tv_kernel(y, x))
+        assert gaussian_tv_kernel(x, y) == pytest.approx(gaussian_tv_kernel(y, x))
+
+    def test_gaussian_tv_kernel_bounded(self):
+        """Gaussian TV kernel should be in (0, 1] for any inputs."""
+        x = np.array([1, 0, 0, 0, 0])
+        y = np.array([0, 0, 0, 0, 1])
+        k = gaussian_tv_kernel(x, y, sigma=1.0)
+        assert 0 < k < 1  # Different distributions, so k < 1
+
+    def test_gaussian_tv_kernel_sigma_effect(self):
+        """Larger sigma should give higher kernel values for different distributions."""
+        x = np.array([1, 0, 0])
+        y = np.array([0, 0, 1])
+        k_small = gaussian_tv_kernel(x, y, sigma=0.1)
+        k_large = gaussian_tv_kernel(x, y, sigma=10.0)
+        assert k_large > k_small
 
 
 class TestMMDComputation:
@@ -153,19 +185,27 @@ class TestMMDComputation:
         mmd = compute_mmd(samples1, samples2, kernel="gaussian")
         assert mmd >= 0
 
-    def test_mmd_tv_kernel(self):
-        """MMD should work with TV kernel."""
+    def test_mmd_gaussian_tv_kernel(self):
+        """MMD should work with gaussian_tv kernel (DiGress style)."""
         samples1 = [np.array([1, 2, 3]) for _ in range(5)]
         samples2 = [np.array([3, 2, 1]) for _ in range(5)]
-        mmd = compute_mmd(samples1, samples2, kernel="tv")
+        mmd = compute_mmd(samples1, samples2, kernel="gaussian_tv")
         assert mmd >= 0
+
+    def test_mmd_default_kernel_is_gaussian_tv(self):
+        """Default kernel should be gaussian_tv for DiGress compatibility."""
+        samples1 = [np.array([1, 2, 3]) for _ in range(5)]
+        samples2 = [np.array([3, 2, 1]) for _ in range(5)]
+        mmd_default = compute_mmd(samples1, samples2)
+        mmd_explicit = compute_mmd(samples1, samples2, kernel="gaussian_tv")
+        assert mmd_default == mmd_explicit
 
 
 class TestGraphStatistics:
     """Tests for compute_graph_statistics."""
 
     def test_statistics_structure(self):
-        """Should return all four histogram types."""
+        """Should return three histogram types (DiGress-compatible)."""
         graphs = [nx.erdos_renyi_graph(10, 0.3, seed=i) for i in range(5)]
         stats = compute_graph_statistics(graphs)
 
@@ -173,7 +213,6 @@ class TestGraphStatistics:
         assert len(stats.degree) == 5
         assert len(stats.clustering) == 5
         assert len(stats.spectral) == 5
-        assert len(stats.laplacian) == 5
 
     def test_statistics_parallel(self):
         """Should work with parallel execution."""
@@ -181,12 +220,26 @@ class TestGraphStatistics:
         stats = compute_graph_statistics(graphs, max_workers=2)
         assert len(stats.degree) == 10
 
+    def test_spectral_histogram_sizes(self):
+        """Spectral histograms should have 200 bins by default (DiGress)."""
+        graphs = [nx.erdos_renyi_graph(15, 0.3, seed=i) for i in range(3)]
+        stats = compute_graph_statistics(graphs)
+        for hist in stats.spectral:
+            assert len(hist) == 200
+
+    def test_clustering_histogram_sizes(self):
+        """Clustering histograms should have 100 bins by default (DiGress)."""
+        graphs = [nx.erdos_renyi_graph(15, 0.3, seed=i) for i in range(3)]
+        stats = compute_graph_statistics(graphs)
+        for hist in stats.clustering:
+            assert len(hist) == 100
+
 
 class TestMMDMetrics:
-    """Tests for full MMD metrics pipeline."""
+    """Tests for full MMD metrics pipeline (DiGress-compatible)."""
 
     def test_mmd_results_structure(self):
-        """Should return all four MMD values."""
+        """Should return three MMD values (DiGress-compatible)."""
         ref_graphs = [nx.erdos_renyi_graph(20, 0.3, seed=i) for i in range(10)]
         gen_graphs = [nx.erdos_renyi_graph(20, 0.3, seed=i + 100) for i in range(10)]
 
@@ -196,7 +249,6 @@ class TestMMDMetrics:
         assert hasattr(results, "degree_mmd")
         assert hasattr(results, "clustering_mmd")
         assert hasattr(results, "spectral_mmd")
-        assert hasattr(results, "laplacian_mmd")
 
     def test_mmd_identical_distributions(self):
         """MMD between identical distributions should be near zero."""
@@ -232,7 +284,7 @@ class TestMMDMetrics:
         assert "degree_mmd" in d
         assert "clustering_mmd" in d
         assert "spectral_mmd" in d
-        assert "laplacian_mmd" in d
+        assert len(d) == 3  # Only three metrics now
 
 
 class TestMMDFromAdjacencies:

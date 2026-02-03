@@ -65,3 +65,11 @@ run = "uv run scripts/semantic_analysis.py --output eigenstructure_results_full/
 description = "Generate all analysis reports (breakdown + semantic)"
 depends = ["breakdown", "semantic"]
 run = "echo 'All reports generated in eigenstructure_results_full/'"
+
+[tasks.aggregate-mmd]
+description = "Aggregate MMD evaluation results from Modal volume into Parquet"
+run = "uv run python -m tmgg.modal.cli.aggregate_mmd --output results/mmd_results.parquet --cache-dir results/mmd_cache"
+
+[tasks.aggregate-mmd-dry]
+description = "Preview MMD evaluation files without downloading"
+run = "uv run python -m tmgg.modal.cli.aggregate_mmd --dry-run"

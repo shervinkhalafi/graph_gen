@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import numpy as np
+import torch
 import torch.nn as nn
 
 from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
@@ -125,3 +127,89 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
     def get_model_name(self) -> str:
         """Get the name of the model for visualization purposes."""
         return "Digress"
+
+    @torch.no_grad()
+    def sample(
+        self,
+        num_graphs: int,
+        num_nodes: int,
+        num_steps: int = 100,
+        noise_schedule: str = "cosine",
+    ) -> list[torch.Tensor]:
+        """Generate graphs by iterative denoising from noise.
+
+        Implements discrete denoising diffusion sampling: starts from random
+        binary graphs and iteratively denoises using the learned model.
+
+        Parameters
+        ----------
+        num_graphs
+            Number of graphs to generate.
+        num_nodes
+            Number of nodes per graph.
+        num_steps
+            Number of denoising steps.
+        noise_schedule
+            Noise schedule type: "linear", "cosine", or "quadratic".
+
+        Returns
+        -------
+        list[torch.Tensor]
+            List of generated adjacency matrices, each (num_nodes, num_nodes).
+        """
+        self.eval()
+        device = next(self.parameters()).device
+
+        # Build noise schedule
+        t = np.linspace(0, 1, num_steps)
+        if noise_schedule == "linear":
+            schedule = t
+        elif noise_schedule == "cosine":
+            schedule = 1 - np.cos(t * np.pi / 2)
+        elif noise_schedule == "quadratic":
+            schedule = t**2
+        else:
+            raise ValueError(f"Unknown noise_schedule: {noise_schedule}")
+
+        # Start from random binary graphs (50% edge probability)
+        z_t = (
+            torch.rand(num_graphs, num_nodes, num_nodes, device=device) > 0.5
+        ).float()
+        # Make symmetric
+        z_t = (z_t + z_t.transpose(-2, -1)) / 2
+        z_t = (z_t > 0.5).float()
+        # Zero diagonal (no self-loops)
+        z_t = z_t * (1 - torch.eye(num_nodes, device=device))
+
+        # Iterative denoising
+        for step in reversed(range(num_steps)):
+            eps = schedule[step]
+
+            # Forward pass to get model prediction
+            output = self.forward(z_t)
+            predictions = self.model.predict(output)
+
+            # Interpolate between prediction and current state based on noise level
+            # High noise (step near num_steps) → trust model less
+            # Low noise (step near 0) → trust model more
+            alpha = 1.0 - eps
+            z_t = alpha * predictions + (1 - alpha) * z_t
+
+            # Binarize for discrete graph
+            z_t = (z_t > 0.5).float()
+            # Enforce symmetry
+            z_t = (z_t + z_t.transpose(-2, -1)) / 2
+            z_t = (z_t > 0.5).float()
+            # Enforce zero diagonal
+            z_t = z_t * (1 - torch.eye(num_nodes, device=device))
+
+        # Final prediction
+        output = self.forward(z_t)
+        final = self.model.logits_to_graph(output)
+        # Enforce symmetry (DiGress-style averaging)
+        final = (final + final.transpose(-2, -1)) / 2
+        final = (final > 0.5).float()
+        # Enforce zero diagonal
+        final = final * (1 - torch.eye(num_nodes, device=device))
+
+        return [final[i] for i in range(num_graphs)]

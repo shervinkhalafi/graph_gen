@@ -1,0 +1,29 @@
+# Stage 2-C Spectral: Spectral models on stage2c datasets
+# Fills the missing grid cell: spectral models were never tested on stage2c datasets
+# (sbm_default, er_spectral, tree_spectral, regular_spectral)
+#
+# This complements stage2c_digress_gnn which only tested DiGress variants.
+# Together they enable fair comparison of spectral vs digress approaches.
+
+name: stage2c_spectral
+base_config: base_config_spectral
+
+architectures:
+  - models/spectral/linear_pe        # Best from stage1
+  - models/spectral/self_attention   # Runner-up
+  - models/spectral/filter_bank      # For dataset-specific comparison
+
+datasets:
+  - sbm_default
+  - er_spectral       # Erdős-Rényi graphs
+  - tree_spectral     # Random trees
+  - regular_spectral  # d-regular graphs
+
+hyperparameters:
+  learning_rate: [5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage2c_{arch}_{data}_{lr}_{wd}_{k}_s{seed}"

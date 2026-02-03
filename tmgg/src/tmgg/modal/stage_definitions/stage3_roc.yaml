@@ -1,0 +1,27 @@
+# Stage 3: Ring of Cliques Evaluation
+# Tests both spectral and digress models on ring_of_cliques graphs
+# to fill the missing digress comparison for this dataset.
+
+name: stage3_roc
+base_config: base_config_spectral
+
+architectures:
+  # Spectral variants
+  - models/spectral/linear_pe
+  - models/spectral/self_attention
+  - models/spectral/filter_bank
+  # DiGress variants
+  - models/digress/digress_transformer
+  - models/digress/digress_transformer_gnn_qk
+
+datasets:
+  - roc_single_graph
+
+hyperparameters:
+  learning_rate: [5e-4, 1e-3]
+  weight_decay: [1e-2, 1e-3]
+  "+model.k": [16, 32]
+
+seeds: [1, 2, 3]
+
+run_id_template: "stage3_roc_{arch}_{data}_{lr}_{wd}_{k}_s{seed}"

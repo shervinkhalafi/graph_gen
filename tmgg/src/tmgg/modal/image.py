@@ -10,47 +10,23 @@ import modal
 
 # Patterns to exclude when mounting local directories
 # Uses dockerignore-like syntax
+# Since we now only mount src/, these patterns are relative to src/
 MODAL_IGNORE_PATTERNS = [
-    # Virtual environments
-    ".venv/",
-    "venv/",
     # Python bytecode
-    "__pycache__/",
-    "*.pyc",
-    # Version control
-    ".git/",
+    "**/__pycache__/",
+    "**/*.pyc",
     # IDE
-    ".idea/",
-    ".vscode/",
-    "*.swp",
-    # Logs and outputs
-    "logs/",
-    "outputs/",
-    # W&B
-    "wandb/",
-    "wandb_export/",
-    # Storage/results
-    "storage/",
-    "reports/",
-    # Test artifacts
-    ".pytest_cache/",
-    ".hypothesis/",
-    ".coverage",
-    "htmlcov/",
-    ".tox/",
+    "**/.idea/",
+    "**/.vscode/",
+    "**/*.swp",
+    # Test artifacts (if any end up in src/)
+    "**/.pytest_cache/",
+    "**/.hypothesis/",
     # Build artifacts
-    "*.egg-info/",
-    "dist/",
-    "build/",
-    ".eggs/",
-    # Cache
-    ".cache/",
-    # Tool data
-    ".naider/",
-    ".aider*",
+    "**/*.egg-info/",
     # Misc
-    ".DS_Store",
-    "*.log",
+    "**/.DS_Store",
+    "**/*.log",
 ]
 
 
@@ -130,14 +106,32 @@ def create_tmgg_image(
 
     # Install TMGG package
     if tmgg_path is not None:
-        # Development mode: copy local package
+        # Development mode: copy only src/ directory (not project root)
+        # This avoids uploading configs/, data/, checkpoints/, results/, etc.
         # copy=True required because run_commands follows add_local_dir
+        src_path = tmgg_path / "src"
+        pyproject_path = tmgg_path / "pyproject.toml"
+
+        # Mount src/ directory
         image = image.add_local_dir(
-            str(tmgg_path),
-            "/app/tmgg",
+            str(src_path),
+            "/app/tmgg/src",
             ignore=MODAL_IGNORE_PATTERNS,
             copy=True,
         )
+        # Mount pyproject.toml and README.md for editable install
+        image = image.add_local_file(
+            str(pyproject_path),
+            "/app/tmgg/pyproject.toml",
+            copy=True,
+        )
+        readme_path = tmgg_path / "README.md"
+        if readme_path.exists():
+            image = image.add_local_file(
+                str(readme_path),
+                "/app/tmgg/README.md",
+                copy=True,
+            )
         image = image.run_commands("uv pip install --system -e /app/tmgg")
     else:
         # Production mode: install from pip

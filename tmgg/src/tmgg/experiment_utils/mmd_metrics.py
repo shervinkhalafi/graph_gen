@@ -1,9 +1,13 @@
 """Maximum Mean Discrepancy (MMD) metrics for graph generation evaluation.
 
 This module computes distributional distance between reference and generated
-graphs using MMD on graph-theoretic properties. Following DiGress/SPECTRE,
-we compute statistics for degree distribution, clustering coefficient,
-and spectral properties.
+graphs using MMD on graph-theoretic properties. Implementation is aligned
+with DiGress (Vignac et al., 2023) for direct comparability:
+
+- Spectral statistic uses normalized Laplacian eigenvalues (200 bins, fixed range)
+- Clustering histogram uses 100 bins
+- Default kernel is gaussian_tv: k(x,y) = exp(-TV(x,y)² / 2σ²)
+- MMD uses unbiased estimator (unique pairs, no self-pairs)
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class MMDResults:
-    """Results from MMD computation across graph statistics.
+    """Results from MMD computation (DiGress-compatible).
 
     Attributes
     ----------
@@ -32,15 +36,12 @@ class MMDResults:
     clustering_mmd
         MMD on clustering coefficient distributions.
     spectral_mmd
-        MMD on adjacency eigenvalue distributions.
-    laplacian_mmd
-        MMD on Laplacian eigenvalue distributions.
+        MMD on normalized Laplacian eigenvalue distributions (DiGress "spectre").
     """
 
     degree_mmd: float
     clustering_mmd: float
     spectral_mmd: float
-    laplacian_mmd: float
 
     def to_dict(self) -> dict[str, float]:
         """Convert to dictionary for logging."""
@@ -48,7 +49,6 @@ class MMDResults:
             "degree_mmd": self.degree_mmd,
             "clustering_mmd": self.clustering_mmd,
             "spectral_mmd": self.spectral_mmd,
-            "laplacian_mmd": self.laplacian_mmd,
         }
 
 
@@ -101,15 +101,15 @@ def compute_degree_histogram(
     return hist
 
 
-def compute_clustering_histogram(G: nx.Graph[Any], num_bins: int = 20) -> np.ndarray:
-    """Compute normalized histogram of clustering coefficients.
+def compute_clustering_histogram(G: nx.Graph[Any], num_bins: int = 100) -> np.ndarray:
+    """Compute histogram of clustering coefficients (DiGress style).
 
     Parameters
     ----------
     G
         NetworkX graph.
     num_bins
-        Number of bins for histogram.
+        Number of bins for histogram. DiGress uses 100.
 
     Returns
     -------
@@ -131,10 +131,48 @@ def compute_clustering_histogram(G: nx.Graph[Any], num_bins: int = 20) -> np.nda
     return hist
 
 
-def compute_spectral_histogram(
+def compute_spectral_histogram(G: nx.Graph[Any], num_bins: int = 200) -> np.ndarray:
+    """Compute histogram of normalized Laplacian eigenvalues (DiGress spectre style).
+
+    Uses fixed range [-1e-5, 2] and normalizes to PMF, matching DiGress's "spectre"
+    metric exactly.
+
+    Parameters
+    ----------
+    G
+        NetworkX graph.
+    num_bins
+        Number of bins for histogram. DiGress uses 200.
+
+    Returns
+    -------
+    np.ndarray
+        PMF over eigenvalue histogram bins.
+    """
+    n = G.number_of_nodes()
+    if n == 0:
+        return np.zeros(num_bins)
+
+    L = nx.normalized_laplacian_matrix(G).toarray()
+    eigenvalues = np.linalg.eigvalsh(L)
+
+    # Fixed range matching DiGress
+    hist, _ = np.histogram(eigenvalues, bins=num_bins, range=(-1e-5, 2), density=False)
+
+    # Normalize to PMF (DiGress style, not density)
+    hist_sum = hist.sum()
+    if hist_sum > 0:
+        hist = hist / hist_sum
+    return hist.astype(np.float64)
+
+
+def compute_adjacency_spectral_histogram(
     G: nx.Graph[Any], num_bins: int = 20, normalized: bool = True
 ) -> np.ndarray:
-    """Compute normalized histogram of adjacency eigenvalues.
+    """Compute histogram of adjacency matrix eigenvalues (legacy tmgg style).
+
+    This is the original tmgg spectral histogram, kept for compatibility. For
+    DiGress-compatible evaluation, use compute_spectral_histogram instead.
 
     Parameters
     ----------
@@ -208,7 +246,7 @@ def compute_laplacian_histogram(
 
 @dataclass
 class GraphStatistics:
-    """Statistics computed from a collection of graphs.
+    """Statistics computed from a collection of graphs (DiGress-compatible).
 
     Attributes
     ----------
@@ -217,15 +255,12 @@ class GraphStatistics:
     clustering
         List of clustering coefficient histograms.
     spectral
-        List of adjacency eigenvalue histograms.
-    laplacian
-        List of Laplacian eigenvalue histograms.
+        List of normalized Laplacian eigenvalue histograms (DiGress "spectre").
     """
 
     degree: list[np.ndarray]
     clustering: list[np.ndarray]
     spectral: list[np.ndarray]
-    laplacian: list[np.ndarray]
 
 
 def compute_graph_statistics(
@@ -249,12 +284,11 @@ def compute_graph_statistics(
 
     def compute_single(
         G: nx.Graph[Any],
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         return (
             compute_degree_histogram(G),
             compute_clustering_histogram(G),
             compute_spectral_histogram(G),
-            compute_laplacian_histogram(G),
         )
 
     if max_workers == 1 or len(graphs) < 4:
@@ -267,13 +301,11 @@ def compute_graph_statistics(
     degree = [r[0] for r in results]
     clustering = [r[1] for r in results]
     spectral = [r[2] for r in results]
-    laplacian = [r[3] for r in results]
 
     return GraphStatistics(
         degree=degree,
         clustering=clustering,
         spectral=spectral,
-        laplacian=laplacian,
     )
 
 
@@ -314,10 +346,10 @@ def gaussian_kernel(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
     return float(np.exp(-(dist**2) / (2 * sigma**2)))
 
 
-def tv_kernel(x: np.ndarray, y: np.ndarray) -> float:
-    """Compute Total Variation kernel between two histograms.
+def gaussian_tv_kernel(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> float:
+    """Gaussian kernel with Total Variation distance (DiGress style).
 
-    Returns 1 - TV(x, y), where TV is total variation distance.
+    Computes k(x,y) = exp(-TV(x,y)² / 2σ²), matching DiGress's gaussian_tv kernel.
 
     Parameters
     ----------
@@ -325,11 +357,13 @@ def tv_kernel(x: np.ndarray, y: np.ndarray) -> float:
         First histogram.
     y
         Second histogram.
+    sigma
+        Kernel bandwidth.
 
     Returns
     -------
     float
-        Kernel value (1 - TV distance).
+        Kernel value in (0, 1].
     """
     # Pad to same length
     max_len = max(len(x), len(y))
@@ -338,7 +372,7 @@ def tv_kernel(x: np.ndarray, y: np.ndarray) -> float:
     x_padded[: len(x)] = x
     y_padded[: len(y)] = y
 
-    # Normalize
+    # Normalize to PMF
     x_sum = x_padded.sum()
     y_sum = y_padded.sum()
     if x_sum > 0:
@@ -348,13 +382,13 @@ def tv_kernel(x: np.ndarray, y: np.ndarray) -> float:
 
     # TV distance = 0.5 * L1 distance for probability distributions
     tv = 0.5 * np.sum(np.abs(x_padded - y_padded))
-    return float(1.0 - tv)
+    return float(np.exp(-(tv**2) / (2 * sigma**2)))
 
 
 def compute_mmd(
     samples1: list[np.ndarray],
     samples2: list[np.ndarray],
-    kernel: Literal["gaussian", "tv"] = "gaussian",
+    kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
     sigma: float = 1.0,
 ) -> float:
     """Compute unbiased MMD estimator between two sets of histograms.
@@ -369,9 +403,9 @@ def compute_mmd(
     samples2
         Second set of histogram samples.
     kernel
-        Kernel type: "gaussian" or "tv".
+        Kernel type: "gaussian" (L2-based) or "gaussian_tv" (TV-based, DiGress style).
     sigma
-        Bandwidth for Gaussian kernel.
+        Bandwidth for kernel (both use same sigma parameter).
 
     Returns
     -------
@@ -384,7 +418,7 @@ def compute_mmd(
     def kernel_fn(x: np.ndarray, y: np.ndarray) -> float:
         if kernel == "gaussian":
             return gaussian_kernel(x, y, sigma)
-        return tv_kernel(x, y)
+        return gaussian_tv_kernel(x, y, sigma)
 
     # Compute kernel expectations
     # k11: E[k(x, x')] for x, x' in samples1
@@ -405,7 +439,7 @@ def compute_mmd(
 def compute_mmd_metrics(
     ref_graphs: list[nx.Graph[Any]],
     gen_graphs: list[nx.Graph[Any]],
-    kernel: Literal["gaussian", "tv"] = "gaussian",
+    kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
     sigma: float = 1.0,
     max_workers: int | None = None,
 ) -> MMDResults:
@@ -418,9 +452,9 @@ def compute_mmd_metrics(
     gen_graphs
         List of generated NetworkX graphs.
     kernel
-        Kernel type for MMD computation.
+        Kernel type: "gaussian" (L2-based) or "gaussian_tv" (TV-based, DiGress style).
     sigma
-        Bandwidth for Gaussian kernel.
+        Bandwidth for kernel.
     max_workers
         Maximum number of parallel workers for statistics computation.
 
@@ -439,20 +473,18 @@ def compute_mmd_metrics(
         ref_stats.clustering, gen_stats.clustering, kernel, sigma
     )
     spectral_mmd = compute_mmd(ref_stats.spectral, gen_stats.spectral, kernel, sigma)
-    laplacian_mmd = compute_mmd(ref_stats.laplacian, gen_stats.laplacian, kernel, sigma)
 
     return MMDResults(
         degree_mmd=degree_mmd,
         clustering_mmd=clustering_mmd,
         spectral_mmd=spectral_mmd,
-        laplacian_mmd=laplacian_mmd,
     )
 
 
 def compute_mmd_from_adjacencies(
     ref_adjacencies: torch.Tensor | np.ndarray | list,
     gen_adjacencies: torch.Tensor | np.ndarray | list,
-    kernel: Literal["gaussian", "tv"] = "gaussian",
+    kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
     sigma: float = 1.0,
     max_workers: int | None = None,
 ) -> MMDResults:
@@ -465,9 +497,9 @@ def compute_mmd_from_adjacencies(
     gen_adjacencies
         Generated adjacency matrices (batch or list).
     kernel
-        Kernel type for MMD computation.
+        Kernel type: "gaussian" (L2-based) or "gaussian_tv" (TV-based, DiGress style).
     sigma
-        Bandwidth for Gaussian kernel.
+        Bandwidth for kernel.
     max_workers
         Maximum number of parallel workers.
 

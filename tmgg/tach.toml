@@ -34,8 +34,10 @@ path = "tmgg.modal"
 depends_on = [
     "tmgg.experiment_utils.cloud",  # Uses CloudRunner interface
     "tmgg.experiment_utils",        # Uses run_experiment
+    "tmgg.experiments",             # Evaluation function uses datamodule and checkpoint utils
 ]
 # Modal platform integration - depends on cloud abstraction and run_experiment
+# Note: modal.evaluate imports from experiments.generative at runtime for evaluation
 
 # ============================================================
 # SHARED UTILITIES (semi-protected)

@@ -16,6 +16,7 @@ __pycache__/
 logs/
 outputs/
 wandb/
+wandb_export/
 
 # Build artifacts
 *.egg-info/
@@ -25,10 +26,40 @@ build/
 
 # Test artifacts
 .pytest_cache/
+.hypothesis/
 .coverage
 htmlcov/
 .tox/
 
+# Cache directories
+.cache/
+cache/
+.ruff_cache/
+
+# Tool data
+.naider/
+.aider*
+.claude/
+
+# Results and data (large directories)
+configs/
+data/
+checkpoints/
+storage/
+reports/
+analysis_output/
+eigenstructure_results/
+eigenstructure_results_full/
+
+# Review/docs artifacts
+2025-*/
+docs/
+scripts/
+tests/
+rationales/
+
 # Misc
 .DS_Store
 *.log
+.env
+.mcp.json

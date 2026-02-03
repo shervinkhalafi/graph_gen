@@ -587,3 +587,14 @@ def create_runner(gpu_type: str = "debug") -> ModalRunner:
     """
     storage = get_storage_from_env()
     return ModalRunner(gpu_type=gpu_type, storage=storage)
+
+
+# Import evaluation functions so they're registered with the Modal app when deploying
+# This makes modal_evaluate_mmd* and modal_list_checkpoints available via
+# `modal deploy -m tmgg.modal.runner`
+from tmgg.modal.evaluate import (  # noqa: E402, F401
+    modal_evaluate_mmd,
+    modal_evaluate_mmd_debug,
+    modal_evaluate_mmd_fast,
+    modal_list_checkpoints,
+)

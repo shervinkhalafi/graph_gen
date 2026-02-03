@@ -1,0 +1,51 @@
+# Full-size DiGress SBM model with eigenvector embeddings
+#
+# Architecture: Matches official DiGress SBM config (8 layers, dx=256, n_head=8)
+# Optimizer: Official DiGress settings (AdamW + amsgrad, LR=0.0002, weight_decay=1e-12)
+
+_target_: tmgg.experiments.digress_denoising.lightning_module.DigressDenoisingLightningModule
+
+# Experiment naming
+digress_arch: "vanilla"
+digress_mode: "eigenvec"
+model_type: digress_vanilla_eigenvec
+
+# Official DiGress optimizer settings
+learning_rate: 0.0002
+weight_decay: 1e-12
+optimizer_type: adamw
+amsgrad: true
+
+# No scheduler (matches official DiGress)
+scheduler_config:
+  type: none
+
+# Loss
+loss_type: "BCEWithLogits"
+
+# Noise configuration (from data config)
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+seed: 42
+
+# Full-size model matching official SBM DiGress
+use_eigenvectors: true
+k: 50  # Number of eigenvectors (padded if graph < k)
+n_layers: 8
+
+hidden_dims:
+  dx: 256
+  de: 64
+  dy: 64
+  n_head: 8
+
+# MLP hidden dims (official SBM config)
+hidden_mlp_dims:
+  X: 128
+  E: 64
+  y: 128
+
+output_dims:
+  X: 0
+  E: 1
+  y: 0

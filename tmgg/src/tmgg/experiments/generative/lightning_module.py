@@ -98,7 +98,7 @@ class GenerativeLightningModule(pl.LightningModule):
     loss_type
         Loss function: "MSE" or "BCEWithLogits".
     mmd_kernel
-        Kernel for MMD computation: "gaussian" or "tv".
+        Kernel for MMD computation: "gaussian" (L2) or "gaussian_tv" (DiGress).
     mmd_sigma
         Sigma for Gaussian kernel.
     eval_num_samples
@@ -130,7 +130,7 @@ class GenerativeLightningModule(pl.LightningModule):
         noise_schedule: Literal["linear", "cosine", "quadratic"] = "cosine",
         noise_type: str = "digress",
         loss_type: str = "MSE",
-        mmd_kernel: Literal["gaussian", "tv"] = "gaussian",
+        mmd_kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
         mmd_sigma: float = 1.0,
         eval_num_samples: int = 100,
         learning_rate: float = 1e-4,
@@ -152,7 +152,7 @@ class GenerativeLightningModule(pl.LightningModule):
         self.num_diffusion_steps = num_diffusion_steps
         self.noise_schedule_type = noise_schedule
         self.noise_type = noise_type
-        self.mmd_kernel: Literal["gaussian", "tv"] = mmd_kernel
+        self.mmd_kernel: Literal["gaussian", "gaussian_tv"] = mmd_kernel
         self.mmd_sigma = mmd_sigma
         self.eval_num_samples = eval_num_samples
         self.learning_rate = learning_rate
@@ -416,7 +416,6 @@ class GenerativeLightningModule(pl.LightningModule):
         self.log("val/degree_mmd", mmd_results.degree_mmd, prog_bar=True)
         self.log("val/clustering_mmd", mmd_results.clustering_mmd)
         self.log("val/spectral_mmd", mmd_results.spectral_mmd)
-        self.log("val/laplacian_mmd", mmd_results.laplacian_mmd)
 
         # Clear reference graphs for next epoch
         self._ref_graphs.clear()
@@ -494,6 +493,11 @@ class GenerativeLightningModule(pl.LightningModule):
         # Final prediction
         logits = self.forward(z_t)
         final = self.model.logits_to_graph(logits)
+        # Enforce symmetry (DiGress-style averaging)
+        final = (final + final.transpose(-2, -1)) / 2
+        final = (final > 0.5).float()
+        # Enforce zero diagonal
+        final = final * (1 - torch.eye(num_nodes, device=device))
 
         return [final[i] for i in range(num_graphs)]
 

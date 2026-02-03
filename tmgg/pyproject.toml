@@ -38,6 +38,7 @@ dependencies = [
   "modal>=0.64.0",           # Modal cloud execution (required for ModalRunner)
   "boto3>=1.26.0",           # S3-compatible storage for Tigris/AWS
   "safetensors>=0.4.0",      # Fast tensor serialization for eigenstructure study
+  "polars>=1.0.0",           # Fast DataFrame operations for results aggregation
 ]
 
 [project.optional-dependencies]

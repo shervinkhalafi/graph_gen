@@ -7,6 +7,7 @@ concerns (paths, storage, env vars) that are resolved inside the worker.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -244,6 +245,53 @@ def _resolve_execution_paths(run_id: str) -> tuple[str, str]:
     return output_dir, results_dir
 
 
+def _write_volume_confirmation(
+    output_dir: str,
+    run_id: str,
+    status: Literal["started", "completed", "failed"],
+    metrics: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Write confirmation file to volume for experiment tracking.
+
+    This provides a backup tracking mechanism independent of W&B and Tigris,
+    allowing verification that experiments actually ran on Modal volumes.
+
+    Parameters
+    ----------
+    output_dir
+        Base output directory for this run.
+    run_id
+        Unique run identifier.
+    status
+        Current status: 'started', 'completed', or 'failed'.
+    metrics
+        Final metrics (only for completed status).
+    error_message
+        Error details (only for failed status).
+    """
+    confirmation_path = Path(output_dir) / "confirmation.json"
+    confirmation_path.parent.mkdir(parents=True, exist_ok=True)
+
+    confirmation: dict[str, Any] = {
+        "run_id": run_id,
+        "status": status,
+        "timestamp": datetime.now().isoformat(),
+        "hostname": os.environ.get("HOSTNAME", "unknown"),
+    }
+
+    if metrics:
+        confirmation["metrics"] = metrics
+    if error_message:
+        confirmation["error_message"] = error_message
+
+    with open(confirmation_path, "w") as f:
+        json.dump(confirmation, f, indent=2)
+
+    # Also print to stdout for Modal logs
+    print(f"[CONFIRMATION] {run_id}: {status} at {confirmation['timestamp']}")
+
+
 def _import_run_experiment():
     """Lazy import to avoid circular dependencies at module load time."""
     from tmgg.experiment_utils.run_experiment import run_experiment
@@ -323,6 +371,9 @@ def execute_task(
     # Get storage for result uploads (if storage getter provided)
     storage = get_storage() if get_storage else None
 
+    # Write confirmation that experiment started (volume backup)
+    _write_volume_confirmation(output_dir, run_id, "started")
+
     try:
         # Run the actual experiment
         result = _run_experiment(config)
@@ -356,6 +407,9 @@ def execute_task(
         if storage:
             _ = storage.upload_metrics(asdict(output), run_id)
 
+        # Write completion confirmation to volume
+        _write_volume_confirmation(output_dir, run_id, "completed", metrics=metrics)
+
         return output
 
     except Exception as e:
@@ -374,6 +428,9 @@ def execute_task(
         # Upload failure record to storage
         if storage:
             _ = storage.upload_metrics(asdict(output), run_id)
+
+        # Write failure confirmation to volume
+        _write_volume_confirmation(output_dir, run_id, "failed", error_message=str(e))
 
         # Re-raise to propagate to caller - no graceful fallback
         raise
