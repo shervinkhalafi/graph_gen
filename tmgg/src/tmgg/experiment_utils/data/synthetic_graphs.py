@@ -166,7 +166,7 @@ def generate_lfr_graphs(
         G = None
         for attempt in range(5):
             try:
-                G = nx.LFR_benchmark_graph(
+                G = nx.LFR_benchmark_graph(  # pyright: ignore[reportConstantRedefinition]  # math notation
                     n=n,
                     tau1=tau1,
                     tau2=tau2,
@@ -186,7 +186,7 @@ def generate_lfr_graphs(
         if G is None:
             # Fall back to SBM-like structure if LFR fails
             # This shouldn't happen often with reasonable parameters
-            G = nx.planted_partition_graph(
+            G = nx.planted_partition_graph(  # pyright: ignore[reportConstantRedefinition]  # math notation
                 l=max(2, n // min_community),
                 k=min_community,
                 p_in=1 - mu,
@@ -391,13 +391,48 @@ def generate_configuration_model_graphs(
         # Create graph from degree sequence
         G = nx.configuration_model(deg_seq, seed=graph_seed)
         # Remove parallel edges and self-loops
-        G = nx.Graph(G)
+        G = nx.Graph(G)  # pyright: ignore[reportConstantRedefinition]  # math notation
         G.remove_edges_from(nx.selfloop_edges(G))
 
         A = nx.to_numpy_array(G, dtype=np.dtype(np.float32), nodelist=range(n))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
+
+
+def generate_ring_of_cliques_graphs(
+    num_cliques: int,
+    clique_size: int,
+    num_graphs: int,
+    seed: int | None = None,
+) -> np.ndarray:
+    """Generate ring-of-cliques graphs via networkx.
+
+    The topology is deterministic for given parameters, so every graph
+    in the returned batch is identical — valid for denoising where
+    noise realizations differ but the clean target does not.
+
+    Parameters
+    ----------
+    num_cliques : int
+        Number of cliques arranged in a ring.
+    clique_size : int
+        Number of nodes per clique.
+    num_graphs : int
+        How many (identical) copies to produce.
+    seed : int or None
+        Unused (topology is deterministic). Accepted for interface
+        consistency with the other generators.
+
+    Returns
+    -------
+    np.ndarray
+        Adjacency matrices, shape ``(num_graphs, n, n)`` where
+        ``n = num_cliques * clique_size``.
+    """
+    G = nx.ring_of_cliques(num_cliques, clique_size)
+    A = nx.to_numpy_array(G, dtype=np.dtype(np.float32))
+    return np.stack([A] * num_graphs, axis=0)
 
 
 class SyntheticGraphDataset:
@@ -417,6 +452,7 @@ class SyntheticGraphDataset:
         - "watts_strogatz" / "ws": small-world graphs
         - "random_geometric" / "rg": geometric proximity graphs
         - "configuration_model" / "cm": graphs with specified degree sequence
+        - "ring_of_cliques": cliques arranged in a ring
     n : int
         Number of nodes per graph.
     num_graphs : int
@@ -431,6 +467,7 @@ class SyntheticGraphDataset:
         - For "watts_strogatz": k (neighbors), p (rewiring probability)
         - For "random_geometric": radius (edge threshold)
         - For "configuration_model": degree_sequence (list of degrees)
+        - For "ring_of_cliques": num_cliques, clique_size
 
     Attributes
     ----------
@@ -454,6 +491,7 @@ class SyntheticGraphDataset:
         "rg",
         "configuration_model",
         "cm",
+        "ring_of_cliques",
     }
 
     # Map aliases to canonical names
@@ -510,6 +548,12 @@ class SyntheticGraphDataset:
             degree_sequence = kwargs.get("degree_sequence")
             self.adjacencies = generate_configuration_model_graphs(
                 n, num_graphs, degree_sequence, seed
+            )
+        elif canonical_type == "ring_of_cliques":
+            num_cliques = kwargs.get("num_cliques", 4)
+            clique_size = kwargs.get("clique_size", 5)
+            self.adjacencies = generate_ring_of_cliques_graphs(
+                num_cliques, clique_size, num_graphs, seed
             )
 
     def __len__(self) -> int:

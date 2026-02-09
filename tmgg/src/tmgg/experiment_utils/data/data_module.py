@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 from typing import Any, Protocol, override
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
@@ -28,7 +29,15 @@ DATASET_WRAPPERS = {
 }
 
 # New synthetic graph types
-SYNTHETIC_GRAPH_TYPES = {"d_regular", "regular", "lfr", "tree", "erdos_renyi", "er"}
+SYNTHETIC_GRAPH_TYPES = {
+    "d_regular",
+    "regular",
+    "lfr",
+    "tree",
+    "erdos_renyi",
+    "er",
+    "ring_of_cliques",
+}
 
 # PyG benchmark datasets
 PYG_DATASETS = {"qm9", "enzymes", "proteins"}
@@ -281,6 +290,7 @@ class GraphDataModule(pl.LightningDataModule):
             "tree": "tree",
             "erdos_renyi": "erdos_renyi",
             "er": "erdos_renyi",
+            "ring_of_cliques": "ring_of_cliques",
         }
         graph_type = name_to_type[self.dataset_name.lower()]
 
@@ -305,6 +315,9 @@ class GraphDataModule(pl.LightningDataModule):
             type_kwargs["min_community"] = self.dataset_config.get(
                 "min_community", None
             )
+        elif graph_type == "ring_of_cliques":
+            type_kwargs["num_cliques"] = self.dataset_config.get("num_cliques", 4)
+            type_kwargs["clique_size"] = self.dataset_config.get("clique_size", 5)
 
         # Generate graphs
         dataset = SyntheticGraphDataset(
@@ -365,7 +378,8 @@ class GraphDataModule(pl.LightningDataModule):
         shuffle: bool,
     ) -> DataLoader[tuple[torch.Tensor, torch.Tensor]]:
         """Create a data loader with common parameters."""
-        dataset = GraphDataset(adjacency_matrices, samples_per_graph)
+        matrices: list[np.ndarray | torch.Tensor] = list(adjacency_matrices)
+        dataset = GraphDataset(matrices, samples_per_graph)
         return DataLoader(
             dataset,
             batch_size=self.batch_size,

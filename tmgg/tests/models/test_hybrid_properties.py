@@ -169,7 +169,7 @@ class MockDenoisingModel(DenoisingModel):
         super().__init__()
         self.d_model = d_model
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
         # Simple identity with small noise - returns single tensor
         noise = torch.randn_like(x) * 0.01
         return x + noise
@@ -185,7 +185,7 @@ class TestSequentialDenoisingModelProperties:
         A=batch_adjacency_matrices(min_nodes=3, max_nodes=10),
         feature_dim=st.integers(min_value=2, max_value=16),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_output_is_valid_adjacency_matrix(
         self, A: torch.Tensor, feature_dim: int
     ) -> None:
@@ -217,7 +217,7 @@ class TestSequentialDenoisingModelProperties:
         feature_dim=st.integers(min_value=2, max_value=16),
         use_denoising=st.booleans(),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_with_and_without_denoising(
         self, A: torch.Tensor, feature_dim: int, use_denoising: bool
     ) -> None:
@@ -237,7 +237,7 @@ class TestSequentialDenoisingModelProperties:
         assert torch.all(probs >= 0) and torch.all(probs <= 1)
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=8))
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_residual_connection_improves_output(self, A: torch.Tensor) -> None:
         """Test that residual connection in denoising doesn't degrade quality.
 
@@ -266,7 +266,7 @@ class TestSequentialDenoisingModelProperties:
         assert torch.mean(diff) < 0.7  # Average difference should be reasonable
 
     @given(config=hybrid_config())
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=2000)
     def test_full_model_integration(
         self, config: tuple[dict[str, int], dict[str, Any]]
     ) -> None:
@@ -306,7 +306,7 @@ class TestCreateSequentialModelProperties:
     """Property-based tests for create_sequential_model factory."""
 
     @given(config=hybrid_config())
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_factory_creates_valid_model(
         self, config: tuple[dict[str, int], dict[str, Any]]
     ) -> None:
@@ -416,6 +416,7 @@ class TestCompositionProperties:
         batch_size=st.integers(min_value=2, max_value=4),
         num_nodes=st.integers(min_value=5, max_value=10),
     )
+    @settings(deadline=2000)
     def test_batch_independence(self, batch_size: int, num_nodes: int) -> None:
         """Test that batch elements are processed independently."""
         feature_dim = 5

@@ -202,31 +202,31 @@ class SingleGraphDataModule(pl.LightningDataModule):
             block_sizes = [self.n // num_blocks] * num_blocks
             block_sizes[-1] += self.n - sum(block_sizes)
 
-            A = generate_sbm_adjacency(block_sizes, p_intra, p_inter, rng)
+            A = generate_sbm_adjacency(block_sizes, p_intra, p_inter, rng)  # pyright: ignore[reportConstantRedefinition]  # math notation
             # Ensure symmetry (use upper triangle)
-            A = np.triu(A) + np.triu(A, 1).T
+            A = np.triu(A) + np.triu(A, 1).T  # pyright: ignore[reportConstantRedefinition]  # math notation
             np.fill_diagonal(A, 0)  # No self-loops
             return A.astype(np.float32)
 
         elif self.graph_type == "erdos_renyi":
             p: float = self.graph_kwargs.get("p", 0.1)
-            A = generate_erdos_renyi_graphs(self.n, p, 1, seed=seed)[0]
+            A = generate_erdos_renyi_graphs(self.n, p, 1, seed=seed)[0]  # pyright: ignore[reportConstantRedefinition]  # math notation
             return A
 
         elif self.graph_type == "regular":
             d: int = self.graph_kwargs.get("d", 3)
-            A = generate_regular_graphs(self.n, d, 1, seed=seed)[0]
+            A = generate_regular_graphs(self.n, d, 1, seed=seed)[0]  # pyright: ignore[reportConstantRedefinition]  # math notation
             return A
 
         elif self.graph_type == "tree":
-            A = generate_tree_graphs(self.n, 1, seed=seed)[0]
+            A = generate_tree_graphs(self.n, 1, seed=seed)[0]  # pyright: ignore[reportConstantRedefinition]  # math notation
             return A
 
         elif self.graph_type == "ring_of_cliques":
             num_cliques: int = self.graph_kwargs.get("num_cliques", 4)
             clique_size: int = self.graph_kwargs.get("clique_size", 5)
             G = nx.ring_of_cliques(num_cliques, clique_size)
-            A = nx.to_numpy_array(G)
+            A = nx.to_numpy_array(G)  # pyright: ignore[reportConstantRedefinition]  # math notation
             return A.astype(np.float32)
 
         elif self.graph_type == "lfr":
@@ -236,7 +236,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
             mu: float = self.graph_kwargs.get("mu", 0.1)
             avg_degree: int = self.graph_kwargs.get("average_degree", 5)
             min_community: int = self.graph_kwargs.get("min_community", 10)
-            G = nx.LFR_benchmark_graph(
+            G = nx.LFR_benchmark_graph(  # pyright: ignore[reportConstantRedefinition]  # math notation
                 self.n,
                 tau1=tau1,
                 tau2=tau2,
@@ -245,7 +245,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
                 min_community=min_community,
                 seed=seed,
             )
-            A = nx.to_numpy_array(G)
+            A = nx.to_numpy_array(G)  # pyright: ignore[reportConstantRedefinition]  # math notation
             return A.astype(np.float32)
 
         elif self.graph_type.startswith("pyg_"):

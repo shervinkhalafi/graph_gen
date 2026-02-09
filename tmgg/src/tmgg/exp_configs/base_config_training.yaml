@@ -16,6 +16,8 @@ defaults:
 
 # Experiment identification (overridden by each experiment type)
 experiment_name: "tmgg_training"
+wandb_project: sandbox
+wandb_entity: graph_denoise_team
 sanity_check: false
 
 # Optimizer settings (per experimental design)

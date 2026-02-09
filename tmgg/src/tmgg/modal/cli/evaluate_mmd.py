@@ -37,7 +37,7 @@ import modal
 MODAL_APP_NAME = "tmgg-spectral"
 
 
-def select_modal_function(gpu_tier: str) -> modal.Function:
+def select_modal_function(gpu_tier: str) -> modal.Function:  # pyright: ignore[reportMissingTypeArgument]
     """Select the appropriate deployed Modal function for the GPU tier."""
     if gpu_tier == "debug":
         func_name = "modal_evaluate_mmd_debug"
@@ -48,13 +48,13 @@ def select_modal_function(gpu_tier: str) -> modal.Function:
     return modal.Function.from_name(MODAL_APP_NAME, func_name)
 
 
-def get_list_checkpoints_function() -> modal.Function:
+def get_list_checkpoints_function() -> modal.Function:  # pyright: ignore[reportMissingTypeArgument]
     """Get the modal_list_checkpoints function."""
     return modal.Function.from_name(MODAL_APP_NAME, "modal_list_checkpoints")
 
 
 def evaluate_single_checkpoint(
-    modal_fn: modal.Function,
+    modal_fn: modal.Function,  # pyright: ignore[reportMissingTypeArgument]
     task_dict: dict[str, Any],
     wait: bool,
     run_id: str,

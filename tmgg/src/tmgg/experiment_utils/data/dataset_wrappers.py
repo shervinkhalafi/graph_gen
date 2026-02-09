@@ -67,7 +67,7 @@ class GraphCollection:
         max_size = max(m.shape[0] for m in adj_matrices)
 
         padded_matrices = [
-            torch.nn.functional.pad(
+            torch.nn.functional.pad(  # pyright: ignore[reportAttributeAccessIssue]  # available at runtime
                 m, (0, max_size - m.shape[0], 0, max_size - m.shape[0]), "constant", 0
             )
             if m.shape[0] < max_size

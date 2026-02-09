@@ -51,13 +51,16 @@ class LinearBaseline(DenoisingModel):
         self.W = nn.Parameter(torch.eye(max_nodes))
         self.b = nn.Parameter(torch.zeros(max_nodes, max_nodes))
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
+    def forward(self, A: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:  # pyright: ignore[reportIncompatibleMethodOverride]  # nn.Module stub uses 'x'
         """Apply linear transformation to input adjacency matrix.
 
         Parameters
         ----------
         A
             Input adjacency matrix of shape (batch, N, N) where N <= max_nodes.
+        t
+            Diffusion timestep tensor, or None for unconditional denoising.
+            Currently unused; reserved for future discrete diffusion pipeline.
 
         Returns
         -------

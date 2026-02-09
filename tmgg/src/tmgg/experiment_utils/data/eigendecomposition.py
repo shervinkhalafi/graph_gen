@@ -18,7 +18,7 @@ def compute_eigendecomposition(
         in ascending order
     """
     # Convert to tensor if needed
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     eigenvalues, eigenvectors = torch.linalg.eigh(A)
     return eigenvalues, eigenvectors

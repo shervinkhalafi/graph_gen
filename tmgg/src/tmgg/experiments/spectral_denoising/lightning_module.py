@@ -156,7 +156,7 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
             **kwargs,
         )
 
-    def _make_model(self, *args: Any, **kwargs: Any) -> nn.Module:
+    def _make_model(self, *args: Any, **kwargs: Any) -> nn.Module:  # pyright: ignore[reportIncompatibleMethodOverride]  # returns DenoisingModel subclass
         """Instantiate the spectral denoising model based on config.
 
         Returns

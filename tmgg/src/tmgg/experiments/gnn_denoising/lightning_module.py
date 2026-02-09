@@ -67,15 +67,15 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
             **kwargs,
         )
 
-    def _make_model(
+    def _make_model(  # pyright: ignore[reportIncompatibleMethodOverride]  # returns DenoisingModel subclass
         self,
-        *args,
+        *args: Any,
         model_type: str = "GNN",
         num_layers: int = 1,
         num_terms: int = 4,
         feature_dim_in: int = 20,
         feature_dim_out: int = 20,
-        **kwargs,
+        **kwargs: Any,
     ) -> nn.Module:
         # Model selection
         if model_type == "GNN":
@@ -106,13 +106,15 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
         """Get the name of the model for visualization purposes."""
         return "GNN"
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
         """Compute adjacency logits from input.
 
         Parameters
         ----------
         x
             Input adjacency matrix of shape (batch, n, n).
+        t
+            Diffusion timestep tensor (unused by GNN models).
 
         Returns
         -------

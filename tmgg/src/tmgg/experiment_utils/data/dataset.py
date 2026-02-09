@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import Dataset
 
 
-class GraphDataset(Dataset):
+class GraphDataset(Dataset):  # type: ignore[type-arg]  # pyright: ignore[reportMissingTypeArgument]
     """
     Unified dataset for graph adjacency matrices with permutation support.
 

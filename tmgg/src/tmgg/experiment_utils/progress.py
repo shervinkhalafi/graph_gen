@@ -27,7 +27,9 @@ from rich.text import Text
 if TYPE_CHECKING:
     import pytorch_lightning as pl
 
-from tmgg.experiment_utils.logging import setup_rich_logging
+from tmgg.experiment_utils.logging import (
+    setup_rich_logging,  # pyright: ignore[reportAttributeAccessIssue]
+)
 
 
 class StepTimeColumn(ProgressColumn):
@@ -247,7 +249,7 @@ class StepProgressBar(ProgressBar):
             self.progress.stop()
             self._progress_stopped = True
 
-    def configure_columns(self, trainer: pl.Trainer) -> list:
+    def configure_columns(self, trainer: pl.Trainer) -> list[ProgressColumn]:
         """Configure progress bar columns for step-focused display."""
         return [
             TextColumn("[progress.description]{task.description}"),
@@ -594,7 +596,7 @@ class StepProgressBar(ProgressBar):
     ) -> None:
         self._stop_progress()
 
-    def __getstate__(self) -> dict:
+    def __getstate__(self) -> dict[str, object]:
         """Handle pickling by removing unpickleable objects."""
         state = self.__dict__.copy()
         state["progress"] = None

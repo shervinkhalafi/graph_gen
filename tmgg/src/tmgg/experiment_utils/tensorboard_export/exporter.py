@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from loguru import logger
@@ -132,7 +133,7 @@ class TensorBoardExporter:
     def _export_runs(self, runs: list[DiscoveredRun]) -> ExportResult:
         """Internal method to export a list of runs."""
         all_events: list[pd.DataFrame] = []
-        all_configs: list[dict] = []
+        all_configs: list[dict[str, Any]] = []
         failed_runs: list[str] = []
 
         for run in runs:

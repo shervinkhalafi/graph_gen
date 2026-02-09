@@ -64,18 +64,28 @@ class MultiLayerAttention(DenoisingModel):
             ]
         )
 
-    def forward(
-        self, A: torch.Tensor, mask: torch.Tensor | None = None
+    def forward(  # pyright: ignore[reportIncompatibleMethodOverride]  # uses 'A' per domain convention
+        self,
+        A: torch.Tensor,
+        t: torch.Tensor | None = None,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """
-        Forward pass through all attention layers.
+        """Forward pass through all attention layers.
 
-        Args:
-            A: Input adjacency matrix
-            mask: Optional attention mask
+        Parameters
+        ----------
+        A
+            Input adjacency matrix.
+        t
+            Diffusion timestep tensor, or None for unconditional denoising.
+            Currently unused; reserved for future discrete diffusion pipeline.
+        mask
+            Optional attention mask.
 
-        Returns:
-            Reconstructed adjacency matrix
+        Returns
+        -------
+        torch.Tensor
+            Reconstructed adjacency matrix.
         """
         x = A
         # Pass through each attention layer sequentially

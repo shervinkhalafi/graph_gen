@@ -48,7 +48,9 @@ Examples
 >>> A_denoised = model(A_noisy)
 """
 
-from abc import abstractmethod
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
 from typing import Any
 
 import torch
@@ -95,7 +97,7 @@ class ShrinkageSVDLayer(nn.Module):
         """
         unbatched = A.ndim == 2
         if unbatched:
-            A = A.unsqueeze(0)
+            A = A.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         # Full SVD then truncate (more numerically stable than randomized)
         U_full, S_full, Vh_full = torch.linalg.svd(A, full_matrices=False)
@@ -107,14 +109,14 @@ class ShrinkageSVDLayer(nn.Module):
         Vh = Vh_full[..., :r, :]
 
         if unbatched:
-            U = U.squeeze(0)
-            S = S.squeeze(0)
+            U = U.squeeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            S = S.squeeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
             Vh = Vh.squeeze(0)
 
         return U, S, Vh
 
 
-class ShrinkageWrapper(DenoisingModel):
+class ShrinkageWrapper(DenoisingModel, ABC):
     """Base wrapper for shrinkage-based spectral denoising.
 
     Wraps an inner SpectralDenoiser model to extract learned features,
@@ -187,9 +189,9 @@ class ShrinkageWrapper(DenoisingModel):
         """
         # Try to infer from model structure
         if hasattr(self.inner_model, "d_k"):
-            return int(self.inner_model.d_k)  # type: ignore[arg-type]
+            return int(self.inner_model.d_k)  # pyright: ignore[reportArgumentType]  # dynamic attr access
         if hasattr(self.inner_model, "d_model"):
-            return int(self.inner_model.d_model)  # type: ignore[arg-type]
+            return int(self.inner_model.d_model)  # pyright: ignore[reportArgumentType]  # dynamic attr access
         # Fallback: assume k-dimensional features
         return int(self.inner_model.k)
 
@@ -286,13 +288,16 @@ class ShrinkageWrapper(DenoisingModel):
         """
         pass
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
+    def forward(self, A: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:  # pyright: ignore[reportIncompatibleMethodOverride]  # nn.Module stub uses 'x'
         """Denoise adjacency via shrinkage.
 
         Parameters
         ----------
         A : torch.Tensor
             Noisy adjacency matrix of shape (batch, n, n) or (n, n).
+        t : torch.Tensor | None
+            Diffusion timestep tensor, or None for unconditional denoising.
+            Currently unused; reserved for future discrete diffusion pipeline.
 
         Returns
         -------
@@ -301,7 +306,7 @@ class ShrinkageWrapper(DenoisingModel):
         """
         unbatched = A.ndim == 2
         if unbatched:
-            A = A.unsqueeze(0)
+            A = A.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         # SVD decomposition
         U, S, Vh = self.svd_layer(A)
@@ -386,7 +391,7 @@ class StrictShrinkageWrapper(ShrinkageWrapper):
         unbatched = S.ndim == 1
         if unbatched:
             raw_params = raw_params.unsqueeze(0)
-            S = S.unsqueeze(0)
+            S = S.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         # Truncate to actual number of singular values
         r = S.shape[-1]
@@ -444,7 +449,7 @@ class RelaxedShrinkageWrapper(ShrinkageWrapper):
         unbatched = S.ndim == 1
         if unbatched:
             raw_params = raw_params.unsqueeze(0)
-            S = S.unsqueeze(0)
+            S = S.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         r = S.shape[-1]
 
@@ -457,7 +462,7 @@ class RelaxedShrinkageWrapper(ShrinkageWrapper):
         shift = shift[..., :r]
 
         # Softplus for positive scale
-        scale = nn.functional.softplus(scale_raw)
+        scale = torch.nn.functional.softplus(scale_raw)  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
 
         S_mod = scale * S + shift
 

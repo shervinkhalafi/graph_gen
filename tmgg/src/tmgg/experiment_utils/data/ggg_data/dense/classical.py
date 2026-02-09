@@ -7,7 +7,7 @@ import torch.distributions as td
 from torch.utils.data import Dataset
 
 
-class CassicalGraphs(Dataset):
+class CassicalGraphs(Dataset):  # type: ignore[type-arg]  # pyright: ignore[reportMissingTypeArgument]
     def __getitem__(self, index: int):
         x = self.X[index]
         A = self.A[index]
@@ -29,11 +29,11 @@ class CassicalGraphs(Dataset):
         elif self.model == "BA":
             Ns = np.array(node_N).astype(np.float64)
             ms = np.floor(np.random.rand(self.n_graphs) * 0.9 * Ns).astype(np.int32)
-            self.A = [
+            self.A = [  # pyright: ignore[reportConstantRedefinition]  # math notation
                 nx.to_numpy_array(nx.barabasi_albert_graph(n, int(m)))
                 for n, m in zip(node_N, ms, strict=False)
             ]
-            self.X = np.stack([Ns, ms], -1)
+            self.X = np.stack([Ns, ms], -1)  # pyright: ignore[reportConstantRedefinition]  # math notation
         else:
             raise NotImplementedError()
 

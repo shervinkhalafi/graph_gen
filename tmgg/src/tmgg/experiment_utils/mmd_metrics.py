@@ -230,9 +230,9 @@ def compute_laplacian_histogram(
         return np.zeros(num_bins)
 
     if normalized:
-        L = nx.normalized_laplacian_matrix(G).toarray()
+        L = nx.normalized_laplacian_matrix(G).toarray()  # pyright: ignore[reportConstantRedefinition]  # math notation
     else:
-        L = nx.laplacian_matrix(G).toarray()
+        L = nx.laplacian_matrix(G).toarray()  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     eigenvalues = np.linalg.eigvalsh(L)
 
@@ -482,8 +482,8 @@ def compute_mmd_metrics(
 
 
 def compute_mmd_from_adjacencies(
-    ref_adjacencies: torch.Tensor | np.ndarray | list,
-    gen_adjacencies: torch.Tensor | np.ndarray | list,
+    ref_adjacencies: torch.Tensor | np.ndarray | list[np.ndarray],
+    gen_adjacencies: torch.Tensor | np.ndarray | list[np.ndarray],
     kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
     sigma: float = 1.0,
     max_workers: int | None = None,

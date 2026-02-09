@@ -88,9 +88,9 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
             **kwargs,
         )
 
-    def _make_model(
+    def _make_model(  # pyright: ignore[reportIncompatibleMethodOverride]  # returns DenoisingModel subclass
         self,
-        *args,
+        *args: Any,
         # GNN configuration
         gnn_num_layers: int = 2,
         gnn_num_terms: int = 2,
@@ -104,7 +104,7 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         transformer_d_v: int | None = None,
         transformer_dropout: float = 0.0,
         transformer_bias: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> nn.Module:
         # GNN configuration
         gnn_config = {

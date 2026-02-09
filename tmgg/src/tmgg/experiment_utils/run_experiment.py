@@ -9,7 +9,10 @@ from loguru import logger as loguru
 from omegaconf import DictConfig, OmegaConf
 
 from tmgg.experiment_utils.final_eval import final_eval
-from tmgg.experiment_utils.logging import create_loggers, sync_tensorboard_to_s3
+from tmgg.experiment_utils.logging import (  # pyright: ignore[reportAttributeAccessIssue]
+    create_loggers,
+    sync_tensorboard_to_s3,
+)
 from tmgg.experiment_utils.sanity_check import maybe_run_sanity_check
 from tmgg.experiment_utils.setup import create_callbacks, set_seed
 
@@ -64,7 +67,7 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
     )
 
     # Run sanity check if enabled
-    maybe_run_sanity_check(config=config, data_module=data_module, model=model)
+    maybe_run_sanity_check(config=config, data_module=data_module, model=model)  # pyright: ignore[reportArgumentType]
 
     # Log hyperparameters
     # TODO: I think this might be redundant?
@@ -109,7 +112,12 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
         data_module.setup("test")
         eval_noise_levels = config.get("evaluation", {}).get("noise_levels", None)
         final_eval(
-            model, data_module, logger, trainer, best_model_path, eval_noise_levels
+            model,
+            data_module,
+            logger,
+            trainer,
+            best_model_path,
+            eval_noise_levels,  # pyright: ignore[reportCallIssue]
         )
 
     # Sync TensorBoard logs to S3 (if configured)

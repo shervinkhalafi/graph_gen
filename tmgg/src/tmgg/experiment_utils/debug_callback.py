@@ -4,6 +4,7 @@ This callback logs detailed statistics about model outputs, gradients, and
 weights to help identify why models might get stuck at sigmoid(0) = 0.5.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytorch_lightning as pl
@@ -38,7 +39,7 @@ class DebugCallback(pl.Callback):
         log_interval: int = 50,
         log_gradients: bool = True,
         log_weights: bool = True,
-        gradient_names: list | None = None,
+        gradient_names: list[str] | None = None,
     ):
         super().__init__()
         self.log_interval = log_interval
@@ -50,7 +51,7 @@ class DebugCallback(pl.Callback):
         self,
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
-        outputs: dict[str, Any],
+        outputs: torch.Tensor | Mapping[str, Any] | None,
         batch: Any,
         batch_idx: int,
     ) -> None:

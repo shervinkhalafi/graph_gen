@@ -4,6 +4,8 @@ Implements a scaled dot-product attention mechanism operating on the
 eigenspace of the noisy adjacency matrix.
 """
 
+from __future__ import annotations
+
 import math
 from typing import Any
 
@@ -111,7 +113,7 @@ class SelfAttentionDenoiser(SpectralDenoiser):
         """
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)
+            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         # Compute Q = V W_Q and K = V W_K
         # V: (batch, n, k), W_Q: (k, d_k) -> Q: (batch, n, d_k)
@@ -241,7 +243,7 @@ class SelfAttentionDenoiserWithMLP(SpectralDenoiser):
         """
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)
+            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         # Attention: Q K^T / √d_k
         Q = torch.matmul(V, self.W_Q)
@@ -549,6 +551,6 @@ class MultiLayerSelfAttentionDenoiser(SpectralDenoiser):
         K = self.W_K(h)
 
         if unbatched:
-            K = K.squeeze(0)
+            K = K.squeeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         return K

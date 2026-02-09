@@ -262,7 +262,7 @@ def convert_g6_to_dense(
             raise RuntimeError("No graphs were loaded from the dataset files")
         As_ = np.zeros([len(As)] + A_max_shape)
         Xs_ = np.zeros([len(Xs)] + X_max_shape)
-        for i, (X, A) in tqdm(
+        for i, (X, A) in tqdm(  # pyright: ignore[reportConstantRedefinition]  # math notation
             enumerate(zip(Xs, As, strict=False)), desc="Finalizing batch"
         ):
             num_nodes, node_dim = X.shape
@@ -280,7 +280,7 @@ def convert_g6_to_dense(
 
 def load_npz_keys(
     keys: list[str], file: str
-) -> tuple[npt.NDArray[Any], ...] | npt.NDArray[Any]:
+) -> tuple[npt.NDArray[Any], ...] | npt.NDArray[Any]:  # pyright: ignore[reportExplicitAny]
     """
     Small utility to directly load an npz_compressed file
     :param keys:
@@ -308,7 +308,7 @@ def get_X(A: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     _ = pt.diagonal(triang_adj, dim1=-2, dim2=-1).fill_(0)
     for k_ in range(2, 7 + 1):
         paths, k_matrix = triangles_(triang_adj, k_, prev_k=k_matrix)
-        X = pt.cat((X, paths.reshape(Asize[0], -1)), -1)
+        X = pt.cat((X, paths.reshape(Asize[0], -1)), -1)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     return X.numpy()
 
@@ -372,8 +372,8 @@ class ANUDataset(Dataset[tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
             )
             num_graphs += N
         # intialize dense graph combination
-        self.X = np.zeros([num_graphs, max_shape[1], max_shape[2]])
-        self.A = np.zeros([num_graphs, max_shape[1], max_shape[1]])
+        self.X = np.zeros([num_graphs, max_shape[1], max_shape[2]])  # pyright: ignore[reportConstantRedefinition]  # math notation
+        self.A = np.zeros([num_graphs, max_shape[1], max_shape[1]])  # pyright: ignore[reportConstantRedefinition]  # math notation
         self.num_graphs = 0
         # actually assign the loaded X,A
         for d in self.datasets:
@@ -381,7 +381,7 @@ class ANUDataset(Dataset[tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
             if not isinstance(result, tuple):
                 raise RuntimeError("Expected tuple of arrays")
             X, A = result
-            N = (
+            N = (  # pyright: ignore[reportConstantRedefinition]  # math notation
                 min(X.shape[0], self.num_graphs_per_set)
                 if self.num_graphs_per_set > 0
                 else X.shape[0]

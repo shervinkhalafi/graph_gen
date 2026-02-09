@@ -127,7 +127,7 @@ class GraphEmbedding(nn.Module, ABC):
             )
         elif loss_type == "mse":
             return nn.functional.mse_loss(reconstruction, target)
-        else:
+        else:  # pyright: ignore[reportUnreachable]  # defensive guard
             raise ValueError(f"Unknown loss type: {loss_type}")
 
     def evaluate(self, target: torch.Tensor) -> tuple[float, float]:
@@ -184,7 +184,7 @@ class GraphEmbedding(nn.Module, ABC):
         )
 
 
-class SymmetricEmbedding(GraphEmbedding):
+class SymmetricEmbedding(GraphEmbedding, ABC):
     """Base class for symmetric embeddings where A ≈ f(X, X).
 
     In symmetric embeddings, each node has a single embedding vector,
@@ -217,7 +217,7 @@ class SymmetricEmbedding(GraphEmbedding):
         return self.X, None
 
 
-class AsymmetricEmbedding(GraphEmbedding):
+class AsymmetricEmbedding(GraphEmbedding, ABC):
     """Base class for asymmetric embeddings where A ≈ f(X, Y).
 
     In asymmetric embeddings, each node has separate source (X) and

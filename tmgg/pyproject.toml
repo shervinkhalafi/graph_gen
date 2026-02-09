@@ -39,6 +39,7 @@ dependencies = [
   "boto3>=1.26.0",           # S3-compatible storage for Tigris/AWS
   "safetensors>=0.4.0",      # Fast tensor serialization for eigenstructure study
   "polars>=1.0.0",           # Fast DataFrame operations for results aggregation
+  "scikit-learn>=1.3.0",     # RF importance analysis in tmgg.analysis.statistics
 ]
 
 [project.optional-dependencies]

@@ -92,7 +92,7 @@ class RotationNoiseGenerator(NoiseGenerator):
             rng = np.random.RandomState(seed)
             A = rng.rand(k, k)
         else:
-            A = np.random.rand(k, k)
+            A = np.random.rand(k, k)  # pyright: ignore[reportConstantRedefinition]  # math notation
         return (A - A.T) / 2
 
     def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
@@ -103,7 +103,7 @@ class RotationNoiseGenerator(NoiseGenerator):
     def requires_state(self) -> bool:
         return True
 
-    def get_config(self) -> dict:
+    def get_config(self) -> dict[str, int | None]:
         """Get configuration for this generator."""
         return {
             "k": self.k,

@@ -73,16 +73,16 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
 
     # forward() is inherited from base class - model handles eigenvector extraction
 
-    def _make_model(
+    def _make_model(  # pyright: ignore[reportIncompatibleMethodOverride]  # returns DenoisingModel subclass
         self,
-        *args,
+        *args: Any,
         n_layers: int = 4,
         hidden_mlp_dims: dict[str, int] | None = None,
         hidden_dims: dict[str, int] | None = None,
         output_dims: dict[str, int] | None = None,
         k: int = 20,
         use_eigenvectors: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> nn.Module:
         """Create the DiGress GraphTransformer model.
 

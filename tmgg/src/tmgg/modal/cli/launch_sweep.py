@@ -80,7 +80,7 @@ def get_config_files(config_dir: Path, filter_pattern: str | None = None) -> lis
     return all_configs
 
 
-def select_modal_function(gpu_tier: str) -> modal.Function:
+def select_modal_function(gpu_tier: str) -> modal.Function:  # pyright: ignore[reportMissingTypeArgument]
     """Select the appropriate deployed Modal function for the GPU tier."""
     if gpu_tier == "debug":
         func_name = "modal_execute_task_debug"
@@ -99,7 +99,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
 
 def launch_single(
     config_path: Path,
-    modal_fn: modal.Function,
+    modal_fn: modal.Function,  # pyright: ignore[reportMissingTypeArgument]
     gpu: str,
     timeout: int | None = None,
     tags: str = "",
@@ -304,7 +304,7 @@ def main() -> None:
 
         success, message = launch_single(
             config_path=config_path,
-            modal_fn=modal_fn,  # type: ignore[arg-type]
+            modal_fn=modal_fn,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             gpu=args.gpu,
             timeout=args.timeout,
             tags=args.tags,

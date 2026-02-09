@@ -112,4 +112,4 @@ def compose_config_as_dict(
         Plain dictionary with all values resolved.
     """
     cfg = compose_config(config_name, overrides)
-    return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
+    return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]  # pyright: ignore[reportReturnType]

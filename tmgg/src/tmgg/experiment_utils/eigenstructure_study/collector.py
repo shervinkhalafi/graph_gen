@@ -306,7 +306,7 @@ class EigenstructureCollector:
             n = M.shape[0]
             if n < target_size:
                 pad_size = target_size - n
-                M_padded = torch.nn.functional.pad(
+                M_padded = torch.nn.functional.pad(  # pyright: ignore[reportAttributeAccessIssue]
                     M, (0, pad_size, 0, pad_size), value=0.0
                 )
                 padded.append(M_padded)
@@ -323,7 +323,7 @@ class EigenstructureCollector:
             n = v.shape[0]
             if n < target_size:
                 pad_size = target_size - n
-                v_padded = torch.nn.functional.pad(v, (0, pad_size), value=0.0)
+                v_padded = torch.nn.functional.pad(v, (0, pad_size), value=0.0)  # pyright: ignore[reportAttributeAccessIssue]
                 padded.append(v_padded)
             else:
                 padded.append(v)

@@ -166,8 +166,8 @@ class GraphDistributionDataModule(pl.LightningDataModule):
                 rng=rng,
             )
             # Ensure symmetric (upper triangular already copied to lower)
-            A = np.triu(A, k=1)
-            A = A + A.T
+            A = np.triu(A, k=1)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            A = A + A.T  # pyright: ignore[reportConstantRedefinition]  # math notation
             # Zero diagonal
             np.fill_diagonal(A, 0)
             adjacencies.append(A.astype(np.float32))
@@ -217,7 +217,7 @@ class GraphDistributionDataModule(pl.LightningDataModule):
         return self._train_data[0]
 
 
-class _UnwrapDataset(torch.utils.data.Dataset):
+class _UnwrapDataset(torch.utils.data.Dataset[torch.Tensor]):
     """Dataset wrapper that returns tensors directly instead of tuples."""
 
     def __init__(self, data: torch.Tensor):

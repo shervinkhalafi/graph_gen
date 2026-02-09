@@ -14,7 +14,7 @@ import argparse
 import itertools
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -50,7 +50,7 @@ def load_model_config(arch_path: str) -> DictConfig:
     if not model_config_path.exists():
         raise FileNotFoundError(f"Model config not found: {model_config_path}")
 
-    return OmegaConf.load(model_config_path)  # type: ignore[return-value]
+    return OmegaConf.load(model_config_path)  # type: ignore[return-value]  # pyright: ignore[reportReturnType]
 
 
 def format_hp_value(key: str, value: float | int) -> str:
@@ -181,7 +181,7 @@ def generate_configs_for_stage(stage_def: dict[str, Any]) -> list[dict[str, Any]
                     # The arch config has interpolations like ${learning_rate} that can't
                     # be resolved in isolation, so we skip those and use the base values.
                     base_model_dict = OmegaConf.to_container(cfg.model, resolve=True)
-                    merged_dict: dict[str, Any] = dict(base_model_dict)  # type: ignore[arg-type]
+                    merged_dict: dict[str, Any] = cast(dict[str, Any], base_model_dict)
 
                     # Extract non-interpolation values from arch config
                     for key in model_cfg:

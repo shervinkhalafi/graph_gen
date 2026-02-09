@@ -5,6 +5,8 @@ eigenspace with optional node-specific bias correction. Supports both
 symmetric (VWV^T) and asymmetric (XY^T) reconstruction modes.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 import torch
@@ -142,7 +144,7 @@ class LinearPE(SpectralDenoiser):
         """
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)
+            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         batch_size, n, k = V.shape
 

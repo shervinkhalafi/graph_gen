@@ -73,13 +73,16 @@ class MLPBaseline(DenoisingModel):
         layers.append(nn.Linear(hidden_dim, self.flatten_dim))
         self.mlp = nn.Sequential(*layers)
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
+    def forward(self, A: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:  # pyright: ignore[reportIncompatibleMethodOverride]  # nn.Module stub uses 'x'
         """Apply MLP to flattened adjacency matrix.
 
         Parameters
         ----------
         A
             Input adjacency matrix of shape (batch, N, N) where N <= max_nodes.
+        t
+            Diffusion timestep tensor, or None for unconditional denoising.
+            Currently unused; reserved for future discrete diffusion pipeline.
 
         Returns
         -------

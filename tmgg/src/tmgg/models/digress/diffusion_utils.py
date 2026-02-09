@@ -13,14 +13,14 @@ class PlaceHolder:
     y: torch.Tensor
 
     def __init__(self, X: torch.Tensor, E: torch.Tensor, y: torch.Tensor) -> None:
-        self.X = X
-        self.E = E
+        self.X = X  # pyright: ignore[reportConstantRedefinition]  # math notation
+        self.E = E  # pyright: ignore[reportConstantRedefinition]  # math notation
         self.y = y
 
     def type_as(self, x: torch.Tensor) -> "PlaceHolder":
         """Changes the device and dtype of X, E, y."""
-        self.X = self.X.type_as(x)
-        self.E = self.E.type_as(x)
+        self.X = self.X.type_as(x)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        self.E = self.E.type_as(x)  # pyright: ignore[reportConstantRedefinition]  # math notation
         self.y = self.y.type_as(x)
         return self
 
@@ -30,14 +30,14 @@ class PlaceHolder:
         e_mask2 = x_mask.unsqueeze(1)  # bs, 1, n, 1
 
         if collapse:
-            self.X = torch.argmax(self.X, dim=-1)
-            self.E = torch.argmax(self.E, dim=-1)
+            self.X = torch.argmax(self.X, dim=-1)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            self.E = torch.argmax(self.E, dim=-1)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
             self.X[node_mask == 0] = -1
             self.E[(e_mask1 * e_mask2).squeeze(-1) == 0] = -1
         else:
-            self.X = self.X * x_mask
-            self.E = self.E * e_mask1 * e_mask2
+            self.X = self.X * x_mask  # pyright: ignore[reportConstantRedefinition]  # math notation
+            self.E = self.E * e_mask1 * e_mask2  # pyright: ignore[reportConstantRedefinition]  # math notation
             _ = torch.allclose(self.E, torch.transpose(self.E, 1, 2))
         return self
 
@@ -221,7 +221,8 @@ def sigma_and_alpha_t_given_s(
         sigma t given s = sqrt(1 - (alpha t given s) ^2 ).
     """
     sigma2_t_given_s = inflate_batch_array(
-        -torch.expm1(F.softplus(gamma_s) - F.softplus(gamma_t)), target_size
+        -torch.expm1(F.softplus(gamma_s) - F.softplus(gamma_t)),
+        target_size,  # pyright: ignore[reportAttributeAccessIssue]  # F.softplus exists at runtime
     )
 
     # alpha_t_given_s = alpha_t / alpha_s
@@ -359,7 +360,7 @@ def compute_posterior_distribution(
     Compute xt @ Qt.T * x0 @ Qsb / x0 @ Qtb @ xt.T
     """
     # Flatten feature tensors
-    M = M.flatten(start_dim=1, end_dim=-2).to(
+    M = M.flatten(start_dim=1, end_dim=-2).to(  # pyright: ignore[reportConstantRedefinition]  # math notation
         torch.float32
     )  # (bs, N, d) with N = n or n * n
     M_t = M_t.flatten(start_dim=1, end_dim=-2).to(torch.float32)  # same
@@ -492,20 +493,20 @@ def sample_discrete_feature_noise(
     U_y = torch.empty((bs, 0))
 
     long_mask = node_mask.long()
-    U_X = U_X.type_as(long_mask)
-    U_E = U_E.type_as(long_mask)
+    U_X = U_X.type_as(long_mask)  # pyright: ignore[reportConstantRedefinition]  # math notation
+    U_E = U_E.type_as(long_mask)  # pyright: ignore[reportConstantRedefinition]  # math notation
     U_y = U_y.type_as(long_mask)
 
-    U_X = F.one_hot(U_X, num_classes=x_limit.shape[-1]).float()
-    U_E = F.one_hot(U_E, num_classes=e_limit.shape[-1]).float()
+    U_X = F.one_hot(U_X, num_classes=x_limit.shape[-1]).float()  # pyright: ignore[reportConstantRedefinition, reportAttributeAccessIssue]  # math notation; F.one_hot exists at runtime
+    U_E = F.one_hot(U_E, num_classes=e_limit.shape[-1]).float()  # pyright: ignore[reportConstantRedefinition, reportAttributeAccessIssue]  # math notation; F.one_hot exists at runtime
 
     # Get upper triangular part of edge noise, without main diagonal
     upper_triangular_mask = torch.zeros_like(U_E)
     indices = torch.triu_indices(row=U_E.size(1), col=U_E.size(2), offset=1)
     upper_triangular_mask[:, indices[0], indices[1], :] = 1
 
-    U_E = U_E * upper_triangular_mask
-    U_E = U_E + torch.transpose(U_E, 1, 2)
+    U_E = U_E * upper_triangular_mask  # pyright: ignore[reportConstantRedefinition]  # math notation
+    U_E = U_E + torch.transpose(U_E, 1, 2)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     if not (torch.transpose(U_E, 1, 2) == U_E).all():
         raise AssertionError("Edge noise is not symmetric")

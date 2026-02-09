@@ -110,7 +110,7 @@ class EigenEmbedding(nn.Module):
         if self.eigenvalue_reg > 0:
             n = A.shape[-1]
             eye = torch.eye(n, device=A.device, dtype=A.dtype)
-            A = A + self.eigenvalue_reg * eye
+            A = A + self.eigenvalue_reg * eye  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         eigenvectors = []
         for i in range(A.shape[0]):

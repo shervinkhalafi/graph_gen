@@ -23,7 +23,7 @@ import modal
 MODAL_APP_NAME = "tmgg-spectral"
 
 
-def select_modal_function(gpu_tier: str) -> modal.Function:
+def select_modal_function(gpu_tier: str) -> modal.Function:  # pyright: ignore[reportMissingTypeArgument]
     """Select the appropriate deployed Modal function for the GPU tier."""
     if gpu_tier == "debug":
         func_name = "modal_execute_task_debug"

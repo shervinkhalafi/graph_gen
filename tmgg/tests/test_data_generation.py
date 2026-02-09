@@ -38,10 +38,11 @@ class TestSBMGeneration:
         assert np.all(A >= 0) and np.all(A <= 1)
         assert np.allclose(A, A.T)  # Symmetric
 
-        # Check block structure
-        assert np.all(A[:5, :5] == 1)  # First block all connected
-        assert np.all(A[5:10, 5:10] == 1)  # Second block all connected
-        assert np.all(A[10:15, 10:15] == 1)  # Third block all connected
+        # Check block structure (off-diagonal entries are 1, diagonal is 0)
+        for start in (0, 5, 10):
+            block = A[start : start + 5, start : start + 5]
+            assert np.all(np.diag(block) == 0), "No self-loops"
+            assert np.all(block + np.eye(5) == 1), "All off-diagonal are 1"
         assert np.all(A[:5, 5:10] == 0)  # No inter-block connections
 
     def test_generate_block_sizes(self):

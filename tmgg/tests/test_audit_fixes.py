@@ -16,6 +16,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from tmgg.experiment_utils import generate_sbm_adjacency
 from tmgg.experiment_utils.metrics import (
     compute_eigenvalue_error,
     compute_subspace_distance,
@@ -410,3 +411,95 @@ class TestIssue14GELUActivation:
     """
 
     pass
+
+
+class TestSBMDiagonalAndSymmetry:
+    """Regression tests for SBM adjacency generation bugs (Step 0.1).
+
+    Bug 1 -- Self-loops on the diagonal: generate_sbm_adjacency produced
+    adjacency matrices where diagonal entries could be 1 (self-loops), because
+    random values were sampled for the full block including diagonal positions,
+    and never zeroed out afterward. Simple graphs must have zero diagonal.
+
+    Bug 2 -- Asymmetric intra-block edges: when i == j (diagonal blocks), the
+    code skipped the symmetrization branch (which only ran for i != j). Each
+    intra-block entry (r, c) was an independent Bernoulli draw, so A[r,c] could
+    differ from A[c,r] within the same community. Undirected graphs require
+    A == A.T everywhere, including within blocks.
+
+    These tests use seeded generators so failures are deterministic. The key
+    invariants -- zero diagonal and full symmetry -- must hold for all parameter
+    combinations, not just edge cases like p=1.0.
+    """
+
+    def test_diagonal_is_zero_deterministic(self):
+        """Diagonal must be zero for all tested (p, q) combinations.
+
+        With p < 1.0, diagonal entries would be randomly set to 0 or 1.
+        This test catches the missing np.fill_diagonal(adj_matrix, 0) call.
+        """
+        rng = np.random.default_rng(42)
+        test_cases = [
+            ([5, 5, 5], 0.8, 0.2),
+            ([3, 7], 0.5, 0.1),
+            ([10], 0.9, 0.0),
+            ([4, 4, 4, 4], 1.0, 0.5),
+            ([2, 3, 5], 0.3, 0.3),
+        ]
+        for block_sizes, p, q in test_cases:
+            A = generate_sbm_adjacency(block_sizes, p, q, rng=rng)
+            assert np.all(
+                np.diag(A) == 0
+            ), f"Self-loops found for block_sizes={block_sizes}, p={p}, q={q}"
+
+    def test_intra_block_symmetry(self):
+        """Intra-block (diagonal block) edges must be symmetric.
+
+        With p < 1.0, each entry is an independent Bernoulli draw. Without
+        explicit symmetrization of diagonal blocks, A[r,c] != A[c,r] for
+        many off-diagonal intra-block pairs. This test catches the missing
+        symmetrization in the i == j branch.
+        """
+        rng = np.random.default_rng(123)
+        test_cases = [
+            ([5, 5, 5], 0.5, 0.1),
+            ([8, 8], 0.3, 0.05),
+            ([10], 0.7, 0.0),
+            ([3, 4, 5, 6], 0.6, 0.2),
+        ]
+        for block_sizes, p, q in test_cases:
+            A = generate_sbm_adjacency(block_sizes, p, q, rng=rng)
+            assert np.allclose(
+                A, A.T
+            ), f"Asymmetry found for block_sizes={block_sizes}, p={p}, q={q}"
+
+    def test_full_matrix_symmetry(self):
+        """The entire adjacency matrix must be symmetric, not just inter-block.
+
+        This is the combined check: both intra- and inter-block portions must
+        satisfy A == A.T. With the bug, inter-block was symmetric but
+        intra-block was not.
+        """
+        rng = np.random.default_rng(999)
+        A = generate_sbm_adjacency([6, 6, 6], 0.4, 0.1, rng=rng)
+        diff = np.abs(A - A.T)
+        assert np.allclose(
+            diff, 0
+        ), f"Matrix not symmetric; max asymmetry = {diff.max()}"
+
+    def test_binary_values(self):
+        """Adjacency entries must be exactly 0 or 1 (no floats from averaging)."""
+        rng = np.random.default_rng(77)
+        A = generate_sbm_adjacency([5, 5], 0.5, 0.3, rng=rng)
+        unique_vals = np.unique(A)
+        assert set(unique_vals).issubset(
+            {0, 1}
+        ), f"Non-binary values found: {unique_vals}"
+
+    def test_shape_and_dtype(self):
+        """Output shape must match sum of block sizes, dtype should be numeric."""
+        rng = np.random.default_rng(0)
+        block_sizes = [3, 4, 5]
+        A = generate_sbm_adjacency(block_sizes, 0.5, 0.2, rng=rng)
+        n = sum(block_sizes)
+        assert A.shape == (n, n), f"Expected ({n}, {n}), got {A.shape}"

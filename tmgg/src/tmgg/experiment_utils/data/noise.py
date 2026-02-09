@@ -34,20 +34,20 @@ def add_rotation_noise(
         Noisy adjacency matrix
     """
     # Convert to tensor if needed
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     # Handle both single matrix and batch cases
     if A.dim() == 2:
         # Single matrix case
-        eigenvalues, V = torch.linalg.eigh(A)
-        R = expm(eps * skew)
+        eigenvalues, V = torch.linalg.eigh(A)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        R = expm(eps * skew)  # pyright: ignore[reportConstantRedefinition]  # math notation
         R_tensor = torch.tensor(R, dtype=torch.float32).to(V.device)
         V_rot = V @ R_tensor
         A_noisy = V_rot @ torch.diag(eigenvalues) @ V_rot.T
     else:
         # Batch case
-        eigenvalues, V = torch.linalg.eigh(A)
-        R = expm(eps * skew)
+        eigenvalues, V = torch.linalg.eigh(A)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        R = expm(eps * skew)  # pyright: ignore[reportConstantRedefinition]  # math notation
         R_tensor = torch.tensor(R, dtype=torch.float32).to(V.device)
         V_rot = V @ R_tensor
 
@@ -84,7 +84,7 @@ def add_gaussian_noise(A: torch.Tensor | np.ndarray, eps: float) -> torch.Tensor
         Noisy adjacency matrix
     """
     # Convert to tensor if needed
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     A_noisy = A + eps * torch.randn_like(A)
     return A_noisy
@@ -137,7 +137,7 @@ def add_logit_noise(
     >>> assert torch.allclose(A_noisy, A_noisy.T)  # Symmetric
     """
     # Convert to tensor if needed
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     # Clamp for numerical stability (avoid log(0) and log(inf))
     A_clamped = A.clamp(clamp_eps, 1 - clamp_eps)
@@ -182,7 +182,7 @@ def add_digress_noise(
         rng = np.random.default_rng()
 
     # Convert to tensor if needed
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     # Generate random values for each element
     random_values = torch.rand_like(A)

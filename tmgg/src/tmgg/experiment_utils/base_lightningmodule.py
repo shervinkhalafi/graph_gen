@@ -20,7 +20,7 @@ from pytorch_lightning.loggers import Logger
 from tmgg.experiment_utils import (
     compute_batch_metrics,
     create_graph_denoising_figure,
-    create_network_denoising_figure,
+    create_network_denoising_figure,  # pyright: ignore[reportAttributeAccessIssue]
     create_noise_generator,
 )
 from tmgg.experiment_utils.exceptions import ConfigurationError
@@ -61,8 +61,16 @@ class _DenoisingModelProtocol(Protocol):
         """Return an iterator over module parameters (from nn.Module)."""
         ...
 
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
+    def __call__(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
+        """Forward pass.
+
+        Parameters
+        ----------
+        x
+            Input tensor (typically noisy adjacency matrix).
+        t
+            Diffusion timestep tensor, or None for unconditional denoising.
+        """
         ...
 
 
@@ -387,18 +395,23 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             _ = print(f"{'=' * 60}\n")
 
     @override
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through the attention model.
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
+        """Forward pass through the denoising model.
 
-        Args:
-            x: Input adjacency matrix
+        Parameters
+        ----------
+        x
+            Input adjacency matrix.
+        t
+            Diffusion timestep tensor, or None for unconditional denoising.
 
-        Returns:
-            Reconstructed adjacency matrix
+        Returns
+        -------
+        torch.Tensor
+            Reconstructed adjacency matrix.
         """
         # Model returns reconstructed adjacency matrix directly
-        output: torch.Tensor = self.model(x)
+        output: torch.Tensor = self.model(x, t=t)
         return output
 
     def _apply_noise(self, batch: torch.Tensor, eps: float) -> torch.Tensor:
@@ -685,7 +698,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
                 fig: matplotlib.figure.Figure = create_graph_denoising_figure(
                     A_clean=A_sample,
                     noise_fn=cast(Any, self.noise_generator.add_noise),
-                    denoise_fn=denoise_fn,
+                    denoise_fn=cast(Any, denoise_fn),
                     noise_level=eps,
                     noise_type=noise_type,
                     title_prefix=f"{self.get_model_name()} - ",
@@ -760,7 +773,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             _ = traceback.print_exc()
 
     @override
-    def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:
+    def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Configure optimizers and learning rate schedulers."""
         # Select optimizer based on type
         optimizer: torch.optim.Optimizer

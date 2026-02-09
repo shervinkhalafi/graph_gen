@@ -612,7 +612,12 @@ def list_remote(verbose: bool) -> None:
 
     try:
         import modal
+    except ImportError:
+        raise click.ClickException(
+            "modal package is required: pip install modal"
+        ) from None
 
+    try:
         # Get reference to deployed function
         fn = modal.Function.from_name("tmgg-spectral", "eigenstructure_list")
         studies = fn.remote()
@@ -686,7 +691,12 @@ def download(
 
     try:
         import modal
+    except ImportError:
+        raise click.ClickException(
+            "modal package is required: pip install modal"
+        ) from None
 
+    try:
         local_path.mkdir(parents=True, exist_ok=True)
 
         click.echo(f"Downloading from Modal: {remote_path}")

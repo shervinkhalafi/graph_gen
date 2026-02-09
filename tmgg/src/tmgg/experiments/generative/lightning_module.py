@@ -168,8 +168,10 @@ class GenerativeLightningModule(pl.LightningModule):
             rotation_k=self.model_config.get("k", 20),
         )
 
-        # Create model (typed as DenoisingModel for method access)
-        self.model: DenoisingModel = self._make_model()
+        # Create model — typed as DenoisingModel at runtime (all models subclass it),
+        # but basedpyright's strict module-identity checks reject cross-subpackage
+        # subtype relationships, so we cast the return value.
+        self.model: DenoisingModel = cast(DenoisingModel, self._make_model())
 
         # Loss function
         if loss_type == "MSE":
@@ -183,13 +185,13 @@ class GenerativeLightningModule(pl.LightningModule):
         self._ref_graphs: list[nx.Graph[Any]] = []
         self._num_nodes: int | None = None
 
-    def _make_model(self) -> DenoisingModel:
+    def _make_model(self) -> nn.Module:
         """Instantiate the model based on configuration.
 
         Returns
         -------
-        DenoisingModel
-            Configured denoising model.
+        nn.Module
+            Configured denoising model (always a DenoisingModel subclass).
         """
         cfg = self.model_config
 
@@ -254,7 +256,7 @@ class GenerativeLightningModule(pl.LightningModule):
             )
             return SequentialDenoisingModel(
                 embedding_model=embedding,
-                denoising_model=denoiser,
+                denoising_model=denoiser,  # pyright: ignore[reportArgumentType]  # cross-subpackage subtype
             )
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
@@ -326,13 +328,13 @@ class GenerativeLightningModule(pl.LightningModule):
         # Forward pass
         output = self.forward(noisy)
 
-        # Compute loss
-        output_for_loss, target_for_loss = self.model.transform_for_loss(output, target)
+        # Compute loss (DenoisingModel methods are resolved via Lightning's __getattr__)
+        output_for_loss, target_for_loss = self.model.transform_for_loss(output, target)  # pyright: ignore[reportCallIssue]
         loss = self.criterion(output_for_loss, target_for_loss)
 
         # Compute accuracy
         with torch.no_grad():
-            predictions = self.model.logits_to_graph(output)
+            predictions = self.model.logits_to_graph(output)  # pyright: ignore[reportCallIssue]
             accuracy = (predictions == target).float().mean()
 
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -375,11 +377,11 @@ class GenerativeLightningModule(pl.LightningModule):
         noisy = self.noise_generator.add_noise(batch, mid_eps)
         output = self.forward(noisy)
 
-        output_for_loss, target_for_loss = self.model.transform_for_loss(output, target)
+        output_for_loss, target_for_loss = self.model.transform_for_loss(output, target)  # pyright: ignore[reportCallIssue]
         loss = self.criterion(output_for_loss, target_for_loss)
 
         with torch.no_grad():
-            predictions = self.model.logits_to_graph(output)
+            predictions = self.model.logits_to_graph(output)  # pyright: ignore[reportCallIssue]
             accuracy = (predictions == target).float().mean()
 
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -475,7 +477,7 @@ class GenerativeLightningModule(pl.LightningModule):
 
             # Forward pass
             logits = self.forward(z_t)
-            predictions = self.model.predict(logits)
+            predictions = self.model.predict(logits)  # pyright: ignore[reportCallIssue]
 
             # Interpolate between prediction and current based on noise level
             # At high noise (t near num_steps), trust model less
@@ -492,7 +494,7 @@ class GenerativeLightningModule(pl.LightningModule):
 
         # Final prediction
         logits = self.forward(z_t)
-        final = self.model.logits_to_graph(logits)
+        final = self.model.logits_to_graph(logits)  # pyright: ignore[reportCallIssue]
         # Enforce symmetry (DiGress-style averaging)
         final = (final + final.transpose(-2, -1)) / 2
         final = (final > 0.5).float()

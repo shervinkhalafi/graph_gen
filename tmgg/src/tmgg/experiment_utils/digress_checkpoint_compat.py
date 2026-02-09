@@ -135,7 +135,7 @@ def _install_stub_module(name: str, installed: dict[str, Any]) -> _StubModule:
     import sys
 
     if name in sys.modules:
-        return sys.modules[name]  # type: ignore[return-value]
+        return sys.modules[name]  # type: ignore[return-value]  # pyright: ignore[reportReturnType]
 
     # Install parent first if needed
     if "." in name:

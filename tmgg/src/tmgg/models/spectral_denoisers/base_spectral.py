@@ -6,6 +6,8 @@ adjacency matrix, process them through an architecture-specific transformation,
 and reconstruct the denoised adjacency matrix.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any, Literal
 
@@ -95,13 +97,16 @@ class SpectralDenoiser(DenoisingModel, ABC):
                 f"'pearl_basis', got {embedding_source!r}"
             )
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
+    def forward(self, A: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:  # pyright: ignore[reportIncompatibleMethodOverride]  # nn.Module stub uses 'x'
         """Denoise adjacency matrix via spectral transformation.
 
         Parameters
         ----------
         A : torch.Tensor
             Noisy adjacency matrix of shape (batch, n, n) or (n, n).
+        t : torch.Tensor | None
+            Diffusion timestep tensor, or None for unconditional denoising.
+            Currently unused; reserved for future discrete diffusion pipeline.
 
         Returns
         -------
@@ -118,12 +123,12 @@ class SpectralDenoiser(DenoisingModel, ABC):
             actual_k = V.shape[-1]
             if actual_k < self.k:
                 pad_size = self.k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))
-                Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))
+                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportConstantRedefinition, reportAttributeAccessIssue]  # math notation; PyTorch stub gap
+                Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
         else:
             # PEARL embeddings
             assert isinstance(self.embedding_layer, PEARLEmbedding)
-            V = self.embedding_layer(A)  # (batch, n, k) or (n, k)
+            V = self.embedding_layer(A)  # pyright: ignore[reportConstantRedefinition]  # math notation; (batch, n, k) or (n, k)
             # PEARL has no eigenvalues; pass zeros as placeholder
             unbatched = V.ndim == 2
             if unbatched:
@@ -211,9 +216,9 @@ class SpectralDenoiser(DenoisingModel, ABC):
             actual_k = V.shape[-1]
             if actual_k < self.k:
                 pad_size = self.k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))
+                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportConstantRedefinition, reportAttributeAccessIssue]  # math notation; PyTorch stub gap
         else:
             assert isinstance(self.embedding_layer, PEARLEmbedding)
-            V = self.embedding_layer(A)
+            V = self.embedding_layer(A)  # pyright: ignore[reportConstantRedefinition]  # math notation
 
         return V

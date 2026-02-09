@@ -80,7 +80,7 @@ class BaselineLightningModule(DenoisingLightningModule):
             **kwargs,
         )
 
-    def _make_model(self, *args: Any, **kwargs: Any) -> nn.Module:
+    def _make_model(self, *args: Any, **kwargs: Any) -> nn.Module:  # pyright: ignore[reportIncompatibleMethodOverride]  # returns DenoisingModel subclass
         """Instantiate the baseline model based on config.
 
         Returns

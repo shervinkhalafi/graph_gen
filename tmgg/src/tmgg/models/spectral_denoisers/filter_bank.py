@@ -5,6 +5,8 @@ allowing the model to learn frequency-dependent transformations. Supports
 both symmetric (VWV^T) and asymmetric (XY^T) reconstruction modes.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 import torch
@@ -112,16 +114,16 @@ class GraphFilterBank(SpectralDenoiser):
                 nn.init.xavier_uniform_(h)
             for h in self.H_Y:
                 nn.init.xavier_uniform_(h)
-            self.H = None  # type: ignore[assignment]
+            self.H = None  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
         else:
             # Learnable coefficient matrices H^{(ℓ)} ∈ R^{k×k} for ℓ = 0, ..., K-1
-            self.H = nn.ParameterList(
+            self.H = nn.ParameterList(  # pyright: ignore[reportConstantRedefinition]
                 [nn.Parameter(torch.empty(k, k)) for _ in range(polynomial_degree)]
             )
             for h in self.H:
                 nn.init.xavier_uniform_(h)
-            self.H_X = None  # type: ignore[assignment]
-            self.H_Y = None  # type: ignore[assignment]
+            self.H_X = None  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+            self.H_Y = None  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
 
     def _compute_spectral_polynomial(
         self,
@@ -162,7 +164,7 @@ class GraphFilterBank(SpectralDenoiser):
             Lambda_matrix = Lambda_power.unsqueeze(-1).expand(
                 -1, -1, k
             )  # (batch, k, k)
-            W = W + Lambda_matrix * H_list[ell].unsqueeze(0)
+            W = W + Lambda_matrix * H_list[ell].unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
             Lambda_power = Lambda_power * Lambda_normalized
 
         return W
@@ -191,7 +193,7 @@ class GraphFilterBank(SpectralDenoiser):
         """
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)
+            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
             Lambda = Lambda.unsqueeze(0)
 
         batch_size, n, k = V.shape

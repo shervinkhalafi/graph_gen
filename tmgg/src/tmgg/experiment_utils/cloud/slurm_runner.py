@@ -253,8 +253,9 @@ echo "SLURM job completed"
     def spawn_experiment(
         self,
         config: DictConfig,
-        gpu_type: str = "debug",
-        timeout_seconds: int = 3600,
+        gpu_type: str | None = None,
+        timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
     ) -> SlurmSpawnedTask:
         """Submit experiment to SLURM without waiting.
 
@@ -272,7 +273,8 @@ echo "SLURM job completed"
         SlurmSpawnedTask
             Handle with run_id and SLURM job_id.
         """
-        task_input = self._create_task_input(config, timeout_seconds)
+        effective_timeout = timeout_seconds if timeout_seconds is not None else 3600
+        task_input = self._create_task_input(config, effective_timeout)
 
         # Ensure output directory exists
         _ = self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -302,8 +304,9 @@ echo "SLURM job completed"
     def spawn_sweep(
         self,
         configs: list[DictConfig],
-        gpu_type: str = "debug",
-        timeout_seconds: int = 3600,
+        gpu_type: str | None = None,
+        timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
     ) -> list[SpawnedTask]:
         """Spawn multiple experiments without waiting.
 
@@ -322,7 +325,9 @@ echo "SLURM job completed"
             Handles for all spawned jobs.
         """
         spawned: list[SpawnedTask] = [
-            self.spawn_experiment(config, gpu_type, timeout_seconds)
+            self.spawn_experiment(
+                config, gpu_type=gpu_type, timeout_seconds=timeout_seconds
+            )
             for config in configs
         ]
         return spawned
@@ -333,6 +338,7 @@ echo "SLURM job completed"
         config: DictConfig,
         gpu_type: str = "debug",
         timeout_seconds: int = 3600,
+        additional_tags: list[str] | None = None,
     ) -> ExperimentResult:
         """Submit experiment and wait for completion.
 
@@ -350,7 +356,9 @@ echo "SLURM job completed"
         ExperimentResult
             Result of the experiment.
         """
-        spawned = self.spawn_experiment(config, gpu_type, timeout_seconds)
+        spawned = self.spawn_experiment(
+            config, gpu_type=gpu_type, timeout_seconds=timeout_seconds
+        )
         return self._wait_for_job(spawned, config)
 
     @override
@@ -358,8 +366,8 @@ echo "SLURM job completed"
         self,
         configs: list[DictConfig],
         gpu_type: str = "debug",
-        parallelism: int = 4,
         timeout_seconds: int = 3600,
+        additional_tags: list[str] | None = None,
     ) -> list[ExperimentResult]:
         """Submit multiple experiments and wait for all.
 
@@ -381,7 +389,9 @@ echo "SLURM job completed"
         """
         # Submit all jobs (use spawn_experiment directly to get proper types)
         spawned_tasks: list[SlurmSpawnedTask] = [
-            self.spawn_experiment(config, gpu_type, timeout_seconds)
+            self.spawn_experiment(
+                config, gpu_type=gpu_type, timeout_seconds=timeout_seconds
+            )
             for config in configs
         ]
 

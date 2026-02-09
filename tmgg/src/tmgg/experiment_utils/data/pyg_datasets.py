@@ -103,7 +103,7 @@ class PyGDatasetWrapper:
 
         # Pad all adjacencies to max size
         padded = []
-        for A in adjacencies:
+        for A in adjacencies:  # pyright: ignore[reportConstantRedefinition]  # math notation
             n = A.shape[0]
             if n < self.max_n:
                 # Pad with zeros

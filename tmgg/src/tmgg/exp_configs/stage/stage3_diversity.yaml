@@ -15,10 +15,11 @@ stage: stage3_diversity
 # Modal cloud execution (off by default, use run_on_modal=true to enable)
 run_on_modal: false
 
-# Optimizer settings (matches stage1_poc)
+# Optimizer settings (harmonized: adamw + minimal weight_decay + amsgrad)
 learning_rate: 1e-2
-weight_decay: 0.0
-optimizer_type: adam
+weight_decay: 1e-12
+optimizer_type: adamw
+amsgrad: true
 scheduler_config:
   type: none
 

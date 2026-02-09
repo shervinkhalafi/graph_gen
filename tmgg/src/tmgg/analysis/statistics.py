@@ -278,7 +278,7 @@ def compute_importance(df: pd.DataFrame, target: str = "test_mse") -> pd.DataFra
             x_data[col] = np.asarray(df_valid[col].fillna(-1))
         else:
             le = LabelEncoder()
-            x_data[col] = le.fit_transform(  # type: ignore[assignment]
+            x_data[col] = le.fit_transform(  # type: ignore[assignment]  # pyright: ignore[reportArgumentType]
                 df_valid[col].fillna("unknown").astype(str)
             )
             encoders[col] = le
@@ -311,8 +311,8 @@ def compute_importance(df: pd.DataFrame, target: str = "test_mse") -> pd.DataFra
     importance_perm = pd.DataFrame(
         {
             "feature": feature_cols,
-            "importance_perm": perm_result.importances_mean,  # type: ignore[union-attr]
-            "importance_perm_std": perm_result.importances_std,  # type: ignore[union-attr]
+            "importance_perm": perm_result.importances_mean,  # type: ignore[union-attr]  # pyright: ignore[reportAttributeAccessIssue]
+            "importance_perm_std": perm_result.importances_std,  # type: ignore[union-attr]  # pyright: ignore[reportAttributeAccessIssue]
         }
     ).sort_values("importance_perm", ascending=False)
 

@@ -95,8 +95,12 @@ def check_noise_generator(
     A: torch.Tensor = (
         torch.eye(sample_size) + torch.rand(sample_size, sample_size) * 0.3
     )
-    A = (A + A.T) / 2  # Make symmetric
-    A = (A > 0.5).float()  # Binarize
+    A = (
+        (A + A.T) / 2
+    )  # Make symmetric  # pyright: ignore[reportConstantRedefinition]  # math notation
+    A = (
+        A > 0.5
+    ).float()  # Binarize  # pyright: ignore[reportConstantRedefinition]  # math notation
 
     # Test different noise levels
     for eps in noise_levels:
@@ -225,7 +229,7 @@ def check_model_forward_pass(
 
 
 def check_data_loader(
-    data_loader: torch.utils.data.DataLoader,
+    data_loader: torch.utils.data.DataLoader[Any],
     expected_batch_size: int,
     expected_shape: tuple[int, int],
     num_batches_to_check: int = 3,
@@ -346,7 +350,7 @@ def check_loss_computation(
 def run_experiment_sanity_check(
     model: torch.nn.Module,
     noise_generator: NoiseGenerator,
-    data_loader: torch.utils.data.DataLoader,
+    data_loader: torch.utils.data.DataLoader[Any],
     criterion: torch.nn.Module,
     device: str | torch.device = "cpu",
     save_plots: bool = True,
@@ -456,7 +460,7 @@ def maybe_run_sanity_check(
         train_loader: torch.utils.data.DataLoader[Any] = data_module.train_dataloader()
 
         # Run sanity checks - cast attributes to expected types
-        noise_gen = cast(NoiseGenerator, model.noise_generator)
+        noise_gen = cast(NoiseGenerator, cast(object, model.noise_generator))
         crit = cast(nn.Module, model.criterion)
         sanity_results: dict[str, Any] = run_experiment_sanity_check(
             model=model,

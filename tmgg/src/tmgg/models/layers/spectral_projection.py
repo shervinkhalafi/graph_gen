@@ -96,13 +96,13 @@ class SpectralProjectionLayer(nn.Module):
             Lambda_matrix = Lambda_power.unsqueeze(-1).expand(
                 -1, -1, k
             )  # (batch, k, k)
-            W = W + Lambda_matrix * self.H[ell].unsqueeze(0)
+            W = W + Lambda_matrix * self.H[ell].unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
             Lambda_power = Lambda_power * Lambda_normalized
 
         # Apply spectral filter: Y = V @ W
         Y = torch.matmul(V, W)  # (batch, n, k)
 
         # Project to output dimension
-        Y = self.out_proj(Y)  # (batch, n, out_dim)
+        Y = self.out_proj(Y)  # pyright: ignore[reportConstantRedefinition]  # math notation; (batch, n, out_dim)
 
         return Y

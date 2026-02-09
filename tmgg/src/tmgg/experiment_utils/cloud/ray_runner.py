@@ -26,11 +26,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, cast, override
 
 from omegaconf import DictConfig
 
-from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult
+from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult, SpawnedTask
 from tmgg.experiment_utils.task import TaskInput, execute_task
 
 if TYPE_CHECKING:
@@ -237,10 +237,13 @@ class RayRunner(CloudRunner):
     # Spawn Methods (Detached Execution)
     # =========================================================================
 
+    @override
     def spawn_experiment(
         self,
         config: DictConfig,
-        timeout_seconds: int = 3600,
+        gpu_type: str | None = None,
+        timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
     ) -> RaySpawnedTask:
         """Spawn a single experiment without waiting for results.
 
@@ -259,7 +262,8 @@ class RayRunner(CloudRunner):
         RaySpawnedTask
             Handle with run_id and ObjectRef for tracking.
         """
-        task_input = self._create_task_input(config, timeout_seconds)
+        effective_timeout = timeout_seconds if timeout_seconds is not None else 3600
+        task_input = self._create_task_input(config, effective_timeout)
         task_dict = asdict(task_input)
 
         # Get the remote function with options
@@ -276,11 +280,14 @@ class RayRunner(CloudRunner):
         logger.info(f"Spawned experiment {task_input.run_id} on Ray (detached)")
         return spawned
 
+    @override
     def spawn_sweep(
         self,
         configs: list[DictConfig],
-        timeout_seconds: int = 3600,
-    ) -> list[RaySpawnedTask]:
+        gpu_type: str | None = None,
+        timeout_seconds: int | None = None,
+        additional_tags: list[str] | None = None,
+    ) -> list[SpawnedTask]:  # pyright: ignore[reportIncompatibleMethodOverride]  # covariant return
         """Spawn multiple experiments without waiting for results.
 
         Each experiment is spawned independently. Ray's scheduler handles
@@ -295,13 +302,13 @@ class RayRunner(CloudRunner):
 
         Returns
         -------
-        list[RaySpawnedTask]
+        list[SpawnedTask]
             Handles with run_ids for tracking.
         """
-        spawned_tasks: list[RaySpawnedTask] = []
+        spawned_tasks: list[SpawnedTask] = []
 
         for config in configs:
-            task = self.spawn_experiment(config, timeout_seconds)
+            task = self.spawn_experiment(config, timeout_seconds=timeout_seconds)
             spawned_tasks.append(task)
 
         logger.info(f"Spawned {len(spawned_tasks)} experiments on Ray (detached)")
@@ -317,6 +324,7 @@ class RayRunner(CloudRunner):
         config: DictConfig,
         gpu_type: str = "debug",
         timeout_seconds: int = 3600,
+        additional_tags: list[str] | None = None,
     ) -> ExperimentResult:
         """Run a single experiment and wait for results.
 
@@ -335,7 +343,7 @@ class RayRunner(CloudRunner):
             Result of the experiment.
         """
         ray = _get_ray()
-        spawned = self.spawn_experiment(config, timeout_seconds)
+        spawned = self.spawn_experiment(config, timeout_seconds=timeout_seconds)
 
         # Block until complete
         result_dict: dict[str, Any] = ray.get(spawned.object_ref)  # pyright: ignore[reportUnknownMemberType]
@@ -351,8 +359,8 @@ class RayRunner(CloudRunner):
         self,
         configs: list[DictConfig],
         gpu_type: str = "debug",
-        parallelism: int = 4,
         timeout_seconds: int = 3600,
+        additional_tags: list[str] | None = None,
     ) -> list[ExperimentResult]:
         """Run multiple experiments in parallel and wait for all results.
 
@@ -377,7 +385,10 @@ class RayRunner(CloudRunner):
             Results from all experiments.
         """
         ray = _get_ray()
-        spawned_tasks = self.spawn_sweep(configs, timeout_seconds)
+        spawned_tasks = cast(
+            list[RaySpawnedTask],
+            self.spawn_sweep(configs, timeout_seconds=timeout_seconds),
+        )
 
         # Collect all results
         object_refs = [t.object_ref for t in spawned_tasks]

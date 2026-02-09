@@ -30,7 +30,7 @@ try:
 
     _RAY_AVAILABLE = True
 except ImportError:
-    _RAY_AVAILABLE = False
+    _RAY_AVAILABLE = False  # pyright: ignore[reportConstantRedefinition]
 
 # SlurmRunner (requires SLURM cluster access)
 from tmgg.experiment_utils.cloud.slurm_runner import (  # noqa: F401

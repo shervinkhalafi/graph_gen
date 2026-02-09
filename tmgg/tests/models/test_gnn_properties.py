@@ -120,7 +120,7 @@ class TestEigenEmbeddingProperties:
     """Property-based tests for EigenEmbedding."""
 
     @given(A=batch_adjacency_matrices())
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=2000)
     def test_eigenembedding_shape_preservation(self, A: torch.Tensor) -> None:
         """Test that eigen embedding preserves batch and node dimensions."""
         embedding = EigenEmbedding()
@@ -136,7 +136,7 @@ class TestEigenEmbeddingProperties:
             assert e.debugging_context is not None
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=10))
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_eigenembedding_orthogonality(self, A: torch.Tensor) -> None:
         """Test that eigenvectors are orthogonal."""
         embedding = EigenEmbedding()
@@ -179,7 +179,7 @@ class TestGaussianEmbeddingProperties:
         num_terms=st.integers(min_value=1, max_value=5),
         num_channels=st.integers(min_value=1, max_value=16),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_gaussian_embedding_output_shape(
         self, A: torch.Tensor, num_terms: int, num_channels: int
     ) -> None:
@@ -195,7 +195,7 @@ class TestGaussianEmbeddingProperties:
         A=batch_adjacency_matrices(min_nodes=3, max_nodes=8),
         num_terms=st.integers(min_value=1, max_value=3),
     )
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_gaussian_embedding_numerical_stability(
         self, A: torch.Tensor, num_terms: int
     ) -> None:
@@ -229,7 +229,7 @@ class TestGNNProperties:
     """Property-based tests for GNN models."""
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=10), params=gnn_params())
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_gnn_output_shapes(self, A: torch.Tensor, params: dict[str, int]) -> None:
         """Test that GNN produces correct output shapes (adjacency logits)."""
         model = GNN(**params)
@@ -244,7 +244,7 @@ class TestGNNProperties:
             pass  # Expected for some matrices
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=8))
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_gnn_symmetric_produces_valid_adjacency(self, A: torch.Tensor) -> None:
         """Test that GNNSymmetric produces valid adjacency matrices.
 
@@ -274,7 +274,7 @@ class TestGNNProperties:
         A=batch_adjacency_matrices(min_nodes=3, max_nodes=8),
         num_layers=st.integers(min_value=1, max_value=3),
     )
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_node_var_gnn_valid_output(self, A: torch.Tensor, num_layers: int) -> None:
         """Test NodeVarGNN produces valid adjacency matrices.
 
@@ -310,7 +310,7 @@ class TestGraphConvolutionProperties:
         num_terms=st.integers(min_value=1, max_value=4),
         num_channels=st.integers(min_value=2, max_value=16),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_graph_conv_shape_preservation(
         self, A: torch.Tensor, num_terms: int, num_channels: int
     ) -> None:

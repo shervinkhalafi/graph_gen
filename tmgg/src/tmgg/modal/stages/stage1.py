@@ -115,8 +115,10 @@ def generate_stage1_configs() -> list[dict[str, Any]]:
                 run_id = f"stage1_{arch_name}_{lr_str}_{wd_str}_{k_str}_s{seed}"
 
                 # Convert to dict and add run_id
-                config_dict = OmegaConf.to_container(config, resolve=True)
-                config_dict["run_id"] = run_id  # type: ignore[index]
+                config_dict: dict[str, Any] = OmegaConf.to_container(
+                    config, resolve=True
+                )  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
+                config_dict["run_id"] = run_id
 
                 configs.append(config_dict)
 
@@ -206,7 +208,7 @@ def run_stage1(
                 print(f"  Warning: {w}")
 
     # Validate metrics and find best result
-    def get_val_loss(result: dict) -> float | None:
+    def get_val_loss(result: dict[str, Any]) -> float | None:
         """Extract validation loss, returning None if missing or invalid."""
         metrics = result.get("metrics", {})
         loss = metrics.get("best_val_loss")

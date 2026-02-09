@@ -69,7 +69,7 @@ def final_eval(
 
     # Perform final evaluation across noise levels
     noise_levels = (
-        eval_noise_levels if eval_noise_levels is not None else data_module.noise_levels
+        eval_noise_levels if eval_noise_levels is not None else data_module.noise_levels  # pyright: ignore[reportAttributeAccessIssue]
     )
     final_results = evaluate_across_noise_levels(best_model, data_module, noise_levels)
 

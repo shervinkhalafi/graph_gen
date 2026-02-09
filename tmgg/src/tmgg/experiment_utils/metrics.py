@@ -1,5 +1,7 @@
 """Evaluation metrics for graph denoising experiments."""
 
+from collections.abc import Callable
+
 import numpy as np
 import torch
 from scipy.sparse.linalg import ArpackError, ArpackNoConvergence, eigsh
@@ -254,10 +256,10 @@ def compute_batch_metrics(
 def evaluate_noise_robustness(
     model: torch.nn.Module,
     A_clean: torch.Tensor,
-    noise_levels: list,
-    noise_function,
+    noise_levels: list[float],
+    noise_function: Callable[..., torch.Tensor],
     device: str = "cpu",
-) -> dict[str, list]:
+) -> dict[str, list[float]]:
     """Evaluate model robustness across noise levels.
 
     Parameters

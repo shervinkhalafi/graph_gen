@@ -46,15 +46,21 @@ def generate_sbm_adjacency(
             # Generate random edges within or between blocks
             block_i_size = block_sizes[i]
             block_j_size = block_sizes[j]
-            adj_matrix[block_start_i:block_end_i, block_start_j:block_end_j] = (
-                rng.random((block_i_size, block_j_size)) < density
-            ).astype(int)
+            block = (rng.random((block_i_size, block_j_size)) < density).astype(int)
 
-            # Make the matrix symmetric (for undirected graphs)
+            if i == j:
+                # Intra-block: symmetrize by keeping upper triangle and mirroring
+                block = np.triu(block) + np.triu(block, 1).T
+            adj_matrix[block_start_i:block_end_i, block_start_j:block_end_j] = block
+
+            # Mirror inter-block edges for symmetry (undirected graph)
             if i != j:
                 adj_matrix[block_start_j:block_end_j, block_start_i:block_end_i] = (
-                    adj_matrix[block_start_i:block_end_i, block_start_j:block_end_j].T
+                    block.T
                 )
+
+    # Simple graphs have no self-loops
+    np.fill_diagonal(adj_matrix, 0)
 
     return adj_matrix
 

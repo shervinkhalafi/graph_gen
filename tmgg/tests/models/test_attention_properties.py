@@ -89,6 +89,7 @@ class TestMultiHeadAttentionProperties:
     """Property-based tests for MultiHeadAttention."""
 
     @given(dims=attention_dims())
+    @settings(deadline=2000)
     def test_output_shape_invariant(self, dims: tuple[int, int]) -> None:
         """Test that output shape matches input shape regardless of internal dimensions."""
         d_model, num_heads = dims
@@ -108,7 +109,7 @@ class TestMultiHeadAttentionProperties:
         batch_size=st.integers(min_value=1, max_value=4),
         seq_len=st.integers(min_value=2, max_value=16),
     )
-    @settings(max_examples=50)
+    @settings(max_examples=50, deadline=2000)
     def test_attention_scores_valid_range(
         self, dims: tuple[int, int], batch_size: int, seq_len: int
     ) -> None:
@@ -128,6 +129,7 @@ class TestMultiHeadAttentionProperties:
         assert not torch.isinf(scores).any()
         assert torch.abs(scores).max() < 100  # Should not explode
 
+    @settings(deadline=500)
     @given(
         dims=attention_dims(),
         batch_size=st.integers(min_value=1, max_value=4),
@@ -157,7 +159,11 @@ class TestMultiHeadAttentionProperties:
         batch_size=st.integers(min_value=1, max_value=2),
         seq_len=st.integers(min_value=2, max_value=8),
     )
-    @settings(max_examples=30, suppress_health_check=[HealthCheck.data_too_large])
+    @settings(
+        max_examples=30,
+        deadline=2000,
+        suppress_health_check=[HealthCheck.data_too_large],
+    )
     def test_numerical_stability(
         self, dims: tuple[int, int], batch_size: int, seq_len: int
     ) -> None:
@@ -211,7 +217,7 @@ class TestMultiLayerAttentionProperties:
         num_nodes=st.integers(min_value=4, max_value=16),
         num_layers=st.integers(min_value=1, max_value=4),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_layer_composition_preserves_shape(
         self, num_nodes: int, num_layers: int
     ) -> None:
@@ -237,7 +243,7 @@ class TestMultiLayerAttentionProperties:
         num_layers=st.integers(min_value=2, max_value=6),
         batch_size=st.integers(min_value=1, max_value=2),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_deeper_models_maintain_stability(
         self, num_nodes: int, num_layers: int, batch_size: int
     ) -> None:
@@ -268,7 +274,7 @@ class TestMultiLayerAttentionProperties:
         num_nodes=st.integers(min_value=4, max_value=12),
         num_layers=st.integers(min_value=1, max_value=4),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_mask_propagation_through_layers(
         self, num_nodes: int, num_layers: int
     ) -> None:

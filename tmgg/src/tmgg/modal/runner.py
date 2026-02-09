@@ -298,7 +298,7 @@ class ModalRunner(CloudRunner):
             additional_tags=additional_tags or [],
         )
 
-    def _select_modal_function(self, gpu_tier: str) -> modal.Function:
+    def _select_modal_function(self, gpu_tier: str) -> modal.Function:  # pyright: ignore[reportMissingTypeArgument]
         """Select the appropriate Modal function for the GPU tier.
 
         Uses modal.Function.from_name() to get references to deployed functions,
