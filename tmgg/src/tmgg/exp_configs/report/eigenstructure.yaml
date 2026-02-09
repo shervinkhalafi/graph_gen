@@ -1,0 +1,16 @@
+# T5: Eigenstructure Report
+# Analyzes spectral properties of graphs under noise and denoising.
+defaults:
+  - /paths: default
+
+report:
+  type: eigenstructure
+  data:
+    results_dir: ${paths.eigenstructure_results}
+    datasets: [sbm, er, tree, regular, enzymes]
+  noise:
+    types: [gaussian, digress]
+    levels: [0.01, 0.05, 0.1, 0.15, 0.2]
+    k_values: [1, 4, 8]
+  output:
+    dir: ${paths.reports}/t5_eigenstructure
