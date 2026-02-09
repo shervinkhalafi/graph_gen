@@ -194,15 +194,15 @@ def create_loggers(config: DictConfig) -> list[Logger]:
     if not loggers and _has_wandb_credentials():
         wandb_cfg = config.get("_wandb_config", {})
 
-        # Use preserved config if available, otherwise fall back to defaults
+        # Use preserved config if available, otherwise fall back to top-level keys
         if wandb_cfg:
-            project = wandb_cfg.get("project", f"tmgg-{config.get('stage', 'default')}")
-            entity = wandb_cfg.get("entity")
+            project = wandb_cfg.get("project", config.get("wandb_project", "sandbox"))
+            entity = wandb_cfg.get("entity", config.get("wandb_entity"))
             tags = wandb_cfg.get("tags", [])
             log_model = wandb_cfg.get("log_model", False)
         else:
-            project = config.get("experiment_name", "tmgg")
-            entity = None
+            project = config.get("wandb_project", "sandbox")
+            entity = config.get("wandb_entity")
             tags = []
             log_model = False
 

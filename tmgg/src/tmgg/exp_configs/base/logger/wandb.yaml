@@ -2,9 +2,9 @@
 
 logger:
   - wandb:
-      project: tmgg-attention-denoising
+      project: ${wandb_project}
       name: ${experiment_name}
       tags: ["attention", "denoising"]
       save_dir: ${paths.output_dir}
-      entity: null  # Your wandb entity/team
+      entity: ${wandb_entity}
       log_model: false  # Whether to log model checkpoints to wandb

@@ -112,10 +112,36 @@ def _extract_wandb_config(config: DictConfig) -> dict[str, Any] | None:
     dict or None
         Extracted W&B config, or None if no W&B logger configured.
     """
+    # Primary path: read top-level wandb_project / wandb_entity keys
+    # (set in base_config_training.yaml, overridden per experiment type).
+    # This avoids parsing logger interpolation strings.
+    wandb_project = config.get("wandb_project")
+    wandb_entity = config.get("wandb_entity")
+    if wandb_project is not None:
+        # Collect tags from logger config if available
+        tags: list[str] = []
+        log_model = False
+        if "logger" in config:
+            logger_configs = config.logger
+            if not isinstance(logger_configs, list):
+                logger_configs = [logger_configs]
+            for logger_cfg in logger_configs:
+                if isinstance(logger_cfg, dict) and "wandb" in logger_cfg:
+                    wandb = logger_cfg["wandb"]
+                    tags = list(wandb.get("tags", []))
+                    log_model = wandb.get("log_model", False)
+                    break
+        return {
+            "entity": wandb_entity,
+            "project": wandb_project,
+            "log_model": log_model,
+            "tags": tags,
+        }
+
+    # Fallback: extract from logger config (legacy configs without top-level keys)
     if "logger" not in config:
         return None
 
-    # logger can be a list of logger configs
     logger_configs = config.logger
     if not isinstance(logger_configs, list):
         logger_configs = [logger_configs]

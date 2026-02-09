@@ -9,6 +9,7 @@ defaults:
 
 # Experiment identification (uses model config values)
 experiment_name: "digress_${model.digress_arch}_${model.digress_mode}"
+wandb_project: architecture-study
 
 # Override model parameters with data config values
 model:

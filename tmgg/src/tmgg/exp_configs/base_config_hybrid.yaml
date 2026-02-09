@@ -8,6 +8,7 @@ defaults:
   - _self_
 
 experiment_name: "hybrid_denoising"
+wandb_project: architecture-study
 
 # Override model parameters with data config values
 model:
