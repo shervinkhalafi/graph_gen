@@ -221,8 +221,8 @@ def sigma_and_alpha_t_given_s(
         sigma t given s = sqrt(1 - (alpha t given s) ^2 ).
     """
     sigma2_t_given_s = inflate_batch_array(
-        -torch.expm1(F.softplus(gamma_s) - F.softplus(gamma_t)),
-        target_size,  # pyright: ignore[reportAttributeAccessIssue]  # F.softplus exists at runtime
+        -torch.expm1(F.softplus(gamma_s) - F.softplus(gamma_t)),  # pyright: ignore[reportAttributeAccessIssue]  # F.softplus exists at runtime
+        target_size,
     )
 
     # alpha_t_given_s = alpha_t / alpha_s

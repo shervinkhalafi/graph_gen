@@ -95,12 +95,12 @@ def check_noise_generator(
     A: torch.Tensor = (
         torch.eye(sample_size) + torch.rand(sample_size, sample_size) * 0.3
     )
-    A = (
+    A = (  # pyright: ignore[reportConstantRedefinition]  # math notation
         (A + A.T) / 2
-    )  # Make symmetric  # pyright: ignore[reportConstantRedefinition]  # math notation
-    A = (
+    )  # Make symmetric
+    A = (  # pyright: ignore[reportConstantRedefinition]  # math notation
         A > 0.5
-    ).float()  # Binarize  # pyright: ignore[reportConstantRedefinition]  # math notation
+    ).float()  # Binarize
 
     # Test different noise levels
     for eps in noise_levels:

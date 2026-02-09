@@ -11,7 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 from tmgg.experiment_utils.final_eval import final_eval
 from tmgg.experiment_utils.logging import (  # pyright: ignore[reportAttributeAccessIssue]
     create_loggers,
-    sync_tensorboard_to_s3,
+    sync_tensorboard_to_s3,  # pyright: ignore[reportAttributeAccessIssue]
 )
 from tmgg.experiment_utils.sanity_check import maybe_run_sanity_check
 from tmgg.experiment_utils.setup import create_callbacks, set_seed
@@ -116,8 +116,8 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
             data_module,
             logger,
             trainer,
-            best_model_path,
-            eval_noise_levels,  # pyright: ignore[reportCallIssue]
+            best_model_path,  # pyright: ignore[reportCallIssue]  # eval_noise_levels is optional at runtime
+            eval_noise_levels,
         )
 
     # Sync TensorBoard logs to S3 (if configured)
