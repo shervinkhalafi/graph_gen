@@ -15,7 +15,7 @@ outputs/
 wandb/
 wandb_export/
 analysis_output/
-reports/
+/reports/
 
 # debug scripts
 scripts/debug_*.py

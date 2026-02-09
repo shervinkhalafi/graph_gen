@@ -19,6 +19,8 @@ Provides four submodules:
   publication-quality plots.
 """
 
+# Import reports subpackage so @register_report decorators fire at import time.
+import tmgg.analysis.reports  # noqa: F401, E402
 from tmgg.analysis.cli import main
 from tmgg.analysis.parsing import (
     enrich_dataframe,
