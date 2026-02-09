@@ -1,5 +1,7 @@
 """TMGG: Graph denoising experiments with Hydra and PyTorch Lightning."""
 
+import math
+
 from omegaconf import OmegaConf
 
 from . import experiment_utils, models
@@ -15,6 +17,13 @@ OmegaConf.register_new_resolver(
     replace=True,
 )
 OmegaConf.register_new_resolver("not_", lambda x: not x, replace=True)
+OmegaConf.register_new_resolver(
+    "epochs_to_steps",
+    lambda num_samples, batch_size, epochs: (
+        math.ceil(int(num_samples) / int(batch_size)) * int(epochs)
+    ),
+    replace=True,
+)
 
 
 def hello() -> str:
