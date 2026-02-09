@@ -66,8 +66,8 @@ class MockDenoisingModel(nn.Module):
         """Threshold at 0.5 for binary prediction."""
         return (torch.sigmoid(logits) > 0.5).float()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Simple forward pass."""
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
+        """Simple forward pass (t accepted but unused, matching production models)."""
         B, N, _ = x.shape
         flat = x.reshape(B, -1)
         out = self.linear(flat)

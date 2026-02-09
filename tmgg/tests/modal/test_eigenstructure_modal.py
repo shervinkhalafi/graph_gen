@@ -256,9 +256,11 @@ class TestModalIntegration:
     @pytest.fixture
     def skip_if_not_deployed(self):
         """Skip test if Modal app is not deployed."""
-        try:
-            import modal
+        import modal
 
+        if isinstance(modal, MagicMock):
+            pytest.skip("Modal is mocked at module level")
+        try:
             fn = modal.Function.from_name("tmgg-spectral", "eigenstructure_list")
             fn.hydrate()
         except Exception:

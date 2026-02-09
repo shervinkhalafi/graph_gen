@@ -32,10 +32,10 @@ from hydra.core.global_hydra import GlobalHydra
 # Base configs to test with their default model/data compositions
 BASE_CONFIGS = [
     "base_config_spectral",
-    "base_config_attention",
     "base_config_gnn",
     "base_config_hybrid",
     "base_config_digress",
+    "grid_search_base",
 ]
 
 
@@ -157,9 +157,9 @@ class TestConfigComposition:
 # Configs that use standard adjacency matrix input
 ADJACENCY_INPUT_CONFIGS = [
     "base_config_spectral",
-    "base_config_attention",
     "base_config_gnn",
     "base_config_hybrid",
+    "grid_search_base",
 ]
 
 # DiGress uses eigenvector input by default, requiring special handling

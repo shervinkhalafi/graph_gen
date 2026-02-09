@@ -328,7 +328,10 @@ class TestExecuteTask:
         _task_module.run_experiment = lambda: capture_config  # type: ignore[attr-defined]
 
         try:
-            with patch.dict(os.environ, {"TMGG_OUTPUT_BASE": "/custom/base"}):
+            with (
+                patch.dict(os.environ, {"TMGG_OUTPUT_BASE": "/custom/base"}),
+                patch.object(_task_module, "_write_volume_confirmation"),
+            ):
                 execute_task(minimal_task, get_storage=lambda: mock_storage)
         finally:
             _task_module.run_experiment = original_run_experiment  # type: ignore[attr-defined]

@@ -237,10 +237,13 @@ class TestDigressLevel2FreshNoiseGeneralization:
 class TestDigressSingleStepLearning:
     """Quick check that one optimizer step reduces loss."""
 
-    @pytest.fixture
-    def training_data(self):
-        """Create noisy/clean adjacency pair."""
-        A_clean = create_block_diagonal_target(n=16, num_blocks=4)
+    @pytest.fixture(params=["block_diagonal", "sbm"])
+    def training_data(self, request):
+        """Create noisy/clean adjacency pair for each target type."""
+        if request.param == "block_diagonal":
+            A_clean = create_block_diagonal_target(n=16, num_blocks=4)
+        else:
+            A_clean = create_sbm_target(block_sizes=[4, 4, 4, 4], p=0.8, q=0.1, seed=42)
         A_clean = A_clean.expand(4, -1, -1).clone()
         A_noisy = add_digress_noise(A_clean, p=0.1)
         return A_noisy, A_clean

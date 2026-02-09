@@ -512,17 +512,19 @@ class TestNoisedCollector:
                 input_dir=original_dir,
                 output_dir=noised_dir,
                 noise_type="digress",
-                noise_levels=[0.05],
+                noise_levels=[0.3],
                 seed=42,
             )
             noised_collector.collect()
 
-            # Verify noised adjacencies are different from original
+            # Verify noised adjacencies are different from original.
+            # Uses eps=0.3 (not 0.05) to make zero-flip probability negligible:
+            # P(no flips) = (0.7)^(3 graphs * 15 edges) ≈ 4e-7.
             orig_tensors, _ = load_decomposition_batch(
                 list(iter_batches(original_dir))[0]
             )
             noised_tensors, _ = load_decomposition_batch(
-                list(iter_batches(noised_dir / "eps_0.0500"))[0]
+                list(iter_batches(noised_dir / "eps_0.3000"))[0]
             )
 
             # Noised adjacency should differ from original
