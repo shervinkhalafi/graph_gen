@@ -25,6 +25,7 @@ from tmgg.experiment_utils import (
 )
 from tmgg.experiment_utils.exceptions import ConfigurationError
 from tmgg.experiment_utils.logging import log_figure
+from tmgg.experiment_utils.mixins import LoggingMixin, OptimizerMixin
 
 
 @runtime_checkable
@@ -74,7 +75,9 @@ class _DenoisingModelProtocol(Protocol):
         ...
 
 
-class DenoisingLightningModule(pl.LightningModule, abc.ABC):
+class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverride,reportIncompatibleVariableOverride]
+    OptimizerMixin, LoggingMixin, pl.LightningModule, abc.ABC
+):
     """PyTorch Lightning module for attention-based graph denoising."""
 
     def __init__(
@@ -240,88 +243,6 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         Instantiate the model based on the config
         """
         pass
-
-    def get_model_name(self) -> str:
-        """Get the name of the model for visualization purposes.
-
-        Returns:
-            Model name to use in plot titles and logging.
-        """
-        return "Base"
-
-    def log_parameter_count(self) -> None:
-        """Log the parameter count of the model in a formatted way."""
-        if not hasattr(self.model, "parameter_count"):
-            # Fallback for models without parameter_count method
-            total_params: int = sum(
-                p.numel() for p in self.model.parameters() if p.requires_grad
-            )
-            _ = print(f"\n{'=' * 50}")
-            _ = print(f"Model: {self.get_model_name()}")
-            _ = print(f"Total Trainable Parameters: {total_params:,}")
-            _ = print(f"{'=' * 50}\n")
-
-            # Log to logger if available
-            if self.logger:
-                _ = self.logger.log_hyperparams({"total_parameters": total_params})
-            return
-
-        # Get hierarchical parameter counts
-        param_counts: dict[str, Any] = self.model.parameter_count()
-
-        # Format and print parameter counts
-        def format_counts(counts: dict[str, Any], indent: int = 0) -> list[str]:
-            """Recursively format parameter counts."""
-            lines: list[str] = []
-            prefix: str = "  " * indent
-
-            # Skip printing "self" and "total" at sub-levels, just show them at top level
-            for key, value in counts.items():
-                if key == "total" and indent == 0:
-                    continue  # Will be printed separately at the top
-                elif key == "self":
-                    if value > 0:
-                        _ = lines.append(f"{prefix}├─ {key}: {value:,}")
-                elif isinstance(value, dict):
-                    if "total" in value:
-                        _ = lines.append(f"{prefix}├─ {key}: {value['total']:,}")
-                        # Recursively format sub-counts if they exist
-                        sub_items: dict[str, Any] = {
-                            k: v for k, v in value.items() if k != "total"
-                        }
-                        if sub_items:
-                            sub_lines: list[str] = format_counts(sub_items, indent + 1)
-                            _ = lines.extend(sub_lines)
-                    else:
-                        _ = lines.append(f"{prefix}├─ {key}:")
-                        sub_lines = format_counts(value, indent + 1)
-                        _ = lines.extend(sub_lines)
-                else:
-                    _ = lines.append(f"{prefix}├─ {key}: {value:,}")
-
-            return lines
-
-        # Print formatted output
-        _ = print(f"\n{'=' * 60}")
-        _ = print(f"Model Parameter Count: {self.get_model_name()}")
-        _ = print(f"{'=' * 60}")
-        _ = print(f"Total Trainable Parameters: {param_counts['total']:,}")
-        _ = print("-" * 60)
-
-        formatted_lines: list[str] = format_counts(param_counts)
-        for line in formatted_lines:
-            _ = print(line)
-
-        _ = print(f"{'=' * 60}\n")
-
-        # Log to logger if available
-        if self.logger:
-            _ = self.logger.log_hyperparams(
-                {
-                    "total_parameters": param_counts["total"],
-                    "parameter_breakdown": param_counts,
-                }
-            )
 
     @override
     def setup(self, stage: str) -> None:
@@ -771,176 +692,3 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             import traceback
 
             _ = traceback.print_exc()
-
-    @override
-    def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        """Configure optimizers and learning rate schedulers."""
-        # Select optimizer based on type
-        optimizer: torch.optim.Optimizer
-        if self.optimizer_type == "adamw":
-            optimizer = torch.optim.AdamW(
-                self.parameters(),
-                lr=self.learning_rate,
-                weight_decay=self.weight_decay,
-                amsgrad=self.amsgrad,
-            )
-        else:  # default to adam
-            optimizer = torch.optim.Adam(
-                self.parameters(),
-                lr=self.learning_rate,
-                amsgrad=self.amsgrad,
-            )
-
-        if self.scheduler_config is None:
-            return optimizer
-
-        scheduler_type: str = self.scheduler_config.get("type", "cosine")
-
-        if scheduler_type == "cosine":
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer,
-                T_0=self.scheduler_config.get("T_0", 20),
-                T_mult=self.scheduler_config.get("T_mult", 2),
-            )
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "interval": "epoch",
-                    "frequency": 1,
-                },
-            }
-        elif scheduler_type == "cosine_warmup":
-            # Cosine schedule with linear warmup
-            #
-            # Supports two configuration modes:
-            # 1. Fraction-based (recommended): warmup_fraction, decay_fraction
-            #    - Automatically scales with batch_size, dataset size, and max_epochs
-            #    - warmup_fraction: fraction of total training for linear warmup (e.g., 0.02)
-            #    - decay_fraction: fraction of training at which LR reaches 0 (e.g., 0.8)
-            #
-            # 2. Legacy step-based: T_warmup, T_max
-            #    - Requires manual recalculation when batch_size or epochs change
-            #    - T_max = (num_samples / batch_size) × expected_epochs
-            #
-            # After T_max/decay point, progress is clamped at 1.0 to keep LR
-            # at minimum instead of oscillating (cos would cycle if progress > 1).
-            import warnings
-
-            # Estimate total training steps from trainer context
-            # Prefer max_steps if set (step-based training), otherwise compute from epochs
-            estimated_total_steps = None
-            trainer = self.trainer
-            if trainer is not None:
-                # First check if max_steps is explicitly configured
-                if trainer.max_steps and trainer.max_steps > 0:
-                    estimated_total_steps = trainer.max_steps
-                else:
-                    dm = self.datamodule
-                    if dm is not None:
-                        # Fallback: compute from epochs (legacy compatibility)
-                        try:
-                            train_loader = dm.train_dataloader()
-                            dataset_size = len(train_loader.dataset)
-                            batch_size = getattr(
-                                dm, "batch_size", train_loader.batch_size
-                            )
-                            steps_per_epoch = (
-                                dataset_size + batch_size - 1
-                            ) // batch_size
-                            max_epochs_val = trainer.max_epochs
-                            max_epochs = (
-                                max_epochs_val
-                                if max_epochs_val is not None and max_epochs_val > 0
-                                else 100
-                            )
-                            estimated_total_steps = steps_per_epoch * max_epochs
-                        except Exception:
-                            pass  # Fall back to defaults below
-
-            if estimated_total_steps is None:
-                # Fallback when trainer context unavailable (e.g., during testing)
-                estimated_total_steps = 10000
-                if "warmup_fraction" in self.scheduler_config:
-                    warnings.warn(
-                        "Could not estimate total training steps from trainer. "
-                        f"Using fallback of {estimated_total_steps} steps. "
-                        "Scheduler fractions may not work as expected.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-
-            # Compute T_warmup and T_max from fractions or legacy values
-            if "warmup_fraction" in self.scheduler_config:
-                # Fraction-based configuration (preferred)
-                warmup_fraction = self.scheduler_config.get("warmup_fraction", 0.02)
-                decay_fraction = self.scheduler_config.get("decay_fraction", 0.8)
-                T_warmup = int(warmup_fraction * estimated_total_steps)
-                T_max = int(decay_fraction * estimated_total_steps)
-            else:
-                # Legacy step-based configuration (backward compatible)
-                T_warmup = self.scheduler_config.get("T_warmup", 100)
-                T_max = self.scheduler_config.get("T_max", 1000)
-
-            # Validation
-            if T_max <= T_warmup:
-                raise ValueError(
-                    f"Scheduler T_max ({T_max}) must be > T_warmup ({T_warmup}). "
-                    f"Check scheduler_config: decay_fraction must be > warmup_fraction."
-                )
-
-            if T_max < estimated_total_steps * 0.5:
-                warnings.warn(
-                    f"Scheduler T_max={T_max} is less than 50% of estimated training "
-                    f"({estimated_total_steps} steps). LR will reach minimum early and "
-                    f"stay there for the remaining training. Consider increasing "
-                    f"decay_fraction or T_max.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-
-            # Store computed values for logging in on_fit_start
-            self._scheduler_T_warmup = T_warmup
-            self._scheduler_T_max = T_max
-            self._scheduler_estimated_total_steps = estimated_total_steps
-
-            def lr_lambda(step: int) -> float:
-                if step < T_warmup:
-                    # Linear warmup: scale from 0 to 1
-                    return step / max(1, T_warmup)
-                else:
-                    # Cosine decay: scale from 1 to 0
-                    # Clamp progress at 1.0 to prevent LR oscillation if step > T_max
-                    progress = (step - T_warmup) / max(1, T_max - T_warmup)
-                    progress = min(1.0, progress)  # Clamp to prevent oscillation
-                    return 0.5 * (1 + np.cos(np.pi * progress))
-
-            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "interval": "step",
-                    "frequency": 1,
-                },
-            }
-        elif scheduler_type == "step":
-            scheduler = torch.optim.lr_scheduler.StepLR(
-                optimizer,
-                step_size=self.scheduler_config.get("step_size", 50),
-                gamma=self.scheduler_config.get("gamma", 0.1),
-            )
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "interval": "epoch",
-                    "frequency": 1,
-                },
-            }
-        else:
-            return optimizer
-
-    def get_model_config(self) -> dict[str, Any]:
-        """Get model configuration for logging."""
-        return self.model.get_config()

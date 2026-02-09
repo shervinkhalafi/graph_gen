@@ -6,10 +6,7 @@ and future diffusion Lightning modules.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from pytorch_lightning.loggers import Logger
+from typing import Any
 
 
 class LoggingMixin:
@@ -34,8 +31,8 @@ class LoggingMixin:
     # Provided by the host LightningModule; declared here for type checking.
     visualization_interval: int  # pyright: ignore[reportUninitializedInstanceVariable]
     model: Any  # pyright: ignore[reportExplicitAny,reportUninitializedInstanceVariable]
-    logger: Logger | None  # pyright: ignore[reportUninitializedInstanceVariable]
-    global_step: int  # pyright: ignore[reportUninitializedInstanceVariable]
+    logger: Any  # pyright: ignore[reportExplicitAny,reportUninitializedInstanceVariable,reportIncompatibleVariableOverride]
+    global_step: int  # pyright: ignore[reportUninitializedInstanceVariable,reportIncompatibleVariableOverride]
 
     # ------------------------------------------------------------------
     # Model name (override in subclasses)

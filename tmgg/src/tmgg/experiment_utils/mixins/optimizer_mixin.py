@@ -48,7 +48,7 @@ class OptimizerMixin:
     _scheduler_T_max: int  # pyright: ignore[reportUninitializedInstanceVariable]
     _scheduler_estimated_total_steps: int  # pyright: ignore[reportUninitializedInstanceVariable]
 
-    def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:
+    def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Configure optimizers and learning rate schedulers.
 
         Returns
