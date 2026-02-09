@@ -9,6 +9,7 @@ placeholder tables and figures so that the pipeline remains testable end to end.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,8 @@ _METRIC_COLUMNS: list[str] = [
     "effective_rank_lap_mean",
 ]
 
+_DEFAULT_DATASETS: list[str] = ["sbm", "er", "tree", "regular", "enzymes"]
+
 
 def _resolve_results_dir(config: DictConfig | dict[str, Any]) -> Path | None:
     """Extract the results directory from the report config.
@@ -50,11 +53,25 @@ def _resolve_results_dir(config: DictConfig | dict[str, Any]) -> Path | None:
             raw = str(config.report.data.results_dir)
         else:
             raw = str(config["report"]["data"]["results_dir"])
-    except (KeyError, AttributeError):
+    except (KeyError, AttributeError) as exc:
+        warnings.warn(
+            f"Could not resolve results_dir from config: {exc}. "
+            f"Falling back to placeholder data.",
+            UserWarning,
+            stacklevel=2,
+        )
         return None
 
     p = Path(str(raw))
-    return p if p.is_dir() else None
+    if not p.is_dir():
+        warnings.warn(
+            f"Results directory does not exist: {p}. "
+            f"Falling back to placeholder data.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    return p
 
 
 def _resolve_datasets(config: DictConfig | dict[str, Any]) -> list[str]:
@@ -65,13 +82,26 @@ def _resolve_datasets(config: DictConfig | dict[str, Any]) -> list[str]:
         else:
             ds = config["report"]["data"]["datasets"]
         return list(ds)
-    except (KeyError, AttributeError):
-        return ["sbm", "er", "tree", "regular", "enzymes"]
+    except (KeyError, AttributeError) as exc:
+        warnings.warn(
+            f"Could not resolve dataset list from config: {exc}. "
+            f"Using default datasets: {_DEFAULT_DATASETS}.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return list(_DEFAULT_DATASETS)
 
 
 def _build_placeholder_data(datasets: list[str]) -> pd.DataFrame:
     """Return synthetic rows so the pipeline can run without real data."""
     import numpy as np
+
+    warnings.warn(
+        "Generating placeholder eigenstructure data because no real "
+        "results were found. Tables and figures will contain synthetic values.",
+        UserWarning,
+        stacklevel=2,
+    )
 
     rng = np.random.default_rng(42)
     rows: list[dict[str, Any]] = []
@@ -138,6 +168,12 @@ class EigenstructureReport(ReportGenerator):
         for ds_name in datasets:
             ds_dir = results_dir / ds_name
             if not ds_dir.is_dir():
+                warnings.warn(
+                    f"Skipping dataset '{ds_name}': directory {ds_dir} "
+                    f"does not exist.",
+                    UserWarning,
+                    stacklevel=2,
+                )
                 continue
             analyzer = SpectralAnalyzer(ds_dir)
             result = analyzer.analyze()
