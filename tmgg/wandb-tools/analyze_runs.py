@@ -14,16 +14,8 @@ and export filtered results.
 Parsing and enrichment are delegated to ``tmgg.analysis.parsing``, which
 is the canonical source for run-name parsing logic.
 
-NOTE: the original local ``parse_architecture`` detected patterns
-(``filter_bank``, ``linear_pe``, ``mlp``, ``digress_transformer_gnn_qk``)
-that the canonical version does not cover.  The canonical version instead
-covers ``gnn_all``, ``gnn_qk``, ``gnn_v``, ``digress_default``,
-``asymmetric``, ``spectral_linear``, ``spectral``.  Any runs matching the
-old-only patterns will now map to ``"other"``.  If those patterns are
-needed, they should be added to ``tmgg.analysis.parsing.parse_architecture``.
-
-Similarly, the old local ``parse_dataset`` returned ``"synthetic"`` as
-default, while the canonical version returns ``"unknown"``.
+The old local ``parse_dataset`` returned ``"synthetic"`` as default; the
+canonical version returns ``"unknown"``.
 
 Usage:
     uv run wandb-tools/analyze_runs.py  # Uses latest export from wandb_export/
