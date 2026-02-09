@@ -19,6 +19,7 @@ defaults:
 
 # Experiment identification
 experiment_name: "grid_search_4k_params"
+wandb_project: tmgg-grid-search-4k
 
 # Override training steps for grid search (see conversion notes above)
 trainer:

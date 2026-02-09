@@ -30,6 +30,10 @@ Agent 1 (wandb-routing) and Agent 2 (analysis-reports) completed all file modifi
 
 The PostToolUse hook reverted some Write tool calls to files in `wandb-tools/`. Agent 2 worked around this by using Python `file.write()` via Bash instead of the Write tool. The final file contents are correct.
 
+### 4. Cross-agent coordination bug: grid search W&B project name
+
+Agent 1 (wandb-routing, Step 1.4) changed `grid_wandb.yaml` from `project: "tmgg-grid-search-4k"` to `project: ${wandb_project}`. Agent 3 (config-modal, Step 1.3) then decided NOT to add `wandb_project` to `grid_search_base.yaml`, reasoning that grid_wandb "already defines its own project name." But Agent 1 had already removed that hardcoded value. Grid search runs would have logged to `"sandbox"` (inherited from `base_config_training`) instead of `"tmgg-grid-search-4k"`. Fixed post-review by adding `wandb_project: tmgg-grid-search-4k` to `grid_search_base.yaml`.
+
 ## Deferred items
 
 ### Pattern coverage gap in `analyze_runs.py`
@@ -54,7 +58,7 @@ Still pending from Layer 0. Five orphaned configs deleted in Step 0.5 are still 
 
 2. **Early stopping patience preserved exactly.** 20-epoch patience with 5-epoch validation interval = 4 validation checks. `patience: 4` in step-based config.
 
-3. **`wandb_project` not added to `grid_search_base.yaml`.** It inherits `sandbox` from `base_config_training` and uses a grid-specific logger (`grid_wandb`) that already defines its own project via `${wandb_project}`. No override needed.
+3. **`wandb_project` added to `grid_search_base.yaml` (post-review fix).** Agent 3 originally omitted it, reasoning that `grid_wandb` had its own hardcoded project. But Agent 1 had already replaced that hardcoded value with `${wandb_project}`, so the override is necessary to preserve the `tmgg-grid-search-4k` project name.
 
 4. **`filter_bank_nonlinear` renamed to `filter_bank` in Modal stages.** The `_nonlinear` variant config never existed. Only `filter_bank.yaml`, `filter_bank_asymmetric.yaml`, and `filter_bank_pearl.yaml` exist under `models/spectral/`. This is both spec-compliant and a bug fix.
 
