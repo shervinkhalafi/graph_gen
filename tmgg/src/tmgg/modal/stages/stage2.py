@@ -2,11 +2,16 @@
 
 Validates generalization across configurations and compares with DiGress.
 Budget: 166.5 GPU-hours
+
+.. deprecated::
+    This module is deprecated. Use YAML stage_definitions/ + generate_configs
+    + launch_sweep pipeline instead.
 """
 
 from __future__ import annotations
 
 import copy
+import warnings
 from typing import Any
 
 from tmgg.modal.app import app
@@ -20,9 +25,15 @@ from tmgg.modal.runner import (
 from tmgg.modal.stages.stage1 import validate_prefix
 from tmgg.modal.storage import get_storage_from_env
 
+warnings.warn(
+    "This module is deprecated. Use YAML stage_definitions/ + generate_configs + launch_sweep pipeline.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 # Stage 2 configuration (module-level defaults)
 STAGE2_ARCHITECTURES = [
-    "models/spectral/filter_bank_nonlinear",
+    "models/spectral/filter_bank",
     "models/spectral/self_attention",
     "models/digress/digress_transformer",
 ]

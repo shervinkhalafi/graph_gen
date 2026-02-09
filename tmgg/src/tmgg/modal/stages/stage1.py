@@ -2,11 +2,16 @@
 
 Runs Linear PE, Graph Filter + Sigmoid, Self-Attention on SBM n=50.
 Budget: 4.4 GPU-hours
+
+.. deprecated::
+    This module is deprecated. Use YAML stage_definitions/ + generate_configs
+    + launch_sweep pipeline instead.
 """
 
 from __future__ import annotations
 
 import re
+import warnings
 from typing import Any
 
 from tmgg.modal.app import app
@@ -17,6 +22,12 @@ from tmgg.modal.runner import (
     wandb_secret,
 )
 from tmgg.modal.storage import get_storage_from_env
+
+warnings.warn(
+    "This module is deprecated. Use YAML stage_definitions/ + generate_configs + launch_sweep pipeline.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def validate_prefix(prefix: str) -> str:
@@ -47,7 +58,7 @@ def validate_prefix(prefix: str) -> str:
 # Stage 1 configuration
 STAGE1_ARCHITECTURES = [
     "models/spectral/linear_pe",
-    "models/spectral/filter_bank_nonlinear",
+    "models/spectral/filter_bank",
     "models/spectral/self_attention",
 ]
 

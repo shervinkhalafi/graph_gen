@@ -1,21 +1,18 @@
 # Base configuration for generative graph modeling experiments
 #
+# Inherits shared training settings from base_config_training.yaml
+#
 # Run with: python -m tmgg.experiments.generative.runner
 # Override: python -m tmgg.experiments.generative.runner model.model_type=gnn
 
 defaults:
-  - base/trainer/default@trainer
-  - base/logger/default
-  - base/callbacks/default
-  - base/progress_bar/default
+  - base_config_training
   - _self_
 
 experiment_name: "generative_graph"
+wandb_project: diffusion-study
 
-# Random seed
-seed: 42
-
-# Model configuration
+# Model configuration (generative-specific)
 model:
   _target_: tmgg.experiments.generative.lightning_module.GenerativeLightningModule
   model_type: self_attention
@@ -33,7 +30,7 @@ model:
   weight_decay: ${weight_decay}
   optimizer_type: ${optimizer_type}
 
-# Data configuration
+# Data configuration (generative-specific)
 data:
   _target_: tmgg.experiments.generative.datamodule.GraphDistributionDataModule
   dataset_type: sbm
@@ -50,24 +47,10 @@ data:
     p_out: 0.1
   noise_levels: ${noise_levels}
 
-# Training settings
-learning_rate: 1e-3
-weight_decay: 1e-4
-optimizer_type: adamw
-
-# Noise levels (for compatibility)
+# Noise levels (generative-specific defaults, override base)
 noise_levels: [0.1, 0.3, 0.5]
 
-# Training resumption
-force_fresh: false
-sanity_check: false
-
-# Paths
-paths:
-  output_dir: ${hydra:runtime.output_dir}
-  results_dir: ${paths.output_dir}/results
-
-# Hydra output
+# Hydra output (generative-specific directory layout)
 hydra:
   run:
     dir: outputs/generative/${now:%Y-%m-%d}/${now:%H-%M-%S}
