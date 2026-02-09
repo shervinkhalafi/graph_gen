@@ -3,12 +3,27 @@
 #     "pandas>=2.0",
 #     "pyarrow",
 #     "rich",
+#     "tmgg",
 # ]
 # ///
 """Quick CLI analysis of aggregated W&B run data.
 
 Load parquet data, group/aggregate by specified columns, print summary tables,
 and export filtered results.
+
+Parsing and enrichment are delegated to ``tmgg.analysis.parsing``, which
+is the canonical source for run-name parsing logic.
+
+NOTE: the original local ``parse_architecture`` detected patterns
+(``filter_bank``, ``linear_pe``, ``mlp``, ``digress_transformer_gnn_qk``)
+that the canonical version does not cover.  The canonical version instead
+covers ``gnn_all``, ``gnn_qk``, ``gnn_v``, ``digress_default``,
+``asymmetric``, ``spectral_linear``, ``spectral``.  Any runs matching the
+old-only patterns will now map to ``"other"``.  If those patterns are
+needed, they should be added to ``tmgg.analysis.parsing.parse_architecture``.
+
+Similarly, the old local ``parse_dataset`` returned ``"synthetic"`` as
+default, while the canonical version returns ``"unknown"``.
 
 Usage:
     uv run wandb-tools/analyze_runs.py  # Uses latest export from wandb_export/
@@ -23,6 +38,8 @@ from pathlib import Path
 import pandas as pd
 from rich.console import Console
 from rich.table import Table
+
+from tmgg.analysis.parsing import enrich_dataframe
 
 console = Console()
 
@@ -45,57 +62,6 @@ def find_latest_export() -> Path | None:
     if parquets:
         return max(parquets, key=lambda p: p.stat().st_mtime)
     return None
-
-
-def parse_architecture(name: str) -> str:
-    """Parse architecture from run display name."""
-    if pd.isna(name):
-        return "unknown"
-    name = str(name)
-    if "digress_transformer_gnn_qk" in name:
-        return "digress_transformer_gnn_qk"
-    elif "digress_transformer" in name:
-        return "digress_transformer"
-    elif "self_attention" in name:
-        return "self_attention"
-    elif "filter_bank" in name:
-        return "filter_bank"
-    elif "linear_pe" in name:
-        return "linear_pe"
-    elif "mlp" in name.lower():
-        return "mlp"
-    return "other"
-
-
-def parse_dataset(name: str) -> str:
-    """Parse dataset from run display name."""
-    if pd.isna(name):
-        return "unknown"
-    name = str(name)
-    if "pyg_enzymes" in name:
-        return "pyg_enzymes"
-    elif "pyg_proteins" in name:
-        return "pyg_proteins"
-    elif "ego" in name.lower():
-        return "ego"
-    elif "community" in name.lower():
-        return "community"
-    elif "grid" in name.lower():
-        return "grid"
-    elif "sbm" in name.lower():
-        return "sbm"
-    return "synthetic"
-
-
-def enrich_with_parsed_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Add parsed architecture and dataset columns from display_name."""
-    name_col = "display_name" if "display_name" in df.columns else "name"
-
-    if name_col in df.columns:
-        df["architecture"] = df[name_col].apply(parse_architecture)
-        df["dataset"] = df[name_col].apply(parse_dataset)
-
-    return df
 
 
 def find_metric_columns(df: pd.DataFrame) -> list[str]:
@@ -234,13 +200,13 @@ def print_top_runs(
         df_valid.nsmallest(n, metric) if ascending else df_valid.nlargest(n, metric)
     )
 
-    # Select columns to display
+    # Select columns to display (canonical enrichment uses "arch", not
+    # "architecture")
     display_cols = [
         "name",
         "project",
         metric,
         "state",
-        "architecture",
         "dataset",
         "stage",
         "arch",
@@ -277,7 +243,7 @@ def print_schema_info(df: pd.DataFrame) -> None:
 def print_pivot_table(
     df: pd.DataFrame,
     metric: str,
-    row_col: str = "architecture",
+    row_col: str = "arch",
     col_col: str = "dataset",
 ) -> None:
     """Print a pivot table of metric by row and column dimensions."""
@@ -332,7 +298,7 @@ def main() -> None:
         "--group-by",
         "-g",
         default=None,
-        help="Column(s) to group by (comma-separated). E.g., 'stage', 'architecture,dataset'",
+        help="Column(s) to group by (comma-separated). E.g., 'stage', 'arch,dataset'",
     )
     parser.add_argument(
         "--metric",
@@ -373,7 +339,7 @@ def main() -> None:
     parser.add_argument(
         "--pivot",
         action="store_true",
-        help="Show pivot table of metric by architecture × dataset",
+        help="Show pivot table of metric by arch x dataset",
     )
     parser.add_argument(
         "--output",
@@ -407,8 +373,12 @@ def main() -> None:
     df = pd.read_parquet(input_path)
     console.print(f"Loaded {len(df)} runs")
 
-    # Enrich with parsed columns
-    df = enrich_with_parsed_columns(df)
+    # Enrich with parsed columns (canonical enrichment from tmgg.analysis.parsing).
+    # NOTE: if the dataframe uses "display_name" instead of "name", copy it so
+    # enrich_dataframe (which expects "name") can work.
+    if "name" not in df.columns and "display_name" in df.columns:
+        df["name"] = df["display_name"]
+    df = enrich_dataframe(df)
 
     # Print schema if requested
     if args.schema:
