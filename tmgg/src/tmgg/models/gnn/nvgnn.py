@@ -47,12 +47,13 @@ class NodeVarGNN(DenoisingModel):
         self.out_y = nn.Linear(feature_dim, feature_dim)
 
     @override
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
         """
         Forward pass returning reconstructed adjacency matrix.
 
         Args:
             x: Input adjacency matrix
+            t: Diffusion timestep tensor, or None. Currently unused.
 
         Returns:
             Reconstructed adjacency matrix

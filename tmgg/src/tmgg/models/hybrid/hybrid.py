@@ -40,13 +40,15 @@ class SequentialDenoisingModel(DenoisingModel):
         self.denoising_model = denoising_model
 
     @override
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
         """Combine GNN embedding and transformer denoising.
 
         Parameters
         ----------
         x
             Input adjacency matrix of shape (batch, n, n).
+        t
+            Diffusion timestep tensor, or None. Currently unused.
 
         Returns
         -------

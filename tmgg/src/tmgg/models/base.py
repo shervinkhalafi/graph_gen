@@ -61,7 +61,7 @@ class BaseModel(nn.Module, ABC):
         return counts
 
 
-class DenoisingModel(BaseModel):
+class DenoisingModel(BaseModel, ABC):
     """Abstract base class for graph denoising models."""
 
     def __init__(self):
@@ -147,19 +147,22 @@ class DenoisingModel(BaseModel):
         elif A.ndim == 3:
             # Batch case: zero diagonal for each matrix
             mask = torch.eye(A.shape[-1], device=A.device, dtype=torch.bool)
-            A = A.masked_fill(mask.unsqueeze(0), 0)
+            A = A.masked_fill(mask.unsqueeze(0), 0)  # pyright: ignore[reportConstantRedefinition]  # math notation
             return A
         else:
             return A
 
     @abstractmethod
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
         """Forward pass for denoising.
 
         Parameters
         ----------
         x
             Input tensor (typically noisy adjacency matrix).
+        t
+            Diffusion timestep tensor, or None for unconditional denoising.
+            Currently unused; reserved for the discrete diffusion pipeline.
 
         Returns
         -------
@@ -169,11 +172,11 @@ class DenoisingModel(BaseModel):
         pass
 
 
-class EmbeddingModel(BaseModel):
+class EmbeddingModel(BaseModel, ABC):
     """Abstract base class for graph embedding models."""
 
     @abstractmethod
-    def forward(self, A: torch.Tensor) -> torch.Tensor | tuple:
+    def forward(self, A: torch.Tensor) -> torch.Tensor | tuple[torch.Tensor, ...]:
         """
         Forward pass for embedding generation.
 

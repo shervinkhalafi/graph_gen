@@ -59,13 +59,15 @@ class GNN(DenoisingModel):
         self.out_y = nn.Linear(feature_dim_in, feature_dim_out)
 
     @override
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
         """Compute adjacency logits from input adjacency matrix.
 
         Parameters
         ----------
         x
             Input adjacency matrix of shape (batch, n, n).
+        t
+            Diffusion timestep tensor, or None. Currently unused.
 
         Returns
         -------
