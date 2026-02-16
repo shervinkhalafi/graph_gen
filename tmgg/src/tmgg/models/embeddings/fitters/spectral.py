@@ -103,13 +103,13 @@ class SpectralFitter:
         else:
             # SVD for asymmetric case
             U, S, Vh = torch.linalg.svd(target, full_matrices=False)
-            U = U[:, :d]  # pyright: ignore[reportConstantRedefinition]  # math notation
-            S = S[:d]  # pyright: ignore[reportConstantRedefinition]  # math notation
+            U = U[:, :d]
+            S = S[:d]
             V = Vh[:d, :].T
 
             # X = U * sqrt(S), Y = V * sqrt(S)
             sqrt_S = torch.sqrt(S)
-            X = U * sqrt_S.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            X = U * sqrt_S.unsqueeze(0)
             Y = V * sqrt_S.unsqueeze(0)
 
             with torch.no_grad():
@@ -154,12 +154,12 @@ class SpectralFitter:
                 embedding.X.copy_(X)
         else:
             U, S, Vh = torch.linalg.svd(logits, full_matrices=False)
-            U = U[:, :d]  # pyright: ignore[reportConstantRedefinition]  # math notation
-            S = S[:d]  # pyright: ignore[reportConstantRedefinition]  # math notation
+            U = U[:, :d]
+            S = S[:d]
             V = Vh[:d, :].T
 
             sqrt_S = torch.sqrt(S)
-            X = U * sqrt_S.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            X = U * sqrt_S.unsqueeze(0)
             Y = V * sqrt_S.unsqueeze(0)
 
             with torch.no_grad():
@@ -185,8 +185,8 @@ class SpectralFitter:
         d = embedding.dimension
 
         U, S, Vh = torch.linalg.svd(target, full_matrices=False)
-        U = U[:, :d]  # pyright: ignore[reportConstantRedefinition]  # math notation
-        S = S[:d]  # pyright: ignore[reportConstantRedefinition]  # math notation
+        U = U[:, :d]
+        S = S[:d]
 
         # Scale by sqrt of singular values
         sqrt_S = torch.sqrt(S)

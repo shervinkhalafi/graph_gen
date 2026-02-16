@@ -30,11 +30,11 @@ def compute_laplacian(A: torch.Tensor) -> torch.Tensor:
     """
     if A.dim() == 2:
         degrees = A.sum(dim=1)
-        D = torch.diag(degrees)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        D = torch.diag(degrees)
         return D - A
     elif A.dim() == 3:
         degrees = A.sum(dim=-1)
-        D = torch.diag_embed(degrees)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        D = torch.diag_embed(degrees)
         return D - A
     else:
         raise ValueError(f"Expected 2D or 3D tensor, got shape {A.shape}")

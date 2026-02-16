@@ -64,7 +64,7 @@ class TopKEigenLayer(nn.Module):
         """
         unbatched = A.ndim == 2
         if unbatched:
-            A = A.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            A = A.unsqueeze(0)
 
         batch_size, n, _ = A.shape
         k = min(self.k, n)
@@ -93,10 +93,10 @@ class TopKEigenLayer(nn.Module):
         # V: (batch, n, k)
 
         # Sign normalization: make first nonzero entry of each eigenvector positive
-        V = self._normalize_signs(V)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        V = self._normalize_signs(V)
 
         if unbatched:
-            V = V.squeeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            V = V.squeeze(0)
             Lambda = Lambda.squeeze(0)
 
         return V, Lambda

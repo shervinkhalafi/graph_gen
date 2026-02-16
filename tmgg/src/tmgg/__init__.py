@@ -24,7 +24,3 @@ OmegaConf.register_new_resolver(
     ),
     replace=True,
 )
-
-
-def hello() -> str:
-    return "Hello from tmgg!"

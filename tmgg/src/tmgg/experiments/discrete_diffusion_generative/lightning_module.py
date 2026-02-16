@@ -383,6 +383,34 @@ class DiscreteDiffusionLightningModule(pl.LightningModule):
         self, batch: tuple[Tensor, Tensor, Tensor, Tensor], batch_idx: int
     ) -> dict[str, Tensor]:
         """Compute the three VLB components: KL prior, diffusion KL, reconstruction."""
+        return self._eval_step(batch)
+
+    def on_validation_epoch_end(self) -> None:
+        """Log epoch-mean VLB components and compute MMD metrics."""
+        self._log_vlb_and_mmd("val")
+
+    # ------------------------------------------------------------------
+    # Test (same evaluation as validation, logged under test/ prefix)
+    # ------------------------------------------------------------------
+
+    def test_step(
+        self, batch: tuple[Tensor, Tensor, Tensor, Tensor], batch_idx: int
+    ) -> dict[str, Tensor]:
+        """Compute VLB components and accumulate reference graphs, same as validation."""
+        return self._eval_step(batch)
+
+    def on_test_epoch_end(self) -> None:
+        """Log epoch-mean VLB components and compute MMD metrics for test set."""
+        self._log_vlb_and_mmd("test")
+
+    # ------------------------------------------------------------------
+    # Shared eval logic for validation and test
+    # ------------------------------------------------------------------
+
+    def _eval_step(
+        self, batch: tuple[Tensor, Tensor, Tensor, Tensor]
+    ) -> dict[str, Tensor]:
+        """Shared implementation for validation_step and test_step."""
         X, E, y, node_mask = batch
 
         noisy_data = self.apply_noise(X, E, y, node_mask)
@@ -395,7 +423,6 @@ class DiscreteDiffusionLightningModule(pl.LightningModule):
         prob0 = self._reconstruction_logp(noisy_data["t"], X, E, node_mask)
         loss_term_0 = self._reconstruction_loss(X, E, prob0, node_mask)
 
-        # NLL = kl_prior + diffusion_kl - reconstruction_logp
         nll = kl_prior + loss_all_t - loss_term_0
 
         self._val_nll.append(nll.mean())
@@ -407,7 +434,7 @@ class DiscreteDiffusionLightningModule(pl.LightningModule):
         from tmgg.experiment_utils.mmd_metrics import adjacency_to_networkx
 
         self.mmd_evaluator.set_num_nodes(int(node_mask[0].sum().item()))
-        adj_batch = E.argmax(dim=-1)  # (bs, n, n) -- class 0 = no edge
+        adj_batch = E.argmax(dim=-1)
         for i in range(adj_batch.size(0)):
             n = int(node_mask[i].sum().item())
             adj_np = (adj_batch[i, :n, :n] > 0).cpu().numpy().astype("float32")
@@ -415,16 +442,17 @@ class DiscreteDiffusionLightningModule(pl.LightningModule):
 
         return {"val_nll": nll.mean()}
 
-    def on_validation_epoch_end(self) -> None:
-        """Log epoch-mean VLB components and compute MMD metrics."""
+    def _log_vlb_and_mmd(self, prefix: str) -> None:
+        """Log VLB components and MMD metrics under the given prefix."""
         if not self._val_nll:
             return
 
-        self.log("val/epoch_NLL", torch.stack(self._val_nll).mean())
-        self.log("val/kl_prior", torch.stack(self._val_kl_prior).mean())
-        self.log("val/kl_diffusion", torch.stack(self._val_kl_diffusion).mean())
+        self.log(f"{prefix}/epoch_NLL", torch.stack(self._val_nll).mean())
+        self.log(f"{prefix}/kl_prior", torch.stack(self._val_kl_prior).mean())
+        self.log(f"{prefix}/kl_diffusion", torch.stack(self._val_kl_diffusion).mean())
         self.log(
-            "val/reconstruction_logp", torch.stack(self._val_reconstruction).mean()
+            f"{prefix}/reconstruction_logp",
+            torch.stack(self._val_reconstruction).mean(),
         )
 
         self._val_nll.clear()
@@ -441,9 +469,9 @@ class DiscreteDiffusionLightningModule(pl.LightningModule):
             gen_graphs = self._sample_graphs_for_eval(num_to_generate, num_nodes)
             results = self.mmd_evaluator.evaluate(gen_graphs)
             if results is not None:
-                self.log("val/degree_mmd", results.degree_mmd, prog_bar=True)
-                self.log("val/clustering_mmd", results.clustering_mmd)
-                self.log("val/spectral_mmd", results.spectral_mmd)
+                self.log(f"{prefix}/degree_mmd", results.degree_mmd, prog_bar=True)
+                self.log(f"{prefix}/clustering_mmd", results.clustering_mmd)
+                self.log(f"{prefix}/spectral_mmd", results.spectral_mmd)
         else:
             self.mmd_evaluator.clear()
 
@@ -718,7 +746,7 @@ class DiscreteDiffusionLightningModule(pl.LightningModule):
             t_norm = t_array / self.T
 
             sampled_s = self._sample_p_zs_given_zt(s_norm, t_norm, X, E, y, node_mask)
-            X, E, y = sampled_s.X, sampled_s.E, sampled_s.y  # pyright: ignore[reportConstantRedefinition]  # loop update
+            X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
 
         # Collapse one-hot to class indices and trim to real nodes
         final = PlaceHolder(X=X, E=E, y=y).mask(node_mask, collapse=True)

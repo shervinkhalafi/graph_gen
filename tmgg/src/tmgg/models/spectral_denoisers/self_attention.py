@@ -116,7 +116,7 @@ class SelfAttentionDenoiser(SpectralDenoiser):
         """
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            V = V.unsqueeze(0)
 
         # 1. Project to Q, K, Val
         Q = torch.matmul(V, self.W_Q)  # (batch, n, d_k)
@@ -157,7 +157,7 @@ class SelfAttentionDenoiser(SpectralDenoiser):
 
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            V = V.unsqueeze(0)
 
         Q = torch.matmul(V, self.W_Q)
         K = torch.matmul(V, self.W_K)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from lightning_fabric.loggers import Logger
+from lightning_fabric.loggers.logger import Logger
 from torch import nn
 
 
@@ -37,7 +37,7 @@ def log_parameter_count(
     """
     if not hasattr(model, "parameter_count"):
         total_params: int = sum(
-            p.numel()
+            p.numel()  # pyright: ignore[reportCallIssue]  # PyTorch stubs mistype numel
             for p in model.parameters()
             if p.requires_grad  # pyright: ignore[reportAny]
         )
@@ -50,7 +50,7 @@ def log_parameter_count(
             logger.log_hyperparams({"total_parameters": total_params})
         return
 
-    param_counts: dict[str, Any] = model.parameter_count()  # pyright: ignore[reportAny]
+    param_counts: dict[str, Any] = model.parameter_count()  # pyright: ignore[reportAny, reportCallIssue]  # method exists at runtime
 
     def format_counts(counts: dict[str, Any], indent: int = 0) -> list[str]:
         """Recursively format parameter counts."""

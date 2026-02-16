@@ -99,7 +99,7 @@ tensorboard --logdir outputs/
 uv run tmgg-spectral-arch logger=wandb
 
 # Or with project name
-uv run tmgg-spectral-arch logger=wandb wandb.project="my-project"
+uv run tmgg-spectral-arch logger=wandb wandb_project="my-project"
 ```
 
 ### CSV Logger
@@ -129,6 +129,12 @@ Additional metrics computed in final evaluation:
 - Eigenvalue error
 - Subspace distance
 - Reconstruction MAE/MSE
+
+> **Caveat:** Loss values are not comparable across experiment types.
+> Denoising uses BCEWithLogits, Gaussian generative uses MSE, and
+> discrete diffusion uses VLB/cross-entropy. Comparing `val/loss`
+> across these experiment families is meaningless — use MMD metrics
+> or graph-theoretic statistics for cross-experiment comparison.
 
 ### Metric Regimes
 
@@ -384,19 +390,24 @@ The generative runner uses its own Hydra config (`base_config_gaussian_diffusion
 
 ```bash
 # Default configuration (self_attention on SBM, 100 diffusion steps)
-python -m tmgg.experiments.gaussian_diffusion_generative.runner
+uv run tmgg-gaussian-gen
 
 # Override model architecture
-python -m tmgg.experiments.gaussian_diffusion_generative.runner model.model_type=gnn
+uv run tmgg-gaussian-gen model.model_type=gnn
 
 # Override dataset and graph size
-python -m tmgg.experiments.gaussian_diffusion_generative.runner data.dataset_type=erdos_renyi data.num_nodes=100
+uv run tmgg-gaussian-gen data.dataset_type=erdos_renyi data.num_nodes=100
 
 # Change noise schedule and diffusion steps
-python -m tmgg.experiments.gaussian_diffusion_generative.runner model.noise_schedule=linear model.num_diffusion_steps=200
+uv run tmgg-gaussian-gen model.noise_schedule=linear model.num_diffusion_steps=200
 ```
 
-Output follows the same timestamped directory layout as denoising experiments, under `outputs/generative/`.
+> **Note:** Denoising experiments use version-based output directories
+> (`outputs/<experiment>/version_N/`) which support automatic resumption.
+> Generative experiments use timestamp-based directories
+> (`outputs/generative/YYYY-MM-DD_HH-MM-SS/`) which do not. To resume
+> a generative run, specify the checkpoint path explicitly via
+> `ckpt_path=<path>`.
 
 ### Supported Architectures
 
@@ -472,7 +483,7 @@ Lower values indicate that generated graphs more closely match the reference dis
 
 ```bash
 # Sweep over architectures and diffusion steps
-python -m tmgg.experiments.gaussian_diffusion_generative.runner --multirun \
+uv run tmgg-gaussian-gen --multirun \
   model.model_type=self_attention,filter_bank,gnn \
   model.num_diffusion_steps=50,100,200 \
   seed=1,2,3

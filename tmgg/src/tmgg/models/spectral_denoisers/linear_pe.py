@@ -61,6 +61,11 @@ class LinearPE(SpectralDenoiser):
     different row and column embeddings, which can capture asymmetric
     structure in directed graphs or improve expressiveness.
 
+    The ``max_nodes`` parameter sets a hard ceiling on graph size. Graphs
+    with more than ``max_nodes`` nodes will have truncated bias vectors.
+    The default of 200 covers SBM and Erdos-Renyi benchmarks; override
+    for larger graphs.
+
     Examples
     --------
     >>> model = LinearPE(k=8, max_nodes=50)
@@ -144,7 +149,7 @@ class LinearPE(SpectralDenoiser):
         """
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            V = V.unsqueeze(0)
 
         batch_size, n, k = V.shape
 

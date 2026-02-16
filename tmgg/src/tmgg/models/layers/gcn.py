@@ -37,8 +37,8 @@ class GraphConvolutionLayer(nn.Module):
             Convolved features
         """
         # Ensure X has the same dtype as model parameters
-        X = X.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]  # math notation
-        A = A.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        X = X.to(self.H.dtype)
+        A = A.to(self.H.dtype)
 
         # Symmetric normalization: D^{-1/2} A D^{-1/2} bounds spectral radius to [-1, 1],
         # preventing overflow in matrix powers for dense graphs
@@ -102,8 +102,8 @@ class BareGraphConvolutionLayer(nn.Module):
         torch.Tensor
             Convolved features, shape (batch, n, num_channels).
         """
-        X = X.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]  # math notation
-        A = A.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        X = X.to(self.H.dtype)
+        A = A.to(self.H.dtype)
 
         # Symmetric normalization: D^{-1/2} A D^{-1/2}
         D = A.sum(dim=-1)  # (batch, n)
@@ -115,7 +115,7 @@ class BareGraphConvolutionLayer(nn.Module):
         Y = X @ self.H[0]  # Identity term (i=0)
         A_power = A_norm
         for i in range(1, self.num_terms + 1):
-            Y = Y + torch.bmm(A_power, X) @ self.H[i]  # pyright: ignore[reportConstantRedefinition]  # math notation
+            Y = Y + torch.bmm(A_power, X) @ self.H[i]
             if i < self.num_terms:
                 A_power = torch.bmm(A_power, A_norm)
 

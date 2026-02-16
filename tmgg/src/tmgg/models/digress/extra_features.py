@@ -391,7 +391,7 @@ class EigenFeatures:
         # are pushed far above zero and don't interfere with the real spectrum.
         mask_diag = 2 * L.shape[-1] * torch.eye(A.shape[-1]).type_as(L).unsqueeze(0)
         mask_diag = mask_diag * (~node_mask.unsqueeze(1)) * (~node_mask.unsqueeze(2))
-        L = L * mask_2d(node_mask) + mask_diag  # pyright: ignore[reportConstantRedefinition]  # math notation
+        L = L * mask_2d(node_mask) + mask_diag
 
         if self.mode == "eigenvalues":
             eigvals = torch.linalg.eigvalsh(L)

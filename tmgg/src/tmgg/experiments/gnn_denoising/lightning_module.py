@@ -88,7 +88,6 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
         return model
 
     def get_model_name(self) -> str:
-        """Get the name of the model for visualization purposes."""
         return "GNN"
 
     def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:

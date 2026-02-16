@@ -97,7 +97,7 @@ class ShrinkageSVDLayer(nn.Module):
         """
         unbatched = A.ndim == 2
         if unbatched:
-            A = A.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            A = A.unsqueeze(0)
 
         # Full SVD then truncate (more numerically stable than randomized)
         U_full, S_full, Vh_full = torch.linalg.svd(A, full_matrices=False)
@@ -109,8 +109,8 @@ class ShrinkageSVDLayer(nn.Module):
         Vh = Vh_full[..., :r, :]
 
         if unbatched:
-            U = U.squeeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
-            S = S.squeeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            U = U.squeeze(0)
+            S = S.squeeze(0)
             Vh = Vh.squeeze(0)
 
         return U, S, Vh
@@ -306,7 +306,7 @@ class ShrinkageWrapper(DenoisingModel, ABC):
         """
         unbatched = A.ndim == 2
         if unbatched:
-            A = A.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            A = A.unsqueeze(0)
 
         # SVD decomposition
         U, S, Vh = self.svd_layer(A)
@@ -412,7 +412,7 @@ class StrictShrinkageWrapper(ShrinkageWrapper):
         unbatched = S.ndim == 1
         if unbatched:
             raw_params = raw_params.unsqueeze(0)
-            S = S.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            S = S.unsqueeze(0)
 
         # Truncate to actual number of singular values
         r = S.shape[-1]
@@ -470,7 +470,7 @@ class RelaxedShrinkageWrapper(ShrinkageWrapper):
         unbatched = S.ndim == 1
         if unbatched:
             raw_params = raw_params.unsqueeze(0)
-            S = S.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            S = S.unsqueeze(0)
 
         r = S.shape[-1]
 

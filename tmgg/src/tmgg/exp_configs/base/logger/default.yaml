@@ -18,7 +18,7 @@ logger:
       default_hp_metric: false
   - wandb:
       project: ${wandb_project}
-      name: ${oc.select:stage,default}_${model.model_type}_lr${learning_rate}
+      name: ${oc.select:stage,default}_${oc.select:model.model_type,unknown}_lr${learning_rate}
       tags: []
       save_dir: ${paths.output_dir}
       entity: ${wandb_entity}

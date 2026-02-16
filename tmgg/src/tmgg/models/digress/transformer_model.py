@@ -187,21 +187,21 @@ class XEyTransformerLayer(nn.Module):
         )
 
         newX_d = self.dropoutX1(newX)
-        X = self.normX1(X + newX_d)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        X = self.normX1(X + newX_d)
 
         newE_d = self.dropoutE1(newE)
-        E = self.normE1(E + newE_d)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        E = self.normE1(E + newE_d)
 
         new_y_d = self.dropout_y1(new_y)
         y = self.norm_y1(y + new_y_d)
 
         ff_outputX = self.linX2(self.dropoutX2(F.relu(self.linX1(X))))
         ff_outputX = self.dropoutX3(ff_outputX)
-        X = self.normX2(X + ff_outputX)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        X = self.normX2(X + ff_outputX)
 
         ff_outputE = self.linE2(self.dropoutE2(F.relu(self.linE1(E))))
         ff_outputE = self.dropoutE3(ff_outputE)
-        E = self.normE2(E + ff_outputE)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        E = self.normE2(E + ff_outputE)
 
         ff_output_y = self.lin_y2(self.dropout_y2(F.relu(self.lin_y1(y))))
         ff_output_y = self.dropout_y3(ff_output_y)
@@ -419,7 +419,7 @@ class NodeEdgeBlock(nn.Module):
 
         # Use provided adjacency if given, otherwise fall back to E[..., 0]
         if A is None and (self._use_gnn_q or self._use_gnn_k or self._use_gnn_v):
-            A = E[..., 0]  # pyright: ignore[reportConstantRedefinition]  # math notation
+            A = E[..., 0]
 
         # Validate spectral inputs
         uses_spectral = (
@@ -438,39 +438,39 @@ class NodeEdgeBlock(nn.Module):
             Q = self.q(A, X) * x_mask
         elif self._use_spectral_q:
             assert V is not None and Lambda is not None
-            Q = self.q(V, Lambda) * x_mask  # pyright: ignore[reportConstantRedefinition]  # math notation
+            Q = self.q(V, Lambda) * x_mask
         else:
-            Q = self.q(X) * x_mask  # pyright: ignore[reportConstantRedefinition]  # math notation; (bs, n, dx)
+            Q = self.q(X) * x_mask  # (bs, n, dx)
 
         if self._use_gnn_k:
             K = self.k(A, X) * x_mask
         elif self._use_spectral_k:
             assert V is not None and Lambda is not None
-            K = self.k(V, Lambda) * x_mask  # pyright: ignore[reportConstantRedefinition]  # math notation
+            K = self.k(V, Lambda) * x_mask
         else:
-            K = self.k(X) * x_mask  # pyright: ignore[reportConstantRedefinition]  # math notation; (bs, n, dx)
+            K = self.k(X) * x_mask  # (bs, n, dx)
         diffusion_utils.assert_correctly_masked(Q, x_mask)
         # 2. Reshape to (bs, n, n_head, df) with dx = n_head * df
 
-        Q = Q.reshape((Q.size(0), Q.size(1), self.n_head, self.df))  # pyright: ignore[reportConstantRedefinition]  # math notation
-        K = K.reshape((K.size(0), K.size(1), self.n_head, self.df))  # pyright: ignore[reportConstantRedefinition]  # math notation
+        Q = Q.reshape((Q.size(0), Q.size(1), self.n_head, self.df))
+        K = K.reshape((K.size(0), K.size(1), self.n_head, self.df))
 
-        Q = Q.unsqueeze(2)  # pyright: ignore[reportConstantRedefinition]  # math notation; (bs, n, 1, n_head, df)
-        K = K.unsqueeze(1)  # pyright: ignore[reportConstantRedefinition]  # math notation; (bs, 1, n, n_head, df)
+        Q = Q.unsqueeze(2)  # (bs, n, 1, n_head, df)
+        K = K.unsqueeze(1)  # (bs, 1, n, n_head, df)
 
         # Compute unnormalized attentions. Y is (bs, n, n, n_head, df)
         Y = Q * K
-        Y = Y / math.sqrt(Y.size(-1))  # pyright: ignore[reportConstantRedefinition]  # math notation
+        Y = Y / math.sqrt(Y.size(-1))
         diffusion_utils.assert_correctly_masked(Y, (e_mask1 * e_mask2).unsqueeze(-1))
 
         E1 = self.e_mul(E) * e_mask1 * e_mask2  # bs, n, n, dx
-        E1 = E1.reshape((E.size(0), E.size(1), E.size(2), self.n_head, self.df))  # pyright: ignore[reportConstantRedefinition]  # math notation
+        E1 = E1.reshape((E.size(0), E.size(1), E.size(2), self.n_head, self.df))
 
         E2 = self.e_add(E) * e_mask1 * e_mask2  # bs, n, n, dx
-        E2 = E2.reshape((E.size(0), E.size(1), E.size(2), self.n_head, self.df))  # pyright: ignore[reportConstantRedefinition]  # math notation
+        E2 = E2.reshape((E.size(0), E.size(1), E.size(2), self.n_head, self.df))
 
         # Incorporate edge features to the self attention scores.
-        Y = Y * (E1 + 1) + E2  # pyright: ignore[reportConstantRedefinition]  # math notation; (bs, n, n, n_head, df)
+        Y = Y * (E1 + 1) + E2  # (bs, n, n, n_head, df)
 
         # Incorporate y to E
         newE = Y.flatten(start_dim=3)  # bs, n, n, dx
@@ -514,7 +514,7 @@ class NodeEdgeBlock(nn.Module):
         newX = self.x_out(newX) * x_mask
         diffusion_utils.assert_correctly_masked(newX, x_mask)
 
-        # Process y based on X axnd E
+        # Process y based on X and E
         y = self.y_y(y)
         e_y = self.e_y(E)
         x_y = self.x_y(X)
@@ -696,15 +696,15 @@ class _GraphTransformer(nn.Module):
             n = X.shape[1]
             # If only adjacency matrix provided, use it as both node and edge features
             if E is None:
-                E = X.unsqueeze(-1)  # pyright: ignore[reportConstantRedefinition]  # math notation; (bs, n, n, 1)
+                E = X.unsqueeze(-1)  # (bs, n, n, 1)
             if X.shape[-1] == n:  # Square matrix, need node features
-                X = X.diagonal(dim1=1, dim2=2).unsqueeze(-1)  # pyright: ignore[reportConstantRedefinition]  # math notation; (bs, n, 1)
+                X = X.diagonal(dim1=1, dim2=2).unsqueeze(-1)  # (bs, n, 1)
 
         n = X.shape[1]
 
         # Create default edge features if not provided
         if E is None:
-            E = torch.zeros(bs, n, n, self.input_dims["E"], device=X.device)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            E = torch.zeros(bs, n, n, self.input_dims["E"], device=X.device)
 
         # Create default global features if not provided
         if y is None:
@@ -754,10 +754,10 @@ class _GraphTransformer(nn.Module):
         features = GraphFeatures(X=self.mlp_in_X(X), E=new_E, y=self.mlp_in_y(y)).mask(
             node_mask
         )
-        X, E, y = features.X, features.E, features.y  # pyright: ignore[reportConstantRedefinition]  # math notation
+        X, E, y = features.X, features.E, features.y
 
         for layer in self.tf_layers:
-            X, E, y = layer(  # pyright: ignore[reportConstantRedefinition]  # math notation
+            X, E, y = layer(
                 X, E, y, node_mask, A=original_A, V=spectral_V, Lambda=spectral_Lambda
             )
 
@@ -885,7 +885,7 @@ class GraphTransformer(DenoisingModel):
             actual_k = V.shape[-1]
             if self._k is not None and actual_k < self._k:
                 pad_size = self._k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportConstantRedefinition, reportAttributeAccessIssue]  # math notation; F.pad exists at runtime
+                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # F.pad exists at runtime
 
             x = V  # Pass eigenvectors as node features
 

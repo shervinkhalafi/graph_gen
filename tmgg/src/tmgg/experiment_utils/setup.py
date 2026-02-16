@@ -13,15 +13,24 @@ from pytorch_lightning.callbacks import (
 
 
 def set_seed(seed: int) -> None:
-    """Set random seeds for reproducibility."""
+    """Set random seeds for reproducibility across all RNG backends."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     pl.seed_everything(seed, workers=True)
 
-    # Enable Tensor Core optimization for GPUs that support it
-    torch.set_float32_matmul_precision("high")
+
+def configure_matmul_precision(precision: str = "high") -> None:
+    """Set float32 matmul precision for Tensor Core GPUs.
+
+    Parameters
+    ----------
+    precision : str
+        One of ``"highest"``, ``"high"``, ``"medium"``. Default ``"high"``
+        enables TF32 on Ampere+ GPUs for ~2x speedup with minimal accuracy loss.
+    """
+    torch.set_float32_matmul_precision(precision)
 
 
 def create_callbacks(config: DictConfig) -> list[pl.Callback]:

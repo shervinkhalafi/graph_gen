@@ -123,12 +123,12 @@ class SpectralDenoiser(DenoisingModel, ABC):
             actual_k = V.shape[-1]
             if actual_k < self.k:
                 pad_size = self.k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportConstantRedefinition, reportAttributeAccessIssue]  # math notation; PyTorch stub gap
+                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
                 Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
         else:
             # PEARL embeddings
             assert isinstance(self.embedding_layer, PEARLEmbedding)
-            V = self.embedding_layer(A)  # pyright: ignore[reportConstantRedefinition]  # math notation; (batch, n, k) or (n, k)
+            V = self.embedding_layer(A)  # (batch, n, k) or (n, k)
             # PEARL has no eigenvalues; pass zeros as placeholder
             unbatched = V.ndim == 2
             if unbatched:
@@ -216,9 +216,9 @@ class SpectralDenoiser(DenoisingModel, ABC):
             actual_k = V.shape[-1]
             if actual_k < self.k:
                 pad_size = self.k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportConstantRedefinition, reportAttributeAccessIssue]  # math notation; PyTorch stub gap
+                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
         else:
             assert isinstance(self.embedding_layer, PEARLEmbedding)
-            V = self.embedding_layer(A)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            V = self.embedding_layer(A)
 
         return V

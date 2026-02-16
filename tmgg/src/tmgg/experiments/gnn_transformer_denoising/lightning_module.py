@@ -36,7 +36,6 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         noise_type: str = "digress",
         rotation_k: int = 20,
         seed: int | None = None,
-        model_type: str | None = None,  # For wandb naming, not used for dispatch
         **kwargs: Any,  # pyright: ignore[reportExplicitAny]
     ):
         """
@@ -123,5 +122,4 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
         return model
 
     def get_model_name(self) -> str:
-        """Get the name of the model for visualization purposes."""
         return "Hybrid"

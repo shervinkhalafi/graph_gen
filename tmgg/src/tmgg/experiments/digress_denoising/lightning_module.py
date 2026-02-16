@@ -35,10 +35,6 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         noise_type: str = "digress",
         rotation_k: int = 20,
         seed: int | None = None,
-        # Config-only params (used for experiment naming, not model behavior)
-        digress_arch: str | None = None,
-        digress_mode: str | None = None,
-        model_type: str | None = None,
         # Legacy parameter name (deprecated, use k instead)
         node_feature_dim: int | None = None,
         **kwargs: Any,  # pyright: ignore[reportExplicitAny]
@@ -127,7 +123,6 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         return model
 
     def get_model_name(self) -> str:
-        """Get the name of the model for visualization purposes."""
         return "Digress"
 
     @torch.no_grad()

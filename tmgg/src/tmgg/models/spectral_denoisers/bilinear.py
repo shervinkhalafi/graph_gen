@@ -117,7 +117,7 @@ class BilinearDenoiser(SpectralDenoiser):
         """
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            V = V.unsqueeze(0)
 
         # Compute Q = V W_Q and K = V W_K
         # V: (batch, n, k), W_Q: (k, d_k) -> Q: (batch, n, d_k)
@@ -248,7 +248,7 @@ class BilinearDenoiserWithMLP(SpectralDenoiser):
         """
         unbatched = V.ndim == 2
         if unbatched:
-            V = V.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            V = V.unsqueeze(0)
 
         # Bilinear form: Q K^T / sqrt(d_k)
         Q = torch.matmul(V, self.W_Q)
@@ -556,6 +556,6 @@ class MultiLayerBilinearDenoiser(SpectralDenoiser):
         K = self.W_K(h)
 
         if unbatched:
-            K = K.squeeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            K = K.squeeze(0)
 
         return K

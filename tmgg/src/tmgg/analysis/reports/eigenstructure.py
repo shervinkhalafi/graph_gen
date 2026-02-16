@@ -65,8 +65,7 @@ def _resolve_results_dir(config: DictConfig | dict[str, Any]) -> Path | None:
     p = Path(str(raw))
     if not p.is_dir():
         warnings.warn(
-            f"Results directory does not exist: {p}. "
-            f"Falling back to placeholder data.",
+            f"Results directory does not exist: {p}. Falling back to placeholder data.",
             UserWarning,
             stacklevel=2,
         )
@@ -169,8 +168,7 @@ class EigenstructureReport(ReportGenerator):
             ds_dir = results_dir / ds_name
             if not ds_dir.is_dir():
                 warnings.warn(
-                    f"Skipping dataset '{ds_name}': directory {ds_dir} "
-                    f"does not exist.",
+                    f"Skipping dataset '{ds_name}': directory {ds_dir} does not exist.",
                     UserWarning,
                     stacklevel=2,
                 )

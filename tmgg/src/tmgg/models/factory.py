@@ -101,7 +101,9 @@ def _make_linear_pe(config: dict[str, Any]) -> nn.Module:
 
     return LinearPE(
         k=config.get("k", 8),
-        max_nodes=config.get("max_nodes", 200),
+        max_nodes=config.get(
+            "max_nodes", 200
+        ),  # hard ceiling; override for graphs > 200 nodes
         use_bias=config.get("use_bias", True),
     )
 
@@ -152,15 +154,13 @@ def _make_bilinear_mlp(config: dict[str, Any]) -> nn.Module:
     "multilayer_self_attention", "multilayer_attention", "multilayer_bilinear"
 )
 def _make_multilayer_bilinear(config: dict[str, Any]) -> nn.Module:
-    from tmgg.models.spectral_denoisers.bilinear import (
-        MultiLayerBilinearDenoiser as MultiLayerSelfAttentionDenoiser,
-    )
+    from tmgg.models.spectral_denoisers.bilinear import MultiLayerBilinearDenoiser
 
     # The spectral module stores the transformer MLP dim separately as
     # "transformer_mlp_hidden_dim"; the generative module reuses
     # "mlp_hidden_dim".  Prefer the explicit key, fall back to generic.
     mlp_dim = config.get("transformer_mlp_hidden_dim", config.get("mlp_hidden_dim"))
-    return MultiLayerSelfAttentionDenoiser(
+    return MultiLayerBilinearDenoiser(
         k=config.get("k", 8),
         d_model=config.get("d_model", 64),
         num_heads=config.get("num_heads", 4),
@@ -230,7 +230,7 @@ def _make_gnn_symmetric(config: dict[str, Any]) -> nn.Module:
     )
 
 
-@register_model("NodeVarGNN")
+@register_model("NodeVarGNN", "node_var_gnn")
 def _make_node_var_gnn(config: dict[str, Any]) -> nn.Module:
     from tmgg.models.gnn import NodeVarGNN
 
@@ -305,7 +305,9 @@ def _make_mlp(config: dict[str, Any]) -> nn.Module:
     from tmgg.models.baselines import MLPBaseline
 
     return MLPBaseline(
-        max_nodes=config.get("max_nodes", 200),
+        max_nodes=config.get(
+            "max_nodes", 200
+        ),  # hard ceiling; override for graphs > 200 nodes
         hidden_dim=config.get("hidden_dim", 256),
         num_layers=config.get("num_layers", 2),
     )

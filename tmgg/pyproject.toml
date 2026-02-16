@@ -62,9 +62,6 @@ tmgg-grid-search = "tmgg.experiments.grid_search_runner:main"
 tmgg-wandb-export = "tmgg.experiment_utils.wandb_export.cli:main"
 # TensorBoard data export utility
 tmgg-tb-export = "tmgg.experiment_utils.tensorboard_export.cli:main"
-# Modal stage runners (for direct Modal execution)
-tmgg-modal-stage1 = "tmgg.modal.stages.stage1:main"
-tmgg-modal-stage2 = "tmgg.modal.stages.stage2:main"
 # Eigenstructure study CLI
 tmgg-eigenstructure = "tmgg.experiment_utils.eigenstructure_study.cli:main"
 # Embedding dimension study CLI

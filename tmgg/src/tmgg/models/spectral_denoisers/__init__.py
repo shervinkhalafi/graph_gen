@@ -77,8 +77,6 @@ __all__ = [
     "BilinearDenoiserWithMLP",
     "MultiLayerBilinearDenoiser",
     "SelfAttentionDenoiser",
-    "SelfAttentionDenoiserWithMLP",
-    "MultiLayerSelfAttentionDenoiser",
     # Shrinkage wrappers (experimental)
     "ShrinkageWrapper",
     "StrictShrinkageWrapper",

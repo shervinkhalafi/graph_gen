@@ -14,7 +14,11 @@ from tmgg.experiment_utils.logging import (  # pyright: ignore[reportAttributeAc
     sync_tensorboard_to_s3,  # pyright: ignore[reportAttributeAccessIssue]
 )
 from tmgg.experiment_utils.sanity_check import maybe_run_sanity_check
-from tmgg.experiment_utils.setup import create_callbacks, set_seed
+from tmgg.experiment_utils.setup import (
+    configure_matmul_precision,
+    create_callbacks,
+    set_seed,
+)
 
 
 def _is_training_complete(checkpoint_path: Path, max_steps: int) -> bool:
@@ -28,8 +32,9 @@ def _is_training_complete(checkpoint_path: Path, max_steps: int) -> bool:
 def run_experiment(
     config: DictConfig, *, skip_final_eval: bool = False
 ) -> dict[str, Any]:
-    # Set random seed
+    # Set random seed and GPU matmul precision
     set_seed(config.seed)
+    configure_matmul_precision()
 
     # Create output directories
     Path(config.paths.output_dir).mkdir(parents=True, exist_ok=True)

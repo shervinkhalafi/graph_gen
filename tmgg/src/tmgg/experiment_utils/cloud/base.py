@@ -7,12 +7,9 @@ along with common data structures for experiment results.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from omegaconf import DictConfig, OmegaConf
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass

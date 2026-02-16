@@ -103,8 +103,8 @@ class NodeVarGraphConvolutionLayer(nn.Module):
             Output features of shape (batch, num_nodes, num_channels_out).
         """
         # Ensure consistent dtype
-        X = X.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]  # math notation
-        A = A.to(self.H.dtype)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        X = X.to(self.H.dtype)
+        A = A.to(self.H.dtype)
 
         # Symmetric normalization to bound spectral radius
         D = A.sum(dim=-1)
@@ -117,10 +117,10 @@ class NodeVarGraphConvolutionLayer(nn.Module):
 
         A_power = A_norm  # Start with A^1
         for i in range(1, self.num_terms + 1):
-            Y = Y + torch.bmm(A_power, X) @ self.H[i]  # pyright: ignore[reportConstantRedefinition]  # math notation
+            Y = Y + torch.bmm(A_power, X) @ self.H[i]
             if i < self.num_terms:
                 A_power = torch.bmm(A_power, A_norm)  # A^{i+1}
 
-        Y = self.layer_norm(Y)  # pyright: ignore[reportConstantRedefinition]  # math notation
-        Y = self.activation(Y)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        Y = self.layer_norm(Y)
+        Y = self.activation(Y)
         return Y

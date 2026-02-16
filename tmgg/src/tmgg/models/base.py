@@ -12,25 +12,18 @@ class BaseModel(nn.Module, ABC):
 
     @abstractmethod
     def get_config(self) -> dict[str, Any]:
-        """
-        Get model configuration for logging/saving.
-
-        Returns:
-            Dictionary containing model hyperparameters
-        """
+        """Return model hyperparameters for logging and serialization."""
         pass
 
     def parameter_count(self) -> dict[str, Any]:
-        """
-        Count trainable parameters in this module and its children.
+        """Count trainable parameters in this module and its children.
 
-        Returns a hierarchical dictionary with:
-        - "total": Total trainable parameters in this module and all children
-        - "self": Parameters directly owned by this module (not in children)
-        - Child module counts with their names as keys
-
-        Returns:
-            Dictionary with parameter counts
+        Returns
+        -------
+        dict[str, Any]
+            Hierarchical counts: ``"total"`` for the full module,
+            ``"self"`` for parameters not in children, and one entry
+            per named child module.
         """
         counts: dict[str, Any] = {"total": 0, "self": 0}
 
@@ -65,7 +58,6 @@ class DenoisingModel(BaseModel, ABC):
     """Abstract base class for graph denoising models."""
 
     def __init__(self):
-        """Initialize denoising model."""
         super().__init__()
 
     def transform_for_loss(
@@ -147,7 +139,7 @@ class DenoisingModel(BaseModel, ABC):
         elif A.ndim == 3:
             # Batch case: zero diagonal for each matrix
             mask = torch.eye(A.shape[-1], device=A.device, dtype=torch.bool)
-            A = A.masked_fill(mask.unsqueeze(0), 0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            A = A.masked_fill(mask.unsqueeze(0), 0)
             return A
         else:
             return A
@@ -177,13 +169,16 @@ class EmbeddingModel(BaseModel, ABC):
 
     @abstractmethod
     def forward(self, A: torch.Tensor) -> torch.Tensor | tuple[torch.Tensor, ...]:
-        """
-        Forward pass for embedding generation.
+        """Compute node embeddings from an adjacency matrix.
 
-        Args:
-            A: Adjacency matrix tensor
+        Parameters
+        ----------
+        A : torch.Tensor
+            Adjacency matrix, shape ``(N, N)`` or ``(B, N, N)``.
 
-        Returns:
-            Node embeddings tensor or tuple of embedding tensors
+        Returns
+        -------
+        torch.Tensor or tuple[torch.Tensor, ...]
+            Node embeddings or tuple of embedding tensors.
         """
         pass

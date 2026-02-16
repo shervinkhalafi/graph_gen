@@ -90,12 +90,17 @@ class DigressNoiseGenerator(NoiseGenerator):
 
 
 class RotationNoiseGenerator(NoiseGenerator):
-    """
-    Rotation noise generator with skew matrix management.
+    """Rotation noise generator with skew matrix management.
 
-    This generator maintains a skew-symmetric matrix that is used to
-    rotate eigenvectors, providing a consistent rotation throughout
-    the experiment.
+    Maintains a skew-symmetric matrix used to rotate eigenvectors,
+    providing a consistent rotation throughout the experiment.
+
+    Notes
+    -----
+    The skew matrix dimension is fixed at construction and must match
+    the input graph size exactly. Variable-size graphs or padded batches
+    will raise ``AssertionError``. Create separate generators for each
+    graph size, or use ``GaussianNoiseGenerator`` for variable-size inputs.
     """
 
     def __init__(self, k: int, seed: int | None = None):

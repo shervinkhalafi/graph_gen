@@ -110,18 +110,18 @@ class EigenEmbedding(nn.Module):
         if self.eigenvalue_reg > 0:
             n = A.shape[-1]
             eye = torch.eye(n, device=A.device, dtype=A.dtype)
-            A = A + self.eigenvalue_reg * eye  # pyright: ignore[reportConstantRedefinition]  # math notation
+            A = A + self.eigenvalue_reg * eye
 
-        eigenvectors = []
-        for i in range(A.shape[0]):
-            try:
-                # Enforce symmetry before eigh: floating-point operations can
-                # introduce small asymmetries, and eigh silently uses only the
-                # lower triangle, which can cause inconsistent results
-                A_sym = (A[i] + A[i].T) / 2
-                _, V = torch.linalg.eigh(A_sym)
-                eigenvectors.append(V)
-            except torch._C._LinAlgError as e:  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
-                # Propagate with debugging context
-                raise EigenDecompositionError(i, A[i], e) from e
-        return torch.stack(eigenvectors, dim=0)
+        # Enforce symmetry on entire batch at once
+        A_sym = (A + A.transpose(-1, -2)) / 2
+        try:
+            _, V = torch.linalg.eigh(A_sym)
+        except torch._C._LinAlgError as e:  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            # Fall back to per-sample to identify which sample failed
+            for i in range(A.shape[0]):
+                try:
+                    torch.linalg.eigh(A_sym[i])
+                except torch._C._LinAlgError:  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+                    raise EigenDecompositionError(i, A[i], e) from e
+            raise  # shouldn't reach here, but propagate if batch eigh failed
+        return V

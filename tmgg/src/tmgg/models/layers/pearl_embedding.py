@@ -126,7 +126,7 @@ class PEARLEmbedding(nn.Module):
         """
         unbatched = A.ndim == 2
         if unbatched:
-            A = A.unsqueeze(0)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            A = A.unsqueeze(0)
 
         batch_size, n, _ = A.shape
         device = A.device
@@ -136,11 +136,11 @@ class PEARLEmbedding(nn.Module):
         if self.mode == "random":
             # R-PEARL: random features, fixed per forward (deterministic in eval)
             if self.training:
-                X = torch.randn(batch_size, n, self.input_samples, device=device)  # pyright: ignore[reportConstantRedefinition]  # math notation
+                X = torch.randn(batch_size, n, self.input_samples, device=device)
             else:
                 # Use fixed random seed for reproducibility in eval
                 generator = torch.Generator(device=device).manual_seed(42)
-                X = torch.randn(  # pyright: ignore[reportConstantRedefinition]  # math notation
+                X = torch.randn(
                     batch_size,
                     n,
                     self.input_samples,
@@ -150,11 +150,11 @@ class PEARLEmbedding(nn.Module):
         else:
             # B-PEARL: standard basis vectors (one-hot up to max_nodes)
             # Each node i gets one-hot vector e_i
-            X = torch.eye(self.max_nodes, device=device, dtype=dtype)[:n, :]  # pyright: ignore[reportConstantRedefinition]  # math notation
-            X = X.unsqueeze(0).expand(batch_size, -1, -1)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            X = torch.eye(self.max_nodes, device=device, dtype=dtype)[:n, :]
+            X = X.unsqueeze(0).expand(batch_size, -1, -1)
 
         # Convert to float for linear layers
-        X = X.to(dtype=torch.float32)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        X = X.to(dtype=torch.float32)
 
         # Normalize adjacency for message passing
         A_norm = self._normalize_adjacency(A.to(dtype=torch.float32))
@@ -164,11 +164,11 @@ class PEARLEmbedding(nn.Module):
             # Aggregate neighbor features
             H = torch.bmm(A_norm, X)  # (batch, n, in_dim)
             # Transform
-            H = layer(H)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            H = layer(H)
             # Normalize
-            H = norm(H)  # pyright: ignore[reportConstantRedefinition]  # math notation
+            H = norm(H)
             # Residual if dimensions match
-            X = X + H if H.shape == X.shape else H  # pyright: ignore[reportConstantRedefinition]  # math notation
+            X = X + H if H.shape == X.shape else H
 
         # Output projection
         embeddings = self.out_proj(X)

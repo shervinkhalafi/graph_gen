@@ -236,9 +236,9 @@ def evaluate_checkpoint(
     """
     checkpoint_path = Path(checkpoint_path)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Evaluating: {checkpoint_path.name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Load model
     print("\nLoading model...")
@@ -292,13 +292,13 @@ def evaluate_checkpoint(
     }
 
     # Print results
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("MMD Results")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Degree MMD:     {mmd_results.degree_mmd:.6f}")
     print(f"  Clustering MMD: {mmd_results.clustering_mmd:.6f}")
     print(f"  Spectral MMD:   {mmd_results.spectral_mmd:.6f}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     return results
 

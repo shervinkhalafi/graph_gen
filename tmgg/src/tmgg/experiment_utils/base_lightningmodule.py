@@ -12,7 +12,6 @@ import matplotlib.figure
 import numpy as np
 import pytorch_lightning as pl
 import torch
-import torch as pt
 import torch.nn as nn
 from pytorch_lightning.loggers import Logger
 
@@ -59,34 +58,46 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         log_rotation_angles: bool = False,
         **kwargs,
     ):
-        """
-        Initialize the Lightning module.
+        """Initialize the denoising Lightning module.
 
-        Args:
-            dropout: Dropout probability
-            bias: Whether to use bias in linear layers
-            learning_rate: Learning rate for optimizer
-            weight_decay: Weight decay (L2 regularization) coefficient for AdamW
-            optimizer_type: Optimizer to use ("adam" or "adamw")
-            loss_type: Loss function type ("MSE" or "BCE")
-            scheduler_config: Optional scheduler configuration. Supports:
-                - type: "cosine", "cosine_warmup", or "step"
-                - T_warmup: Warmup steps (for cosine_warmup)
-                - T_0, T_mult: CosineAnnealingWarmRestarts params
-                - step_size, gamma: StepLR params
-            eval_noise_levels: List of noise levels for evaluation. If None, uses
-                the datamodule's noise_levels (same as training).
-            noise_type: Type of noise to use ("Gaussian", "Rotation", "Digress")
-            rotation_k: Dimension for rotation noise skew matrix (number of eigenvectors)
-            seed: Random seed for reproducible noise generation
-            visualization_interval: Steps between logging visualizations (default: 5000)
-            spectral_k: Number of top eigenvectors for subspace comparison in spectral
-                delta metrics. Only used when log_spectral_deltas=True.
-            log_spectral_deltas: If True, compute and log spectral delta metrics during
-                validation/test. Tracks eigengap delta, algebraic connectivity delta,
-                eigenvalue drift, and subspace distance for noisy→clean and denoised→clean.
-            log_rotation_angles: If True (and log_spectral_deltas=True), also compute
-                Procrustes rotation angle and residual metrics.
+        Parameters
+        ----------
+        dropout : float
+            Dropout probability.
+        bias : bool
+            Whether to use bias in linear layers.
+        learning_rate : float
+            Learning rate for optimizer.
+        weight_decay : float
+            Weight decay (L2 regularization) coefficient for AdamW.
+        optimizer_type : str
+            Optimizer to use (``"adam"`` or ``"adamw"``).
+        loss_type : str
+            Loss function type (``"MSE"`` or ``"BCEWithLogits"``).
+        scheduler_config : dict or None
+            Optional scheduler configuration with keys ``type``
+            (``"cosine"``, ``"cosine_warmup"``, ``"step"``),
+            ``T_warmup``, ``T_0``, ``T_mult``, ``step_size``, ``gamma``.
+        eval_noise_levels : list[float] or None
+            Noise levels for evaluation. Falls back to the datamodule's
+            ``noise_levels`` when None.
+        noise_type : str
+            Noise type (``"gaussian"``, ``"rotation"``, ``"digress"``).
+        rotation_k : int
+            Dimension for rotation noise skew matrix.
+        seed : int or None
+            Random seed for reproducible noise generation.
+        visualization_interval : int
+            Global steps between visualization logging.
+        spectral_k : int
+            Number of top eigenvectors for spectral delta metrics.
+            Only used when *log_spectral_deltas* is True.
+        log_spectral_deltas : bool
+            If True, compute eigengap delta, algebraic connectivity delta,
+            eigenvalue drift, and subspace distance during validation/test.
+        log_rotation_angles : bool
+            If True (and *log_spectral_deltas* is True), also compute
+            Procrustes rotation angle and residual metrics.
         """
         super().__init__()
         self.save_hyperparameters()
@@ -223,9 +234,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
 
     @abstractmethod
     def _make_model(self, *args: Any, **kwargs: Any) -> DenoisingModel:  # pyright: ignore[reportExplicitAny]
-        """
-        Instantiate the model based on the config
-        """
+        """Create and return the denoising model for this experiment."""
         pass
 
     @override
@@ -440,8 +449,8 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         )
         for metric_name, value in batch_metrics_mean.items():
             self.log(f"{mode}/{metric_name}", value, on_step=False, on_epoch=True)
-        mode_loss_mean_tensor: pt.Tensor = torch.tensor(mode_loss_mean)
-        batch_metrics_mean_dict: dict[str, pt.Tensor] = {
+        mode_loss_mean_tensor: torch.Tensor = torch.tensor(mode_loss_mean)
+        batch_metrics_mean_dict: dict[str, torch.Tensor] = {
             k: torch.tensor(v) for k, v in batch_metrics_mean.items()
         }
         return {f"{mode}_loss": mode_loss_mean_tensor, **batch_metrics_mean_dict}
@@ -510,32 +519,12 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
 
     @override
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> dict[str, torch.Tensor]:
-        """
-        Test step.
-
-        Args:
-            batch: Batch of adjacency matrices
-            batch_idx: Batch index
-
-        Returns:
-            Dictionary of test metrics
-        """
         return self._val_or_test(mode="test", batch=batch)
 
     @override
     def validation_step(
         self, batch: torch.Tensor, batch_idx: int
     ) -> dict[str, torch.Tensor]:
-        """
-        Validation step.
-
-        Args:
-            batch: Batch of adjacency matrices
-            batch_idx: Batch index
-
-        Returns:
-            Dictionary of validation metrics
-        """
         return self._val_or_test(mode="val", batch=batch)
 
     @override
@@ -550,11 +539,12 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
         _ = self._log_visualizations("test")
 
     def _log_visualizations(self, stage: str) -> None:
-        """
-        Log visualizations to configured loggers.
+        """Log denoising visualizations to configured loggers.
 
-        Args:
-            stage: Stage name ("val" or "test")
+        Parameters
+        ----------
+        stage : str
+            Either ``"val"`` or ``"test"``.
         """
         trainer = self.trainer
         if not self.logger or trainer is None or trainer.sanity_checking:

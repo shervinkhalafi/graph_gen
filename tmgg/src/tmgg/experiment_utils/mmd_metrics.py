@@ -15,14 +15,11 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from itertools import combinations
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import networkx as nx
 import numpy as np
 import torch
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass
@@ -97,6 +94,8 @@ def compute_degree_histogram(
         return np.array([1.0])
 
     max_d = max_degree if max_degree is not None else max(degrees)
+    # density=True with unit-width bins produces a PMF (sums to 1),
+    # consistent with the manual normalization in compute_spectral_histogram.
     hist, _ = np.histogram(degrees, bins=np.arange(0, max_d + 2), density=True)
     return hist
 

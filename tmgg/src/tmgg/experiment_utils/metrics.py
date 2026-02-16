@@ -1,4 +1,8 @@
-"""Evaluation metrics for graph denoising experiments."""
+"""Evaluation metrics for graph denoising experiments.
+
+Per-sample eigsh is intentional: scipy.sparse.linalg.eigsh doesn't
+support batched input. For evaluation-time metrics this is acceptable.
+"""
 
 import numpy as np
 import torch
