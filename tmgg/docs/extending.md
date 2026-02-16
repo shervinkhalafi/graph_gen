@@ -10,6 +10,8 @@ Create a new file in `src/tmgg/models/` inheriting from `DenoisingModel`:
 
 ```python
 # src/tmgg/models/mymodels/my_model.py
+from typing import Any
+
 import torch
 import torch.nn as nn
 from tmgg.models.base import DenoisingModel
@@ -21,9 +23,8 @@ class MyModel(DenoisingModel):
         self,
         hidden_dim: int,
         num_layers: int,
-        domain: str = "standard",
     ):
-        super().__init__(domain=domain)
+        super().__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
 
@@ -32,35 +33,34 @@ class MyModel(DenoisingModel):
             nn.Linear(hidden_dim, hidden_dim)
             for _ in range(num_layers)
         ])
-        self.output = nn.Linear(hidden_dim, hidden_dim)
+        self.output_layer = nn.Linear(hidden_dim, hidden_dim)
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, t: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Forward pass.
+
+        Parameters
+        ----------
+        x
+            Noisy adjacency matrix of shape (batch, n, n).
+        t
+            Diffusion timestep tensor, or None for unconditional denoising.
+
+        Returns
+        -------
+        torch.Tensor
+            Raw logits (unbounded). Use predict() for binary predictions.
         """
-        Forward pass.
-
-        Args:
-            A: Adjacency matrix (batch, n, n)
-
-        Returns:
-            Reconstructed adjacency (batch, n, n)
-        """
-        # Apply input domain transformation
-        x = self._apply_domain_transform(A)
-
-        # Process
         for layer in self.layers:
             x = torch.relu(layer(x))
-        x = self.output(x)
+        return self.output_layer(x)
 
-        # Apply output domain transformation
-        return self._apply_output_transform(x)
-
-    def get_config(self) -> dict:
+    def get_config(self) -> dict[str, Any]:
         """Return model configuration."""
         return {
             "hidden_dim": self.hidden_dim,
             "num_layers": self.num_layers,
-            "domain": self.domain,
         }
 ```
 
@@ -80,13 +80,11 @@ class MyLightningModule(DenoisingLightningModule):
         self,
         hidden_dim: int,
         num_layers: int,
-        domain: str = "standard",
         **kwargs,
     ) -> MyModel:
         return MyModel(
             hidden_dim=hidden_dim,
             num_layers=num_layers,
-            domain=domain,
         )
 ```
 
@@ -131,7 +129,6 @@ _target_: tmgg.experiments.my_experiment.lightning_module.MyLightningModule
 
 hidden_dim: 64
 num_layers: 4
-domain: "standard"
 
 learning_rate: 0.001
 loss_type: "MSE"
@@ -384,27 +381,25 @@ class MyCloudRunner(CloudRunner):
 
 ### Step 2: Register the Runner
 
-In `src/tmgg/experiment_utils/cloud/factory.py`:
+Export your runner from `src/tmgg/experiment_utils/cloud/__init__.py` so it can be imported directly:
 
 ```python
-def _try_register_my_cloud() -> None:
-    try:
-        from .my_runner import MyCloudRunner
-        CloudRunnerFactory.register("mycloud", MyCloudRunner)
-    except ImportError:
-        pass
+# In src/tmgg/experiment_utils/cloud/__init__.py
+from tmgg.experiment_utils.cloud.my_runner import MyCloudRunner
 
-# Call during module initialization
-_try_register_my_cloud()
+__all__ = [
+    # ... existing exports ...
+    "MyCloudRunner",
+]
 ```
 
-Or register at runtime:
+Then use it:
 
 ```python
-from tmgg.experiment_utils.cloud import CloudRunnerFactory
-from my_package import MyCloudRunner
+from tmgg.experiment_utils.cloud import MyCloudRunner
 
-CloudRunnerFactory.register("mycloud", MyCloudRunner)
+runner = MyCloudRunner(api_key="...")
+result = runner.run_experiment(config)
 ```
 
 ## Testing Your Extensions
@@ -424,13 +419,14 @@ class TestMyModel:
         output = model(x)
         assert output.shape == (4, 20, 20)
 
-    def test_output_range(self):
+    def test_predict_binary(self):
         model = MyModel(hidden_dim=20, num_layers=2)
         model.eval()
         x = torch.randn(4, 20, 20)
-        output = model(x)
-        # In eval mode with standard domain, output is sigmoid
-        assert torch.all(output >= 0) and torch.all(output <= 1)
+        logits = model(x)
+        # predict() converts raw logits to binary {0, 1} predictions
+        preds = model.predict(logits)
+        assert torch.all((preds == 0) | (preds == 1))
 ```
 
 Run tests:

@@ -40,7 +40,7 @@ STAGE2_ARCHITECTURES = [
 
 STAGE2_DATASETS = [
     "data/sbm_default",
-    # "data/sbm_n100",  # Uncomment when config exists
+    "data/sbm_n100",
 ]
 
 STAGE2_DEFAULT_HYPERPARAMETERS = {
@@ -104,7 +104,7 @@ def generate_stage2_configs(
                     overrides.append(f"seed={seed}")
 
                     # Compose config with Hydra (resolves all defaults and interpolations)
-                    config = compose_config("base_config_spectral", overrides)
+                    config = compose_config("base_config_spectral_arch", overrides)
 
                     # Generate run ID
                     arch_name = arch.split("/")[-1]

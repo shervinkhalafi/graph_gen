@@ -49,9 +49,11 @@ class GraphConvolutionLayer(nn.Module):
         A_norm = torch.bmm(torch.bmm(D_inv_sqrt_mat, A), D_inv_sqrt_mat)
 
         Y_hat = X @ self.H[0]
+        A_power = A_norm
         for i in range(1, self.num_terms + 1):
-            A_power_i = torch.matrix_power(A_norm, i)
-            Y_hat += torch.bmm(A_power_i, X) @ self.H[i]
+            Y_hat = Y_hat + torch.bmm(A_power, X) @ self.H[i]
+            if i < self.num_terms:
+                A_power = torch.bmm(A_power, A_norm)
         Y_hat = self.layer_norm(Y_hat)
         Y_hat = self.activation(Y_hat)
         return Y_hat

@@ -38,7 +38,10 @@ class PlaceHolder:
         else:
             self.X = self.X * x_mask  # pyright: ignore[reportConstantRedefinition]  # math notation
             self.E = self.E * e_mask1 * e_mask2  # pyright: ignore[reportConstantRedefinition]  # math notation
-            _ = torch.allclose(self.E, torch.transpose(self.E, 1, 2))
+            assert torch.allclose(self.E, torch.transpose(self.E, 1, 2)), (
+                f"Edge features E must be symmetric after masking. "
+                f"Max asymmetry: {(self.E - torch.transpose(self.E, 1, 2)).abs().max().item():.2e}"
+            )
         return self
 
 
@@ -120,9 +123,30 @@ def cosine_beta_schedule_discrete(
 
 
 def custom_beta_schedule_discrete(
-    timesteps: int, average_num_nodes: int = 50, s: float = 0.008
+    timesteps: int,
+    average_num_nodes: int = 50,
+    s: float = 0.008,
+    num_edge_classes: int = 2,
 ) -> NDArray[np.floating[Any]]:
-    """Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ."""
+    """Cosine beta schedule with edge-class-dependent floor.
+
+    Uses the schedule from https://openreview.net/forum?id=-NEXDKk8gZ with a
+    minimum beta that depends on the number of edge classes K. The stationary
+    probability of a non-null edge type is ``p = 1 - 1/K``, which sets the
+    floor so that early steps produce ~1.2 edge updates per graph.
+
+    Parameters
+    ----------
+    timesteps : int
+        Number of diffusion steps (must be >= 100).
+    average_num_nodes : int
+        Mean graph size, used to estimate the number of edges.
+    s : float
+        Offset for the cosine schedule.
+    num_edge_classes : int
+        Number of categorical edge classes K. For binary (edge/no-edge)
+        graphs K=2 gives p=1/2; for molecular datasets K=5 gives p=4/5.
+    """
     steps = timesteps + 2
     x = np.linspace(0, steps, steps)
 
@@ -134,7 +158,7 @@ def custom_beta_schedule_discrete(
     if not timesteps >= 100:
         raise AssertionError(f"timesteps must be >= 100, got {timesteps}")
 
-    p = 4 / 5  # 1 - 1 / num_edge_classes
+    p = 1 - 1 / num_edge_classes
     num_edges = average_num_nodes * (average_num_nodes - 1) / 2
 
     # First 100 steps: only a few updates per graph
@@ -250,7 +274,7 @@ def sample_feature_noise(
 ) -> PlaceHolder:
     """Standard normal noise for all features.
     Output size: X.size(), E.size(), y.size()"""
-    # TODO: How to change this for the multi-gpu case?
+    # Device placement handled by .type_as() below — works under DDP.
     epsX = sample_gaussian(X_size)
     epsE = sample_gaussian(E_size)
     epsy = sample_gaussian(y_size)
@@ -282,7 +306,7 @@ def sample_normal(
     node_mask: torch.Tensor,
 ) -> PlaceHolder:
     """Samples from a Normal distribution."""
-    # TODO: change for multi-gpu case
+    # Device placement handled by .type_as() — works under DDP.
     eps = sample_feature_noise(
         mu_X.size(), mu_E.size(), mu_y.size(), node_mask
     ).type_as(mu_X)

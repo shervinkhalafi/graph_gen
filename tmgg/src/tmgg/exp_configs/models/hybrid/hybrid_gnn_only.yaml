@@ -4,7 +4,7 @@
 defaults:
   - /base/lightning_base
 
-_target_: tmgg.experiments.hybrid_denoising.lightning_module.HybridDenoisingLightningModule
+_target_: tmgg.experiments.gnn_transformer_denoising.lightning_module.HybridDenoisingLightningModule
 
 model_type: hybrid_gnn
 
@@ -29,3 +29,7 @@ learning_rate: ${learning_rate}
 loss_type: ${loss_type}
 weight_decay: ${weight_decay}
 optimizer_type: ${optimizer_type}
+
+# Eval/noise propagation
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}

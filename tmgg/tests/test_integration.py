@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 from tmgg.experiment_utils.data import (
     PermutedAdjacencyDataset,
-    add_digress_noise,
+    add_edge_flip_noise,
     add_gaussian_noise,
     add_rotation_noise,
     compute_eigendecomposition,
@@ -68,7 +68,7 @@ class TestEndToEndTraining:
             epoch_loss = 0.0
             for batch in dataloader:
                 # Add noise
-                batch_noisy = add_digress_noise(batch, p=0.1)
+                batch_noisy = add_edge_flip_noise(batch, p=0.1)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
@@ -98,7 +98,7 @@ class TestEndToEndTraining:
         _ = model.eval()
         with torch.no_grad():
             test_batch = adjacency_matrices[0].unsqueeze(0)
-            test_noisy = add_digress_noise(test_batch, p=0.1)
+            test_noisy = add_edge_flip_noise(test_batch, p=0.1)
 
             logits = model(test_noisy.float())
             A_pred = torch.sigmoid(logits)
@@ -260,7 +260,7 @@ class TestEndToEndTraining:
                 eps: float = np.random.choice(noise_levels)
 
                 # Add noise
-                batch_noisy = add_digress_noise(batch, p=eps)
+                batch_noisy = add_edge_flip_noise(batch, p=eps)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
@@ -282,7 +282,7 @@ class TestEndToEndTraining:
             test_batch = dataloader.dataset[0].unsqueeze(0)
 
             for eps in noise_levels:
-                test_noisy = add_digress_noise(test_batch, p=eps)
+                test_noisy = add_edge_flip_noise(test_batch, p=eps)
                 logits = model(test_noisy.float())
                 A_pred = torch.sigmoid(logits)
 
@@ -354,7 +354,7 @@ class TestEndToEndTraining:
         _ = model.float()
 
         batch = next(iter(dataloader))
-        batch_noisy = add_digress_noise(batch, p=0.1).float()
+        batch_noisy = add_edge_flip_noise(batch, p=0.1).float()
         batch = batch.float()
 
         logits = model(batch_noisy)
@@ -398,7 +398,7 @@ class TestEndToEndTraining:
         _ = model.float()
 
         batch = next(iter(dataloader))
-        batch_noisy = add_digress_noise(batch, p=0.1).float()
+        batch_noisy = add_edge_flip_noise(batch, p=0.1).float()
         batch = batch.float()
 
         output = model(batch_noisy)

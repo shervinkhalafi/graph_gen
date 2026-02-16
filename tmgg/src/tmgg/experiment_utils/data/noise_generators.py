@@ -11,6 +11,7 @@ import torch
 
 from .noise import (
     add_digress_noise,
+    add_edge_flip_noise,
     add_gaussian_noise,
     add_logit_noise,
     add_rotation_noise,
@@ -53,12 +54,35 @@ class GaussianNoiseGenerator(NoiseGenerator):
         return False
 
 
-class DigressNoiseGenerator(NoiseGenerator):
-    """Digress (edge flipping) noise generator (stateless)."""
+class EdgeFlipNoiseGenerator(NoiseGenerator):
+    """Symmetric Bernoulli edge-flip noise generator (stateless)."""
 
     def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
-        """Add digress noise by flipping edges with probability eps."""
-        return add_digress_noise(A, eps)
+        """Flip edges with probability eps."""
+        return add_edge_flip_noise(A, eps)
+
+    @property
+    def requires_state(self) -> bool:
+        return False
+
+
+class DigressNoiseGenerator(NoiseGenerator):
+    """DiGress categorical noise generator (Vignac et al. 2023).
+
+    Implements the forward diffusion process from DiGress for binary
+    adjacency matrices. The eps parameter from the NoiseGenerator interface
+    is converted to alpha_bar = 1 - eps before applying noise:
+    - eps=0 -> alpha_bar=1 -> no noise (clean)
+    - eps=1 -> alpha_bar=0 -> fully random (uniform)
+
+    At a given eps, this produces half the flip rate of EdgeFlipNoiseGenerator,
+    because DiGress models noise as a categorical transition where the maximum
+    flip probability (at alpha_bar=0) is 0.5, not 1.0.
+    """
+
+    def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
+        alpha_bar = 1.0 - eps
+        return add_digress_noise(A, alpha_bar=alpha_bar)
 
     @property
     def requires_state(self) -> bool:
@@ -97,6 +121,10 @@ class RotationNoiseGenerator(NoiseGenerator):
 
     def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
         """Add rotation noise by rotating eigenvectors."""
+        assert A.shape[-1] == self.skew.shape[0], (
+            f"Graph dimension {A.shape[-1]} != skew matrix dimension {self.skew.shape[0]}. "
+            f"RotationNoiseGenerator was created with k={self.skew.shape[0]}."
+        )
         return add_rotation_noise(A, eps, self.skew)
 
     @property
@@ -167,7 +195,7 @@ def create_noise_generator(
     Factory function to create noise generators.
 
     Args:
-        noise_type: Type of noise ("gaussian", "digress", "rotation", or "logit")
+        noise_type: Type of noise ("gaussian", "edge_flip", "digress", "rotation", or "logit")
         rotation_k: Dimension for rotation noise skew matrix
         seed: Random seed for reproducible noise generation
         **kwargs: Additional arguments (for future extensibility)
@@ -183,6 +211,8 @@ def create_noise_generator(
 
     if noise_type == "gaussian":
         return GaussianNoiseGenerator()
+    elif noise_type == "edge_flip":
+        return EdgeFlipNoiseGenerator()
     elif noise_type == "digress":
         return DigressNoiseGenerator()
     elif noise_type == "rotation":

@@ -6,7 +6,7 @@
 
 ## Summary
 
-19 out of 108 Stage 1 experiments appeared to be missing from `graph_denoise_team/spectral_denoising`. Investigation revealed all 19 runs completed successfully but logged to `igorkraw/spectral_denoising` instead due to entity routing issues during the original batch launch.
+19 out of 108 Stage 1 experiments appeared to be missing from `graph_denoise_team/spectral_arch_denoising`. Investigation revealed all 19 runs completed successfully but logged to `igorkraw/spectral_arch_denoising` instead due to entity routing issues during the original batch launch.
 
 ## Affected Configurations
 
@@ -35,7 +35,7 @@ stage1_self_attention_lr1e-4_wd1e-2_k8_s{1,2}
 ## Reproduction
 
 1. Generate configs: `uv run python src/tmgg/modal/cli/generate_configs.py --stage stage1`
-2. Launch all: `doppler run -- uv run python src/tmgg/modal/cli/launch_sweep.py --config-dir configs/stage1/2026-01-05 --gpu debug --wandb-entity graph_denoise_team --wandb-project spectral_denoising`
+2. Launch all: `doppler run -- uv run python src/tmgg/modal/cli/launch_sweep.py --config-dir configs/stage1/2026-01-05 --gpu debug --wandb-entity graph_denoise_team --wandb-project spectral_arch_denoising`
 3. After completion, compare config count vs W&B run count
 
 ## Investigation Steps
@@ -87,13 +87,13 @@ fc-01KE6XT3DFJ7YT3K3STNM80EXX  stage1_self_attention_lr1e-4_wd1e-2_k8_s2
 
 ### Root Cause: Entity Routing Race Condition
 
-The 19 runs were NOT missing - they completed successfully but logged to the wrong W&B entity. All runs exist in `igorkraw/spectral_denoising` instead of `graph_denoise_team/spectral_denoising`.
+The 19 runs were NOT missing - they completed successfully but logged to the wrong W&B entity. All runs exist in `igorkraw/spectral_arch_denoising` instead of `graph_denoise_team/spectral_arch_denoising`.
 
 **Why this happened**: During the original batch launch of 108 experiments, some runs started before `_wandb_config` injection completed, causing them to fall back to the WANDB_API_KEY owner's default entity.
 
 ### Verification via W&B API (2026-01-05 15:30 CET)
 
-All 19 runs confirmed present in `igorkraw/spectral_denoising` with `state: finished`:
+All 19 runs confirmed present in `igorkraw/spectral_arch_denoising` with `state: finished`:
 
 | Category | Expected | Found | Status |
 |----------|----------|-------|--------|
@@ -107,8 +107,8 @@ All 19 runs confirmed present in `igorkraw/spectral_denoising` with `state: fini
 ### Data Location
 
 For analysis, use runs from BOTH projects:
-- **Primary**: `graph_denoise_team/spectral_denoising` (89 runs)
-- **Secondary**: `igorkraw/spectral_denoising` (19 runs from original batch)
+- **Primary**: `graph_denoise_team/spectral_arch_denoising` (89 runs)
+- **Secondary**: `igorkraw/spectral_arch_denoising` (19 runs from original batch)
 
 ### Prevention
 

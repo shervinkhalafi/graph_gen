@@ -1,0 +1,23 @@
+# Base configuration for baseline denoising experiments (linear, MLP)
+#
+# Inherits shared training settings from base_config_training.yaml
+#
+# Run with: uv run tmgg-baseline
+# Override: uv run tmgg-baseline model=baselines/mlp model.hidden_dim=512
+
+defaults:
+  - base_config_training
+  - models/baselines/linear@model
+  - _self_
+
+experiment_name: "baseline_denoising"
+wandb_project: architecture-study
+
+# Override model parameters with data config values
+model:
+  noise_type: ${data.noise_type}
+  noise_levels: ${data.noise_levels}
+  seed: ${seed}
+  # Spectral delta logging (from base_config_training)
+  log_spectral_deltas: ${log_spectral_deltas}
+  spectral_k: ${spectral_k}

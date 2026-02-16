@@ -1,5 +1,7 @@
 #!/usr/bin/env python
-"""Debug script for running experiments with constant noise level.
+"""Standalone diagnostic tool -- not part of the main experiment pipeline.
+
+Debug script for running experiments with constant noise level.
 
 This script helps diagnose why models might be stuck at 0.5 output by:
 1. Using a single constant noise level (eliminating variance)

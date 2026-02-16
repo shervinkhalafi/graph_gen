@@ -27,7 +27,7 @@ try:
 
     _tmgg_path = discover_tmgg_path()
     eigenstructure_image = create_tmgg_image(_tmgg_path)
-except Exception:
+except (ImportError, RuntimeError):
     eigenstructure_image = None
 
 

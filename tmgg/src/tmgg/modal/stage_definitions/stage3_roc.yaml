@@ -3,7 +3,7 @@
 # to fill the missing digress comparison for this dataset.
 
 name: stage3_roc
-base_config: base_config_spectral
+base_config: base_config_spectral_arch
 
 architectures:
   # Spectral variants

@@ -17,6 +17,8 @@ import torch
 
 from tmgg.experiment_utils.eigenstructure_study.laplacian import compute_laplacian
 
+_EPS = 1e-10  # numerical stability for relative metrics
+
 
 def compute_spectral_deltas(
     A_clean: torch.Tensor,
@@ -74,12 +76,12 @@ def compute_spectral_deltas(
     # 1. Eigengap delta (relative)
     gap_clean = eig_clean[:, -1] - eig_clean[:, -2]
     gap_other = eig_other[:, -1] - eig_other[:, -2]
-    eigengap_delta = (gap_other - gap_clean) / (gap_clean.abs() + 1e-10)
+    eigengap_delta = (gap_other - gap_clean) / (gap_clean.abs() + _EPS)
 
     # 2. Algebraic connectivity delta (relative)
     alg_conn_clean = lap_eig_clean[:, 1]
     alg_conn_other = lap_eig_other[:, 1]
-    alg_conn_delta = (alg_conn_other - alg_conn_clean) / (alg_conn_clean.abs() + 1e-10)
+    alg_conn_delta = (alg_conn_other - alg_conn_clean) / (alg_conn_clean.abs() + _EPS)
 
     # 3. Eigenvalue drift (relative L2)
     eig_diff = torch.norm(eig_other - eig_clean, dim=-1)

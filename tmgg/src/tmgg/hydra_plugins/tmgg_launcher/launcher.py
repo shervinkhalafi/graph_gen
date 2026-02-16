@@ -1,7 +1,7 @@
 """Custom Hydra launcher that dispatches to CloudRunner backends.
 
 Replaces the hacky sys.argv injection pattern with proper Hydra integration.
-Supports local, Modal, and Ray execution backends.
+Supports local and Modal execution backends.
 """
 
 from collections.abc import Sequence
@@ -18,7 +18,7 @@ from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult, Loca
 class TmggLauncher(Launcher):
     """Custom Hydra launcher for TMGG experiments.
 
-    Dispatches jobs to CloudRunner backends (LocalRunner, ModalRunner, RayRunner)
+    Dispatches jobs to CloudRunner backends (LocalRunner, ModalRunner)
     based on configuration. Converts between Hydra's job paradigm and CloudRunner's
     experiment interface.
     """
@@ -120,10 +120,6 @@ class TmggLauncher(Launcher):
         if launcher_cfg.get("use_modal", False):
             gpu_type = launcher_cfg.get("gpu_type", "debug")
             return self._create_modal_runner(gpu_type=gpu_type)
-        elif launcher_cfg.get("use_ray", False):
-            return self._create_ray_runner()
-        elif launcher_cfg.get("use_slurm", False):
-            return self._create_slurm_runner(launcher_cfg)
         else:
             return self._create_local_runner()
 
@@ -234,41 +230,3 @@ class TmggLauncher(Launcher):
         from tmgg.modal.runner import ModalRunner
 
         return ModalRunner(gpu_type=gpu_type)
-
-    def _create_ray_runner(self) -> CloudRunner:
-        """Create RayRunner instance.
-
-        Returns
-        -------
-        CloudRunner
-            Configured RayRunner.
-        """
-        from tmgg.experiment_utils.cloud.ray_runner import RayRunner
-
-        return RayRunner()
-
-    def _create_slurm_runner(self, launcher_cfg: dict[str, Any]) -> CloudRunner:
-        """Create SlurmRunner instance.
-
-        Parameters
-        ----------
-        launcher_cfg
-            Launcher configuration with SLURM-specific settings.
-
-        Returns
-        -------
-        CloudRunner
-            Configured SlurmRunner.
-        """
-        from tmgg.experiment_utils.cloud.slurm_runner import SlurmConfig, SlurmRunner
-
-        slurm_config = SlurmConfig(
-            partition=launcher_cfg.get("slurm_partition", "gpu"),
-            nodes=launcher_cfg.get("slurm_nodes", 1),
-            cpus_per_task=launcher_cfg.get("slurm_cpus_per_task", 4),
-            gpus_per_task=launcher_cfg.get("slurm_gpus_per_task", 1),
-            time_limit=launcher_cfg.get("slurm_time_limit", "04:00:00"),
-            mem_per_cpu=launcher_cfg.get("slurm_mem_per_cpu", "4GB"),
-            setup_commands=launcher_cfg.get("slurm_setup_commands", []),
-        )
-        return SlurmRunner(slurm_config=slurm_config)

@@ -287,6 +287,66 @@ class TestMMDMetrics:
         assert len(d) == 3  # Only three metrics now
 
 
+class TestMMDFromAdjacenciesPrecedenceBug:
+    """Regression tests for operator precedence bug in compute_mmd_from_adjacencies.
+
+    Bug: the original condition used ``isinstance(x, Tensor) or isinstance(x, ndarray)
+    and x.ndim == 3``. Because ``and`` binds tighter than ``or`` in Python, this
+    parsed as ``isinstance(x, Tensor) or (isinstance(x, ndarray) and x.ndim == 3)``,
+    so a 2D torch.Tensor would bypass the ``ndim == 3`` check and enter the
+    batch-splitting branch, causing an IndexError on shape[0] iteration.
+
+    The fix uses ``isinstance(x, Tensor | ndarray) and x.ndim == 3`` to ensure
+    *both* types are checked for 3D shape before batch-splitting.
+    """
+
+    def test_2d_torch_tensor_treated_as_list(self):
+        """A 2D torch.Tensor (single adjacency) should take the list branch, not batch-split.
+
+        Before the fix, a 2D tensor would enter the ``for i in range(shape[0])``
+        branch, slicing rows instead of treating the matrix as one graph.
+        """
+        A = torch.tensor([[0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=torch.float32)
+        # Wrap in list since compute_mmd_from_adjacencies expects a collection
+        results = compute_mmd_from_adjacencies([A], [A])
+        assert isinstance(results, MMDResults)
+        # Identical inputs → MMD should be inf (< 2 samples) or zero
+        # With only 1 sample each, MMD returns inf
+        assert results.degree_mmd == float("inf")
+
+    def test_2d_numpy_array_treated_as_list(self):
+        """A 2D np.ndarray (single adjacency) should take the list branch, not batch-split."""
+        A = np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=np.float64)
+        results = compute_mmd_from_adjacencies([A], [A])
+        assert isinstance(results, MMDResults)
+        assert results.degree_mmd == float("inf")
+
+    def test_3d_torch_tensor_batch_splits(self):
+        """A 3D torch.Tensor should be batch-split along dim 0."""
+        n, batch = 5, 4
+        A = torch.zeros(batch, n, n)
+        for i in range(batch):
+            # Simple path graph adjacency
+            for j in range(n - 1):
+                A[i, j, j + 1] = 1.0
+                A[i, j + 1, j] = 1.0
+        results = compute_mmd_from_adjacencies(A, A)
+        assert isinstance(results, MMDResults)
+        assert results.degree_mmd == pytest.approx(0.0, abs=0.01)
+
+    def test_3d_numpy_array_batch_splits(self):
+        """A 3D np.ndarray should be batch-split along axis 0."""
+        n, batch = 5, 4
+        A = np.zeros((batch, n, n))
+        for i in range(batch):
+            for j in range(n - 1):
+                A[i, j, j + 1] = 1.0
+                A[i, j + 1, j] = 1.0
+        results = compute_mmd_from_adjacencies(A, A)
+        assert isinstance(results, MMDResults)
+        assert results.degree_mmd == pytest.approx(0.0, abs=0.01)
+
+
 class TestMMDFromAdjacencies:
     """Tests for convenience function with adjacency matrices."""
 

@@ -1,7 +1,7 @@
 # Self-Attention denoiser with query/key projections
 # Â = (V W_Q)(V W_K)^T / √d_k (outputs logits)
 
-_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
 
 model_type: self_attention
 

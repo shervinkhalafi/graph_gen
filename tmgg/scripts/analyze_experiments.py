@@ -38,7 +38,7 @@ PARQUET_FILE = OUTPUT_DIR / "all_runs.parquet"
 
 ENTITY = "graph_denoise_team"
 PROJECTS = [
-    "spectral_denoising",
+    "spectral_arch_denoising",
     "tmgg-stage2_validation",
     "tmgg-stage1_5_crossdata",
     "00_initial_experiment_widening",

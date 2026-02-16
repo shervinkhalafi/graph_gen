@@ -4,7 +4,7 @@
 # Stage 1 findings: linear_pe + lr1e-3 dominates, k=8/16 both good
 
 name: stage2_validation
-base_config: base_config_spectral
+base_config: base_config_spectral_arch
 
 architectures:
   - models/spectral/linear_pe        # Winner from Stage 1

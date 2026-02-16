@@ -24,19 +24,31 @@ class PredefinedNoiseScheduleDiscrete(nn.Module):
         Name of the schedule. One of ``"cosine"`` or ``"custom"``.
     timesteps : int
         Number of diffusion steps.
+    num_edge_classes : int
+        Number of categorical edge classes K, passed to the custom schedule
+        to compute the correct beta floor. Ignored for the cosine schedule.
+        Default is 2 (binary edge/no-edge).
     """
 
     betas: torch.Tensor  # pyright: ignore[reportUninitializedInstanceVariable] — set by register_buffer
     timesteps: int
 
-    def __init__(self, noise_schedule: str, timesteps: int) -> None:
+    def __init__(
+        self,
+        noise_schedule: str,
+        timesteps: int,
+        num_edge_classes: int = 2,
+    ) -> None:
         super().__init__()
         self.timesteps = timesteps
+        self.num_edge_classes = num_edge_classes
 
         if noise_schedule == "cosine":
             betas_np = cosine_beta_schedule_discrete(timesteps)
         elif noise_schedule == "custom":
-            betas_np = custom_beta_schedule_discrete(timesteps)
+            betas_np = custom_beta_schedule_discrete(
+                timesteps, num_edge_classes=num_edge_classes
+            )
         else:
             raise NotImplementedError(f"Unknown noise schedule: {noise_schedule!r}")
 

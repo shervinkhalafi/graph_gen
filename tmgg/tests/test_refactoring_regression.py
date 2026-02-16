@@ -11,7 +11,7 @@ Test rationale:
     - Ensure config composition works throughout refactoring
 
 Invariants:
-    - All stage configs compose with base_config_spectral
+    - All stage configs compose with base_config_spectral_arch
     - All models produce finite outputs
     - Optimizer settings are explicitly documented
 """
@@ -93,7 +93,7 @@ class TestOptimizerConsistency:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         assert cfg.optimizer_type == expected_optimizer, (
             f"Stage {stage_name}: expected optimizer_type={expected_optimizer}, "
@@ -129,7 +129,7 @@ class TestStage2CrossGraphParameter:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         # After refactoring, cross_graph=false should be the default
         # This means same_graph_all_splits should be true
@@ -150,7 +150,7 @@ class TestStage2CrossGraphParameter:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         # With cross_graph=true, same_graph_all_splits should be false
         assert (
@@ -265,7 +265,7 @@ class TestSingleGraphBaseConfig:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         # Required fields from single_graph_base
         required_fields = [
@@ -331,7 +331,7 @@ class TestConfigPrecedence:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            compose(config_name="base_config_spectral", overrides=overrides)
+            compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         GlobalHydra.instance().clear()
 
@@ -344,7 +344,7 @@ class TestConfigPrecedence:
             config_dir=str(exp_config_path),
         ):
             stage_cfg = compose(
-                config_name="base_config_spectral", overrides=overrides_with_stage
+                config_name="base_config_spectral_arch", overrides=overrides_with_stage
             )
             stage_lr = stage_cfg.learning_rate
 
@@ -360,7 +360,7 @@ class TestConfigPrecedence:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         assert (
             cfg.learning_rate == 5e-3

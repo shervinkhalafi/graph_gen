@@ -2,11 +2,11 @@
 
 from typing import Any
 
-import numpy as np
 import torch
-import torch.nn as nn
 
 from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
+from tmgg.experiment_utils.sampling import get_noise_schedule
+from tmgg.models.base import DenoisingModel
 from tmgg.models.digress.transformer_model import GraphTransformer
 
 
@@ -31,8 +31,8 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         amsgrad: bool = False,
         loss_type: str = "MSE",
         scheduler_config: dict[str, Any] | None = None,
-        noise_levels: list[float] | None = None,
-        noise_type: str = "Digress",
+        eval_noise_levels: list[float] | None = None,
+        noise_type: str = "digress",
         rotation_k: int = 20,
         seed: int | None = None,
         # Config-only params (used for experiment naming, not model behavior)
@@ -64,7 +64,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             amsgrad=amsgrad,
             loss_type=loss_type,
             scheduler_config=scheduler_config,
-            noise_levels=noise_levels,
+            eval_noise_levels=eval_noise_levels,
             noise_type=noise_type,
             rotation_k=rotation_k,
             seed=seed,
@@ -73,7 +73,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
 
     # forward() is inherited from base class - model handles eigenvector extraction
 
-    def _make_model(  # pyright: ignore[reportIncompatibleMethodOverride]  # returns DenoisingModel subclass
+    def _make_model(
         self,
         *args: Any,
         n_layers: int = 4,
@@ -83,7 +83,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         k: int = 20,
         use_eigenvectors: bool = False,
         **kwargs: Any,
-    ) -> nn.Module:
+    ) -> DenoisingModel:
         """Create the DiGress GraphTransformer model.
 
         Parameters
@@ -114,7 +114,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             "y": 0,
         }
 
-        return GraphTransformer(
+        model = GraphTransformer(
             n_layers=n_layers,
             input_dims=input_dims,
             hidden_mlp_dims=hidden_mlp_dims,
@@ -123,6 +123,8 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             use_eigenvectors=use_eigenvectors,
             k=k if use_eigenvectors else None,
         )
+        assert isinstance(model, DenoisingModel)
+        return model
 
     def get_model_name(self) -> str:
         """Get the name of the model for visualization purposes."""
@@ -160,16 +162,7 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         self.eval()
         device = next(self.parameters()).device
 
-        # Build noise schedule
-        t = np.linspace(0, 1, num_steps)
-        if noise_schedule == "linear":
-            schedule = t
-        elif noise_schedule == "cosine":
-            schedule = 1 - np.cos(t * np.pi / 2)
-        elif noise_schedule == "quadratic":
-            schedule = t**2
-        else:
-            raise ValueError(f"Unknown noise_schedule: {noise_schedule}")
+        schedule = get_noise_schedule(noise_schedule, num_steps)
 
         # Start from random binary graphs (50% edge probability)
         z_t = (

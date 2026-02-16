@@ -8,7 +8,7 @@ from tmgg.experiment_utils import (
     AdjacencyMatrixDataset,
     GraphDataset,
     PermutedAdjacencyDataset,
-    add_digress_noise,
+    add_edge_flip_noise,
     add_gaussian_noise,
     add_rotation_noise,
     compute_eigendecomposition,
@@ -113,12 +113,12 @@ class TestNoiseGeneration:
         # Check that noise is different for each batch element
         assert not torch.allclose(A_noisy[0], A_noisy[1])
 
-    def test_add_digress_noise(self):
+    def test_add_edge_flip_noise(self):
         """Test digress (edge flipping) noise."""
         A = np.ones((5, 5))
         p = 0.0  # No flipping
 
-        A_noisy = add_digress_noise(A, p)
+        A_noisy = add_edge_flip_noise(A, p)
         eigenvalues, V = compute_eigendecomposition(A_noisy)
 
         assert torch.allclose(A_noisy, torch.ones(5, 5))
@@ -126,7 +126,7 @@ class TestNoiseGeneration:
         # Test with some flipping
         A = np.zeros((5, 5))
         p = 1.0  # Flip all edges (not diagonal)
-        A_noisy = add_digress_noise(A, p)
+        A_noisy = add_edge_flip_noise(A, p)
         eigenvalues, V = compute_eigendecomposition(A_noisy)
 
         # Should flip all off-diagonal elements to 1, diagonal stays 0
@@ -139,7 +139,7 @@ class TestNoiseGeneration:
         torch.manual_seed(0)
         A = np.eye(5)
         p = 0.2
-        A_noisy = add_digress_noise(A, p)
+        A_noisy = add_edge_flip_noise(A, p)
         eigenvalues, V = compute_eigendecomposition(A_noisy)
 
         # Check that some elements are flipped
@@ -152,18 +152,18 @@ class TestNoiseGeneration:
         )
         assert torch.allclose(reconstructed, A_noisy, atol=1e-5)
 
-    def test_add_digress_noise_symmetry(self):
+    def test_add_edge_flip_noise_symmetry(self):
         """Test that digress noise preserves symmetry."""
         # Create symmetric matrix
         A = np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1]], dtype=float)
         p = 0.3
 
-        A_noisy = add_digress_noise(A, p)
+        A_noisy = add_edge_flip_noise(A, p)
 
         # Check symmetry is preserved
         assert torch.allclose(A_noisy, A_noisy.T)
 
-    def test_add_digress_noise_discrete(self):
+    def test_add_edge_flip_noise_discrete(self):
         """Test that digress noise maintains discrete values (0 or 1 only)."""
         # Test various cases
         test_cases = [
@@ -178,7 +178,7 @@ class TestNoiseGeneration:
             A = (A + A.T) / 2
             A = (A > 0.5).astype(float)
 
-            A_noisy = add_digress_noise(A, p)
+            A_noisy = add_edge_flip_noise(A, p)
 
             # Check that all values are either 0 or 1
             unique_values = torch.unique(A_noisy)
@@ -190,6 +190,24 @@ class TestNoiseGeneration:
             assert not torch.any(
                 torch.abs(A_noisy - 0.5) < 1e-6
             ), "Found values close to 0.5"
+
+    def test_add_edge_flip_noise_no_rng_parameter(self):
+        """P2.4 regression: rng parameter was removed from add_edge_flip_noise.
+
+        The function previously accepted an unused ``rng: np.random.Generator``
+        parameter. It now uses only ``torch.rand_like`` for noise sampling,
+        controlled by PyTorch's global random state. A third positional
+        argument should raise TypeError.
+        """
+        import inspect
+
+        sig = inspect.signature(add_edge_flip_noise)
+        param_names = list(sig.parameters.keys())
+        assert param_names == ["A", "p"], f"Expected ['A', 'p'], got {param_names}"
+
+        # Passing a third argument should fail
+        with pytest.raises(TypeError):
+            add_edge_flip_noise(np.eye(5), 0.1, None)  # type: ignore[call-arg]
 
     def test_add_rotation_noise(self):
         """Test rotation noise addition."""
@@ -242,7 +260,7 @@ class TestNoiseGeneration:
         A_gauss = add_gaussian_noise(A_np, 0.1)
         assert isinstance(A_gauss, torch.Tensor)
 
-        A_digress = add_digress_noise(A_np, 0.1)
+        A_digress = add_edge_flip_noise(A_np, 0.1)
         assert isinstance(A_digress, torch.Tensor)
 
         A_rot = add_rotation_noise(A_np, 0.1, random_skew_symmetric_matrix(5))

@@ -1,7 +1,7 @@
 # Multilayer Self-Attention denoiser with transformer blocks
 # V → project → L×(attention + residual + [MLP + residual]) → Q,K → Â
 
-_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
 
 model_type: multilayer_self_attention
 

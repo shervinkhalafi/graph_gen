@@ -4,21 +4,6 @@ This directory contains bash scripts for running graph denoising experiments usi
 
 ## Legacy Replication Scripts
 
-### `tmgg_train_attention.sh` 
-Clean TMGG-based replica of `../denoising/train_attention.sh`. Replicates exact same experimental setup using modern tmgg infrastructure.
-
-**Parameters replicated:**
-- Fixed block sizes: [10, 5, 3, 2]  
-- Noise types: digress, gaussian, rotation
-- Noise level: eps=0.3
-- Model: num_heads=8, num_layers=8
-- Training: 1000 epochs, 128 samples/epoch, batch_size=32, seed=42
-
-**Usage:**
-```bash
-./tmgg_train_attention.sh
-```
-
 ### `tmgg_train_gnn.sh`
 Clean TMGG-based replica of `../denoising/train_gnn.sh`. Replicates exact GNN experimental setup using modern tmgg infrastructure.
 
@@ -47,8 +32,8 @@ Validation script that runs minimal experiments to ensure parameter mapping work
 ### `train_hybrid.sh`
 Runs experiments with hybrid models combining GNN embeddings with transformer denoising.
 
-### `test_noise_generators.sh`
-Quick test script to verify the noise generators are working correctly with reduced epochs for quick validation.
+### `run_grid_search.sh`
+Runs hyperparameter grid search experiments.
 
 ## Key Features
 
@@ -61,7 +46,7 @@ Quick test script to verify the noise generators are working correctly with redu
 
 | Legacy Parameter | TMGG Command |
 |-----------------|---------------|
-| `--model_type MultiLayerAttention --eps 0.3` | `tmgg-attention 'model.noise_levels=[0.3]'` |
+| `--model_type MultiLayerAttention --eps 0.3` | *(attention entry point removed; use `tmgg-spectral` for spectral models)* |
 | `--model_type GNN --num_layers 1` | `tmgg-gnn model.num_layers=1` |
 | `--block_sizes "[10, 5, 3, 2]"` | `data=legacy_match` (built into config) |
 | `--num_epochs 1000 --seed 42` | `trainer.max_epochs=1000 seed=42` |

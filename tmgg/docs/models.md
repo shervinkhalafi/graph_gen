@@ -15,7 +15,7 @@ BaseModel (src/tmgg/models/base.py)
     └── Spectral denoisers (spectral_denoisers/)
 ```
 
-All models inherit from `DenoisingModel`, which provides domain transformations and configuration utilities.
+All models inherit from `DenoisingModel`, which provides configuration utilities and prediction methods.
 
 ## Attention Models
 
@@ -36,7 +36,6 @@ Multi-layer transformer attention for denoising adjacency matrices. Processes th
 | `d_v` | int | None | Value dimension (defaults to d_model // num_heads) |
 | `dropout` | float | 0.0 | Dropout rate |
 | `bias` | bool | True | Use bias in linear layers |
-| `domain` | str | "standard" | Domain transformation |
 
 **Config:** `exp_configs/models/attention/multi_layer_attention.yaml`
 
@@ -72,7 +71,6 @@ Standard graph neural network with polynomial graph convolution filters.
 | `feature_dim_in` | int | 10 | Input feature dimension |
 | `feature_dim_out` | int | 10 | Output feature dimension |
 | `eigenvalue_reg` | float | 0.0 | Eigenvalue regularization |
-| `domain` | str | "standard" | Domain transformation |
 
 **Config:** `exp_configs/models/gnn/standard_gnn.yaml`
 
@@ -171,18 +169,23 @@ Scaled dot-product attention on eigenvector embeddings.
 
 **Formula:**
 ```
-Q = V W_Q,  K = V W_K
-Â = Q K^T / √d_k
+Q = V W_Q,  K = V W_K,  Val = V W_V
+attn = softmax(Q K^T / √d_k)
+H = attn · Val
+A_hat = (H W_out_Q) (H W_out_K)^T / √d_out
 ```
 
-where W_Q, W_K ∈ R^{k×d_k} are learnable projections. The 1/√d_k scaling stabilizes gradients following transformer practice.
+where V ∈ R^{n×k} are eigenvectors, W_Q, W_K, W_V ∈ R^{k×d_k} are learnable
+projections, and W_out_Q, W_out_K ∈ R^{d_k×d_out} reconstruct the adjacency
+from the attended representations.
 
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `k` | int | required | Number of eigenvectors (input dim) |
-| `d_k` | int | 64 | Key/query dimension |
+| `d_k` | int | 64 | Query/key/value dimension |
+| `d_out` | int | None | Readout projection dimension (defaults to `d_k`) |
 
 **Config:** `exp_configs/models/spectral/self_attention.yaml`
 
@@ -209,10 +212,11 @@ Score-based model operating on graph structure. Two variants are used in experim
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `n_layers` | int | 4 | Number of transformer layers |
-| `node_feature_dim` | int | 50 | Node feature dimension |
+| `k` | int | 50 | Number of eigenvectors (input feature dimension) |
 | `use_eigenvectors` | bool | True | Use eigenvector features |
 | `hidden_dims.dx` | int | 128 | Node hidden dimension |
 | `hidden_dims.de` | int | 32 | Edge hidden dimension |
+| `hidden_dims.dy` | int | 128 | Global (graph-level) hidden dimension |
 | `hidden_dims.n_head` | int | 4 | Number of attention heads |
 
 **Config:** `exp_configs/models/digress/digress_sbm_small.yaml`
@@ -221,7 +225,7 @@ Score-based model operating on graph structure. Two variants are used in experim
 
 Simple baselines for comparison.
 
-**Location:** `src/tmgg/experiments/baselines/`
+**Location:** `src/tmgg/experiments/lin_mlp_baseline_denoising/`
 
 ### Linear Baseline
 
@@ -315,27 +319,6 @@ print(f"Final accuracy: {result.final_accuracy}")
 ```
 
 The search starts at ceil(√n) and first searches downward if successful, then upward if needed.
-
-## Domain Transformations
-
-Models support two domain transformations, configured via the `domain` parameter:
-
-### Standard Domain
-
-- Input: Adjacency matrix used directly
-- Output: Sigmoid applied to produce probabilities in [0, 1]
-
-### Inv-Sigmoid Domain
-
-- Input: Logit transform applied (numerically stabilized)
-- Output: In training mode, raw logits are returned for BCEWithLogitsLoss; in eval mode, sigmoid is applied
-
-The inv-sigmoid domain can improve numerical stability for sparse graphs.
-
-```python
-# Using inv-sigmoid domain
-model = GNN(num_layers=2, domain="inv-sigmoid")
-```
 
 ## Eigenvalue Regularization
 

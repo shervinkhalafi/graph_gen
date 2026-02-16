@@ -21,17 +21,17 @@ uv sync --all-extras
 Run your first experiment:
 
 ```bash
-# Attention-based denoising
-uv run tmgg-attention
+# Spectral denoising (main experiment type)
+uv run tmgg-spectral-arch
 
 # GNN-based denoising with custom training steps
 uv run tmgg-gnn trainer.max_steps=50000
 
 # Spectral denoising with specific eigenvector count
-uv run tmgg-spectral model.k=50
+uv run tmgg-spectral-arch model.k=50
 
 # Run with Weights & Biases logging
-uv run tmgg-attention logger=wandb
+uv run tmgg-spectral-arch logger=wandb
 ```
 
 Note: Training is configured in **steps**, not epochs (see [Configuration](docs/configuration.md)).
@@ -101,18 +101,21 @@ modal secret create tigris-credentials \
 
 ```bash
 export WANDB_API_KEY="your-api-key"
-uv run tmgg-attention logger=wandb
+uv run tmgg-spectral-arch logger=wandb
 ```
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `tmgg-attention` | Attention-based denoising |
 | `tmgg-gnn` | GNN-based denoising |
-| `tmgg-hybrid` | GNN + Transformer hybrid |
+| `tmgg-gnn-transformer` | GNN + Transformer hybrid denoising |
 | `tmgg-digress` | DiGress transformer model |
-| `tmgg-spectral` | Spectral positional encoding models |
+| `tmgg-spectral-arch` | Spectral positional encoding denoising |
+| `tmgg-gaussian-gen` | Gaussian diffusion generative |
+| `tmgg-discrete-gen` | Discrete diffusion generative (DiGress) |
+| `tmgg-discrete-eval` | Discrete diffusion evaluation |
+| `tmgg-baseline` | Linear/MLP baseline denoising |
 | `tmgg-experiment` | Unified stage runner (e.g., `+stage=stage1_poc`) |
 | `tmgg-grid-search` | Hyperparameter grid search |
 | `tmgg-wandb-export` | Export W&B metrics to CSV |
@@ -126,14 +129,27 @@ All commands support Hydra overrides:
 
 ```bash
 # Override model parameters
-uv run tmgg-attention model.num_layers=16 model.num_heads=8
+uv run tmgg-spectral-arch model.k=50 model.d_k=128
 
 # Override training steps and learning rate
 uv run tmgg-gnn trainer.max_steps=50000 model.learning_rate=0.001
 
 # Hyperparameter sweep
-uv run tmgg-attention --multirun model.num_layers=4,8,16
+uv run tmgg-spectral-arch --multirun model.k=8,16,32
 ```
+
+### W&B Project Naming
+
+Each CLI command logs to a specific W&B project (when `logger=wandb`). The project name is set in the corresponding base config and can be overridden with `wandb_project=...`.
+
+| CLI Commands | W&B Project | Base Config |
+|-------------|-------------|-------------|
+| `tmgg-gnn`, `tmgg-gnn-transformer`, `tmgg-spectral-arch`, `tmgg-digress`, `tmgg-baseline` | `architecture-study` | `base_config_{gnn,gnn_transformer,spectral_arch,digress,baseline}.yaml` |
+| `tmgg-gaussian-gen` | `diffusion-study` | `base_config_gaussian_diffusion.yaml` |
+| `tmgg-discrete-gen`, `tmgg-discrete-eval` | `discrete-diffusion` | `base_config_discrete_diffusion_generative.yaml` |
+| `tmgg-grid-search` | `tmgg-grid-search-4k` | `grid_search_base.yaml` |
+
+The shared `base_config_training.yaml` defaults to `sandbox`, which individual configs override.
 
 ## Experiment Analysis
 
@@ -177,18 +193,19 @@ See `eigenstructure_results_full/analysis_summary.md` for full analysis and `eig
 tmgg/
 ├── src/tmgg/
 │   ├── models/              # Neural network architectures
-│   │   ├── attention/       # Transformer attention models
 │   │   ├── gnn/             # Graph neural networks
-│   │   ├── hybrid/          # GNN + Transformer combinations
 │   │   ├── layers/          # Shared layers (GCN, MHA, Eigen)
 │   │   ├── embeddings/      # Graph embedding dimension analysis
-│   │   └── spectral_denoisers/
+│   │   ├── spectral_denoisers/
+│   │   └── factory.py       # Registry-based model factory
 │   ├── experiments/         # Experiment runners
-│   │   ├── attention_denoising/
-│   │   ├── gnn_denoising/
-│   │   ├── hybrid_denoising/
+│   │   ├── spectral_arch_denoising/
 │   │   ├── digress_denoising/
-│   │   ├── spectral_denoising/
+│   │   ├── discrete_diffusion_generative/
+│   │   ├── gnn_denoising/
+│   │   ├── gnn_transformer_denoising/
+│   │   ├── gaussian_diffusion_generative/
+│   │   ├── lin_mlp_baseline_denoising/
 │   │   └── stages/          # Multi-stage experiments
 │   ├── experiment_utils/    # Shared infrastructure
 │   │   ├── data/            # Data loading and generation
@@ -237,11 +254,13 @@ For detailed documentation, see the [docs/](docs/) folder:
 
 ## Noise Types
 
-The framework supports three noise models for training and evaluation:
+The framework supports multiple noise models for training and evaluation:
 
 - **Gaussian**: Additive Gaussian noise to adjacency matrices
 - **Rotation**: Eigenspace rotation via skew-symmetric matrices
-- **Digress**: Edge flipping with configurable probability
+- **Digress**: Categorical transition matrices (Vignac et al. 2023), interpolating between identity and uniform distribution
+- **Edge Flip**: Simple Bernoulli edge flipping
+- **Logit**: Gaussian noise in logit space, producing soft adjacency values
 
 ## Testing
 

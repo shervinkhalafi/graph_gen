@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import hydra
 import torch
@@ -25,7 +25,9 @@ def _is_training_complete(checkpoint_path: Path, max_steps: int) -> bool:
     return ckpt.get("global_step", 0) >= max_steps
 
 
-def run_experiment(config: DictConfig) -> dict[str, Any]:
+def run_experiment(
+    config: DictConfig, *, skip_final_eval: bool = False
+) -> dict[str, Any]:
     # Set random seed
     set_seed(config.seed)
 
@@ -69,17 +71,6 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
     # Run sanity check if enabled
     maybe_run_sanity_check(config=config, data_module=data_module, model=model)  # pyright: ignore[reportArgumentType]
 
-    # Log hyperparameters
-    # TODO: I think this might be redundant?
-    if logger:
-        # Handle multiple loggers
-        config_dict = cast(dict[str, Any], OmegaConf.to_container(config, resolve=True))
-        if isinstance(logger, list):
-            for lg in logger:
-                lg.log_hyperparams(config_dict)
-        else:
-            logger.log_hyperparams(config_dict)
-
     # Checkpoint resumption: look for last.ckpt unless force_fresh is set
     ckpt_path = None
     if config.get("force_fresh", False):
@@ -103,22 +94,33 @@ def run_experiment(config: DictConfig) -> dict[str, Any]:
             json.dumps({"tested_at": datetime.now().isoformat()})
         )
 
-    # Get best model path
+    # Final evaluation (denoising experiments only — generative experiments
+    # compute sample-quality metrics during validation instead)
     best_model_path = trainer.checkpoint_callback.best_model_path
 
-    # Load best model for final evaluation
-    if best_model_path:
-        # Ensure test data is set up (may have been skipped if test results existed)
-        data_module.setup("test")
-        eval_noise_levels = config.get("evaluation", {}).get("noise_levels", None)
-        final_eval(
-            model,
-            data_module,
-            logger,
-            trainer,
-            best_model_path,  # pyright: ignore[reportCallIssue]  # eval_noise_levels is optional at runtime
-            eval_noise_levels,
-        )
+    if best_model_path and not skip_final_eval:
+        from tmgg.experiment_utils.data.noise_generators import NoiseGenerator
+
+        if hasattr(model, "noise_generator") and isinstance(
+            model.noise_generator, NoiseGenerator
+        ):
+            data_module.setup("test")
+            eval_noise_levels = config.get("evaluation", {}).get("noise_levels", None)
+
+            final_eval(
+                model,
+                data_module,
+                logger,
+                trainer,
+                best_model_path,  # pyright: ignore[reportCallIssue]  # pyright mis-infers signature through broken __init__ chain
+                noise_generator=model.noise_generator,
+                eval_noise_levels=eval_noise_levels,
+            )
+        else:
+            loguru.info(
+                f"Skipping final_eval: {model.__class__.__name__} has no "
+                f"noise_generator (generative models evaluate during validation)"
+            )
 
     # Sync TensorBoard logs to S3 (if configured)
     if isinstance(logger, list):

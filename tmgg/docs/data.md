@@ -67,7 +67,7 @@ For multi-graph training protocols (Stages 2+). Multiple graphs with train/val/t
 | `batch_size` | int | 100 | Batch size |
 | `val_split` | float | 0.2 | Validation set fraction |
 | `test_split` | float | 0.2 | Test set fraction |
-| `noise_type` | str | "digress" | Noise model (gaussian, rotation, digress) |
+| `noise_type` | str | "digress" | Noise model (gaussian, rotation, digress, edge_flip) |
 | `noise_levels` | list | [0.1] | Noise levels to sample from |
 
 **Usage:**
@@ -77,7 +77,7 @@ from tmgg.experiment_utils.data import GraphDataModule
 
 data_module = GraphDataModule(
     dataset_name="sbm",
-    dataset_config={"num_nodes": 20, "p_intra": 1.0, "q_inter": 0.0},
+    dataset_config={"num_nodes": 20, "p_intra": 1.0, "p_inter": 0.0},
     noise_type="digress",
     noise_levels=[0.05, 0.1, 0.2],
 )
@@ -100,7 +100,7 @@ dataset_name: sbm
 dataset_config:
   num_nodes: 20
   p_intra: 1.0       # Edge probability within blocks
-  q_inter: 0.0       # Edge probability between blocks
+  p_inter: 0.0       # Edge probability between blocks
   min_blocks: 2
   max_blocks: 4
   min_block_size: 2
@@ -266,7 +266,7 @@ tensor = dataset.to_torch()  # Returns torch.Tensor
 
 ## Noise Types
 
-Three noise models are available for training and evaluation.
+Four noise models are available for training and evaluation.
 
 ### Gaussian Noise
 
@@ -291,14 +291,24 @@ skew = random_skew_symmetric_matrix(k=20)  # k = num eigenvectors
 noisy = add_rotation_noise(adjacency, eps=0.1, skew=skew)
 ```
 
-### Digress Noise
+### DiGress Noise (Categorical Transition)
 
-Flips edges with probability proportional to the noise level. Discrete noise model suited for binary adjacency matrices.
+Implements the forward diffusion process from Vignac et al. (2023). For binary adjacency matrices, this applies a categorical transition matrix that interpolates between the identity (no change) and a uniform distribution over edge states. At noise level `eps`, the transition probability is `Q_t = (1 - eps) * I + eps * uniform`, so each edge independently stays the same with probability `(1 - eps/2)` or flips with probability `eps/2`. This produces half the flip rate of simple edge flipping at the same noise level.
 
 ```python
 from tmgg.experiment_utils.data import add_digress_noise
 
-noisy = add_digress_noise(adjacency, p=0.1)  # 10% flip probability
+noisy = add_digress_noise(adjacency, eps=0.1)
+```
+
+### Edge Flip Noise
+
+Simple Bernoulli edge flipping: each edge is independently flipped (0 to 1 or 1 to 0) with probability `eps`. This is the straightforward binary noise model, distinct from the DiGress categorical transition above.
+
+```python
+from tmgg.experiment_utils.data import add_edge_flip_noise
+
+noisy = add_edge_flip_noise(adjacency, eps=0.1)  # 10% flip probability
 ```
 
 ## Configuring Noise
@@ -306,7 +316,7 @@ noisy = add_digress_noise(adjacency, p=0.1)  # 10% flip probability
 In YAML configs:
 
 ```yaml
-noise_type: "digress"  # gaussian, rotation, or digress
+noise_type: "digress"  # gaussian, rotation, digress, or edge_flip
 noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
 ```
 

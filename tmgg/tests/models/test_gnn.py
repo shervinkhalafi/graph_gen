@@ -7,7 +7,6 @@ from tmgg.models import GNN, GNNSymmetric
 from tmgg.models.gnn import NodeVarGNN
 from tmgg.models.layers import (
     EigenEmbedding,
-    GaussianEmbedding,
     GraphConvolutionLayer,
 )
 
@@ -26,20 +25,6 @@ class TestEmbeddings:
         embeddings = embedding(A)
 
         assert embeddings.shape == (batch_size, num_nodes, num_nodes)
-
-    def test_gaussian_embedding(self):
-        """Test GaussianEmbedding."""
-        batch_size = 2
-        num_nodes = 5
-        num_terms = 3
-        num_channels = 10
-
-        embedding = GaussianEmbedding(num_terms, num_channels)
-        A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-
-        embeddings = embedding(A)
-
-        assert embeddings.shape == (batch_size, num_nodes, num_channels)
 
 
 class TestGNNModels:

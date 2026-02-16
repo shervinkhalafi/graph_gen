@@ -1,7 +1,7 @@
 # Graph Filter Bank denoiser with spectral polynomial
 # W = Σ Λ^ℓ H^{(ℓ)}, Â = V W V^T
 
-_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
 
 model_type: filter_bank
 

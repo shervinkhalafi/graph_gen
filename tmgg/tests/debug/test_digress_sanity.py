@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 
 from tmgg.experiment_utils import generate_sbm_adjacency
-from tmgg.experiment_utils.data import add_digress_noise
+from tmgg.experiment_utils.data import add_edge_flip_noise
 from tmgg.models.digress.transformer_model import GraphTransformer
 
 # =============================================================================
@@ -87,7 +87,7 @@ class TestDigressLevel1ConstantNoiseMemorization:
 
         torch.manual_seed(123)
         np.random.seed(123)
-        A_noisy = add_digress_noise(A_clean, p=0.1)
+        A_noisy = add_edge_flip_noise(A_clean, p=0.1)
         return A_noisy, A_clean, request.param
 
     @pytest.mark.xfail(
@@ -183,7 +183,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
         )
 
         for _ in range(2000):
-            A_noisy = add_digress_noise(A_clean, p=0.1)
+            A_noisy = add_edge_flip_noise(A_clean, p=0.1)
             logits = model(A_noisy)
             loss = F.binary_cross_entropy_with_logits(logits, A_clean)
             loss.backward()
@@ -191,7 +191,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
             optimizer.zero_grad()
 
         torch.manual_seed(999)
-        A_noisy_eval = add_digress_noise(A_clean, p=0.1)
+        A_noisy_eval = add_edge_flip_noise(A_clean, p=0.1)
 
         with torch.no_grad():
             logits = model(A_noisy_eval)
@@ -209,7 +209,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
         for _ in range(2000):
-            A_noisy = add_digress_noise(A_clean, p=0.1)
+            A_noisy = add_edge_flip_noise(A_clean, p=0.1)
             logits = model(A_noisy)
             loss = F.binary_cross_entropy_with_logits(logits, A_clean)
             loss.backward()
@@ -217,7 +217,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
             optimizer.zero_grad()
 
         torch.manual_seed(999)
-        A_noisy_eval = add_digress_noise(A_clean, p=0.1)
+        A_noisy_eval = add_edge_flip_noise(A_clean, p=0.1)
 
         with torch.no_grad():
             logits = model(A_noisy_eval)
@@ -245,7 +245,7 @@ class TestDigressSingleStepLearning:
         else:
             A_clean = create_sbm_target(block_sizes=[4, 4, 4, 4], p=0.8, q=0.1, seed=42)
         A_clean = A_clean.expand(4, -1, -1).clone()
-        A_noisy = add_digress_noise(A_clean, p=0.1)
+        A_noisy = add_edge_flip_noise(A_clean, p=0.1)
         return A_noisy, A_clean
 
     @pytest.mark.parametrize(

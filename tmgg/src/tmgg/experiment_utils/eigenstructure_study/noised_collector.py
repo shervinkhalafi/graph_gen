@@ -24,6 +24,8 @@ from .storage import (
     save_decomposition_batch,
 )
 
+_EPS = 1e-10  # numerical stability for relative metrics
+
 
 class NoisedEigenstructureCollector:
     """
@@ -211,11 +213,11 @@ class NoisedAnalysisComparator:
 
             # Relative L2 drift per graph
             adj_diff = torch.norm(noised_adj - orig_adj, dim=-1)
-            adj_norm = torch.norm(orig_adj, dim=-1) + 1e-10
+            adj_norm = torch.norm(orig_adj, dim=-1) + _EPS
             adj_drifts.append(adj_diff / adj_norm)
 
             lap_diff = torch.norm(noised_lap - orig_lap, dim=-1)
-            lap_norm = torch.norm(orig_lap, dim=-1) + 1e-10
+            lap_norm = torch.norm(orig_lap, dim=-1) + _EPS
             lap_drifts.append(lap_diff / lap_norm)
 
         adj_drift = torch.cat(adj_drifts)
@@ -642,11 +644,11 @@ class NoisedAnalysisComparator:
                 / orig_summary["frobenius_norm"]
             )
             trace_delta = (noised_summary["trace"] - orig_summary["trace"]) / (
-                orig_summary["trace"] + 1e-10
+                orig_summary["trace"] + _EPS
             )
             off_diag_delta = (
                 noised_summary["off_diagonal_sum"] - orig_summary["off_diagonal_sum"]
-            ) / (abs(orig_summary["off_diagonal_sum"]) + 1e-10)
+            ) / (abs(orig_summary["off_diagonal_sum"]) + _EPS)
 
             per_level_results.append(
                 {

@@ -18,8 +18,8 @@ import pytest
 import torch
 
 from tmgg.models.spectral_denoisers import (
+    BilinearDenoiser,
     RelaxedShrinkageWrapper,
-    SelfAttentionDenoiser,
     ShrinkageSVDLayer,
     StrictShrinkageWrapper,
 )
@@ -104,7 +104,7 @@ class TestStrictShrinkageWrapper:
     @pytest.fixture
     def inner_model(self):
         """Create inner spectral denoiser."""
-        return SelfAttentionDenoiser(k=8, d_k=32)
+        return BilinearDenoiser(k=8, d_k=32)
 
     @pytest.fixture
     def wrapper(self, inner_model):
@@ -186,7 +186,7 @@ class TestStrictShrinkageWrapper:
         assert config["hidden_dim"] == 64
         assert config["mlp_layers"] == 2
         assert "inner_model" in config
-        assert config["inner_model"]["model_class"] == "SelfAttentionDenoiser"
+        assert config["inner_model"]["model_class"] == "BilinearDenoiser"
 
 
 class TestRelaxedShrinkageWrapper:
@@ -195,7 +195,7 @@ class TestRelaxedShrinkageWrapper:
     @pytest.fixture
     def inner_model(self):
         """Create inner spectral denoiser."""
-        return SelfAttentionDenoiser(k=8, d_k=32)
+        return BilinearDenoiser(k=8, d_k=32)
 
     @pytest.fixture
     def wrapper(self, inner_model):
@@ -272,10 +272,10 @@ class TestInnerModelFeatures:
     """Test get_features() method on spectral denoisers used as inner models."""
 
     def test_self_attention_get_features_shape(self):
-        """Verify SelfAttentionDenoiser.get_features() returns correct shape."""
+        """Verify BilinearDenoiser.get_features() returns correct shape."""
         k = 8
         d_k = 32
-        model = SelfAttentionDenoiser(k=k, d_k=d_k)
+        model = BilinearDenoiser(k=k, d_k=d_k)
 
         n = 20
         A = torch.randn(n, n)
@@ -290,7 +290,7 @@ class TestInnerModelFeatures:
         k = 8
         d_k = 32
         batch_size = 4
-        model = SelfAttentionDenoiser(k=k, d_k=d_k)
+        model = BilinearDenoiser(k=k, d_k=d_k)
 
         n = 20
         A = torch.randn(batch_size, n, n)
@@ -304,7 +304,7 @@ class TestInnerModelFeatures:
         """Verify features depend on learned parameters."""
         k = 8
         d_k = 32
-        model = SelfAttentionDenoiser(k=k, d_k=d_k)
+        model = BilinearDenoiser(k=k, d_k=d_k)
 
         n = 20
         A = torch.randn(n, n)
@@ -327,12 +327,12 @@ class TestAttentionPooling:
 
     def test_attention_aggregation(self):
         """Verify attention aggregation produces different results than mean."""
-        inner = SelfAttentionDenoiser(k=8, d_k=32)
+        inner = BilinearDenoiser(k=8, d_k=32)
         wrapper_mean = StrictShrinkageWrapper(
             inner_model=inner, max_rank=16, aggregation="mean"
         )
         wrapper_attn = StrictShrinkageWrapper(
-            inner_model=SelfAttentionDenoiser(k=8, d_k=32),
+            inner_model=BilinearDenoiser(k=8, d_k=32),
             max_rank=16,
             aggregation="attention",
         )
@@ -347,3 +347,68 @@ class TestAttentionPooling:
 
         assert output_mean.shape == (n, n)
         assert output_attn.shape == (n, n)
+
+
+class TestShrinkageWrapperLogitsToGraph:
+    """Regression tests for ShrinkageWrapper.logits_to_graph threshold (P2.1).
+
+    ShrinkageWrapper.forward() returns adjacency values in [0, 1] after SVD
+    reconstruction and symmetrization, not raw logits. The base DenoisingModel
+    thresholds at 0 (correct for BCE logits), but adjacency values need a 0.5
+    threshold. Without the override, values like 0.3 would incorrectly map to 1.
+    """
+
+    @pytest.fixture
+    def strict_wrapper(self):
+        """Create a StrictShrinkageWrapper instance."""
+        inner = BilinearDenoiser(k=8, d_k=32)
+        return StrictShrinkageWrapper(inner_model=inner, max_rank=16)
+
+    @pytest.fixture
+    def relaxed_wrapper(self):
+        """Create a RelaxedShrinkageWrapper instance."""
+        inner = BilinearDenoiser(k=8, d_k=32)
+        return RelaxedShrinkageWrapper(inner_model=inner, max_rank=16)
+
+    def test_threshold_at_half_not_zero(self, strict_wrapper):
+        """Regression test for P2.1: threshold must be 0.5, not 0.
+
+        Before the fix, logits_to_graph inherited from DenoisingModel and used
+        ``(logits > 0).float()``, which is wrong for adjacency-range outputs:
+        a value of 0.3 would be classified as edge-present (1) when it should
+        be edge-absent (0).
+        """
+        adjacency_output = torch.tensor([[0.3, 0.7], [0.7, 0.3]])
+        result = strict_wrapper.logits_to_graph(adjacency_output)
+        expected = torch.tensor([[0.0, 1.0], [1.0, 0.0]])
+        assert torch.equal(result, expected)
+
+    def test_threshold_boundary_value(self, strict_wrapper):
+        """Values exactly at 0.5 should map to 0 (strict greater-than)."""
+        adjacency_output = torch.tensor([0.5])
+        result = strict_wrapper.logits_to_graph(adjacency_output)
+        assert result.item() == 0.0
+
+    def test_relaxed_wrapper_shares_override(self, relaxed_wrapper):
+        """RelaxedShrinkageWrapper inherits the same 0.5 threshold."""
+        adjacency_output = torch.tensor([[0.3, 0.7], [0.7, 0.3]])
+        result = relaxed_wrapper.logits_to_graph(adjacency_output)
+        expected = torch.tensor([[0.0, 1.0], [1.0, 0.0]])
+        assert torch.equal(result, expected)
+
+    def test_batched_threshold(self, strict_wrapper):
+        """Threshold works correctly on batched input."""
+        adjacency_output = torch.tensor(
+            [
+                [[0.1, 0.9], [0.9, 0.1]],
+                [[0.6, 0.4], [0.4, 0.6]],
+            ]
+        )
+        result = strict_wrapper.logits_to_graph(adjacency_output)
+        expected = torch.tensor(
+            [
+                [[0.0, 1.0], [1.0, 0.0]],
+                [[1.0, 0.0], [0.0, 1.0]],
+            ]
+        )
+        assert torch.equal(result, expected)

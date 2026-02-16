@@ -2,7 +2,7 @@
 # Uses sigmoid gating to enforce S_mod = alpha * S where alpha in [0, 1]
 # Guarantees singular values can only decrease (energy removal)
 
-_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
 
 model_type: self_attention_strict_shrinkage
 

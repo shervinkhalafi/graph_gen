@@ -16,7 +16,7 @@ Invariants:
     - No exception tracebacks in stderr
 
 The CLI runners tested cover all experiment types:
-    - Experiment runners: digress, gnn, hybrid, spectral, grid-search
+    - Experiment runners: digress, gnn, gnn-transformer, spectral-arch, grid-search
     - Unified experiment runner: tmgg-experiment +stage=<stage_name>
 """
 
@@ -35,9 +35,10 @@ from tests.integration_utils import (
 EXPERIMENT_RUNNERS = [
     ("tmgg-digress", "base_config_digress"),
     ("tmgg-gnn", "base_config_gnn"),
-    ("tmgg-hybrid", "base_config_hybrid"),
-    ("tmgg-spectral", "base_config_spectral"),
+    ("tmgg-gnn-transformer", "base_config_gnn_transformer"),
+    ("tmgg-spectral-arch", "base_config_spectral_arch"),
     ("tmgg-grid-search", "grid_search_base"),
+    ("tmgg-discrete-gen", "base_config_discrete_diffusion_generative"),
 ]
 
 # Stage configs tested via unified tmgg-experiment CLI
@@ -94,7 +95,7 @@ class TestUnifiedExperimentRunner:
         """Verify tmgg-experiment with stage override completes training.
 
         The unified CLI uses +stage=<name> to compose stage configs on top
-        of base_config_spectral.
+        of base_config_spectral_arch.
         """
         overrides = get_quick_training_overrides(tmp_path)
         # Ensure single-experiment mode (not sweep)
@@ -126,8 +127,8 @@ class TestRunnerImports:
         from tmgg.experiments import grid_search_runner
         from tmgg.experiments.digress_denoising import runner as digress
         from tmgg.experiments.gnn_denoising import runner as gnn
-        from tmgg.experiments.hybrid_denoising import runner as hybrid
-        from tmgg.experiments.spectral_denoising import runner as spectral
+        from tmgg.experiments.gnn_transformer_denoising import runner as hybrid
+        from tmgg.experiments.spectral_arch_denoising import runner as spectral
 
         # Verify each has a main function
         assert callable(digress.main)

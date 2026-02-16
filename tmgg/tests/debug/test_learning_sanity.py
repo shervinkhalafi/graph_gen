@@ -35,7 +35,7 @@ import torch
 import torch.nn.functional as F
 
 from tmgg.experiment_utils import generate_sbm_adjacency
-from tmgg.experiment_utils.data import add_digress_noise
+from tmgg.experiment_utils.data import add_edge_flip_noise
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
@@ -144,7 +144,7 @@ class TestLevel1ConstantNoiseMemorization:
         # CRITICAL: Fixed seed for noise - same noise every call
         torch.manual_seed(123)
         np.random.seed(123)
-        A_noisy = add_digress_noise(A_clean, p=0.1)
+        A_noisy = add_edge_flip_noise(A_clean, p=0.1)
 
         return A_noisy, A_clean, str(request.param)
 
@@ -273,7 +273,7 @@ class TestLevel2FreshNoiseGeneralization:
 
         # Train with FRESH noise each step
         for _ in range(2000):
-            A_noisy = add_digress_noise(A_clean, p=0.1)
+            A_noisy = add_edge_flip_noise(A_clean, p=0.1)
             logits = model(A_noisy)
             loss = F.binary_cross_entropy_with_logits(logits, A_clean)
             loss.backward()
@@ -282,7 +282,7 @@ class TestLevel2FreshNoiseGeneralization:
 
         # Evaluate on FRESH noise (different from any training noise)
         torch.manual_seed(999)  # Different seed for evaluation
-        A_noisy_eval = add_digress_noise(A_clean, p=0.1)
+        A_noisy_eval = add_edge_flip_noise(A_clean, p=0.1)
 
         with torch.no_grad():
             logits = model(A_noisy_eval)
@@ -318,7 +318,7 @@ class TestSingleStepLearning:
         A_clean = create_block_diagonal_target(n=32, num_blocks=4)
         # Expand to batch
         A_clean = A_clean.expand(4, -1, -1).clone()
-        A_noisy = add_digress_noise(A_clean, p=0.1)
+        A_noisy = add_edge_flip_noise(A_clean, p=0.1)
         return A_noisy, A_clean
 
     @pytest.mark.parametrize(
@@ -366,7 +366,7 @@ class TestLossDecreasesCurve:
         torch.manual_seed(123)
         A_clean = create_block_diagonal_target(n=16, num_blocks=4)
         A_clean = A_clean.expand(8, -1, -1).clone()
-        A_noisy = add_digress_noise(A_clean, p=0.1)
+        A_noisy = add_edge_flip_noise(A_clean, p=0.1)
         return A_noisy, A_clean
 
     @pytest.mark.parametrize(

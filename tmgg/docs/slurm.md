@@ -1,5 +1,7 @@
 # SLURM Execution
 
+> **Note:** Slurm execution is not currently maintained. The primary cloud backend is Modal. See [Cloud](cloud.md).
+
 TMGG supports execution on SLURM-managed HPC clusters using Ray's distributed computing capabilities. This document explains the architecture, configuration, and troubleshooting.
 
 ## Architecture

@@ -70,12 +70,15 @@ class GraphDataModule(pl.LightningDataModule):
     pin_memory: bool
     val_split: float
     test_split: float
+    seed: int
     noise_levels: list[float]
     train_adjacency_matrices: list[torch.Tensor] | None
     val_adjacency_matrices: list[torch.Tensor] | None
     test_adjacency_matrices: list[torch.Tensor] | None
     all_partitions: list[list[int]] | None
     train_partitions: list[list[int]]
+    _rng: random.Random
+    _np_rng: np.random.Generator
 
     def __init__(
         self,
@@ -89,23 +92,40 @@ class GraphDataModule(pl.LightningDataModule):
         val_split: float = 0.2,
         test_split: float = 0.2,
         noise_levels: list[float] | None = None,
+        seed: int = 42,
         **kwargs: Any,
     ):
         """
         Initialize the GraphDataModule.
 
-        Args:
-            dataset_name: Name of the dataset to use (e.g., "sbm", "classical").
-            dataset_config: Dictionary of parameters for the chosen dataset.
-            num_samples_per_graph: Number of samples (permutations) per graph for training.
-            val_samples_per_graph: Number of samples per graph for validation/test.
-                Defaults to num_samples_per_graph // 2 if not specified.
-            batch_size: Batch size for data loaders.
-            num_workers: Number of worker processes for data loading.
-            pin_memory: Whether to pin memory for faster GPU transfer.
-            val_split: Fraction of data to use for validation (for non-SBM datasets).
-            test_split: Fraction of data to use for testing (for non-SBM datasets).
-            noise_levels: List of noise levels for evaluation.
+        Parameters
+        ----------
+        dataset_name
+            Name of the dataset to use (e.g., "sbm", "classical").
+        dataset_config
+            Dictionary of parameters for the chosen dataset.
+        num_samples_per_graph
+            Number of samples (permutations) per graph for training.
+        val_samples_per_graph
+            Number of samples per graph for validation/test.
+            Defaults to ``num_samples_per_graph // 2`` if not specified.
+        batch_size
+            Batch size for data loaders.
+        num_workers
+            Number of worker processes for data loading.
+        pin_memory
+            Whether to pin memory for faster GPU transfer.
+        val_split
+            Fraction of data to use for validation (for non-SBM datasets).
+        test_split
+            Fraction of data to use for testing (for non-SBM datasets).
+        noise_levels
+            List of noise levels for evaluation.
+        seed
+            Random seed for reproducible train/val/test splitting and
+            SBM adjacency generation.  A dedicated ``random.Random`` and
+            ``numpy.random.Generator`` are created from this seed so the
+            module never mutates global random state.
         """
         super().__init__()
         self.save_hyperparameters()
@@ -123,7 +143,12 @@ class GraphDataModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
         self.val_split = val_split
         self.test_split = test_split
+        self.seed = seed
         self.noise_levels = noise_levels or [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
+
+        # Dedicated RNGs so we never touch Python/numpy global random state
+        self._rng = random.Random(self.seed)
+        self._np_rng = np.random.default_rng(self.seed)
 
         self.train_adjacency_matrices = None
         self.val_adjacency_matrices = None
@@ -171,7 +196,7 @@ class GraphDataModule(pl.LightningDataModule):
     def _setup_sbm(self, stage: str | None = None) -> None:
         sbm_params = self.dataset_config
         p_intra: float = sbm_params.get("p_intra", 1.0)
-        q_inter: float = sbm_params.get("q_inter", 0.0)
+        p_inter: float = sbm_params.get("p_inter", 0.0)
 
         # all_partitions must be set by prepare_data() before setup() is called
         if self.all_partitions is None:
@@ -205,7 +230,9 @@ class GraphDataModule(pl.LightningDataModule):
                 train_partitions = all_partitions
             else:
                 # For random partitions, sample different ones
-                train_partitions = random.sample(all_partitions, num_train_partitions)
+                train_partitions = self._rng.sample(
+                    all_partitions, num_train_partitions
+                )
             self.train_partitions = train_partitions  # Save for test set exclusion
 
             if "block_sizes" in sbm_params:
@@ -218,17 +245,19 @@ class GraphDataModule(pl.LightningDataModule):
                 ]
 
             num_val_partitions = min(5, max(1, len(remaining_partitions) // 2))
-            val_partitions = random.sample(remaining_partitions, num_val_partitions)
+            val_partitions = self._rng.sample(remaining_partitions, num_val_partitions)
 
             self.train_adjacency_matrices = [
                 torch.tensor(
-                    generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
+                    generate_sbm_adjacency(p, p_intra, p_inter, rng=self._np_rng),
+                    dtype=torch.float32,
                 )
                 for p in train_partitions
             ]
             self.val_adjacency_matrices = [
                 torch.tensor(
-                    generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
+                    generate_sbm_adjacency(p, p_intra, p_inter, rng=self._np_rng),
+                    dtype=torch.float32,
                 )
                 for p in val_partitions
             ]
@@ -240,13 +269,14 @@ class GraphDataModule(pl.LightningDataModule):
                 test_partitions = all_partitions
             else:
                 # For random partitions, exclude train partitions
-                test_partitions = random.sample(
+                test_partitions = self._rng.sample(
                     [p for p in all_partitions if p not in train_partitions],
                     num_test_partitions,
                 )
             self.test_adjacency_matrices = [
                 torch.tensor(
-                    generate_sbm_adjacency(p, p_intra, q_inter), dtype=torch.float32
+                    generate_sbm_adjacency(p, p_intra, p_inter, rng=self._np_rng),
+                    dtype=torch.float32,
                 )
                 for p in test_partitions
             ]
@@ -267,7 +297,7 @@ class GraphDataModule(pl.LightningDataModule):
                 f"Expected torch.float."
             )
 
-        random.shuffle(all_matrices)
+        self._rng.shuffle(all_matrices)
 
         num_graphs = len(all_matrices)
         num_test = int(self.test_split * num_graphs)
@@ -432,4 +462,4 @@ class GraphDataModule(pl.LightningDataModule):
                 "Please ensure setup() has been called and the dataset is not empty."
             )
 
-        return random.choice(matrices)
+        return self._rng.choice(matrices)

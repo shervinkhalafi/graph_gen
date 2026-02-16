@@ -5,6 +5,7 @@ across distributed runs.
 """
 
 import json
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,6 +21,8 @@ from tmgg.experiment_utils.cloud.base import (
     SpawnedTask,
 )
 from tmgg.experiment_utils.cloud.storage import CloudStorage, LocalStorage
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -273,7 +276,7 @@ class ExperimentCoordinator:
                         config.seed = seed
 
                         # Training settings come from Hydra config inheritance
-                        # (base_config_spectral.yaml -> base/trainer/default.yaml)
+                        # (base_config_spectral_arch.yaml -> base/trainer/default.yaml)
 
                         # Generate deterministic run ID from config signature
                         run_id_parts = [stage.name]
@@ -396,7 +399,7 @@ class ExperimentCoordinator:
         if not self.runner.supports_spawn:
             raise NotImplementedError(
                 f"{self.runner.__class__.__name__} does not support spawn execution. "
-                + "Use run_stage() for blocking execution, or use ModalRunner/RayRunner."
+                + "Use run_stage() for blocking execution, or use ModalRunner."
             )
 
         configs = list(self.generate_configs(stage, base_config))
@@ -446,7 +449,10 @@ class ExperimentCoordinator:
                 try:
                     metrics = self.storage.download_metrics(f"results/{run_id}")
                     status_map[run_id] = metrics.get("status", "completed")
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to load metrics for {run_id}, assuming completed: {e}"
+                    )
                     status_map[run_id] = "completed"
             else:
                 # Not in storage - check runner status
@@ -585,7 +591,10 @@ class ExperimentCoordinator:
                 started_at=data.get("started_at", ""),
                 completed_at=data.get("completed_at", ""),
             )
-        except Exception:
+        except Exception as e:
+            logger.debug(
+                f"No stored stage result for '{stage_name}', returning empty: {e}"
+            )
             return StageResult(stage_name=stage_name)
 
     def _aggregate_results(

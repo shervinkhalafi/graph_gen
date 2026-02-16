@@ -52,6 +52,15 @@ def masked_softmax(
 
     if mask.sum() == 0:
         return torch.zeros_like(x)
+
     x_masked = x.clone()
     x_masked[mask == 0] = -float("inf")
-    return torch.softmax(x_masked, **kwargs)
+    result = torch.softmax(x_masked, **kwargs)
+
+    # Per-row all-masked case: softmax([-inf, ...]) = NaN.
+    # Replace with zeros — no valid targets means zero attention.
+    nan_mask = torch.isnan(result)
+    if nan_mask.any():
+        result = torch.where(nan_mask, torch.zeros_like(result), result)
+
+    return result

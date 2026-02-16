@@ -22,7 +22,7 @@ import pytorch_lightning as pl
 import torch
 from omegaconf import OmegaConf
 
-from tmgg.experiments.spectral_denoising.lightning_module import (
+from tmgg.experiments.spectral_arch_denoising.lightning_module import (
     SpectralDenoisingLightningModule,
 )
 
@@ -225,7 +225,7 @@ class TestTrainingPipeline:
     def test_loss_decreases_during_training(self, minimal_config, tmp_path):
         """Test that loss decreases during training (model learns)."""
         from tmgg.experiment_utils.data.data_module import GraphDataModule
-        from tmgg.experiments.spectral_denoising.lightning_module import (
+        from tmgg.experiments.spectral_arch_denoising.lightning_module import (
             SpectralDenoisingLightningModule,
         )
 
@@ -306,7 +306,7 @@ class TestDataModuleIntegration:
     def test_lightning_module_uses_datamodule_noise_levels(self):
         """Test that Lightning module uses datamodule's noise_levels when attached."""
         from tmgg.experiment_utils.data.data_module import GraphDataModule
-        from tmgg.experiments.spectral_denoising.lightning_module import (
+        from tmgg.experiments.spectral_arch_denoising.lightning_module import (
             SpectralDenoisingLightningModule,
         )
 

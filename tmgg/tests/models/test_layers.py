@@ -2,168 +2,10 @@
 
 import pytest
 import torch
-import torch.nn as nn
 from hypothesis import given
 from hypothesis import strategies as st
 
-from tmgg.models.layers import Etoy, Xtoy, masked_softmax
-
-
-class TestXtoy:
-    """Test Xtoy layer."""
-
-    def test_init(self):
-        """Test initialization."""
-        dx = 16
-        dy = 32
-
-        layer = Xtoy(dx, dy)
-
-        assert isinstance(layer.lin, nn.Linear)
-        assert layer.lin.in_features == 4 * dx
-        assert layer.lin.out_features == dy
-
-    def test_forward_shape(self):
-        """Test forward pass output shape."""
-        batch_size = 4
-        num_nodes = 10
-        dx = 16
-        dy = 32
-
-        layer = Xtoy(dx, dy)
-        X = torch.randn(batch_size, num_nodes, dx)
-
-        output = layer(X)
-
-        assert output.shape == (batch_size, dy)
-
-    def test_aggregation_components(self):
-        """Test that all aggregation components are computed correctly."""
-        batch_size = 2
-        dx = 8
-        dy = 16
-
-        layer = Xtoy(dx, dy)
-
-        # Create specific input to test aggregations
-        X = torch.tensor(
-            [
-                [[1.0] * dx, [2.0] * dx, [3.0] * dx, [4.0] * dx, [5.0] * dx],
-                [[0.0] * dx, [1.0] * dx, [2.0] * dx, [3.0] * dx, [4.0] * dx],
-            ]
-        )
-
-        output = layer(X)
-
-        # Check output shape
-        assert output.shape == (batch_size, dy)
-
-        # Verify the linear layer receives correct sized input
-        expected_mean = X.mean(dim=1)
-        expected_min = X.min(dim=1)[0]
-        expected_max = X.max(dim=1)[0]
-        expected_std = X.std(dim=1)
-
-        assert expected_mean.shape == (batch_size, dx)
-        assert expected_min.shape == (batch_size, dx)
-        assert expected_max.shape == (batch_size, dx)
-        assert expected_std.shape == (batch_size, dx)
-
-    @given(
-        batch_size=st.integers(min_value=1, max_value=10),
-        num_nodes=st.integers(min_value=2, max_value=20),
-        dx=st.integers(min_value=4, max_value=32),
-        dy=st.integers(min_value=4, max_value=32),
-    )
-    def test_property_shapes(self, batch_size, num_nodes, dx, dy):
-        """Property test for shape consistency."""
-        layer = Xtoy(dx, dy)
-        X = torch.randn(batch_size, num_nodes, dx)
-
-        output = layer(X)
-
-        assert output.shape == (batch_size, dy)
-        assert not torch.isnan(output).any()
-        assert not torch.isinf(output).any()
-
-
-class TestEtoy:
-    """Test Etoy layer."""
-
-    def test_init(self):
-        """Test initialization."""
-        de = 16
-        dy = 32
-
-        layer = Etoy(de, dy)
-
-        assert isinstance(layer.lin, nn.Linear)
-        assert layer.lin.in_features == 4 * de
-        assert layer.lin.out_features == dy
-
-    def test_forward_shape(self):
-        """Test forward pass output shape."""
-        batch_size = 4
-        num_nodes = 10
-        de = 16
-        dy = 32
-
-        layer = Etoy(de, dy)
-        E = torch.randn(batch_size, num_nodes, num_nodes, de)
-
-        output = layer(E)
-
-        assert output.shape == (batch_size, dy)
-
-    def test_aggregation_components(self):
-        """Test that all aggregation components are computed correctly."""
-        batch_size = 2
-        num_nodes = 3
-        de = 8
-        dy = 16
-
-        layer = Etoy(de, dy)
-
-        # Create specific input to test aggregations
-        E = torch.zeros(batch_size, num_nodes, num_nodes, de)
-        # Set different values for each edge
-        for b in range(batch_size):
-            for i in range(num_nodes):
-                for j in range(num_nodes):
-                    E[b, i, j] = (b + 1) * (i + 1) * (j + 1)
-
-        output = layer(E)
-
-        # Check output shape
-        assert output.shape == (batch_size, dy)
-
-        # Verify aggregations work correctly
-        expected_mean = E.mean(dim=(1, 2))
-        expected_min = E.min(dim=2)[0].min(dim=1)[0]
-        expected_max = E.max(dim=2)[0].max(dim=1)[0]
-        expected_std = torch.std(E, dim=(1, 2))
-
-        assert expected_mean.shape == (batch_size, de)
-        assert expected_min.shape == (batch_size, de)
-        assert expected_max.shape == (batch_size, de)
-        assert expected_std.shape == (batch_size, de)
-
-    @given(
-        batch_size=st.integers(min_value=1, max_value=8),
-        num_nodes=st.integers(min_value=2, max_value=10),
-        de=st.integers(min_value=4, max_value=32),
-        dy=st.integers(min_value=4, max_value=32),
-    )
-    def test_property_shapes(self, batch_size, num_nodes, de, dy):
-        """Property test for shape consistency."""
-        layer = Etoy(de, dy)
-        E = torch.randn(batch_size, num_nodes, num_nodes, de)
-
-        output = layer(E)
-
-        assert output.shape == (batch_size, dy)
-        assert not torch.isnan(output).any()
-        assert not torch.isinf(output).any()
+from tmgg.models.layers import masked_softmax
 
 
 class TestMaskedSoftmax:
@@ -277,6 +119,60 @@ class TestMaskedSoftmax:
         output = masked_softmax(x, mask, dim=dim)
 
         assert output.shape == x.shape
+
+
+class TestMaskedSoftmaxDigressCopy:
+    """Test the digress/layers.py copy of masked_softmax.
+
+    The DiGress transformer imports masked_softmax from
+    tmgg.models.digress.layers, not tmgg.models.layers. This class
+    verifies that the digress copy also handles per-row NaN correctly
+    (P2.8 fix: softmax([-inf, ...]) = NaN → replaced with zeros).
+    """
+
+    def test_per_row_nan_handling(self) -> None:
+        """Rows where all positions are masked produce zeros, not NaN.
+
+        Starting state: 2-row input where row 0 is fully masked and
+        row 1 has one valid position.
+        Invariant: no NaN in output; fully-masked row is all zeros;
+        valid row sums to 1.
+        """
+        from tmgg.models.digress.layers import masked_softmax as digress_masked_softmax
+
+        x = torch.randn(2, 5)
+        mask = torch.zeros(2, 5)
+        mask[1, 2] = 1  # only row 1, position 2 is valid
+
+        output = digress_masked_softmax(x, mask, dim=-1)
+
+        assert not torch.isnan(output).any(), "NaN found in masked_softmax output"
+        assert torch.all(output[0] == 0), "Fully-masked row should be all zeros"
+        assert output[1, 2] == pytest.approx(
+            1.0
+        ), "Single valid position should get all weight"
+
+    def test_3d_per_row_nan_handling(self) -> None:
+        """Per-row NaN handling works on attention-shaped (bs, n, n) tensors.
+
+        Starting state: (2, 3, 4) attention tensor where batch 0, row 1
+        is fully masked.
+        Invariant: that specific row is zeros; other rows with valid
+        positions sum to 1.
+        """
+        from tmgg.models.digress.layers import masked_softmax as digress_masked_softmax
+
+        x = torch.randn(2, 3, 4)
+        mask = torch.ones(2, 3, 4)
+        mask[0, 1, :] = 0  # fully mask row 1 in batch 0
+
+        output = digress_masked_softmax(x, mask, dim=-1)
+
+        assert not torch.isnan(output).any(), "NaN found in output"
+        assert torch.all(output[0, 1] == 0), "Fully-masked row should be zeros"
+        # Other rows should be valid probability distributions
+        assert torch.allclose(output[0, 0].sum(), torch.tensor(1.0), atol=1e-6)
+        assert torch.allclose(output[1, 0].sum(), torch.tensor(1.0), atol=1e-6)
 
 
 if __name__ == "__main__":

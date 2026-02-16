@@ -41,11 +41,12 @@ Configuration is composed in the following order (later overrides earlier):
 ```
 exp_configs/
 ├── base_config_training.yaml    # Shared training settings (optimizer, scheduler, noise, paths)
-├── base_config_spectral.yaml    # Spectral experiments (inherits from training)
-├── base_config_attention.yaml   # Attention experiments (inherits from training)
-├── base_config_gnn.yaml         # GNN experiments (inherits from training)
-├── base_config_hybrid.yaml      # Hybrid experiments (inherits from training)
-├── base_config_digress.yaml     # DiGress experiments (inherits from training)
+├── base_config_spectral_arch.yaml  # Spectral architecture denoising (inherits from training)
+├── base_config_gnn.yaml            # GNN denoising (inherits from training)
+├── base_config_gnn_transformer.yaml # GNN+Transformer denoising (inherits from training)
+├── base_config_digress.yaml        # DiGress denoising (inherits from training)
+├── base_config_gaussian_diffusion.yaml         # Gaussian diffusion generation (inherits from training)
+├── base_config_discrete_diffusion_generative.yaml # Categorical diffusion generation (inherits from training)
 ├── base_dataloader.yaml         # Shared dataloader settings
 ├── data/                        # Dataset configurations
 │   ├── single_graph_base.yaml   # Base for single-graph datasets

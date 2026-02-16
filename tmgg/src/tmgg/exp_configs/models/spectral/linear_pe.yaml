@@ -1,7 +1,7 @@
 # Linear Positional Encoding denoiser
 # Â = V W V^T + 1 b^T + b 1^T
 
-_target_: tmgg.experiments.spectral_denoising.SpectralDenoisingLightningModule
+_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
 
 model_type: linear_pe
 

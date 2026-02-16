@@ -13,14 +13,13 @@ learning_rate: ${learning_rate}
 loss_type: ${loss_type}
 weight_decay: ${weight_decay}
 optimizer_type: ${optimizer_type}
-scheduler_config:
-  type: "cosine_warmup"
-  warmup_fraction: 0.02
-  decay_fraction: 0.8
+scheduler_config: ${scheduler_config}
 
 # These are overridden by base_config_digress.yaml
 noise_type: ${data.noise_type}
 noise_levels: ${data.noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
 seed: ${seed}
 
 # Model-specific architecture parameters

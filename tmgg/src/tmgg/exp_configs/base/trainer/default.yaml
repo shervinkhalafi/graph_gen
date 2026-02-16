@@ -31,6 +31,10 @@ gradient_clip_val: 1.0
 gradient_clip_algorithm: "norm"
 
 # Reproducibility
+# NOTE: deterministic=false + benchmark=true enables cuDNN autotuning,
+# which is non-deterministic. Same seed may produce slightly different
+# results across runs. For exact reproduction: trainer.deterministic=true
+# trainer.benchmark=false (at the cost of ~10-20% slower training).
 deterministic: false
 benchmark: true
 

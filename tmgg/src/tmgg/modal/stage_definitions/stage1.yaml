@@ -3,7 +3,7 @@
 # Tests Linear PE, Graph Filter + Sigmoid, Self-Attention on SBM n=50
 
 name: stage1_poc
-base_config: base_config_spectral
+base_config: base_config_spectral_arch
 
 architectures:
   - models/spectral/linear_pe

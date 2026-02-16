@@ -7,7 +7,7 @@ This module tests the core training module that handles:
 - Spectral delta logging
 
 Testing Strategy:
-- Create minimal mock model implementing _DenoisingModelProtocol
+- Create minimal mock model subclassing DenoisingModel
 - Create concrete subclass of DenoisingLightningModule for testing
 - Test core functionality without full training loops
 - Mock trainer/datamodule dependencies where needed
@@ -31,40 +31,19 @@ import torch.nn as nn
 
 from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
 from tmgg.experiment_utils.exceptions import ConfigurationError
+from tmgg.models.base import DenoisingModel
 
 
-class MockDenoisingModel(nn.Module):
-    """Minimal model implementing _DenoisingModelProtocol for testing."""
+class MockDenoisingModel(DenoisingModel):
+    """Minimal DenoisingModel subclass for testing."""
 
     def __init__(self, input_size: int = 10):
         super().__init__()
         self.input_size = input_size
         self.linear = nn.Linear(input_size * input_size, input_size * input_size)
 
-    def parameter_count(self) -> dict[str, Any]:
-        return {"total": sum(p.numel() for p in self.parameters())}
-
     def get_config(self) -> dict[str, Any]:
         return {"input_size": self.input_size}
-
-    def transform_for_loss(
-        self, output: torch.Tensor, target: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Identity transform for testing."""
-        return output, target
-
-    def predict(self, logits: torch.Tensor, zero_diag: bool = True) -> torch.Tensor:
-        """Apply sigmoid for predictions."""
-        preds = torch.sigmoid(logits)
-        if zero_diag and preds.dim() >= 2:
-            preds = preds.clone()
-            for i in range(preds.shape[-1]):
-                preds[..., i, i] = 0
-        return preds
-
-    def logits_to_graph(self, logits: torch.Tensor) -> torch.Tensor:
-        """Threshold at 0.5 for binary prediction."""
-        return (torch.sigmoid(logits) > 0.5).float()
 
     def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
         """Simple forward pass (t accepted but unused, matching production models)."""
@@ -95,7 +74,7 @@ class TestDenoisingLightningModuleInit:
         assert module.learning_rate == 0.001
         assert module.weight_decay == 0.0
         assert module.optimizer_type == "adam"
-        assert module.noise_type == "Digress"
+        assert module.noise_type == "digress"
         assert module.visualization_interval == 5000
 
     def test_loss_type_mse(self) -> None:
@@ -377,9 +356,9 @@ class TestSchedulerConfiguration:
             }
         )
 
-        # Mock trainer to avoid "not attached" error
+        # Mock trainer — max_steps must be set since the 10k fallback was removed
         mock_trainer = MagicMock()
-        mock_trainer.max_steps = 0  # Force fallback path
+        mock_trainer.max_steps = 10000
         module._trainer = mock_trainer
 
         result = module.configure_optimizers()
@@ -425,12 +404,35 @@ class TestSchedulerConfiguration:
             }
         )
 
-        # Mock trainer to avoid "not attached" error
+        # Mock trainer — max_steps must be set since the 10k fallback was removed
         mock_trainer = MagicMock()
-        mock_trainer.max_steps = 0
+        mock_trainer.max_steps = 10000
         module._trainer = mock_trainer
 
         with pytest.raises(ValueError, match="T_max.*must be > T_warmup"):
+            module.configure_optimizers()
+
+    def test_cosine_warmup_raises_without_steps_or_datamodule(self) -> None:
+        """cosine_warmup should raise RuntimeError when steps cannot be estimated.
+
+        Rationale: The old code silently fell back to 10,000 steps, which could
+        produce wrong warmup schedules. We now require either max_steps or a
+        datamodule to be available.
+        """
+        module = ConcreteDenoisingModule(
+            scheduler_config={
+                "type": "cosine_warmup",
+                "warmup_fraction": 0.02,
+                "decay_fraction": 0.8,
+            }
+        )
+
+        mock_trainer = MagicMock()
+        mock_trainer.max_steps = 0
+        mock_trainer.datamodule = None
+        module._trainer = mock_trainer
+
+        with pytest.raises(RuntimeError, match="Cannot estimate total training steps"):
             module.configure_optimizers()
 
 

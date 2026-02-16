@@ -89,7 +89,7 @@ uv run pytest -m "integration and slow" -v
 uv run pytest -m "integration and not slow" -v
 
 # Single runner test
-uv run pytest tests/test_runner_integration.py::TestExperimentRunners::test_runner_executes_brief_training[tmgg-spectral-base_config_spectral] -v
+uv run pytest tests/test_runner_integration.py::TestExperimentRunners::test_runner_executes_brief_training[tmgg-spectral-arch-base_config_spectral_arch] -v
 ```
 
 ## Adding New Runners

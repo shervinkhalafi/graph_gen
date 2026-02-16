@@ -1,7 +1,5 @@
 """Evaluation metrics for graph denoising experiments."""
 
-from collections.abc import Callable
-
 import numpy as np
 import torch
 from scipy.sparse.linalg import ArpackError, ArpackNoConvergence, eigsh
@@ -251,70 +249,3 @@ def compute_batch_metrics(
 
     metrics_avg = {key: value / batch_size for key, value in metrics_sum.items()}
     return metrics_avg
-
-
-def evaluate_noise_robustness(
-    model: torch.nn.Module,
-    A_clean: torch.Tensor,
-    noise_levels: list[float],
-    noise_function: Callable[..., torch.Tensor],
-    device: str = "cpu",
-) -> dict[str, list[float]]:
-    """Evaluate model robustness across noise levels.
-
-    Parameters
-    ----------
-    model
-        Trained denoising model with predict() method.
-    A_clean
-        Clean adjacency matrix.
-    noise_levels
-        List of noise levels to test.
-    noise_function
-        Function to add noise: (A, eps) -> A_noisy.
-    device
-        Device for computation.
-
-    Returns
-    -------
-    dict
-        Metrics by noise level.
-    """
-    model.eval()
-
-    metrics_by_noise = {
-        "noise_levels": noise_levels,
-        "mse": [],
-        "eigenvalue_error": [],
-        "subspace_distance": [],
-        "accuracy": [],
-    }
-
-    with torch.no_grad():
-        for eps in noise_levels:
-            A_noisy, _, _ = noise_function(A_clean, eps)
-            A_noisy = A_noisy.to(device)
-            A_clean_tensor = A_clean.to(device)
-
-            if A_noisy.ndim == 2:
-                A_noisy = A_noisy.unsqueeze(0)
-            if A_clean_tensor.ndim == 2:
-                A_clean_tensor = A_clean_tensor.unsqueeze(0)
-
-            logits = model(A_noisy)
-            # Call predict method (exists on denoising models but not typed on Module)
-            predict_fn = getattr(model, "predict")  # noqa: B009
-            A_pred = predict_fn(logits)
-
-            sample_metrics = compute_reconstruction_metrics(A_clean_tensor, A_pred)
-
-            metrics_by_noise["mse"].append(sample_metrics["mse"])
-            metrics_by_noise["eigenvalue_error"].append(
-                sample_metrics["eigenvalue_error"]
-            )
-            metrics_by_noise["subspace_distance"].append(
-                sample_metrics["subspace_distance"]
-            )
-            metrics_by_noise["accuracy"].append(sample_metrics["accuracy"])
-
-    return metrics_by_noise

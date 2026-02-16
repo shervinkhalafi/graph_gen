@@ -13,11 +13,14 @@ LinearPE
 GraphFilterBank
     Spectral polynomial filter: W = Σ Λ^ℓ H^{(ℓ)}
 SelfAttentionDenoiser
-    Scaled dot-product attention: Â = Q K^T / √d_k
-SelfAttentionDenoiserWithMLP
-    Attention with MLP post-processing: Â = MLP(Q K^T / √d_k)
-MultiLayerSelfAttentionDenoiser
-    Stacked transformer blocks on eigenvectors with residual connections
+    Vaswani et al. (2017) self-attention with softmax + value projection,
+    followed by bilinear readout: Â = (attn @ Val) readout
+BilinearDenoiser
+    Scaled bilinear form: Â = Q K^T / √d_k (no softmax, no values)
+BilinearDenoiserWithMLP
+    Bilinear with MLP post-processing: Â = MLP(Q K^T / √d_k)
+MultiLayerBilinearDenoiser
+    Stacked transformer blocks on eigenvectors with bilinear readout
 
 Shrinkage Wrappers (Experimental)
 ---------------------------------
@@ -42,13 +45,14 @@ SpectralDenoiser
 """
 
 from tmgg.models.spectral_denoisers.base_spectral import SpectralDenoiser
+from tmgg.models.spectral_denoisers.bilinear import (
+    BilinearDenoiser,
+    BilinearDenoiserWithMLP,
+    MultiLayerBilinearDenoiser,
+)
 from tmgg.models.spectral_denoisers.filter_bank import GraphFilterBank
 from tmgg.models.spectral_denoisers.linear_pe import LinearPE
-from tmgg.models.spectral_denoisers.self_attention import (
-    MultiLayerSelfAttentionDenoiser,
-    SelfAttentionDenoiser,
-    SelfAttentionDenoiserWithMLP,
-)
+from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
 from tmgg.models.spectral_denoisers.shrinkage_wrapper import (
     RelaxedShrinkageWrapper,
     ShrinkageSVDLayer,
@@ -56,6 +60,10 @@ from tmgg.models.spectral_denoisers.shrinkage_wrapper import (
     StrictShrinkageWrapper,
 )
 from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
+
+# Backward-compat aliases until correct replacements are built
+SelfAttentionDenoiserWithMLP = BilinearDenoiserWithMLP
+MultiLayerSelfAttentionDenoiser = MultiLayerBilinearDenoiser
 
 __all__ = [
     # Base classes
@@ -65,6 +73,9 @@ __all__ = [
     # Models
     "LinearPE",
     "GraphFilterBank",
+    "BilinearDenoiser",
+    "BilinearDenoiserWithMLP",
+    "MultiLayerBilinearDenoiser",
     "SelfAttentionDenoiser",
     "SelfAttentionDenoiserWithMLP",
     "MultiLayerSelfAttentionDenoiser",

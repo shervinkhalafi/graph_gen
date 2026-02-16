@@ -28,8 +28,8 @@ def create_sbm_graphs(
     num_graphs: int,
     num_nodes: int,
     num_blocks: int = 2,
-    p_in: float = 0.7,
-    p_out: float = 0.1,
+    p_intra: float = 0.7,
+    p_inter: float = 0.1,
 ) -> list[torch.Tensor]:
     """Create stochastic block model graphs for testing.
 
@@ -41,9 +41,9 @@ def create_sbm_graphs(
         Number of nodes per graph.
     num_blocks
         Number of community blocks.
-    p_in
+    p_intra
         Edge probability within blocks.
-    p_out
+    p_inter
         Edge probability between blocks.
 
     Returns
@@ -61,7 +61,7 @@ def create_sbm_graphs(
             for j in range(i + 1, num_nodes):
                 block_i = i // block_size
                 block_j = j // block_size
-                p = p_in if block_i == block_j else p_out
+                p = p_intra if block_i == block_j else p_inter
 
                 if torch.rand(1).item() < p:
                     A[i, j] = 1

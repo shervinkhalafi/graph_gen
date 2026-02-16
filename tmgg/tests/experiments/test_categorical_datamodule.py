@@ -11,7 +11,7 @@ import torch
 
 from tmgg.data.batches import CategoricalBatch
 from tmgg.experiment_utils.data.conversions import categorical_to_adjacency
-from tmgg.experiments.discrete_diffusion.datamodule import (
+from tmgg.experiments.discrete_diffusion_generative.datamodule import (
     SyntheticCategoricalDataModule,
 )
 

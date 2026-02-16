@@ -147,7 +147,7 @@ def build_runner_command(
     Parameters
     ----------
     runner
-        Name of the CLI runner (e.g., 'tmgg-spectral').
+        Name of the CLI runner (e.g., 'tmgg-spectral-arch').
     overrides
         List of Hydra override strings.
 

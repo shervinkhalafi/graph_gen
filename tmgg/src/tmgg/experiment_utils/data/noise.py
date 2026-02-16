@@ -73,21 +73,36 @@ def add_rotation_noise(
 
 
 def add_gaussian_noise(A: torch.Tensor | np.ndarray, eps: float) -> torch.Tensor:
-    """
-    Add Gaussian noise to adjacency matrix.
+    """Add symmetric Gaussian noise to adjacency matrix.
 
-    Args:
-        A: Input adjacency matrix
-        eps: Noise level
+    Generates noise for the upper triangle and mirrors it to the lower
+    triangle, matching the symmetrization convention of all other noise
+    types (edge_flip, logit, digress). Diagonal entries receive no noise.
 
-    Returns:
-        Noisy adjacency matrix
+    Parameters
+    ----------
+    A
+        Input adjacency matrix, single (n, n) or batched (batch_size, n, n).
+    eps
+        Noise standard deviation.
+
+    Returns
+    -------
+    torch.Tensor
+        Noisy adjacency matrix with symmetric noise.
     """
-    # Convert to tensor if needed
     A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
 
-    A_noisy = A + eps * torch.randn_like(A)
-    return A_noisy
+    noise = eps * torch.randn_like(A)
+
+    if A.dim() == 2:
+        noise = torch.triu(noise, diagonal=1)
+        noise = noise + noise.T
+    else:
+        noise = torch.triu(noise, diagonal=1)
+        noise = noise + noise.transpose(-2, -1)
+
+    return A + noise
 
 
 def add_logit_noise(
@@ -164,23 +179,68 @@ def add_logit_noise(
 
 def add_digress_noise(
     A: torch.Tensor | np.ndarray,
-    p: float,
-    rng: np.random.Generator | None = None,
+    alpha_bar: float,
 ) -> torch.Tensor:
+    """Apply DiGress-style categorical noise to a binary adjacency matrix.
+
+    Implements the forward process from Vignac et al. (2023) for binary edges
+    (K=2 classes). The transition matrix is:
+
+        Q_bar_t = alpha_bar * I + (1 - alpha_bar) * U
+
+    where U is the 2x2 uniform matrix. For binary edges, each entry flips
+    with probability (1 - alpha_bar) / 2.
+
+    Parameters
+    ----------
+    A
+        Binary adjacency matrix (0s and 1s), single (n, n) or batched
+        (batch_size, n, n).
+    alpha_bar
+        Cumulative noise schedule parameter in [0, 1]. At alpha_bar=1.0,
+        no noise (clean). At alpha_bar=0.0, output is uniform random
+        (fully noisy). Related to the noise schedule by
+        alpha_bar_t = prod_{s=1}^{t} (1 - beta_s).
+
+    Returns
+    -------
+    torch.Tensor
+        Noisy binary adjacency matrix, same shape as input. Symmetric
+        if input was symmetric.
     """
-    Add noise to an adjacency matrix by flipping edges with probability p.
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
 
-    Args:
-        A: Input adjacency matrix (0s and 1s)
-        p: Probability of flipping each element
-        rng: Random number generator (optional)
+    # Flip probability from DiGress transition: (1 - alpha_bar) / 2
+    flip_prob = (1.0 - alpha_bar) / 2.0
 
-    Returns:
-        Noisy adjacency matrix
+    # Delegate to edge-flip noise with the derived probability
+    return add_edge_flip_noise(A, p=flip_prob)
+
+
+def add_edge_flip_noise(
+    A: torch.Tensor | np.ndarray,
+    p: float,
+) -> torch.Tensor:
+    """Flip edges with probability p (symmetric Bernoulli noise).
+
+    Each upper-triangular entry is independently flipped with probability
+    ``p``, then mirrored to the lower triangle to preserve symmetry.
+    Noise is sampled via ``torch.rand_like``, so reproducibility is
+    controlled by PyTorch's global random state (``torch.manual_seed``).
+
+    Parameters
+    ----------
+    A
+        Input adjacency matrix (0s and 1s), single ``(n, n)`` or
+        batched ``(batch_size, n, n)``.
+    p
+        Probability of flipping each edge.
+
+    Returns
+    -------
+    torch.Tensor
+        Noisy adjacency matrix with same shape as input.
     """
-    if rng is None:
-        rng = np.random.default_rng()
-
     # Convert to tensor if needed
     A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
 

@@ -348,7 +348,7 @@ class TestDigressSampleMethod:
 
         module = DigressDenoisingLightningModule(k=8, n_layers=2, noise_levels=[0.1])
 
-        with pytest.raises(ValueError, match="Unknown noise_schedule"):
+        with pytest.raises(ValueError, match="Unknown schedule"):
             module.sample(
                 num_graphs=1, num_nodes=10, num_steps=3, noise_schedule="invalid"
             )
@@ -363,7 +363,7 @@ class TestGenerateReferenceGraphs:
     )
     def test_generates_correct_count_and_shape(self, dataset_type: str) -> None:
         """Generated graphs should have correct count and node dimensions."""
-        from tmgg.experiments.generative.evaluate_checkpoint import (
+        from tmgg.experiments.gaussian_diffusion_generative.evaluate_checkpoint import (
             generate_reference_graphs,
         )
 
@@ -381,7 +381,7 @@ class TestGenerateReferenceGraphs:
     @pytest.mark.parametrize("dataset_type", ["sbm", "erdos_renyi", "regular"])
     def test_graphs_are_valid_adjacency(self, dataset_type: str) -> None:
         """Generated graphs should be binary, symmetric, zero-diagonal."""
-        from tmgg.experiments.generative.evaluate_checkpoint import (
+        from tmgg.experiments.gaussian_diffusion_generative.evaluate_checkpoint import (
             generate_reference_graphs,
         )
 
@@ -402,7 +402,7 @@ class TestGenerateReferenceGraphs:
 
     def test_sbm_parameters_used(self) -> None:
         """SBM-specific parameters should affect generation."""
-        from tmgg.experiments.generative.evaluate_checkpoint import (
+        from tmgg.experiments.gaussian_diffusion_generative.evaluate_checkpoint import (
             generate_reference_graphs,
         )
 
@@ -431,7 +431,7 @@ class TestGenerateReferenceGraphs:
 
     def test_invalid_dataset_type_raises(self) -> None:
         """Unknown dataset type should raise ValueError."""
-        from tmgg.experiments.generative.evaluate_checkpoint import (
+        from tmgg.experiments.gaussian_diffusion_generative.evaluate_checkpoint import (
             generate_reference_graphs,
         )
 

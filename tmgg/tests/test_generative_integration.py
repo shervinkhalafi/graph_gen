@@ -21,8 +21,12 @@ import pytest
 import pytorch_lightning as pl
 import torch
 
-from tmgg.experiments.generative.datamodule import GraphDistributionDataModule
-from tmgg.experiments.generative.lightning_module import GenerativeLightningModule
+from tmgg.experiments.gaussian_diffusion_generative.datamodule import (
+    GraphDistributionDataModule,
+)
+from tmgg.experiments.gaussian_diffusion_generative.lightning_module import (
+    GenerativeLightningModule,
+)
 
 # Dataset configurations for parametrized tests (excludes LFR due to generation complexity)
 DATASET_CONFIGS: dict[str, dict] = {
@@ -63,7 +67,7 @@ class TestGenerativeModuleInstantiation:
 
     def test_invalid_model_type_raises(self) -> None:
         """Unknown model_type should raise ValueError with informative message."""
-        with pytest.raises(ValueError, match="model_type must be one of"):
+        with pytest.raises(ValueError, match="Unknown model_type"):
             GenerativeLightningModule(model_type="invalid_type")
 
 
@@ -171,8 +175,7 @@ class TestGenerativeValidation:
         module, batch = module_and_batch
         with patch.object(module, "log"):
             module.validation_step(batch, batch_idx=0)
-        # Access private attribute to verify accumulation
-        assert len(module._ref_graphs) > 0  # pyright: ignore[reportPrivateUsage]
+        assert module.mmd_evaluator.num_ref_graphs > 0
 
     def test_validation_epoch_end_computes_mmd(
         self, module_and_batch: tuple[GenerativeLightningModule, torch.Tensor]
@@ -290,3 +293,70 @@ class TestGenerativeDataModule:
         # Check zero diagonal
         for i in range(train_data.shape[0]):
             assert torch.all(train_data[i].diagonal() == 0), "Self-loops present"
+
+
+class TestPerElementNoiseLevels:
+    """Regression test for per-element noise levels in training_step.
+
+    Test rationale:
+        Before the fix, training_step averaged per-element noise levels into a
+        single scalar via ``float(noise_levels.mean().item())``, causing the
+        entire batch to receive identical noise. The diffusion objective requires
+        each graph to be corrupted at its own independently sampled timestep,
+        otherwise the model sees a degenerate distribution of noise levels during
+        training (batch-uniform instead of uniform over timesteps).
+
+    Invariants:
+        - Each batch element should be noised with its own eps value.
+        - With distinct eps values, the noisy outputs for different batch
+          elements should differ (unless the clean inputs are identical AND
+          the noise is deterministic, which it isn't for any noise type).
+    """
+
+    def test_training_step_applies_per_element_noise(self) -> None:
+        """Verify that training_step calls add_noise once per batch element
+        with that element's own noise level, rather than a single averaged eps.
+
+        We instrument the noise generator to record each (element_shape, eps) call.
+        With a batch of 4 graphs and a wide noise schedule (100 steps), the recorded
+        eps values should not all be identical.
+        """
+        module = GenerativeLightningModule(
+            model_type="self_attention",
+            model_config={"k": 8},
+            num_diffusion_steps=100,
+        )
+
+        batch = torch.zeros(4, 16, 16)
+        batch[:, :8, :8] = torch.bernoulli(torch.full((4, 8, 8), 0.6))
+        batch = (batch + batch.transpose(-2, -1)) / 2
+        batch = (batch > 0.5).float()
+        batch.diagonal(dim1=-2, dim2=-1).zero_()
+
+        # Wrap the noise generator to record per-call eps values
+        recorded_eps: list[float] = []
+        original_add_noise = module.noise_generator.add_noise
+
+        def recording_add_noise(A: torch.Tensor, eps: float) -> torch.Tensor:
+            recorded_eps.append(eps)
+            return original_add_noise(A, eps)
+
+        module.noise_generator.add_noise = recording_add_noise  # pyright: ignore[reportAttributeAccessIssue]
+
+        # Force distinct timesteps by seeding so they don't all land on one step
+        torch.manual_seed(12345)
+        with patch.object(module, "log"):
+            module.training_step(batch, batch_idx=0)
+
+        # add_noise should be called once per batch element, not once for the batch
+        assert (
+            len(recorded_eps) == 4
+        ), f"Expected 4 add_noise calls (one per element), got {len(recorded_eps)}"
+
+        # With 100 diffusion steps and 4 random draws, the probability of
+        # all 4 landing on the exact same timestep is (1/100)^3 ≈ 1e-6.
+        # A stricter check: at least 2 distinct values.
+        assert len(set(recorded_eps)) >= 2, (
+            f"All eps values are identical ({recorded_eps[0]}), "
+            "noise is still being averaged across the batch"
+        )

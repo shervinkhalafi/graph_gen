@@ -116,7 +116,7 @@ def _run_stage(cfg: DictConfig, stage_name: str) -> dict[str, Any]:
 @hydra.main(
     version_base=None,
     config_path=CONFIG_PATH,
-    config_name="base_config_spectral",
+    config_name="base_config_spectral_arch",
 )
 def main(cfg: DictConfig) -> dict[str, Any]:
     """Unified experiment entry point.

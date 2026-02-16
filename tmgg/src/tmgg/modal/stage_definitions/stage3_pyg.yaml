@@ -3,7 +3,7 @@
 # (enzymes, proteins) to validate generalization beyond synthetic graphs.
 
 name: stage3_pyg
-base_config: base_config_spectral
+base_config: base_config_spectral_arch
 
 architectures:
   # Spectral variants

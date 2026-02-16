@@ -70,7 +70,7 @@ class TestComposeConfig:
         # Override hydra resolver-dependent paths for test context
         # Disable logger to avoid TMGG_S3_BUCKET env var requirement
         cfg = compose_config(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=["paths.output_dir=/tmp/test_output", "~logger"],
         )
 
@@ -102,11 +102,11 @@ class TestComposeConfig:
         """Overriding model config group should load architecture config.
 
         Note: Hydra's compose() with config groups uses the defaults list syntax.
-        The base_config_spectral has `models/spectral/linear_pe@model` in defaults,
+        The base_config_spectral_arch has `models/spectral/linear_pe@model` in defaults,
         and we override it with `model=models/spectral/self_attention`.
         """
         cfg = compose_config(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=[
                 "model=models/spectral/self_attention",
                 "paths.output_dir=/tmp/test_output",
@@ -132,7 +132,7 @@ class TestComposeConfig:
     def test_compose_with_hyperparameter_overrides(self):
         """Hyperparameter overrides should be applied correctly."""
         cfg = compose_config(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=[
                 "learning_rate=1e-5",
                 "weight_decay=1e-2",
@@ -150,15 +150,15 @@ class TestComposeConfig:
         """Multiple compose_config calls should not raise 'already initialized'."""
         # GlobalHydra must be properly cleared between calls
         cfg1 = compose_config(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=["seed=1", "paths.output_dir=/tmp/test_output", "~logger"],
         )
         cfg2 = compose_config(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=["seed=2", "paths.output_dir=/tmp/test_output", "~logger"],
         )
         cfg3 = compose_config(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=["seed=3", "paths.output_dir=/tmp/test_output", "~logger"],
         )
 
@@ -174,7 +174,7 @@ class TestComposeConfig:
     def test_compose_config_as_dict_returns_plain_dict(self):
         """compose_config_as_dict should return plain dict, not DictConfig."""
         cfg_dict = compose_config_as_dict(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=["paths.output_dir=/tmp/test_output", "~logger"],
         )
 
@@ -203,7 +203,7 @@ class TestHydraConfigContext:
 
         # Inside context (uses the context manager)
         cfg = compose_config(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=["paths.output_dir=/tmp/test_output", "~logger"],
         )
         assert cfg is not None
@@ -252,7 +252,7 @@ class TestStageConfigGeneration:
                     overrides.append(f"{key}={value}")
                 overrides.append(f"seed={seed}")
 
-                cfg = compose_config("base_config_spectral", overrides)
+                cfg = compose_config("base_config_spectral_arch", overrides)
                 cfg_dict = OmegaConf.to_container(cfg, resolve=True)
                 assert isinstance(cfg_dict, dict)  # type narrowing for pyright
 
@@ -285,7 +285,7 @@ class TestStageConfigGeneration:
         from omegaconf import OmegaConf
 
         cfg = compose_config(
-            "base_config_spectral",
+            "base_config_spectral_arch",
             overrides=["paths.output_dir=/tmp/test_output", "~logger"],
         )
 

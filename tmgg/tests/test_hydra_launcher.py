@@ -2,7 +2,7 @@
 
 Test rationale:
     The TmggLauncher is a custom Hydra launcher plugin that dispatches jobs to
-    CloudRunner backends (LocalRunner, ModalRunner, RayRunner). These tests verify
+    CloudRunner backends (LocalRunner, ModalRunner). These tests verify
     that the launcher correctly:
     - Initializes with the appropriate runner based on configuration
     - Executes single and multi-run jobs via CloudRunner
@@ -16,10 +16,8 @@ Assumptions:
 
 Invariants:
     - setup() must be called before launch()
-    - LocalRunner is used when use_modal=False, use_ray=False, use_slurm=False
+    - LocalRunner is used when use_modal=False (the default)
     - ModalRunner is used when use_modal=True
-    - RayRunner is used when use_ray=True
-    - SlurmRunner is used when use_slurm=True
     - Each job override sequence produces one ExperimentResult and one JobReturn
 """
 
@@ -44,7 +42,7 @@ class TestTmggLauncherRunnerSelection:
         launcher = TmggLauncher()
         config = OmegaConf.create(
             {
-                "hydra": {"launcher": {"use_modal": False, "use_ray": False}},
+                "hydra": {"launcher": {"use_modal": False}},
             }
         )
 
@@ -85,73 +83,6 @@ class TestTmggLauncherRunnerSelection:
 
         mock_modal.assert_called_once_with(gpu_type="a10g")
 
-    def test_selects_ray_runner_when_configured(self) -> None:
-        """RayRunner is selected when use_ray=True."""
-        from tmgg.hydra_plugins.tmgg_launcher import TmggLauncher
-
-        launcher = TmggLauncher()
-        config = OmegaConf.create(
-            {
-                "hydra": {
-                    "launcher": {
-                        "use_modal": False,
-                        "use_ray": True,
-                    }
-                },
-            }
-        )
-
-        with patch.object(launcher, "_create_ray_runner") as mock_ray:
-            mock_ray.return_value = MagicMock()
-            launcher.setup(
-                hydra_context=MagicMock(),
-                task_function=MagicMock(),
-                config=config,
-            )
-
-        mock_ray.assert_called_once()
-
-    def test_selects_slurm_runner_when_configured(self) -> None:
-        """SlurmRunner is selected when use_slurm=True."""
-        from tmgg.hydra_plugins.tmgg_launcher import TmggLauncher
-
-        launcher = TmggLauncher()
-        config = OmegaConf.create(
-            {
-                "hydra": {
-                    "launcher": {
-                        "use_modal": False,
-                        "use_ray": False,
-                        "use_slurm": True,
-                        "slurm_partition": "gpu",
-                        "slurm_nodes": 4,
-                        "slurm_cpus_per_task": 8,
-                        "slurm_gpus_per_task": 1,
-                        "slurm_time_limit": "08:00:00",
-                        "slurm_mem_per_cpu": "4GB",
-                        "slurm_setup_commands": [],
-                    }
-                },
-            }
-        )
-
-        with patch.object(launcher, "_create_slurm_runner") as mock_slurm:
-            mock_slurm.return_value = MagicMock()
-            launcher.setup(
-                hydra_context=MagicMock(),
-                task_function=MagicMock(),
-                config=config,
-            )
-
-        # Verify _create_slurm_runner was called with the launcher config dict
-        mock_slurm.assert_called_once()
-        call_args = mock_slurm.call_args[0][0]
-        assert call_args["slurm_partition"] == "gpu"
-        assert call_args["slurm_nodes"] == 4
-        assert call_args["slurm_cpus_per_task"] == 8
-        assert call_args["slurm_gpus_per_task"] == 1
-        assert call_args["slurm_time_limit"] == "08:00:00"
-
 
 class TestTmggLauncherJobExecution:
     """Tests for job execution via the launcher."""
@@ -177,7 +108,7 @@ class TestTmggLauncherJobExecution:
         launcher = TmggLauncher()
         config = OmegaConf.create(
             {
-                "hydra": {"launcher": {"use_modal": False, "use_ray": False}},
+                "hydra": {"launcher": {"use_modal": False}},
                 "model": "baseline",
             }
         )
@@ -291,7 +222,7 @@ class TestLauncherErrorHandling:
         launcher = TmggLauncher()
         config = OmegaConf.create(
             {
-                "hydra": {"launcher": {"use_modal": False, "use_ray": False}},
+                "hydra": {"launcher": {"use_modal": False}},
                 "model": "baseline",
             }
         )
@@ -323,20 +254,9 @@ class TestLauncherConfiguration:
         # Verify required attributes exist with correct defaults
         config = TmggLauncherConf()
         assert config.use_modal is False
-        assert config.use_ray is False
-        assert config.use_slurm is False
         assert config.gpu_type == "debug"
         assert config.parallelism == 4
         assert config.timeout_seconds == 3600
-
-        # SLURM-specific defaults
-        assert config.slurm_partition == "gpu"
-        assert config.slurm_nodes == 1
-        assert config.slurm_cpus_per_task == 4
-        assert config.slurm_gpus_per_task == 1
-        assert config.slurm_time_limit == "04:00:00"
-        assert config.slurm_mem_per_cpu == "4GB"
-        assert config.slurm_setup_commands == []
 
     def test_launcher_registered_in_config_store(self) -> None:
         """Launcher config is registered in Hydra's ConfigStore."""

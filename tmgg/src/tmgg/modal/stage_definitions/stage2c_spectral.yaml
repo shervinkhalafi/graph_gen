@@ -6,7 +6,7 @@
 # Together they enable fair comparison of spectral vs digress approaches.
 
 name: stage2c_spectral
-base_config: base_config_spectral
+base_config: base_config_spectral_arch
 
 architectures:
   - models/spectral/linear_pe        # Best from stage1

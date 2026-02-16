@@ -8,7 +8,7 @@
 # - self_attention_relaxed_shrinkage: FiLM-style modulation (S_mod = scale * S + shift)
 
 name: stage2b_shrinkage
-base_config: base_config_spectral
+base_config: base_config_spectral_arch
 
 architectures:
   - models/spectral/self_attention              # Baseline

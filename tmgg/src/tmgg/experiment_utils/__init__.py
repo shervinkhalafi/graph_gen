@@ -4,12 +4,14 @@ from .checkpoint_utils import load_checkpoint_with_fallback
 from .data import (
     AdjacencyMatrixDataset,
     DigressNoiseGenerator,
+    EdgeFlipNoiseGenerator,
     GaussianNoiseGenerator,
     GraphDataset,
     NoiseGenerator,
     PermutedAdjacencyDataset,
     RotationNoiseGenerator,
     add_digress_noise,
+    add_edge_flip_noise,
     add_gaussian_noise,
     add_rotation_noise,
     compute_eigendecomposition,
@@ -34,18 +36,11 @@ from .metrics import (
 )
 from .plotting import (
     create_graph_denoising_figure,
-    create_graph_denoising_wandb_image,
     create_network_denoising_figure,
-    create_wandb_visualization,
-    plot_denoising_results,
-    plot_eigenvalue_comparison,
-    plot_eigenvalue_denoising,
     plot_graph_denoising_combined,
     plot_graph_denoising_comparison,
-    plot_graph_network_comparison,
-    plot_noise_level_comparison,
-    plot_training_curves,
 )
+from .sampling import get_noise_schedule
 from .sanity_check import (
     SanityCheckResult,
     check_data_loader,
@@ -62,6 +57,7 @@ __all__ = [
     "add_gaussian_noise",
     "add_rotation_noise",
     "add_digress_noise",
+    "add_edge_flip_noise",
     "random_skew_symmetric_matrix",
     "AdjacencyMatrixDataset",
     "PermutedAdjacencyDataset",
@@ -69,8 +65,9 @@ __all__ = [
     "compute_eigendecomposition",
     # Noise generators
     "NoiseGenerator",
-    "GaussianNoiseGenerator",
     "DigressNoiseGenerator",
+    "GaussianNoiseGenerator",
+    "EdgeFlipNoiseGenerator",
     "RotationNoiseGenerator",
     "create_noise_generator",
     # Metrics
@@ -81,17 +78,9 @@ __all__ = [
     "compute_batch_metrics",
     # Plotting
     "plot_graph_denoising_comparison",
-    "plot_graph_network_comparison",
     "plot_graph_denoising_combined",
-    "create_graph_denoising_wandb_image",
     "create_graph_denoising_figure",
     "create_network_denoising_figure",
-    "plot_training_curves",
-    "plot_denoising_results",
-    "plot_noise_level_comparison",
-    "plot_eigenvalue_comparison",
-    "plot_eigenvalue_denoising",
-    "create_wandb_visualization",
     # Sanity checks
     "SanityCheckResult",
     "check_noise_generator",
@@ -103,6 +92,8 @@ __all__ = [
     "DebugCallback",
     # Checkpoint utilities
     "load_checkpoint_with_fallback",
+    # Sampling / noise schedules
+    "get_noise_schedule",
     # Exceptions
     "ExperimentUtilsError",
     "ConfigurationError",

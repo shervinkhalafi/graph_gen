@@ -155,9 +155,10 @@ class LinearPE(SpectralDenoiser):
             Y = torch.matmul(V, self.W_Y)  # (batch, n, k)
             A_reconstructed = torch.matmul(X, Y.transpose(-1, -2))  # (batch, n, n)
         else:
-            # Symmetric reconstruction: V W V^T
+            # Symmetric reconstruction: V W_sym V^T
             assert self.W is not None
-            VW = torch.matmul(V, self.W)  # (batch, n, k)
+            W_sym = (self.W + self.W.T) / 2  # Enforce symmetry of W
+            VW = torch.matmul(V, W_sym)  # (batch, n, k)
             A_reconstructed = torch.matmul(VW, V.transpose(-1, -2))  # (batch, n, n)
 
         # Add bias term if enabled

@@ -4,7 +4,7 @@ from pytorch_lightning.loggers import Logger
 
 from tmgg.experiment_utils.data.data_module import GraphDataModule
 from tmgg.experiment_utils.data.eigendecomposition import compute_eigendecomposition
-from tmgg.experiment_utils.data.noise import add_digress_noise
+from tmgg.experiment_utils.data.noise_generators import NoiseGenerator
 from tmgg.experiment_utils.metrics import compute_reconstruction_metrics
 
 
@@ -12,17 +12,26 @@ def evaluate_across_noise_levels(
     model: pl.LightningModule,
     data_module: GraphDataModule,
     noise_levels: list[float],
+    noise_generator: NoiseGenerator,
 ) -> dict[str, list[float]]:
     """
     Evaluate model across different noise levels.
 
-    Args:
-        model: Trained model
-        data_module: Data module
-        noise_levels: List of noise levels to evaluate
+    Parameters
+    ----------
+    model
+        Trained model.
+    data_module
+        Data module providing test samples.
+    noise_levels
+        Noise intensities to evaluate at.
+    noise_generator
+        Noise generator matching the model's training noise type.
 
-    Returns:
-        Dictionary with evaluation results
+    Returns
+    -------
+    dict[str, list[float]]
+        Per-noise-level MSE, eigenvalue error, and subspace distance.
     """
 
     model.eval()  # pyright: ignore[reportUnusedCallResult]
@@ -33,8 +42,8 @@ def evaluate_across_noise_levels(
 
     with torch.no_grad():
         for eps in noise_levels:
-            # Add noise
-            A_noisy = add_digress_noise(sample_A, eps)
+            # Add noise using the model's noise type
+            A_noisy = noise_generator.add_noise(sample_A, eps)
             _, V_noisy = compute_eigendecomposition(A_noisy)
 
             # Predict
@@ -60,8 +69,28 @@ def final_eval(
     logger: Logger | list[Logger],
     trainer: pl.Trainer,
     best_model_path: str,
+    noise_generator: NoiseGenerator,
     eval_noise_levels: list[float] | None = None,
 ):
+    """Run final evaluation of the best checkpoint across noise levels.
+
+    Parameters
+    ----------
+    model
+        Original model instance (used to determine class for checkpoint loading).
+    data_module
+        Data module with test data already set up.
+    logger
+        Logger(s) for recording final metrics.
+    trainer
+        Trainer instance (for global_step reference).
+    best_model_path
+        Path to the best checkpoint file.
+    noise_generator
+        Noise generator matching the model's training noise type.
+    eval_noise_levels
+        Noise levels to evaluate at. Falls back to ``data_module.noise_levels``.
+    """
     # Load best model with fallback for old checkpoint hyperparameter structures
     from tmgg.experiment_utils.checkpoint_utils import load_checkpoint_with_fallback
 
@@ -71,7 +100,9 @@ def final_eval(
     noise_levels = (
         eval_noise_levels if eval_noise_levels is not None else data_module.noise_levels  # pyright: ignore[reportAttributeAccessIssue]
     )
-    final_results = evaluate_across_noise_levels(best_model, data_module, noise_levels)
+    final_results = evaluate_across_noise_levels(
+        best_model, data_module, noise_levels, noise_generator
+    )
 
     # Log final results
     if logger:

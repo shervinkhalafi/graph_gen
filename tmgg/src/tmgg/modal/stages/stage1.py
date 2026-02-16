@@ -105,7 +105,7 @@ def generate_stage1_configs() -> list[dict[str, Any]]:
                 overrides.append(f"seed={seed}")
 
                 # Compose config with Hydra (resolves all defaults and interpolations)
-                config = compose_config("base_config_spectral", overrides)
+                config = compose_config("base_config_spectral_arch", overrides)
 
                 # Generate run ID
                 arch_name = arch.split("/")[-1]

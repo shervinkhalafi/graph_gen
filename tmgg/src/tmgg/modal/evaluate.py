@@ -99,7 +99,7 @@ try:
 
     _tmgg_path = discover_tmgg_path()
     experiment_image = create_tmgg_image(_tmgg_path)
-except Exception:
+except (ImportError, RuntimeError):
     # During testing with mocked modal, image creation may fail
     experiment_image = None
 
@@ -153,7 +153,7 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
         adjacency_to_networkx,
         compute_mmd_metrics,
     )
-    from tmgg.experiments.generative.evaluate_checkpoint import (
+    from tmgg.experiments.gaussian_diffusion_generative.evaluate_checkpoint import (
         load_model_from_checkpoint,
     )
 
@@ -368,7 +368,9 @@ def _reconstruct_data_module(config):
     GraphDistributionDataModule
         Configured data module ready for setup().
     """
-    from tmgg.experiments.generative.datamodule import GraphDistributionDataModule
+    from tmgg.experiments.gaussian_diffusion_generative.datamodule import (
+        GraphDistributionDataModule,
+    )
 
     data_cfg = config.get("data", {})
 

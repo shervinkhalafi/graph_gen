@@ -18,7 +18,6 @@ nav:
       - tmgg: reference/tmgg.md
       - Experiments:
           - Overview: reference/experiments/index.md
-          - Attention denoising: reference/experiments/attention_denoising.md
           - Baselines: reference/experiments/baselines.md
           - DiGress denoising: reference/experiments/digress_denoising.md
           - GNN denoising: reference/experiments/gnn_denoising.md

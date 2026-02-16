@@ -3,10 +3,10 @@
 from typing import Any
 
 import torch
-import torch.nn as nn
 
 from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
-from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
+from tmgg.models.base import DenoisingModel
+from tmgg.models.factory import create_model
 
 
 class GNNDenoisingLightningModule(DenoisingLightningModule):
@@ -25,8 +25,8 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
         amsgrad: bool = False,
         loss_type: str = "MSE",
         scheduler_config: dict[str, Any] | None = None,
-        noise_levels: list[float] | None = None,
-        noise_type: str = "Digress",
+        eval_noise_levels: list[float] | None = None,
+        noise_type: str = "digress",
         rotation_k: int = 20,
         seed: int | None = None,
         **kwargs: Any,  # pyright: ignore[reportExplicitAny]
@@ -41,9 +41,9 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
             feature_dim_in: Input feature dimension
             feature_dim_out: Output feature dimension
             learning_rate: Learning rate for optimizer
-            loss_type: Loss function type ("MSE" or "BCE")
+            loss_type: Loss function type ("MSE" or "BCEWithLogits")
             scheduler_config: Optional scheduler configuration
-            noise_levels: List of noise levels to sample from during training
+            eval_noise_levels: Noise levels for evaluation (overrides datamodule's)
             noise_type: Type of noise to use ("Gaussian", "Rotation", "Digress")
             rotation_k: Dimension for rotation noise skew matrix
             seed: Random seed for reproducible noise generation
@@ -60,14 +60,14 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
             amsgrad=amsgrad,
             loss_type=loss_type,
             scheduler_config=scheduler_config,
-            noise_levels=noise_levels,
+            eval_noise_levels=eval_noise_levels,
             noise_type=noise_type,
             rotation_k=rotation_k,
             seed=seed,
             **kwargs,
         )
 
-    def _make_model(  # pyright: ignore[reportIncompatibleMethodOverride]  # returns DenoisingModel subclass
+    def _make_model(
         self,
         *args: Any,
         model_type: str = "GNN",
@@ -76,30 +76,15 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
         feature_dim_in: int = 20,
         feature_dim_out: int = 20,
         **kwargs: Any,
-    ) -> nn.Module:
-        # Model selection
-        if model_type == "GNN":
-            model = GNN(
-                num_layers=num_layers,
-                num_terms=num_terms,
-                feature_dim_in=feature_dim_in,
-                feature_dim_out=feature_dim_out,
-            )
-        elif model_type == "NodeVarGNN":
-            model = NodeVarGNN(
-                num_layers=num_layers,
-                num_terms=num_terms,
-                feature_dim=feature_dim_out,  # NodeVarGNN uses single feature_dim
-            )
-        elif model_type == "GNNSymmetric":
-            model = GNNSymmetric(
-                num_layers=num_layers,
-                num_terms=num_terms,
-                feature_dim_in=feature_dim_in,
-                feature_dim_out=feature_dim_out,
-            )
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
+    ) -> DenoisingModel:
+        config: dict[str, Any] = {
+            "num_layers": num_layers,
+            "num_terms": num_terms,
+            "feature_dim_in": feature_dim_in,
+            "feature_dim_out": feature_dim_out,
+        }
+        model = create_model(model_type, config)
+        assert isinstance(model, DenoisingModel)
         return model
 
     def get_model_name(self) -> str:
@@ -121,5 +106,6 @@ class GNNDenoisingLightningModule(DenoisingLightningModule):
         torch.Tensor
             Adjacency logits (pre-sigmoid) of shape (batch, n, n).
         """
-        # All GNN models now return adjacency logits directly
+        # GNN models are not timestep-conditioned. The t parameter is
+        # accepted for interface compatibility but intentionally discarded.
         return self.model(x)

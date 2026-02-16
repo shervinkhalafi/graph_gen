@@ -2,6 +2,7 @@
 
 from .attention import MultiLayerAttention
 from .base import DenoisingModel
+from .factory import MODEL_REGISTRY, create_model, register_model
 from .gnn import (
     GNN,
     GNNSymmetric,
@@ -10,20 +11,19 @@ from .gnn import (
 from .hybrid import SequentialDenoisingModel, create_sequential_model
 from .layers import (
     EigenEmbedding,
-    Etoy,
-    GaussianEmbedding,
     GraphConvolutionLayer,
     MultiHeadAttention,
     NodeVarGraphConvolutionLayer,
-    Xtoy,
     masked_softmax,
 )
 
 __all__ = [
     "DenoisingModel",
+    "MODEL_REGISTRY",
+    "create_model",
+    "register_model",
     "MultiHeadAttention",
     "MultiLayerAttention",
-    "GaussianEmbedding",
     "EigenEmbedding",
     "GraphConvolutionLayer",
     "NodeVarGraphConvolutionLayer",
@@ -32,7 +32,5 @@ __all__ = [
     "GNNSymmetric",
     "SequentialDenoisingModel",
     "create_sequential_model",
-    "Xtoy",
-    "Etoy",
     "masked_softmax",
 ]

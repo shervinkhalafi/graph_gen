@@ -2,7 +2,7 @@
 # flatten -> MLP -> reshape
 # Ignores graph structure but should learn if training works
 
-_target_: tmgg.experiments.baselines.BaselineLightningModule
+_target_: tmgg.experiments.lin_mlp_baseline_denoising.BaselineLightningModule
 
 model_type: mlp
 
@@ -24,6 +24,8 @@ scheduler_config: ${scheduler_config}
 # Noise settings
 noise_type: ${noise_type}
 noise_levels: ${noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
 
 # Loss
 loss_type: ${loss_type}

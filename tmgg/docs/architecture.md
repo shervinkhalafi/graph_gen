@@ -8,26 +8,19 @@ This document describes the system design, module organization, and how componen
 src/tmgg/
 ├── models/                    # Neural network architectures
 │   ├── base.py                # BaseModel, DenoisingModel base classes
-│   ├── attention/             # Transformer attention models
 │   ├── gnn/                   # Graph neural networks
-│   ├── hybrid/                # GNN + Transformer combinations
 │   ├── layers/                # Shared layers (GCN, MHA, EigenEmbedding)
 │   ├── embeddings/            # Graph embedding dimension analysis
-│   │   ├── base.py            # GraphEmbedding base class
-│   │   ├── lpca.py            # Logistic PCA embeddings
-│   │   ├── dot_product.py     # Dot product embeddings
-│   │   ├── dot_threshold.py   # Threshold-based dot product
-│   │   ├── distance_threshold.py
-│   │   ├── orthogonal.py      # Orthogonal representations
-│   │   ├── dimension_search.py  # Binary search for min dimension
-│   │   └── fitters/           # Gradient and spectral fitting
-│   └── spectral_denoisers/    # Spectral positional encoding models
-├── experiments/               # Experiment runners
-│   ├── attention_denoising/   # Each has lightning_module.py + runner.py
-│   ├── gnn_denoising/
-│   ├── hybrid_denoising/
+│   ├── spectral_denoisers/    # Spectral positional encoding models
+│   └── factory.py             # Registry-based model factory
+├── experiments/               # Experiment runners (each has lightning_module.py + runner.py)
+│   ├── spectral_arch_denoising/
 │   ├── digress_denoising/
-│   ├── spectral_denoising/
+│   ├── discrete_diffusion_generative/
+│   ├── gaussian_diffusion_generative/
+│   ├── gnn_denoising/
+│   ├── gnn_transformer_denoising/
+│   ├── lin_mlp_baseline_denoising/
 │   └── stages/                # Stage runners
 ├── experiment_utils/          # Shared infrastructure
 │   ├── data/                  # Data loading, generation, noise
@@ -52,7 +45,8 @@ src/tmgg/
 
 The base class for all denoising models, defined in `src/tmgg/models/base.py`. It provides:
 
-- Domain transformations (`standard` or `inv-sigmoid`) for numerical stability
+- Prediction utilities: `predict()` for binary graph predictions, `logits_to_graph()` for thresholding
+- Loss helpers: `transform_for_loss()` for pre-processing output/target pairs
 - Parameter counting via `parameter_count()`
 - Configuration export via `get_config()`
 
@@ -60,14 +54,13 @@ The base class for all denoising models, defined in `src/tmgg/models/base.py`. I
 from tmgg.models.base import DenoisingModel
 
 class MyModel(DenoisingModel):
-    def __init__(self, ..., domain: str = "standard"):
-        super().__init__(domain=domain)
+    def __init__(self, ...):
+        super().__init__()
         # Model setup
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
-        A_transformed = self._apply_domain_transform(A)
-        # Process
-        return self._apply_output_transform(output)
+    def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
+        # Process x, return raw logits
+        return output
 ```
 
 ### DenoisingLightningModule
@@ -82,9 +75,9 @@ The PyTorch Lightning base class for experiments, defined in `src/tmgg/experimen
 Experiment-specific modules inherit from this and implement `_make_model()`:
 
 ```python
-class AttentionDenoisingLightningModule(DenoisingLightningModule):
-    def _make_model(self, d_model, num_heads, num_layers, ...):
-        return MultiLayerAttention(d_model, num_heads, num_layers, ...)
+class SpectralDenoisingLightningModule(DenoisingLightningModule):
+    def _make_model(self, model_type, k, ...):
+        return SpectralDenoiser(model_type, k, ...)
 ```
 
 ### GraphDataModule
@@ -111,7 +104,7 @@ result = runner.run_experiment(config)
 When you run an experiment:
 
 ```
-CLI Entry Point (e.g., tmgg-attention)
+CLI Entry Point (e.g., tmgg-spectral-arch)
     │
     ▼
 @hydra.main decorator loads configuration
@@ -171,7 +164,8 @@ model = SequentialDenoisingModel(
 **To understand models:**
 - `models/base.py` - Base classes
 - `models/gnn/gnn.py` - GNN implementation
-- `models/attention/attention.py` - Attention implementation
+- `models/spectral_denoisers/` - Spectral denoiser implementations
+- `models/factory.py` - Registry-based model factory
 
 **To understand data:**
 - `experiment_utils/data/data_module.py` - Data loading

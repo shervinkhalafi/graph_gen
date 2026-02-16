@@ -166,84 +166,6 @@ def compute_spectral_histogram(G: nx.Graph[Any], num_bins: int = 200) -> np.ndar
     return hist.astype(np.float64)
 
 
-def compute_adjacency_spectral_histogram(
-    G: nx.Graph[Any], num_bins: int = 20, normalized: bool = True
-) -> np.ndarray:
-    """Compute histogram of adjacency matrix eigenvalues (legacy tmgg style).
-
-    This is the original tmgg spectral histogram, kept for compatibility. For
-    DiGress-compatible evaluation, use compute_spectral_histogram instead.
-
-    Parameters
-    ----------
-    G
-        NetworkX graph.
-    num_bins
-        Number of bins for histogram.
-    normalized
-        If True, normalize eigenvalues by sqrt(n).
-
-    Returns
-    -------
-    np.ndarray
-        Normalized eigenvalue histogram.
-    """
-    n = G.number_of_nodes()
-    if n == 0:
-        return np.zeros(num_bins)
-
-    A = nx.to_numpy_array(G)
-    eigenvalues = np.linalg.eigvalsh(A)
-
-    if normalized and n > 0:
-        eigenvalues = eigenvalues / np.sqrt(n)
-
-    # Use data-driven bin range centered on 0
-    max_abs = max(abs(eigenvalues.min()), abs(eigenvalues.max()), 0.1)
-    hist, _ = np.histogram(
-        eigenvalues, bins=np.linspace(-max_abs, max_abs, num_bins + 1), density=True
-    )
-    return hist
-
-
-def compute_laplacian_histogram(
-    G: nx.Graph[Any], num_bins: int = 20, normalized: bool = True
-) -> np.ndarray:
-    """Compute normalized histogram of Laplacian eigenvalues.
-
-    Parameters
-    ----------
-    G
-        NetworkX graph.
-    num_bins
-        Number of bins for histogram.
-    normalized
-        If True, use normalized Laplacian.
-
-    Returns
-    -------
-    np.ndarray
-        Normalized Laplacian eigenvalue histogram.
-    """
-    n = G.number_of_nodes()
-    if n == 0:
-        return np.zeros(num_bins)
-
-    if normalized:
-        L = nx.normalized_laplacian_matrix(G).toarray()  # pyright: ignore[reportConstantRedefinition]  # math notation
-    else:
-        L = nx.laplacian_matrix(G).toarray()  # pyright: ignore[reportConstantRedefinition]  # math notation
-
-    eigenvalues = np.linalg.eigvalsh(L)
-
-    # Laplacian eigenvalues are non-negative
-    max_val = max(eigenvalues.max(), 0.1)
-    hist, _ = np.histogram(
-        eigenvalues, bins=np.linspace(0, max_val, num_bins + 1), density=True
-    )
-    return hist
-
-
 @dataclass
 class GraphStatistics:
     """Statistics computed from a collection of graphs (DiGress-compatible).
@@ -482,8 +404,8 @@ def compute_mmd_metrics(
 
 
 def compute_mmd_from_adjacencies(
-    ref_adjacencies: torch.Tensor | np.ndarray | list[np.ndarray],
-    gen_adjacencies: torch.Tensor | np.ndarray | list[np.ndarray],
+    ref_adjacencies: torch.Tensor | np.ndarray | list[np.ndarray] | list[torch.Tensor],
+    gen_adjacencies: torch.Tensor | np.ndarray | list[np.ndarray] | list[torch.Tensor],
     kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
     sigma: float = 1.0,
     max_workers: int | None = None,
@@ -510,8 +432,7 @@ def compute_mmd_from_adjacencies(
     """
     # Convert to list of numpy arrays
     if (
-        isinstance(ref_adjacencies, torch.Tensor)
-        or isinstance(ref_adjacencies, np.ndarray)
+        isinstance(ref_adjacencies, torch.Tensor | np.ndarray)
         and ref_adjacencies.ndim == 3
     ):
         ref_list = [ref_adjacencies[i] for i in range(ref_adjacencies.shape[0])]
@@ -519,8 +440,7 @@ def compute_mmd_from_adjacencies(
         ref_list = list(ref_adjacencies)
 
     if (
-        isinstance(gen_adjacencies, torch.Tensor)
-        or isinstance(gen_adjacencies, np.ndarray)
+        isinstance(gen_adjacencies, torch.Tensor | np.ndarray)
         and gen_adjacencies.ndim == 3
     ):
         gen_list = [gen_adjacencies[i] for i in range(gen_adjacencies.shape[0])]

@@ -86,7 +86,7 @@ try:
 
     _tmgg_path = discover_tmgg_path()
     experiment_image = create_tmgg_image(_tmgg_path)
-except Exception:
+except (ImportError, RuntimeError):
     # During testing with mocked modal, image creation may fail
     # This is fine as the decorated functions won't actually run
     experiment_image = None
@@ -537,8 +537,8 @@ class ModalRunner(CloudRunner):
             if self.storage.exists(f"metrics/{run_id}.json"):
                 metrics = self.storage.download_metrics(run_id)
                 return metrics.get("status", "completed")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to check storage status for {run_id}: {e}")
 
         # Check if we have an active spawn handle
         if run_id in self._active_runs:

@@ -97,7 +97,7 @@ def collect(
     Examples:
         # SBM dataset with fixed partition
         tmgg-eigenstructure collect -d sbm \\
-            -c '{"num_nodes": 50, "p_intra": 0.8, "q_inter": 0.1, "num_partitions": 100}' \\
+            -c '{"num_nodes": 50, "p_intra": 0.8, "p_inter": 0.1, "num_partitions": 100}' \\
             -o ./eigen_data/sbm
 
         # Erdos-Renyi graphs

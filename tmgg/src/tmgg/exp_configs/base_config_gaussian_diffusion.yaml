@@ -1,0 +1,59 @@
+# Base configuration for generative graph modeling experiments
+#
+# Inherits shared training settings from base_config_training.yaml via Hydra
+# defaults. Only generative-specific keys and intentional overrides appear here;
+# optimizer, scheduler, seed, sweep flags, etc. are inherited unchanged.
+#
+# Run with: python -m tmgg.experiments.gaussian_diffusion_generative.runner
+# Override: python -m tmgg.experiments.gaussian_diffusion_generative.runner model.model_type=gnn
+
+defaults:
+  - base_config_training
+  - _self_
+
+# --- Intentional overrides of base_config_training defaults ---
+experiment_name: "generative_graph"       # override: base uses "tmgg_training"
+wandb_project: diffusion-study            # override: base uses "sandbox"
+
+# --- Generative-specific sections (not present in base) ---
+
+model:
+  _target_: tmgg.experiments.gaussian_diffusion_generative.lightning_module.GenerativeLightningModule
+  model_type: self_attention
+  model_config:
+    k: 8
+    d_k: 64
+  num_diffusion_steps: 100
+  noise_schedule: cosine
+  noise_type: digress
+  loss_type: MSE
+  mmd_kernel: gaussian
+  mmd_sigma: 1.0
+  eval_num_samples: 100
+  learning_rate: ${learning_rate}
+  weight_decay: ${weight_decay}
+  optimizer_type: ${optimizer_type}
+
+# Replaces the denoising GraphDataModule with a generative-specific one
+data:
+  _target_: tmgg.experiments.gaussian_diffusion_generative.datamodule.GraphDistributionDataModule
+  dataset_type: sbm
+  num_nodes: 50
+  num_graphs: 1000
+  train_ratio: 0.8
+  val_ratio: 0.1
+  batch_size: 32
+  num_workers: 0
+  seed: ${seed}
+  dataset_config:
+    num_blocks: 2
+    p_intra: 0.7
+    p_inter: 0.1
+
+# Override: date-based layout instead of base's version-based layout
+hydra:
+  run:
+    dir: outputs/generative/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/generative/sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    # subdir inherited from base_config_training (${hydra.job.num})

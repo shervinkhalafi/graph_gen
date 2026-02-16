@@ -108,7 +108,7 @@ def compose_base_config(base_config: str, tmp_path: Path) -> DictConfig:
     Parameters
     ----------
     base_config
-        Base config name like "base_config_spectral".
+        Base config name like "base_config_spectral_arch".
     tmp_path
         Temporary directory for output paths.
 

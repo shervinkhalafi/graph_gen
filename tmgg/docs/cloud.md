@@ -7,13 +7,15 @@ TMGG supports cloud execution via Modal, enabling GPU-accelerated experiments wi
 ```
 Experiment Runner
     │
-    ├── CloudRunnerFactory
+    ├── CloudRunner (abstract base)
     │   ├── LocalRunner (subprocess, built-in)
     │   └── ModalRunner (cloud GPUs)
     │
+    ├── ExperimentCoordinator (sweep orchestration)
+    │
     └── Storage
         ├── LocalStorage
-        └── TigrisStorage (S3-compatible)
+        └── S3Storage (Tigris-compatible)
 ```
 
 The `ModalRunner` deploys experiments to Modal's serverless infrastructure, which provisions GPUs on demand and scales automatically.
@@ -78,7 +80,7 @@ mise run modal-deploy
 
 This command:
 1. Creates/updates Modal secrets from Doppler
-2. Deploys the `tmgg-spectral` app with two functions:
+2. Deploys the `tmgg-spectral-arch` app with two functions:
    - `modal_execute_task` (standard GPU)
    - `modal_execute_task_fast` (A100 GPU)
 
@@ -93,9 +95,9 @@ mise run modal-serve
 ### Single Experiment
 
 ```python
-from tmgg.experiment_utils.cloud import CloudRunnerFactory
+from tmgg.modal.runner import ModalRunner
 
-runner = CloudRunnerFactory.create("modal")
+runner = ModalRunner()
 result = runner.run_experiment(config, gpu_type="standard")
 ```
 
@@ -108,9 +110,9 @@ uv run tmgg-experiment +stage=stage2_validation run_on_modal=true
 ### Sweeps
 
 ```python
-from tmgg.experiment_utils.cloud import CloudRunnerFactory
+from tmgg.modal.runner import ModalRunner
 
-runner = CloudRunnerFactory.create("modal")
+runner = ModalRunner()
 results = runner.run_sweep(
     configs,
     gpu_type="standard",
@@ -140,9 +142,9 @@ result = runner.run_experiment(config, gpu_type="fast")
 The default runner executes experiments in a subprocess on your local machine:
 
 ```python
-from tmgg.experiment_utils.cloud import CloudRunnerFactory
+from tmgg.experiment_utils.cloud import LocalRunner
 
-runner = CloudRunnerFactory.create("local", output_dir="./results")
+runner = LocalRunner(output_dir="./results")
 result = runner.run_experiment(config)
 ```
 
@@ -253,7 +255,7 @@ Run `mise run modal-deploy` to deploy the app.
 
 ### "Function not hydrated"
 
-The deployment check uses `modal.Function.from_name()` to verify deployment. Ensure the app name matches (`tmgg-spectral`).
+The deployment check uses `modal.Function.from_name()` to verify deployment. Ensure the app name matches (`tmgg-spectral-arch`).
 
 ### SyntaxError in Modal container
 

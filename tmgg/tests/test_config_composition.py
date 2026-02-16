@@ -31,9 +31,9 @@ from hydra.core.global_hydra import GlobalHydra
 
 # Base configs to test with their default model/data compositions
 BASE_CONFIGS = [
-    "base_config_spectral",
+    "base_config_spectral_arch",
     "base_config_gnn",
-    "base_config_hybrid",
+    "base_config_gnn_transformer",
     "base_config_digress",
     "grid_search_base",
 ]
@@ -156,9 +156,9 @@ class TestConfigComposition:
 
 # Configs that use standard adjacency matrix input
 ADJACENCY_INPUT_CONFIGS = [
-    "base_config_spectral",
+    "base_config_spectral_arch",
     "base_config_gnn",
-    "base_config_hybrid",
+    "base_config_gnn_transformer",
     "grid_search_base",
 ]
 
@@ -322,7 +322,7 @@ class TestStageConfigComposition:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         # Verify stage was applied
         assert (

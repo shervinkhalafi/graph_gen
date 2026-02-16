@@ -6,7 +6,7 @@ TMGG is a research framework for graph denoising with attention, GNN, and hybrid
 
 ```bash
 uv sync
-uv run tmgg-attention
+uv run tmgg-spectral-arch
 ```
 
 Need a different model or a custom configuration? Start with the **Get started** guide and the **Configuration** reference.
@@ -24,10 +24,10 @@ Need a different model or a custom configuration? Start with the **Get started**
 
 ## When to use which entry point
 
-- `tmgg-attention` — attention-based denoising
-- `tmgg-gnn` — GNN-based denoising
-- `tmgg-hybrid` — hybrid GNN + transformer model
+- `tmgg-spectral-arch` — spectral positional encoding models (main focus)
 - `tmgg-digress` — DiGress transformer
-- `tmgg-spectral` — spectral positional encoding models
+- `tmgg-gnn` — GNN-based denoising
+- `tmgg-gnn-transformer` — hybrid GNN + transformer model
+- `python -m tmgg.experiments.gaussian_diffusion_generative.runner` — diffusion-based graph generation (see [Experiments: Generative](experiments.md#generative-graph-modeling))
 
-If you’re unsure, start with `tmgg-attention` and explore overrides in the Configuration guide.
+The first four entry points run *denoising* experiments that reconstruct corrupted graphs. The generative runner trains a full diffusion model to *generate* novel graphs from noise, evaluated via MMD metrics. If you're unsure, start with `tmgg-spectral-arch` and explore overrides in the Configuration guide.

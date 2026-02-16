@@ -16,9 +16,8 @@ weight_decay: 0.0
 optimizer_type: adam
 amsgrad: false
 
-# No scheduler (simpler optimization)
-scheduler_config:
-  type: none
+# Scheduler (from base config)
+scheduler_config: ${scheduler_config}
 
 # Loss
 loss_type: "BCEWithLogits"
@@ -26,6 +25,8 @@ loss_type: "BCEWithLogits"
 # Noise configuration (will be overridden by stage config)
 noise_type: "digress"
 noise_levels: [0.1]
+eval_noise_levels: ${eval_noise_levels}
+fixed_noise_seed: ${fixed_noise_seed}
 seed: 42
 
 # Small model for stage 1 (4 layers instead of official 8)

@@ -337,6 +337,27 @@ class ShrinkageWrapper(DenoisingModel, ABC):
 
         return A_reconstructed
 
+    def logits_to_graph(self, logits: torch.Tensor) -> torch.Tensor:
+        """Convert adjacency predictions to binary graph.
+
+        Overrides ``DenoisingModel.logits_to_graph`` because ShrinkageWrapper's
+        ``forward()`` returns reconstructed adjacency values already in [0, 1]
+        (after SVD shrinkage + symmetrization), not raw logits. The base class
+        thresholds at 0 (correct for BCE logits where sigmoid(x)>0.5 ⟺ x>0),
+        but here the natural decision boundary is 0.5.
+
+        Parameters
+        ----------
+        logits
+            Model output from ``forward()``, with values in [0, 1].
+
+        Returns
+        -------
+        torch.Tensor
+            Binary predictions (0 or 1), thresholded at 0.5.
+        """
+        return (logits > 0.5).float()
+
     def get_config(self) -> dict[str, Any]:
         """Get model configuration for logging/saving."""
         return {

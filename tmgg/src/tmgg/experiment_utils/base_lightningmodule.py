@@ -1,13 +1,12 @@
-# TODO: add the criterion, training setup etc. as an inheritable thing
-# then just change model (define setup hook?) since we want to study architectures
 """Base Lightning module for denoising experiments."""
 
 from __future__ import annotations
 
 import abc
+import warnings
 from abc import abstractmethod
 from collections import defaultdict
-from typing import Any, Protocol, cast, override, runtime_checkable
+from typing import Any, cast, override
 
 import matplotlib.figure
 import numpy as np
@@ -25,59 +24,18 @@ from tmgg.experiment_utils import (
 )
 from tmgg.experiment_utils.exceptions import ConfigurationError
 from tmgg.experiment_utils.logging import log_figure
-from tmgg.experiment_utils.mixins import LoggingMixin, OptimizerMixin
+from tmgg.experiment_utils.model_logging import (
+    log_parameter_count as _log_parameter_count,
+)
+from tmgg.experiment_utils.optimizer_config import (
+    OptimizerLRSchedulerConfig,
+    SchedulerInfo,
+    configure_optimizers_from_config,
+)
+from tmgg.models.base import DenoisingModel
 
 
-@runtime_checkable
-class _DenoisingModelProtocol(Protocol):
-    """Protocol defining the interface expected from denoising models.
-
-    This protocol is used for type checking within experiment_utils without
-    creating a dependency on tmgg.models, respecting module boundaries.
-    """
-
-    def parameter_count(self) -> dict[str, Any]:
-        """Return hierarchical parameter counts."""
-        ...
-
-    def get_config(self) -> dict[str, Any]:
-        """Return model configuration."""
-        ...
-
-    def transform_for_loss(
-        self, output: torch.Tensor, target: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Transform output and target for loss computation."""
-        ...
-
-    def predict(self, logits: torch.Tensor, zero_diag: bool = True) -> torch.Tensor:
-        """Convert logits to predictions."""
-        ...
-
-    def logits_to_graph(self, logits: torch.Tensor) -> torch.Tensor:
-        """Convert logits to binary graph predictions."""
-        ...
-
-    def parameters(self, recurse: bool = True) -> Any:  # pyright: ignore[reportExplicitAny]
-        """Return an iterator over module parameters (from nn.Module)."""
-        ...
-
-    def __call__(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
-        """Forward pass.
-
-        Parameters
-        ----------
-        x
-            Input tensor (typically noisy adjacency matrix).
-        t
-            Diffusion timestep tensor, or None for unconditional denoising.
-        """
-        ...
-
-
-class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverride,reportIncompatibleVariableOverride]
-    OptimizerMixin, LoggingMixin, pl.LightningModule, abc.ABC
-):
+class DenoisingLightningModule(pl.LightningModule, abc.ABC):
     """PyTorch Lightning module for attention-based graph denoising."""
 
     def __init__(
@@ -92,7 +50,7 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
         loss_type: str = "MSE",
         scheduler_config: dict[str, Any] | None = None,
         eval_noise_levels: list[float] | None = None,
-        noise_type: str = "Digress",
+        noise_type: str = "digress",
         rotation_k: int = 20,
         seed: int | None = None,
         visualization_interval: int = 5000,
@@ -131,10 +89,9 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
                 Procrustes rotation angle and residual metrics.
         """
         super().__init__()
-        _ = self.save_hyperparameters()
+        self.save_hyperparameters()
 
-        # Model (typed as Protocol for methods, but actual impl is nn.Module subclass)
-        self.model: _DenoisingModelProtocol = self._make_model(
+        self.model: DenoisingModel = self._make_model(
             *args,
             bias=bias,
             dropout=dropout,
@@ -174,14 +131,48 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
             noise_type=noise_type, rotation_k=rotation_k, seed=seed
         )
 
-        # Metrics tracking
-        self.train_metrics: list[Any] = []
-        self.val_metrics: list[Any] = []
-
         # Spectral delta logging configuration
         self.spectral_k: int = spectral_k
         self.log_spectral_deltas: bool = log_spectral_deltas
         self.log_rotation_angles: bool = log_rotation_angles
+
+        # Seeded RNG for noise level sampling (avoids global numpy state)
+        self._noise_rng: np.random.Generator = np.random.default_rng(seed)
+
+        # Populated by configure_optimizers when cosine_warmup scheduler is used
+        self._scheduler_info: SchedulerInfo | None = None
+
+    def configure_optimizers(
+        self,
+    ) -> torch.optim.Optimizer | OptimizerLRSchedulerConfig:
+        """Configure optimizers and learning rate schedulers."""
+        result, scheduler_info = configure_optimizers_from_config(
+            self,
+            learning_rate=self.learning_rate,
+            weight_decay=self.weight_decay,
+            optimizer_type=self.optimizer_type,
+            amsgrad=self.amsgrad,
+            scheduler_config=self.scheduler_config,
+        )
+        self._scheduler_info = scheduler_info
+        return result
+
+    def get_model_name(self) -> str:
+        """Return the model name for display in logs and plots.
+
+        Subclasses should override to return a meaningful name.
+        """
+        return "Base"
+
+    def get_model_config(self) -> dict[str, Any]:
+        """Get model configuration for logging.
+
+        Returns
+        -------
+        dict[str, Any]
+            Configuration dict as reported by the underlying model.
+        """
+        return self.model.get_config()  # pyright: ignore[reportAny]
 
     @property
     def noise_levels(self) -> list[float]:
@@ -230,15 +221,8 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
             pl.LightningDataModule | None, getattr(self.trainer, "datamodule", None)
         )
 
-    def _get_datamodule(self) -> pl.LightningDataModule | None:
-        """Safely get the datamodule from the trainer.
-
-        Deprecated: Use the `datamodule` property instead.
-        """
-        return self.datamodule
-
     @abstractmethod
-    def _make_model(self, *args: Any, **kwargs: Any) -> _DenoisingModelProtocol:  # pyright: ignore[reportExplicitAny, reportAny]
+    def _make_model(self, *args: Any, **kwargs: Any) -> DenoisingModel:  # pyright: ignore[reportExplicitAny]
         """
         Instantiate the model based on the config
         """
@@ -273,17 +257,17 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
     def on_fit_start(self) -> None:
         """Called at the beginning of training."""
         # Log parameter count at the start of training
-        _ = self.log_parameter_count()
+        _log_parameter_count(self.model, self.get_model_name(), self.logger)
 
         # Log scheduler configuration for cosine_warmup
         if (
             self.scheduler_config
             and self.scheduler_config.get("type") == "cosine_warmup"
-            and hasattr(self, "_scheduler_T_warmup")
+            and self._scheduler_info is not None
         ):
-            T_warmup: int = self._scheduler_T_warmup
-            T_max: int = self._scheduler_T_max
-            total_steps: int = self._scheduler_estimated_total_steps
+            T_warmup: int = self._scheduler_info.T_warmup
+            T_max: int = self._scheduler_info.T_max
+            total_steps: int = self._scheduler_info.estimated_total_steps
 
             # Estimate steps per epoch for readable output
             steps_per_epoch: int = 1
@@ -294,8 +278,12 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
                     dataset_size: int = len(train_loader.dataset)
                     batch_size: int = getattr(dm, "batch_size", train_loader.batch_size)
                     steps_per_epoch = (dataset_size + batch_size - 1) // batch_size
-                except Exception:
-                    pass
+                except (TypeError, AttributeError, RuntimeError) as exc:
+                    warnings.warn(
+                        f"Could not estimate steps_per_epoch for scheduler logging: {exc}",
+                        UserWarning,
+                        stacklevel=2,
+                    )
 
             warmup_epochs: float = (
                 T_warmup / steps_per_epoch if steps_per_epoch > 0 else 0
@@ -305,15 +293,13 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
                 total_steps / steps_per_epoch if steps_per_epoch > 0 else 0
             )
 
-            _ = print(f"\n{'=' * 60}")
-            _ = print("Scheduler Configuration (cosine_warmup)")
-            _ = print(f"{'=' * 60}")
-            _ = print(f"  Warmup:     {T_warmup:,} steps ({warmup_epochs:.1f} epochs)")
-            _ = print(f"  LR at zero: {T_max:,} steps ({decay_epochs:.1f} epochs)")
-            _ = print(
-                f"  Total est:  {total_steps:,} steps ({total_epochs:.0f} epochs)"
-            )
-            _ = print(f"{'=' * 60}\n")
+            print(f"\n{'=' * 60}")
+            print("Scheduler Configuration (cosine_warmup)")
+            print(f"{'=' * 60}")
+            print(f"  Warmup:     {T_warmup:,} steps ({warmup_epochs:.1f} epochs)")
+            print(f"  LR at zero: {T_max:,} steps ({decay_epochs:.1f} epochs)")
+            print(f"  Total est:  {total_steps:,} steps ({total_epochs:.0f} epochs)")
+            print(f"{'=' * 60}\n")
 
     @override
     def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
@@ -369,7 +355,7 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
             Dictionary with 'loss' (required by Lightning) and 'logits' for debugging.
         """
         # Sample noise level randomly from training noise levels
-        eps: float = float(np.random.choice(self.noise_levels))
+        eps: float = float(self._noise_rng.choice(self.noise_levels))
         target: torch.Tensor = batch
 
         # Add noise
@@ -391,11 +377,11 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
             train_acc: torch.Tensor = (predictions == target).float().mean()
 
         # Log metrics
-        _ = self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-        _ = self.log(
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log(
             "train/accuracy", train_acc, on_step=True, on_epoch=True, prog_bar=True
         )
-        _ = self.log("train/noise_level", eps, on_step=False, on_epoch=True)
+        self.log("train/noise_level", eps, on_step=False, on_epoch=True)
 
         # Return dict with loss and logits for debugging callbacks
         return {"loss": loss, "logits": output}
@@ -428,7 +414,7 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
             batch_metrics: dict[str, float] = compute_batch_metrics(target, predictions)
 
             # Log metrics
-            _ = self.log(
+            self.log(
                 f"{mode}_{eps}/loss",
                 mode_loss,
                 on_step=False,
@@ -436,7 +422,7 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
                 prog_bar=True,
             )
             for metric_name, value in batch_metrics.items():
-                _ = self.log(
+                self.log(
                     f"{mode}_{eps}/{metric_name}", value, on_step=False, on_epoch=True
                 )
 
@@ -449,11 +435,11 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
                 batch_metrics_mean[k] += v / N
 
         # Log metrics
-        _ = self.log(
+        self.log(
             f"{mode}/loss", mode_loss_mean, on_step=False, on_epoch=True, prog_bar=True
         )
         for metric_name, value in batch_metrics_mean.items():
-            _ = self.log(f"{mode}/{metric_name}", value, on_step=False, on_epoch=True)
+            self.log(f"{mode}/{metric_name}", value, on_step=False, on_epoch=True)
         mode_loss_mean_tensor: pt.Tensor = torch.tensor(mode_loss_mean)
         batch_metrics_mean_dict: dict[str, pt.Tensor] = {
             k: torch.tensor(v) for k, v in batch_metrics_mean.items()
@@ -500,7 +486,7 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
                 compute_rotation=self.log_rotation_angles,
             )
             for name, values in deltas_noisy.items():
-                _ = self.log(
+                self.log(
                     f"{mode}_{eps}/noisy_{name}",
                     values.mean(),
                     on_step=False,
@@ -515,7 +501,7 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
                 compute_rotation=self.log_rotation_angles,
             )
             for name, values in deltas_denoised.items():
-                _ = self.log(
+                self.log(
                     f"{mode}_{eps}/denoised_{name}",
                     values.mean(),
                     on_step=False,
@@ -615,80 +601,65 @@ class DenoisingLightningModule(  # pyright: ignore[reportIncompatibleMethodOverr
 
         # Log visualization for each noise level
         for eps in noise_levels:
-            try:
-                fig: matplotlib.figure.Figure = create_graph_denoising_figure(
-                    A_clean=A_sample,
-                    noise_fn=cast(Any, self.noise_generator.add_noise),
-                    denoise_fn=cast(Any, denoise_fn),
-                    noise_level=eps,
-                    noise_type=noise_type,
-                    title_prefix=f"{self.get_model_name()} - ",
-                )
-                plot_name: str = f"{stage}_denoising_{noise_type}_eps_{eps:.3f}"
-                _ = log_figure(
-                    cast(list[Logger], self.loggers),
-                    plot_name,
-                    fig,
-                    global_step=self.global_step,
-                )
-                _ = print(f"Logged individual plot: {plot_name}")
-            except Exception as e:
-                _ = print(f"Failed to create/log plot for eps={eps}: {e}")
-                import traceback
-
-                _ = traceback.print_exc()
+            fig: matplotlib.figure.Figure = create_graph_denoising_figure(
+                A_clean=A_sample,
+                noise_fn=cast(Any, self.noise_generator.add_noise),
+                denoise_fn=cast(Any, denoise_fn),
+                noise_level=eps,
+                noise_type=noise_type,
+                title_prefix=f"{self.get_model_name()} - ",
+            )
+            plot_name: str = f"{stage}_denoising_{noise_type}_eps_{eps:.3f}"
+            log_figure(
+                cast(list[Logger], self.loggers),
+                plot_name,
+                fig,
+                global_step=self.global_step,
+            )
+            print(f"Logged individual plot: {plot_name}")
 
             # Log node-link network visualization for small graphs
             n_nodes: int = (
                 A_sample.shape[0] if A_sample.ndim == 2 else A_sample.shape[-1]
             )
             if n_nodes <= 50:
-                try:
-                    network_fig = create_network_denoising_figure(
-                        A_clean=A_sample,
-                        noise_fn=cast(Any, self.noise_generator.add_noise),
-                        denoise_fn=denoise_fn,
-                        noise_level=eps,
-                        noise_type=noise_type,
-                        title_prefix=f"{self.get_model_name()} - ",
-                        layout="spring",
-                        show_edge_diff=True,
+                network_fig = create_network_denoising_figure(
+                    A_clean=A_sample,
+                    noise_fn=cast(Any, self.noise_generator.add_noise),
+                    denoise_fn=denoise_fn,
+                    noise_level=eps,
+                    noise_type=noise_type,
+                    title_prefix=f"{self.get_model_name()} - ",
+                    layout="spring",
+                    show_edge_diff=True,
+                )
+                if network_fig is not None:
+                    network_plot_name: str = (
+                        f"{stage}_network_{noise_type}_eps_{eps:.3f}"
                     )
-                    if network_fig is not None:
-                        network_plot_name: str = (
-                            f"{stage}_network_{noise_type}_eps_{eps:.3f}"
-                        )
-                        _ = log_figure(
-                            cast(list[Logger], self.loggers),
-                            network_plot_name,
-                            network_fig,
-                            global_step=self.global_step,
-                        )
-                        _ = print(f"Logged network plot: {network_plot_name}")
-                except Exception as e:
-                    _ = print(f"Failed to create/log network plot for eps={eps}: {e}")
+                    log_figure(
+                        cast(list[Logger], self.loggers),
+                        network_plot_name,
+                        network_fig,
+                        global_step=self.global_step,
+                    )
+                    print(f"Logged network plot: {network_plot_name}")
 
         # Also create multi-noise visualization
-        try:
-            from tmgg.experiment_utils.plotting import create_multi_noise_visualization
+        from tmgg.experiment_utils.plotting import create_multi_noise_visualization
 
-            multi_fig: matplotlib.figure.Figure = create_multi_noise_visualization(
-                A_sample,
-                self,
-                self.noise_generator.add_noise,
-                noise_levels,
-                str(self.device),
-            )
-            overview_name: str = f"{stage}_multi_noise_{noise_type}_overview"
-            _ = log_figure(
-                cast(list[Logger], self.loggers),
-                overview_name,
-                multi_fig,
-                global_step=self.global_step,
-            )
-            _ = print(f"Logged multi-noise overview: {overview_name}")
-        except Exception as e:
-            _ = print(f"Failed to create/log multi-noise overview: {e}")
-            import traceback
-
-            _ = traceback.print_exc()
+        multi_fig: matplotlib.figure.Figure = create_multi_noise_visualization(
+            A_sample,
+            self,
+            self.noise_generator.add_noise,
+            noise_levels,
+            str(self.device),
+        )
+        overview_name: str = f"{stage}_multi_noise_{noise_type}_overview"
+        log_figure(
+            cast(list[Logger], self.loggers),
+            overview_name,
+            multi_fig,
+            global_step=self.global_step,
+        )
+        print(f"Logged multi-noise overview: {overview_name}")

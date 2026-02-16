@@ -133,7 +133,7 @@ class EigenstructureCollector:
         config = self.dataset_config
         num_nodes = config["num_nodes"]
         p_intra = config.get("p_intra", 1.0)
-        q_inter = config.get("q_inter", 0.0)
+        p_inter = config.get("p_inter", 0.0)
 
         if "block_sizes" in config:
             # Fixed partition
@@ -159,7 +159,7 @@ class EigenstructureCollector:
 
         matrices = []
         for partition in partitions:
-            A = generate_sbm_adjacency(partition, p_intra, q_inter)
+            A = generate_sbm_adjacency(partition, p_intra, p_inter)
             matrices.append(torch.from_numpy(A).float())
 
         return matrices

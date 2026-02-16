@@ -12,7 +12,6 @@ from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
 from tmgg.models.layers import (
     EigenDecompositionError,
     EigenEmbedding,
-    GaussianEmbedding,
     GraphConvolutionLayer,
 )
 
@@ -169,60 +168,6 @@ class TestEigenEmbeddingProperties:
         assert error.debugging_context["has_nan"] is True
         assert error.debugging_context["matrix_shape"] == [3, 3]
         assert "Mock eigendecomposition failure" in str(error)
-
-
-class TestGaussianEmbeddingProperties:
-    """Property-based tests for GaussianEmbedding."""
-
-    @given(
-        A=batch_adjacency_matrices(min_nodes=3, max_nodes=10),
-        num_terms=st.integers(min_value=1, max_value=5),
-        num_channels=st.integers(min_value=1, max_value=16),
-    )
-    @settings(max_examples=20, deadline=2000)
-    def test_gaussian_embedding_output_shape(
-        self, A: torch.Tensor, num_terms: int, num_channels: int
-    ) -> None:
-        """Test output shape of Gaussian embedding."""
-        embedding = GaussianEmbedding(num_terms, num_channels)
-
-        result = embedding(A)
-
-        batch_size, num_nodes, _ = A.shape
-        assert result.shape == (batch_size, num_nodes, num_channels)
-
-    @given(
-        A=batch_adjacency_matrices(min_nodes=3, max_nodes=8),
-        num_terms=st.integers(min_value=1, max_value=3),
-    )
-    @settings(max_examples=15, deadline=2000)
-    def test_gaussian_embedding_numerical_stability(
-        self, A: torch.Tensor, num_terms: int
-    ) -> None:
-        """Test that Gaussian embedding doesn't produce NaN/Inf."""
-        num_channels = 5
-        embedding = GaussianEmbedding(num_terms, num_channels)
-
-        result = embedding(A)
-
-        assert not torch.isnan(result).any()
-        assert not torch.isinf(result).any()
-
-    @given(
-        num_terms=st.integers(min_value=1, max_value=4),
-        num_channels=st.integers(min_value=1, max_value=10),
-    )
-    def test_gaussian_embedding_identity_matrix(
-        self, num_terms: int, num_channels: int
-    ) -> None:
-        """Test Gaussian embedding on identity matrix."""
-        embedding = GaussianEmbedding(num_terms, num_channels)
-
-        eye_matrix = torch.eye(5).unsqueeze(0)  # Identity matrix
-        result = embedding(eye_matrix)
-
-        assert result.shape == (1, 5, num_channels)
-        assert not torch.isnan(result).any()
 
 
 class TestGNNProperties:

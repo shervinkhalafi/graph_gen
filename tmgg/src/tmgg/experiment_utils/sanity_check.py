@@ -448,9 +448,9 @@ def maybe_run_sanity_check(
 ) -> dict[str, str] | None:
     # Run sanity check if requested
     if config.get("sanity_check", False):
-        _ = print("\n" + "=" * 70)
-        _ = print("SANITY CHECK MODE - Validating experimental setup")
-        _ = print("=" * 70)
+        print("\n" + "=" * 70)
+        print("SANITY CHECK MODE - Validating experimental setup")
+        print("=" * 70)
 
         # Setup data module (ensure prepare_data is called first)
         _ = data_module.prepare_data()
@@ -475,7 +475,7 @@ def maybe_run_sanity_check(
         if not sanity_results["passed"]:
             raise RuntimeError("Sanity check failed! See output above for details.")
 
-        _ = print("\nSanity check passed! Exiting without training.")
+        print("\nSanity check passed! Exiting without training.")
         return {"sanity_check": "passed"}
     return None
 

@@ -65,6 +65,61 @@ def generate_sbm_adjacency(
     return adj_matrix
 
 
+def generate_sbm_batch(
+    num_graphs: int,
+    num_nodes: int,
+    num_blocks: int = 2,
+    p_intra: float = 0.7,
+    p_inter: float = 0.1,
+    seed: int = 42,
+) -> np.ndarray:
+    """Generate a batch of SBM adjacency matrices.
+
+    Computes approximately equal block sizes for ``num_nodes`` across
+    ``num_blocks`` blocks, then calls ``generate_sbm_adjacency`` for each
+    graph.  That function already produces symmetric matrices with zero
+    diagonal, so no post-processing is needed.
+
+    Parameters
+    ----------
+    num_graphs
+        Number of graphs to generate.
+    num_nodes
+        Number of nodes per graph.
+    num_blocks
+        Number of communities in the SBM.
+    p_intra
+        Intra-block edge probability.
+    p_inter
+        Inter-block edge probability.
+    seed
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    np.ndarray
+        Adjacency matrices, shape ``(num_graphs, num_nodes, num_nodes)``,
+        dtype ``float32``.
+    """
+    rng = np.random.default_rng(seed)
+
+    # Equal block sizes, distributing remainder to first blocks
+    block_size = num_nodes // num_blocks
+    remainder = num_nodes % num_blocks
+    block_sizes = [block_size] * num_blocks
+    for i in range(remainder):
+        block_sizes[i] += 1
+
+    adjacencies: list[np.ndarray] = []
+    for _ in range(num_graphs):
+        adj = generate_sbm_adjacency(
+            block_sizes=block_sizes, p=p_intra, q=p_inter, rng=rng
+        )
+        adjacencies.append(adj.astype(np.float32))
+
+    return np.stack(adjacencies, axis=0)
+
+
 def generate_block_sizes(
     n: int,
     min_blocks: int = 2,

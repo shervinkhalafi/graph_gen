@@ -10,7 +10,7 @@ dataset_config:
   # Graph parameters
   num_nodes: 20
   p_intra: 1.0  # Probability of intra-block edges
-  q_inter: 0.0  # Probability of inter-block edges
+  p_inter: 0.0  # Probability of inter-block edges
 
   # Block size generation
   min_blocks: 2

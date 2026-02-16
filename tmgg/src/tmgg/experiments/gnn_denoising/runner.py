@@ -1,33 +1,31 @@
-"""Main runner for GNN-based denoising experiments."""
+"""Hydra entry point for GNN-based denoising experiments.
 
-from pathlib import Path
+Run experiments with::
+
+    tmgg-gnn
+    tmgg-gnn model.gnn_num_layers=4 data.num_nodes=100
+"""
 
 import hydra
 from omegaconf import DictConfig
 
-from tmgg.experiment_utils.run_experiment import (
-    run_experiment,  # pyright: ignore[reportMissingTypeStubs]
+from tmgg.experiment_utils.run_experiment import run_experiment
+
+
+@hydra.main(
+    version_base=None,
+    config_path="../../exp_configs",
+    config_name="base_config_gnn",
 )
+def main(cfg: DictConfig) -> None:
+    """Run GNN denoising experiment.
 
-# Navigate to the centralized config location
-TMGG_ROOT = Path(__file__).parent.parent.parent  # Navigate to tmgg/src/tmgg
-CONFIG_PATH = str(TMGG_ROOT / "exp_configs")
-
-
-@hydra.main(  # pyright: ignore[reportAny]
-    version_base="1.3", config_path=CONFIG_PATH, config_name="base_config_gnn"
-)
-def main(config: DictConfig):
+    Parameters
+    ----------
+    cfg
+        Hydra configuration containing model, data, trainer, and logger settings.
     """
-    Main training function.
-
-    Args:
-        config: Hydra configuration
-
-    Returns:
-        Dictionary with training results
-    """
-    return run_experiment(config)
+    run_experiment(cfg)
 
 
 if __name__ == "__main__":

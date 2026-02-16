@@ -3,7 +3,7 @@
 # using the distributional protocol (train/test on DIFFERENT graphs).
 
 name: stage3_pyg_dist
-base_config: base_config_spectral
+base_config: base_config_spectral_arch
 
 architectures:
   # Spectral variants
