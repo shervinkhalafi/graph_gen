@@ -33,6 +33,32 @@ exp_configs/
     └── stage5_full.yaml           # Full validation (future)
 ```
 
+## Composition Chain
+
+Hydra composes configurations bottom-up. Each layer can override keys from layers below:
+
+```
+base/trainer/default.yaml     <- trainer settings (max_steps, val_check_interval, ...)
+base/logger/default.yaml      <- logger backends (tensorboard, wandb)
+base/callbacks/default.yaml   <- checkpointing, early stopping
+data/sbm_default.yaml         <- dataset configuration
+         |
+base_config_training.yaml     <- shared training infrastructure (optimizer, scheduler,
+         |                       seed, paths, noise config, sweep settings)
+         |
+base_config_<experiment>.yaml <- experiment-specific overrides (model, experiment_name,
+         |                       wandb_project, data section)
+         |
+stage/<stage>.yaml            <- stage-specific overrides (noise_levels, max_steps,
+         |                       per-stage sweep axes)
+         |
+models/<type>/<variant>.yaml  <- model architecture variants
+         |
+CLI overrides                 <- command-line Hydra overrides (highest priority)
+```
+
+The `_self_` directive in each config controls where that file's keys are inserted relative to its defaults. All base configs use `- _self_` as the last default, meaning the file's explicit keys override everything composed below.
+
 Each base config composes defaults from subdirectories:
 
 ```yaml
@@ -47,6 +73,53 @@ defaults:
 experiment_name: "spectral_arch_denoising"
 seed: 42
 ```
+
+## Interpolation and `_self_` semantics
+
+### Lazy resolution
+
+OmegaConf `${key}` references resolve at access time, not at file load. The library builds a reference graph and evaluates each node only when its value is actually read. A model config can therefore declare `noise_type: ${data.noise_type}` before the `data` group is composed — the reference becomes valid once the full config tree exists.
+
+### Reference types
+
+Three forms of interpolation cover most use cases:
+
+```yaml
+# Same-level reference
+seed: 42
+run_name: "experiment_seed_${seed}"
+
+# Cross-section reference
+data:
+  noise_type: gaussian
+model:
+  noise_type: ${data.noise_type}
+
+# OmegaConf built-ins
+api_key: ${oc.env:WANDB_API_KEY}          # reads environment variable
+stage: ${oc.select:stage,default_stage}    # returns "default_stage" if `stage` is missing
+```
+
+### `_self_` placement
+
+In the `defaults:` list, `_self_` controls where the current file's explicit keys are inserted relative to composed defaults. All TMGG base configs place `- _self_` last:
+
+```yaml
+defaults:
+  - models/spectral/linear_pe@model
+  - data: sbm_default
+  - _self_         # file's keys override everything above
+```
+
+If `_self_` were first, composed defaults would override the file's explicit values instead.
+
+### Missing interpolation targets
+
+When code accesses a key whose `${...}` target does not exist, OmegaConf raises `InterpolationKeyError` immediately. There is no silent fallback to `None` or an empty string — resolution is fail-fast by design.
+
+### Batch generation context
+
+Architecture YAMLs contain `${learning_rate}`, `${noise_levels}`, and similar placeholders so they remain usable with Hydra's CLI for single-run local invocations. During batch config generation, `strip_interpolations()` in the config builder removes these entries before merging so the resolved values from Phase 1 survive the architecture merge. See the [config generation pipeline](how-to-run-experiments.md#config-generation-pipeline) for the full two-phase design.
 
 ## Hydra Override Syntax
 

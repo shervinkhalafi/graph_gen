@@ -1,6 +1,6 @@
 # Extending the Framework
 
-This document covers how to add new models, datasets, noise types, and execution backends.
+This document covers how to add new models, datasets, noise types, execution backends, and entirely new experiment types.
 
 ## Adding a New Model
 
@@ -153,6 +153,56 @@ In `src/tmgg/models/__init__.py`:
 ```python
 from tmgg.models.mymodels.my_model import MyModel
 ```
+
+### Step 7: Register in Model Factory
+
+The framework dispatches model construction through a central registry in
+`src/tmgg/models/factory.py`. Without registration, `create_model()` (and by
+extension every Lightning module's `_make_model()`) cannot instantiate your
+architecture.
+
+`MODEL_REGISTRY` is a plain `dict[str, Callable[[dict, Any], nn.Module]]`.
+The `@register_model(*names)` decorator adds one or more string keys that
+map to a factory function. Duplicate names raise `ValueError` immediately,
+so silent overwrites are impossible.
+
+Register your model by adding a decorated factory at the bottom of
+`src/tmgg/models/factory.py`:
+
+```python
+@register_model("my_model")
+def _make_my_model(config: dict[str, Any]) -> nn.Module:
+    from tmgg.models.mymodels.my_model import MyModel
+
+    return MyModel(
+        hidden_dim=config.get("hidden_dim", 64),
+        num_layers=config.get("num_layers", 4),
+    )
+```
+
+If your model should be reachable under multiple names (e.g. a short alias),
+pass them all to the decorator:
+
+```python
+@register_model("my_model", "mm")
+def _make_my_model(config: dict[str, Any]) -> nn.Module:
+    ...
+```
+
+After registration, any caller can construct the model via:
+
+```python
+from tmgg.models.factory import create_model
+
+model = create_model("my_model", {"hidden_dim": 128, "num_layers": 6})
+```
+
+`create_model` raises `ValueError` with a list of all registered types if the
+key is unknown, which makes typos easy to diagnose.
+
+> **Note:** Use lazy imports inside the factory function (as shown above) to
+> avoid circular imports and keep module load time fast. Every existing
+> registration in `factory.py` follows this pattern.
 
 ## Adding a New Dataset
 
@@ -401,6 +451,177 @@ from tmgg.experiment_utils.cloud import MyCloudRunner
 runner = MyCloudRunner(api_key="...")
 result = runner.run_experiment(config)
 ```
+
+## Adding a New Experiment Type
+
+The sections above cover adding models, datasets, and noise within an existing experiment family. This section covers creating an entirely new experiment family from scratch — for instance, a graph VAE alongside the existing denoising and discrete diffusion families.
+
+The end-to-end process requires six artifacts. We walk through each using a hypothetical `vae_graph` experiment.
+
+### Step 1: Lightning Module
+
+Subclass `DenoisingLightningModule` and implement `_make_model()`. The critical contract: call `self.save_hyperparameters()` **before** `super().__init__()`, because `_make_model()` is invoked during the parent's `__init__` and reads from `self.hparams`.
+
+See `src/tmgg/experiments/spectral_arch_denoising/lightning_module.py` for the canonical example.
+
+```python
+# src/tmgg/experiments/vae_graph/lightning_module.py
+from typing import Any
+
+from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
+from tmgg.models.base import DenoisingModel
+
+
+class GraphVAELightningModule(DenoisingLightningModule):
+    """Lightning module for graph variational autoencoder experiments."""
+
+    def __init__(
+        self,
+        latent_dim: int = 32,
+        encoder_layers: int = 3,
+        learning_rate: float = 1e-3,
+        weight_decay: float = 1e-2,
+        optimizer_type: str = "adamw",
+        **kwargs: Any,
+    ):
+        # Populate self.hparams BEFORE super().__init__() —
+        # _make_model() reads from it during parent init.
+        self.save_hyperparameters()
+        super().__init__(
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            optimizer_type=optimizer_type,
+            **kwargs,
+        )
+
+    def _make_model(self, *args: Any, **kwargs: Any) -> DenoisingModel:
+        hp = self.hparams
+        return MyGraphVAE(
+            latent_dim=hp["latent_dim"],
+            encoder_layers=hp["encoder_layers"],
+        )
+```
+
+If your experiment needs custom training/validation logic beyond what `DenoisingLightningModule` provides (e.g., ELBO loss with KL term), override `training_step` and `validation_step` in this class.
+
+### Step 2: Base Config YAML
+
+Create `src/tmgg/exp_configs/base_config_vae_graph.yaml`. The `defaults:` list composes config groups; `_self_` goes last so that explicit keys in this file take priority over defaults.
+
+```yaml
+# Base configuration for graph VAE experiments
+#
+# Run with: uv run tmgg-vae-graph
+# Override: uv run tmgg-vae-graph model.latent_dim=64
+
+defaults:
+  - base_config_training
+  - models/vae/vae_default@model
+  - _self_
+
+experiment_name: "vae_graph"
+wandb_project: vae-graph
+
+model:
+  noise_type: ${data.noise_type}
+  noise_levels: ${data.noise_levels}
+  seed: ${seed}
+```
+
+### Step 3: Model Config
+
+Create YAML files under `src/tmgg/exp_configs/models/vae/`. The `_target_` points to the Lightning module class. Use `${}` interpolations for values that come from the base config or CLI overrides — the batch config builder strips these during generation.
+
+```yaml
+# src/tmgg/exp_configs/models/vae/vae_default.yaml
+
+_target_: tmgg.experiments.vae_graph.lightning_module.GraphVAELightningModule
+
+latent_dim: 32
+encoder_layers: 3
+
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+loss_type: ${loss_type}
+```
+
+### Step 4: Runner Script
+
+Create the Hydra entry point. The `config_path` is relative to the runner file's location.
+
+```python
+# src/tmgg/experiments/vae_graph/runner.py
+import hydra
+from omegaconf import DictConfig
+from tmgg.experiment_utils.run_experiment import run_experiment
+
+CONFIG_PATH = "../../exp_configs"
+
+@hydra.main(version_base="1.3", config_path=CONFIG_PATH, config_name="base_config_vae_graph")
+def main(config: DictConfig):
+    return run_experiment(config)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Step 5: CLI Entry Point
+
+Register the runner in `pyproject.toml` under `[project.scripts]`:
+
+```toml
+[project.scripts]
+# ... existing entries ...
+# VAE experiment CLI
+tmgg-vae-graph = "tmgg.experiments.vae_graph.runner:main"
+```
+
+After adding this, reinstall with `uv pip install -e .` so the console script is available.
+
+### Step 6: Stage Definition (Batch Runs)
+
+To run sweeps on Modal, create a stage definition at `src/tmgg/modal/stage_definitions/stage_vae_graph.yaml`. This defines the architecture/hyperparameter grid and seed list for batch config generation.
+
+```yaml
+# Graph VAE: initial validation sweep
+
+name: stage_vae_graph
+base_config: base_config_vae_graph
+
+architectures:
+  - models/vae/vae_default
+
+hyperparameters:
+  learning_rate: [1e-4, 1e-3]
+  "model.latent_dim": [16, 32, 64]
+
+seeds: [1, 2, 3]
+
+run_id_template: "vae_{arch}_{latent_dim}_{lr}_s{seed}"
+```
+
+Verify the generated configs with a dry run:
+
+```bash
+uv run python -m tmgg.modal.cli.generate_configs \
+    --stage stage_vae_graph --output-dir /tmp/test --dry-run
+```
+
+### Checklist Summary
+
+Before marking a new experiment type complete, confirm:
+
+1. Lightning module calls `save_hyperparameters()` before `super().__init__()`.
+2. Base config YAML exists in `src/tmgg/exp_configs/` with `- _self_` last in defaults.
+3. At least one model config exists under `src/tmgg/exp_configs/models/<family>/`.
+4. Runner script uses `@hydra.main(version_base="1.3", ...)` with correct `config_path`.
+5. `pyproject.toml` has the `tmgg-<name>` entry point.
+6. Stage YAML generates valid configs via `--dry-run`.
+7. `uv run tmgg-<name> --help` prints the Hydra help without errors.
 
 ## Testing Your Extensions
 

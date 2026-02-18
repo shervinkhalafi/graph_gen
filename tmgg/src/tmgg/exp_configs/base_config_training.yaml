@@ -1,38 +1,17 @@
-# Base training configuration shared across all experiment types
+# Base training configuration for denoising experiments
 #
-# Individual experiment configs (base_config_*.yaml) inherit from this
-# and override only experiment-specific settings (model, experiment_name, wandb).
+# Inherits shared infrastructure from _base_infra.yaml and adds
+# denoising-specific settings: data config group (sbm_default), noise
+# parameters, loss type, and the data↔model noise sync.
 #
-# This file contains all training infrastructure: optimizer, scheduler, noise,
-# paths, hydra output, sweep settings, and Modal cloud execution config.
+# Individual denoising experiment configs (base_config_digress.yaml, etc.)
+# inherit from this file. Generative experiment configs inherit from
+# _base_infra.yaml directly, avoiding the denoising data/noise leakage.
 
 defaults:
+  - _base_infra
   - data: sbm_default
-  - base/trainer/default@trainer
-  - base/logger/default
-  - base/callbacks/default
-  - base/progress_bar/default
   - _self_
-
-# Experiment identification (overridden by each experiment type)
-experiment_name: "tmgg_training"
-wandb_project: sandbox
-wandb_entity: graph_denoise_team
-sanity_check: false
-
-# Optimizer settings (per experimental design)
-learning_rate: 1e-3
-weight_decay: 1e-4
-optimizer_type: adamw
-
-# Learning rate scheduler with warmup
-# Uses fractions of total training - automatically adjusts to batch_size and epochs.
-# warmup_fraction: linear warmup from 0 to LR over this fraction of training
-# decay_fraction: LR reaches 0 at this fraction, stays at 0 after (clamped)
-scheduler_config:
-  type: cosine_warmup
-  warmup_fraction: 0.02    # 2% of training (~1-2 epochs typical)
-  decay_fraction: 0.8      # LR reaches 0 at 80% of training
 
 # Loss function (models output logits, BCEWithLogits applies sigmoid internally)
 loss_type: BCEWithLogits
@@ -43,55 +22,8 @@ noise_levels: [0.01, 0.05, 0.1, 0.2, 0.3]
 eval_noise_levels: null  # Noise levels for evaluation. null = use noise_levels
 fixed_noise_seed: null  # Set to int for constant noise (sanity check mode)
 
-# Sync data module noise_levels with model (prevents hparam conflict)
+# Sync data module noise config with top-level settings.
+# Ensures LightningModule and DataModule hparams agree (Lightning merges them).
 data:
   noise_levels: ${noise_levels}
   noise_type: ${noise_type}
-
-# Visualization settings (step-based)
-visualization_interval: 5000  # steps between logging visualizations
-
-# Spectral delta logging (for eigenstructure tracking during training)
-# When enabled, logs eigengap delta, algebraic connectivity delta,
-# eigenvalue drift, and subspace distance for noisy→clean and denoised→clean.
-log_spectral_deltas: false  # Set true to enable spectral delta metrics
-spectral_k: 4               # Number of top eigenvectors for subspace comparison
-
-# Random seed for reproducibility
-seed: 42
-
-# Training resumption: set true to ignore existing checkpoints and start fresh
-force_fresh: false
-
-# Stage identifier for multi-stage experiments (stage1_poc, stage2_validation, etc.)
-# Set automatically by stage runners; null when running experiments directly
-stage: null
-
-# Sweep mode settings (for multi-experiment runs via tmgg-stageN sweep=true)
-sweep: false
-parallelism: 4
-resume: true
-
-# Modal cloud execution (opt-in, use run_on_modal=true to enable)
-run_on_modal: false
-detach: false  # Fire-and-forget mode: spawn experiments and exit immediately
-
-# Evaluation settings (step-based)
-evaluation:
-  visualization_interval: ${visualization_interval}
-
-# Paths configuration
-# - Local execution: Hydra resolves ${hydra:runtime.output_dir} automatically
-# - Remote execution (Modal/Ray): prepare_config_for_remote() sets these to None,
-#   then execute_task() resolves from TMGG_OUTPUT_BASE env var and run_id
-paths:
-  output_dir: ${hydra:runtime.output_dir}
-  results_dir: ${paths.output_dir}/results
-
-# Hydra output directory (version-based for checkpoint resumption)
-hydra:
-  run:
-    dir: outputs/v${tmgg_version:}/${experiment_name}
-  sweep:
-    dir: outputs/sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}
-    subdir: ${hydra.job.num}

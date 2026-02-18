@@ -19,7 +19,9 @@ from typing import Any, Literal, cast
 
 import networkx as nx
 import numpy as np
+import ot
 import torch
+from scipy.linalg import toeplitz
 
 
 @dataclass
@@ -306,11 +308,64 @@ def gaussian_tv_kernel(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> floa
     return float(np.exp(-(tv**2) / (2 * sigma**2)))
 
 
+def gaussian_emd_kernel(
+    x: np.ndarray,
+    y: np.ndarray,
+    sigma: float = 1.0,
+    distance_scaling: float = 1.0,
+) -> float:
+    """Gaussian kernel with Earth Mover's Distance (DiGress style).
+
+    Uses optimal transport distance instead of TV or L2, providing
+    sensitivity to distributional shape that TV ignores. Matches the
+    ``gaussian_emd`` kernel from ``analysis/dist_helper.py`` in the
+    upstream DiGress codebase.
+
+    Parameters
+    ----------
+    x
+        First histogram.
+    y
+        Second histogram.
+    sigma
+        Kernel bandwidth.
+    distance_scaling
+        Scale factor for the Toeplitz distance matrix. Upstream uses
+        ``bins`` (e.g. 100 for clustering) to normalise bin distances.
+
+    Returns
+    -------
+    float
+        Kernel value in (0, 1].
+    """
+    # Pad to same length
+    support_size = max(len(x), len(y))
+    x_padded = np.zeros(support_size)
+    y_padded = np.zeros(support_size)
+    x_padded[: len(x)] = x
+    y_padded[: len(y)] = y
+
+    # Normalize to PMF
+    x_sum = x_padded.sum()
+    y_sum = y_padded.sum()
+    if x_sum > 0:
+        x_padded = x_padded / x_sum
+    if y_sum > 0:
+        y_padded = y_padded / y_sum
+
+    # Toeplitz distance matrix (DiGress convention)
+    d_mat = toeplitz(range(support_size)).astype(float) / distance_scaling
+
+    emd_val: float = ot.emd2(x_padded, y_padded, d_mat)  # pyright: ignore[reportUnknownMemberType, reportAssignmentType]
+    return float(np.exp(-(emd_val * emd_val) / (2 * sigma * sigma)))
+
+
 def compute_mmd(
     samples1: list[np.ndarray],
     samples2: list[np.ndarray],
-    kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
+    kernel: Literal["gaussian", "gaussian_tv", "gaussian_emd"] = "gaussian_tv",
     sigma: float = 1.0,
+    distance_scaling: float = 1.0,
 ) -> float:
     """Compute unbiased MMD estimator between two sets of histograms.
 
@@ -324,9 +379,15 @@ def compute_mmd(
     samples2
         Second set of histogram samples.
     kernel
-        Kernel type: "gaussian" (L2-based) or "gaussian_tv" (TV-based, DiGress style).
+        Kernel type: ``"gaussian"`` (L2-based), ``"gaussian_tv"``
+        (TV-based, DiGress default), or ``"gaussian_emd"`` (Earth
+        Mover's Distance via POT).
     sigma
-        Bandwidth for kernel (both use same sigma parameter).
+        Bandwidth for kernel.
+    distance_scaling
+        Scale factor for the EMD distance matrix. Only used with
+        ``"gaussian_emd"``; upstream DiGress uses ``bins`` (e.g. 100
+        for clustering).
 
     Returns
     -------
@@ -339,6 +400,8 @@ def compute_mmd(
     def kernel_fn(x: np.ndarray, y: np.ndarray) -> float:
         if kernel == "gaussian":
             return gaussian_kernel(x, y, sigma)
+        if kernel == "gaussian_emd":
+            return gaussian_emd_kernel(x, y, sigma, distance_scaling)
         return gaussian_tv_kernel(x, y, sigma)
 
     # Compute kernel expectations
@@ -360,7 +423,7 @@ def compute_mmd(
 def compute_mmd_metrics(
     ref_graphs: list[nx.Graph[Any]],
     gen_graphs: list[nx.Graph[Any]],
-    kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
+    kernel: Literal["gaussian", "gaussian_tv", "gaussian_emd"] = "gaussian_tv",
     sigma: float = 1.0,
     max_workers: int | None = None,
 ) -> MMDResults:
@@ -373,7 +436,9 @@ def compute_mmd_metrics(
     gen_graphs
         List of generated NetworkX graphs.
     kernel
-        Kernel type: "gaussian" (L2-based) or "gaussian_tv" (TV-based, DiGress style).
+        Kernel type: ``"gaussian"`` (L2-based), ``"gaussian_tv"``
+        (TV-based, DiGress default), or ``"gaussian_emd"`` (Earth
+        Mover's Distance via POT).
     sigma
         Bandwidth for kernel.
     max_workers
@@ -388,10 +453,16 @@ def compute_mmd_metrics(
     ref_stats = compute_graph_statistics(ref_graphs, max_workers)
     gen_stats = compute_graph_statistics(gen_graphs, max_workers)
 
-    # Compute MMD for each statistic
+    # Compute MMD for each statistic.
+    # Upstream DiGress uses sigma=1.0/10 and distance_scaling=bins for
+    # clustering with EMD; the default sigma=1.0 works for TV/L2.
     degree_mmd = compute_mmd(ref_stats.degree, gen_stats.degree, kernel, sigma)
     clustering_mmd = compute_mmd(
-        ref_stats.clustering, gen_stats.clustering, kernel, sigma
+        ref_stats.clustering,
+        gen_stats.clustering,
+        kernel,
+        sigma=sigma if kernel != "gaussian_emd" else 1.0 / 10,
+        distance_scaling=100.0 if kernel == "gaussian_emd" else 1.0,
     )
     spectral_mmd = compute_mmd(ref_stats.spectral, gen_stats.spectral, kernel, sigma)
 
@@ -405,7 +476,7 @@ def compute_mmd_metrics(
 def compute_mmd_from_adjacencies(
     ref_adjacencies: torch.Tensor | np.ndarray | list[np.ndarray] | list[torch.Tensor],
     gen_adjacencies: torch.Tensor | np.ndarray | list[np.ndarray] | list[torch.Tensor],
-    kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
+    kernel: Literal["gaussian", "gaussian_tv", "gaussian_emd"] = "gaussian_tv",
     sigma: float = 1.0,
     max_workers: int | None = None,
 ) -> MMDResults:

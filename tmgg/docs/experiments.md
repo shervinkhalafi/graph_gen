@@ -102,6 +102,8 @@ uv run tmgg-spectral-arch logger=wandb
 uv run tmgg-spectral-arch logger=wandb wandb_project="my-project"
 ```
 
+For analysis tools and exported data, see [`wandb-tools/README.md`](../wandb-tools/README.md).
+
 ### CSV Logger
 
 ```bash
@@ -429,7 +431,7 @@ All eight denoising architectures are available for generative modeling, enablin
 
 ### Graph Distributions
 
-The `GraphDistributionDataModule` generates synthetic graph collections for training. Supported distributions:
+The `MultiGraphDataModule` generates synthetic graph collections for training. Supported distributions:
 
 | `dataset_type` | Description |
 |----------------|-------------|

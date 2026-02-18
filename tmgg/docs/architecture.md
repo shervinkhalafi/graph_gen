@@ -88,16 +88,13 @@ The data loading abstraction in `src/tmgg/experiment_utils/data/data_module.py`.
 - Train/val/test splitting
 - Batch loading with noise injection
 
-### CloudRunner and CloudRunnerFactory
+### Cloud Execution (Modal)
 
-The cloud execution abstraction in `src/tmgg/experiment_utils/cloud/`. The factory pattern allows registering multiple backends:
+The Modal integration in `src/tmgg/modal/` provides cloud GPU execution. CLI tools in `tmgg.modal.cli` spawn and manage experiments:
 
-```python
-from tmgg.experiment_utils.cloud import CloudRunnerFactory
-
-runner = CloudRunnerFactory.create("local")  # or "modal"
-result = runner.run_experiment(config)
-```
+- `tmgg.modal.cli.spawn_single` — run one experiment configuration on a Modal GPU
+- `tmgg.modal.cli.launch_sweep` — run a sweep of configurations in parallel
+- `tmgg.modal._functions` — Modal function definitions deployed to the cloud
 
 ## Execution Flow
 
@@ -129,11 +126,12 @@ Each step is driven by the Hydra configuration. The `_target_` fields in YAML co
 
 ### Factory Pattern
 
-`CloudRunnerFactory` registers and creates execution backends:
+`MODEL_REGISTRY` in `models/factory.py` maps string identifiers to model constructors:
 
 ```python
-CloudRunnerFactory.register("modal", ModalRunner)
-runner = CloudRunnerFactory.create("modal", **kwargs)
+from tmgg.models.factory import create_model
+
+model = create_model("self_attention", {"k": 8, "d_k": 64})
 ```
 
 ### Strategy Pattern
@@ -160,6 +158,11 @@ model = SequentialDenoisingModel(
 **To understand training flow:**
 - `experiment_utils/run_experiment.py` - Main orchestration
 - `experiment_utils/base_lightningmodule.py` - Training loop
+- `experiment_utils/optimizer_config.py` - Optimizer and LR scheduler configuration
+- `experiment_utils/model_logging.py` - Parameter count logging
+- `experiment_utils/final_eval.py` - Post-training evaluation across noise levels
+- `experiment_utils/checkpoint_utils.py` - Checkpoint loading with backward compatibility
+- `experiment_utils/setup.py` - Seed, callbacks, matmul precision
 
 **To understand models:**
 - `models/base.py` - Base classes
@@ -169,7 +172,12 @@ model = SequentialDenoisingModel(
 
 **To understand data:**
 - `experiment_utils/data/data_module.py` - Data loading
-- `experiment_utils/data/noise_generators.py` - Noise models
+- `experiment_utils/data/noise.py` - Low-level noise functions (Gaussian, rotation, DiGress, edge flip, logit)
+- `experiment_utils/data/noise_generators.py` - OOP noise generator wrappers
+
+**To understand metrics:**
+- `experiment_utils/metrics.py` - Reconstruction quality metrics
+- `experiment_utils/mmd_metrics.py` - Graph distribution distance (MMD)
 
 **To understand configuration:**
 - `exp_configs/base_config_*.yaml` - Top-level configs

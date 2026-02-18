@@ -650,6 +650,7 @@ class _GraphTransformer(nn.Module):
                     n_head=hidden_dims["n_head"],
                     dim_ffX=hidden_dims.get("dim_ffX", 2048),
                     dim_ffE=hidden_dims.get("dim_ffE", 128),
+                    dim_ffy=hidden_dims.get("dim_ffy", 2048),
                     use_gnn_q=use_gnn_q,
                     use_gnn_k=use_gnn_k,
                     use_gnn_v=use_gnn_v,

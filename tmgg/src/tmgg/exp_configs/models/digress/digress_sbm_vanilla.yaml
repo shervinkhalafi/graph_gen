@@ -27,7 +27,7 @@ noise_type: ${data.noise_type}
 noise_levels: ${data.noise_levels}
 eval_noise_levels: ${eval_noise_levels}
 fixed_noise_seed: ${fixed_noise_seed}
-seed: 42
+seed: ${seed}
 
 # Full-size model matching official SBM DiGress
 use_eigenvectors: true
@@ -39,6 +39,9 @@ hidden_dims:
   de: 64
   dy: 64
   n_head: 8
+  dim_ffX: 256
+  dim_ffE: 64
+  dim_ffy: 256
 
 # MLP hidden dims (official SBM config)
 hidden_mlp_dims:

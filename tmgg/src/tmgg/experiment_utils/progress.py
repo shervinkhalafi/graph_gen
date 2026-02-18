@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     import pytorch_lightning as pl
 
 from tmgg.experiment_utils.logging import (
-    setup_rich_logging,  # pyright: ignore[reportAttributeAccessIssue]
+    setup_rich_logging,
 )
 
 

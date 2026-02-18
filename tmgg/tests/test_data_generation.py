@@ -63,13 +63,21 @@ class TestNoiseGeneration:
     """Test noise generation functions."""
 
     def test_random_skew_symmetric_matrix(self):
-        """Test skew-symmetric matrix generation."""
+        """Test skew-symmetric matrix generation with explicit RNG."""
         n = 5
-        S = random_skew_symmetric_matrix(n)
+        rng = np.random.default_rng(42)
+        S = random_skew_symmetric_matrix(n, rng=rng)
 
         assert S.shape == (n, n)
         assert np.allclose(S, -S.T)  # Skew-symmetric property
         assert np.allclose(np.diag(S), 0)  # Diagonal is zero
+
+    def test_random_skew_symmetric_matrix_reproducibility(self):
+        """Passing the same seed produces identical matrices."""
+        n = 5
+        S1 = random_skew_symmetric_matrix(n, rng=np.random.default_rng(99))
+        S2 = random_skew_symmetric_matrix(n, rng=np.random.default_rng(99))
+        assert np.array_equal(S1, S2)
 
     def test_add_gaussian_noise(self):
         """Test Gaussian noise addition."""
@@ -213,7 +221,7 @@ class TestNoiseGeneration:
         """Test rotation noise addition."""
         A = torch.eye(5).unsqueeze(0)  # Add batch dimension
         eps = 0.1
-        skew = random_skew_symmetric_matrix(5)
+        skew = random_skew_symmetric_matrix(5, rng=np.random.default_rng(0))
 
         A_noisy = add_rotation_noise(A, eps, skew)
         eigenvalues, V_rot = compute_eigendecomposition(A_noisy)
@@ -237,7 +245,7 @@ class TestNoiseGeneration:
         """Test that rotation preserves orthogonality of eigenvectors."""
         A = torch.diag(torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])).unsqueeze(0)
         eps = 0.5
-        skew = random_skew_symmetric_matrix(5)
+        skew = random_skew_symmetric_matrix(5, rng=np.random.default_rng(1))
 
         A_noisy = add_rotation_noise(A, eps, skew)
         eigenvalues, V_rot = compute_eigendecomposition(A_noisy)
@@ -263,7 +271,9 @@ class TestNoiseGeneration:
         A_digress = add_edge_flip_noise(A_np, 0.1)
         assert isinstance(A_digress, torch.Tensor)
 
-        A_rot = add_rotation_noise(A_np, 0.1, random_skew_symmetric_matrix(5))
+        A_rot = add_rotation_noise(
+            A_np, 0.1, random_skew_symmetric_matrix(5, rng=np.random.default_rng(2))
+        )
         assert isinstance(A_rot, torch.Tensor)
 
 

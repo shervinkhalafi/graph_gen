@@ -12,7 +12,16 @@ BaseModel (src/tmgg/models/base.py)
     ├── GNNSymmetric (gnn/gnn_sym.py)
     ├── NodeVarGNN (gnn/nvgnn.py)
     ├── SequentialDenoisingModel (hybrid/hybrid.py)
-    └── Spectral denoisers (spectral_denoisers/)
+    ├── Spectral denoisers (spectral_denoisers/)
+    │   ├── LinearPE
+    │   ├── GraphFilterBank
+    │   ├── SelfAttentionDenoiser
+    │   ├── BilinearDenoiser
+    │   ├── BilinearDenoiserWithMLP
+    │   └── MultiLayerBilinearDenoiser
+    └── Shrinkage wrappers (spectral_denoisers/shrinkage_wrapper.py)
+        ├── StrictShrinkageWrapper
+        └── RelaxedShrinkageWrapper
 ```
 
 All models inherit from `DenoisingModel`, which provides configuration utilities and prediction methods.
@@ -179,6 +188,8 @@ where V ∈ R^{n×k} are eigenvectors, W_Q, W_K, W_V ∈ R^{k×d_k} are learnabl
 projections, and W_out_Q, W_out_K ∈ R^{d_k×d_out} reconstruct the adjacency
 from the attended representations.
 
+**Registry alias:** `self_attention`
+
 **Parameters:**
 
 | Parameter | Type | Default | Description |
@@ -189,9 +200,177 @@ from the attended representations.
 
 **Config:** `exp_configs/models/spectral/self_attention.yaml`
 
+### BilinearDenoiser
+
+Scaled bilinear form on eigenvector embeddings. Despite naming inherited from transformer literature, there is no softmax normalization and no value projection -- the core operation is a pure bilinear form.
+
+**Formula:**
+```
+Q = V W_Q,  K = V W_K
+Â = Q K^T / √d_k
+```
+
+where V ∈ R^{n×k} are top-k eigenvectors and W_Q, W_K ∈ R^{k×d_k} are learnable projection matrices. The output is raw logits (unbounded); use `model.predict(logits)` for [0,1] probabilities via sigmoid.
+
+**Location:** `src/tmgg/models/spectral_denoisers/bilinear.py`
+
+**Registry alias:** `bilinear`
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `k` | int | required | Number of eigenvectors (input dim) |
+| `d_k` | int | 64 | Query/key dimension |
+
+**Usage:**
+
+```python
+from tmgg.models.factory import create_model
+
+model = create_model("bilinear", {"k": 8, "d_k": 64})
+```
+
+### BilinearDenoiserWithMLP
+
+Extends BilinearDenoiser by passing the bilinear output through an element-wise MLP before producing adjacency logits. The MLP treats each edge independently, preserving permutation equivariance.
+
+**Formula:**
+```
+Q = V W_Q,  K = V W_K
+H = Q K^T / √d_k
+Â = MLP(H)
+```
+
+The MLP reshapes H to scalar-per-edge, applies hidden layers with ReLU activations, and outputs one logit per edge.
+
+**Location:** `src/tmgg/models/spectral_denoisers/bilinear.py`
+
+**Registry aliases:** `self_attention_mlp`, `bilinear_mlp`
+
+> **Note:** The `self_attention_mlp` alias refers to `BilinearDenoiserWithMLP`, not to `SelfAttentionDenoiser` combined with an MLP. This is a common source of confusion.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `k` | int | required | Number of eigenvectors (input dim) |
+| `d_k` | int | 64 | Query/key dimension |
+| `mlp_hidden_dim` | int | 128 | Hidden dimension of MLP layers |
+| `mlp_num_layers` | int | 2 | Number of MLP layers (including output) |
+
+**Config:** `exp_configs/models/spectral/self_attention_mlp.yaml`
+
+**Usage:**
+
+```python
+from tmgg.models.factory import create_model
+
+model = create_model("self_attention_mlp", {"k": 8, "d_k": 64, "mlp_hidden_dim": 128})
+```
+
+### MultiLayerBilinearDenoiser
+
+Multilayer transformer-style denoiser operating on eigenvectors. Stacks transformer blocks (multi-head self-attention + residual connections + optional feed-forward MLP) on eigenvector embeddings, then reconstructs the adjacency via final Q/K projections. This is the deep extension of BilinearDenoiser, enabling more complex spectral-to-adjacency mappings.
+
+**Architecture:**
+```
+V (n×k)  →  Linear (k → d_model)
+         →  L × TransformerBlock(attention + residual + [MLP + residual])
+         →  Q = W_Q(h),  K = W_K(h)
+         →  Â = Q K^T / √d_model
+```
+
+Each TransformerBlock uses post-norm style (LayerNorm after residual addition), multi-head self-attention, and an optional GELU-activated feed-forward MLP.
+
+**Location:** `src/tmgg/models/spectral_denoisers/bilinear.py`
+
+**Registry aliases:** `multilayer_self_attention`, `multilayer_attention`, `multilayer_bilinear`
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `k` | int | required | Number of eigenvectors (input dim) |
+| `d_model` | int | 64 | Hidden dimension for transformer blocks |
+| `num_heads` | int | 4 | Number of attention heads (must divide d_model) |
+| `num_layers` | int | 2 | Number of stacked transformer blocks |
+| `use_mlp` | bool | True | Include feed-forward MLP in each block |
+| `mlp_hidden_dim` | int | 4*d_model | MLP hidden dimension (config key: `transformer_mlp_hidden_dim`) |
+| `dropout` | float | 0.0 | Dropout probability |
+
+**Config:** `exp_configs/models/spectral/multilayer_self_attention.yaml`
+
+**Usage:**
+
+```python
+from tmgg.models.factory import create_model
+
+model = create_model("multilayer_self_attention", {
+    "k": 8, "d_model": 64, "num_heads": 4, "num_layers": 3,
+})
+```
+
+### StrictShrinkageWrapper
+
+Wraps an inner spectral denoiser (by default BilinearDenoiser) to enforce denoising via SVD singular value shrinkage. The inner model extracts learned features that are aggregated to graph level and fed to an MLP predicting per-singular-value shrinkage coefficients. Sigmoid gating constrains coefficients to [0, 1], guaranteeing that singular values can only decrease -- corresponding to a denoising interpretation where noise adds energy that should be removed.
+
+**Formula:**
+```
+U, S, V^T = SVD(A_noisy)
+F = inner_model.get_features(A_noisy)
+h = aggregate(F)                          # mean or attention pooling
+alpha = sigmoid(MLP(h))                   # alpha in [0, 1] per singular value
+A_hat = U diag(alpha * S) V^T
+A_hat = (A_hat + A_hat^T) / 2            # symmetrize
+```
+
+**Location:** `src/tmgg/models/spectral_denoisers/shrinkage_wrapper.py`
+
+**Registry alias:** `self_attention_strict_shrinkage`
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `k` | int | required | Number of eigenvectors for inner BilinearDenoiser |
+| `d_k` | int | 64 | Key dimension for inner BilinearDenoiser |
+| `shrinkage_max_rank` | int | 50 | Maximum number of singular values to retain |
+| `shrinkage_aggregation` | str | "mean" | Feature aggregation: "mean" or "attention" |
+| `shrinkage_hidden_dim` | int | 128 | Hidden dimension of the shrinkage MLP |
+| `shrinkage_mlp_layers` | int | 2 | Number of layers in the shrinkage MLP |
+
+**Config:** `exp_configs/models/spectral/self_attention_strict_shrinkage.yaml`
+
+> **Note:** This module is experimental and not yet used in standard experiment sweeps.
+
+### RelaxedShrinkageWrapper
+
+Like StrictShrinkageWrapper but uses FiLM-style affine modulation (`scale * S + shift`) instead of sigmoid gating. This allows both shrinkage and expansion of singular values, making it more expressive at the cost of losing the monotone-decrease guarantee. The scale passes through softplus to ensure positivity.
+
+**Formula:**
+```
+(scale_raw, shift) = split(MLP(h))
+scale = softplus(scale_raw)
+S_mod = scale * S + shift
+A_hat = U diag(S_mod) V^T
+```
+
+**Location:** `src/tmgg/models/spectral_denoisers/shrinkage_wrapper.py`
+
+**Registry alias:** `self_attention_relaxed_shrinkage`
+
+**Parameters:** Same as StrictShrinkageWrapper (uses identical config keys).
+
+**Config:** `exp_configs/models/spectral/self_attention_relaxed_shrinkage.yaml`
+
+> **Note:** This module is experimental and not yet used in standard experiment sweeps.
+
 ## DiGress Models
 
 Diffusion-based transformer for graph denoising. Used as baseline for comparing spectral architectures.
+
+For a detailed comparison of DiGress attention vs. standard scaled dot-product attention, see [Attention Mechanisms: DiGress vs Standard Graph Transformer](attention_comparison.md).
 
 **Location:** `src/tmgg/models/digress/`
 

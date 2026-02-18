@@ -22,12 +22,12 @@ scheduler_config: ${scheduler_config}
 # Loss
 loss_type: "BCEWithLogits"
 
-# Noise configuration (will be overridden by stage config)
-noise_type: "digress"
-noise_levels: [0.1]
+# Noise configuration (from data config)
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
 eval_noise_levels: ${eval_noise_levels}
 fixed_noise_seed: ${fixed_noise_seed}
-seed: 42
+seed: ${seed}
 
 # Small model for stage 1 (4 layers instead of official 8)
 use_eigenvectors: true
@@ -39,6 +39,9 @@ hidden_dims:
   de: 32
   dy: 128
   n_head: 4
+  dim_ffX: 128
+  dim_ffE: 32
+  dim_ffy: 128
 
 # MLP hidden dims (scaled down proportionally from official 128/64/128)
 hidden_mlp_dims:

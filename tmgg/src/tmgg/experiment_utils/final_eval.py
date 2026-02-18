@@ -13,9 +13,13 @@ def evaluate_across_noise_levels(
     data_module: GraphDataModule,
     noise_levels: list[float],
     noise_generator: NoiseGenerator,
+    num_eval_samples: int = 10,
 ) -> dict[str, list[float]]:
-    """
-    Evaluate model across different noise levels.
+    """Evaluate model across different noise levels, averaging over multiple samples.
+
+    For each noise level, draws ``num_eval_samples`` independent test graphs
+    from the data module and averages the reconstruction metrics. This reduces
+    variance compared to evaluating on a single random test graph.
 
     Parameters
     ----------
@@ -27,38 +31,56 @@ def evaluate_across_noise_levels(
         Noise intensities to evaluate at.
     noise_generator
         Noise generator matching the model's training noise type.
+    num_eval_samples
+        Number of test graphs to average over per noise level. Higher values
+        reduce variance at the cost of evaluation time.
 
     Returns
     -------
     dict[str, list[float]]
-        Per-noise-level MSE, eigenvalue error, and subspace distance.
+        Per-noise-level MSE, eigenvalue error, and subspace distance,
+        each averaged over ``num_eval_samples`` test graphs.
     """
 
     model.eval()  # pyright: ignore[reportUnusedCallResult]
-    results = {"mse": [], "eigenvalue_error": [], "subspace_distance": []}
-
-    # Get a sample for evaluation
-    sample_A = data_module.get_sample_adjacency_matrix("test")
+    results: dict[str, list[float]] = {
+        "mse": [],
+        "eigenvalue_error": [],
+        "subspace_distance": [],
+    }
 
     with torch.no_grad():
         for eps in noise_levels:
-            # Add noise using the model's noise type
-            A_noisy = noise_generator.add_noise(sample_A, eps)
-            _, V_noisy = compute_eigendecomposition(A_noisy)
+            eps_metrics = {
+                "mse": 0.0,
+                "eigenvalue_error": 0.0,
+                "subspace_distance": 0.0,
+            }
 
-            # Predict
-            V_noisy_input = V_noisy.unsqueeze(0) if A_noisy.ndim == 2 else V_noisy
+            for _ in range(num_eval_samples):
+                sample_A = data_module.get_sample_adjacency_matrix("test")
 
-            # Move to model's device
-            V_noisy_input = V_noisy_input.to(model.device)
-            A_pred = model(V_noisy_input)
+                # Add noise using the model's noise type
+                A_noisy = noise_generator.add_noise(sample_A, eps)
+                _, V_noisy = compute_eigendecomposition(A_noisy)
 
-            # Compute metrics (move prediction back to CPU)
-            metrics = compute_reconstruction_metrics(sample_A, A_pred.squeeze(0).cpu())
+                # Predict
+                V_noisy_input = V_noisy.unsqueeze(0) if A_noisy.ndim == 2 else V_noisy
 
-            results["mse"].append(metrics["mse"])
-            results["eigenvalue_error"].append(metrics["eigenvalue_error"])
-            results["subspace_distance"].append(metrics["subspace_distance"])
+                # Move to model's device
+                V_noisy_input = V_noisy_input.to(model.device)
+                A_pred = model(V_noisy_input)
+
+                # Compute metrics (move prediction back to CPU)
+                metrics = compute_reconstruction_metrics(
+                    sample_A, A_pred.squeeze(0).cpu()
+                )
+
+                for k in eps_metrics:
+                    eps_metrics[k] += metrics[k] / num_eval_samples
+
+            for k in eps_metrics:
+                results[k].append(eps_metrics[k])
 
     return results
 

@@ -117,11 +117,8 @@ class RotationNoiseGenerator(NoiseGenerator):
 
     def _generate_skew_matrix(self, k: int, seed: int | None) -> np.ndarray:
         """Generate a random skew-symmetric matrix."""
-        if seed is not None:
-            rng = np.random.RandomState(seed)
-            A = rng.rand(k, k)
-        else:
-            A = np.random.rand(k, k)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        rng = np.random.default_rng(seed)
+        A = rng.random((k, k))
         return (A - A.T) / 2
 
     def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:

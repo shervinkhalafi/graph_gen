@@ -67,7 +67,7 @@ For multi-graph training protocols (Stages 2+). Multiple graphs with train/val/t
 | `batch_size` | int | 100 | Batch size |
 | `val_split` | float | 0.2 | Validation set fraction |
 | `test_split` | float | 0.2 | Test set fraction |
-| `noise_type` | str | "digress" | Noise model (gaussian, rotation, digress, edge_flip) |
+| `noise_type` | str | "digress" | Noise model (gaussian, rotation, digress, edge_flip, logit) |
 | `noise_levels` | list | [0.1] | Noise levels to sample from |
 
 **Usage:**
@@ -266,7 +266,7 @@ tensor = dataset.to_torch()  # Returns torch.Tensor
 
 ## Noise Types
 
-Four noise models are available for training and evaluation.
+Five noise models are available for training and evaluation.
 
 ### Gaussian Noise
 
@@ -311,12 +311,22 @@ from tmgg.experiment_utils.data import add_edge_flip_noise
 noisy = add_edge_flip_noise(adjacency, eps=0.1)  # 10% flip probability
 ```
 
+### Logit Noise
+
+Applies Gaussian noise in logit (log-odds) space, producing soft adjacency values in (0, 1). The input is clamped to avoid numerical issues, transformed via `logit(A) = log(A / (1 - A))`, perturbed with symmetric Gaussian noise of standard deviation `sigma`, then mapped back through sigmoid. Unlike flip-based noise types, the output is continuous rather than binary. The `sigma` parameter controls perturbation severity in log-odds space: values around 0.5 cause mild perturbation where most edges retain their original polarity, while values around 5.0 cause aggressive flipping.
+
+```python
+from tmgg.experiment_utils.data import add_logit_noise
+
+noisy = add_logit_noise(adjacency, sigma=1.0)
+```
+
 ## Configuring Noise
 
 In YAML configs:
 
 ```yaml
-noise_type: "digress"  # gaussian, rotation, digress, or edge_flip
+noise_type: "digress"  # gaussian, rotation, digress, edge_flip, or logit
 noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
 ```
 

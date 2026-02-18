@@ -1,10 +1,12 @@
 """PyTorch Lightning module for Digress GraphTransformer-based denoising."""
 
-from typing import Any
+from typing import Any, override
 
 import torch
 
 from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
+from tmgg.experiment_utils.mmd_evaluator import MMDEvaluator
+from tmgg.experiment_utils.mmd_metrics import adjacency_to_networkx
 from tmgg.experiment_utils.sampling import get_noise_schedule
 from tmgg.models.base import DenoisingModel
 from tmgg.models.digress.transformer_model import GraphTransformer
@@ -15,6 +17,11 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
 
     Eigenvector extraction (when use_eigenvectors=True) is handled internally
     by the GraphTransformer model, matching the architecture of spectral denoisers.
+
+    Includes MMD evaluation during validation: accumulates clean reference
+    graphs, generates graphs via iterative denoising at epoch end, and logs
+    degree/clustering/spectral MMD for cross-paradigm comparison with the
+    generative discrete diffusion experiment.
     """
 
     def __init__(
@@ -35,6 +42,10 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         noise_type: str = "digress",
         rotation_k: int = 20,
         seed: int | None = None,
+        # MMD evaluation
+        eval_num_samples: int = 128,
+        mmd_kernel: str = "gaussian_tv",
+        mmd_sigma: float = 1.0,
         # Legacy parameter name (deprecated, use k instead)
         node_feature_dim: int | None = None,
         **kwargs: Any,  # pyright: ignore[reportExplicitAny]
@@ -43,9 +54,10 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
         if node_feature_dim is not None:
             k = node_feature_dim
 
-        # Store before super().__init__ since _make_model is called there
-        self._use_eigenvectors = use_eigenvectors
-        self._k = k
+        # Populate self.hparams before super().__init__() so that subclass
+        # params are available during _make_model if needed.
+        # See the Template Method contract on _make_model.
+        self.save_hyperparameters()
 
         super().__init__(
             use_eigenvectors=use_eigenvectors,
@@ -67,7 +79,106 @@ class DigressDenoisingLightningModule(DenoisingLightningModule):
             **kwargs,
         )
 
+        # MMD evaluation — same interface as DiscreteDiffusionLightningModule
+        self.mmd_evaluator = MMDEvaluator(
+            eval_num_samples=eval_num_samples,
+            kernel=mmd_kernel,
+            sigma=mmd_sigma,
+        )
+        self._mmd_num_nodes: int | None = None
+
     # forward() is inherited from base class - model handles eigenvector extraction
+
+    # ------------------------------------------------------------------
+    # MMD evaluation hooks
+    # ------------------------------------------------------------------
+
+    @override
+    def validation_step(
+        self, batch: torch.Tensor, batch_idx: int
+    ) -> dict[str, torch.Tensor]:
+        """Run base validation and accumulate reference graphs for MMD."""
+        result = super().validation_step(batch, batch_idx)
+
+        # Accumulate clean graphs as NetworkX for MMD reference set.
+        # batch shape: (B, N, N) — binary adjacency matrices.
+        if self._mmd_num_nodes is None:
+            self._mmd_num_nodes = batch.shape[1]
+            self.mmd_evaluator.set_num_nodes(batch.shape[1])
+
+        for i in range(batch.size(0)):
+            adj_np = batch[i].detach().cpu().numpy()
+            self.mmd_evaluator.accumulate(adjacency_to_networkx(adj_np))
+
+        return result
+
+    @override
+    def on_validation_epoch_end(self) -> None:
+        """Generate graphs via iterative denoising and compute MMD metrics."""
+        # Run MMD evaluation before base visualizations
+        if (
+            self.global_step > 0
+            and self.mmd_evaluator.num_ref_graphs >= 2
+            and self._mmd_num_nodes is not None
+        ):
+            num_to_generate = min(
+                self.mmd_evaluator.num_ref_graphs,
+                self.mmd_evaluator.eval_num_samples,
+            )
+            gen_adjs = self.sample(
+                num_graphs=num_to_generate,
+                num_nodes=self._mmd_num_nodes,
+            )
+            gen_graphs = [adjacency_to_networkx(adj.cpu().numpy()) for adj in gen_adjs]
+            results = self.mmd_evaluator.evaluate(gen_graphs)
+            if results is not None:
+                self.log("val/degree_mmd", results.degree_mmd, prog_bar=True)
+                self.log("val/clustering_mmd", results.clustering_mmd)
+                self.log("val/spectral_mmd", results.spectral_mmd)
+        else:
+            self.mmd_evaluator.clear()
+
+        self._mmd_num_nodes = None
+        super().on_validation_epoch_end()
+
+    @override
+    def test_step(self, batch: torch.Tensor, batch_idx: int) -> dict[str, torch.Tensor]:
+        """Run base test step and accumulate reference graphs for MMD."""
+        result = super().test_step(batch, batch_idx)
+
+        if self._mmd_num_nodes is None:
+            self._mmd_num_nodes = batch.shape[1]
+            self.mmd_evaluator.set_num_nodes(batch.shape[1])
+
+        for i in range(batch.size(0)):
+            adj_np = batch[i].detach().cpu().numpy()
+            self.mmd_evaluator.accumulate(adjacency_to_networkx(adj_np))
+
+        return result
+
+    @override
+    def on_test_epoch_end(self) -> None:
+        """Generate graphs and compute MMD metrics at end of test."""
+        if self.mmd_evaluator.num_ref_graphs >= 2 and self._mmd_num_nodes is not None:
+            num_to_generate = min(
+                self.mmd_evaluator.num_ref_graphs,
+                self.mmd_evaluator.eval_num_samples,
+            )
+            gen_adjs = self.sample(
+                num_graphs=num_to_generate,
+                num_nodes=self._mmd_num_nodes,
+            )
+            gen_graphs = [adjacency_to_networkx(adj.cpu().numpy()) for adj in gen_adjs]
+            results = self.mmd_evaluator.evaluate(gen_graphs)
+            if results is not None:
+                self.log("test/degree_mmd", results.degree_mmd)
+                self.log("test/clustering_mmd", results.clustering_mmd)
+                self.log("test/spectral_mmd", results.spectral_mmd)
+        else:
+            self.mmd_evaluator.clear()
+
+        self._mmd_num_nodes = None
+        super().on_test_epoch_end()
 
     def _make_model(
         self,

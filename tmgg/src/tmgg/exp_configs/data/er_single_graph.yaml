@@ -5,5 +5,7 @@ defaults:
   - single_graph_base
 
 graph_type: erdos_renyi
-n: 50
-p: 0.1  # Edge probability
+num_nodes: 50
+
+graph_config:
+  p: 0.1  # Edge probability

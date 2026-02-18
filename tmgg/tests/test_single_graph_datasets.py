@@ -28,7 +28,7 @@ class TestSyntheticGraphs:
     """Test synthetic graph types that don't require external downloads."""
 
     @pytest.mark.parametrize(
-        "graph_type,kwargs",
+        "graph_type,graph_config",
         [
             ("sbm", {"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3}),
             ("erdos_renyi", {"p": 0.1}),
@@ -36,17 +36,17 @@ class TestSyntheticGraphs:
             ("tree", {}),
         ],
     )
-    def test_synthetic_graph_generation(self, graph_type: str, kwargs: dict):
+    def test_synthetic_graph_generation(self, graph_type: str, graph_config: dict):
         """Test that synthetic graphs generate valid adjacency matrices."""
         dm = SingleGraphDataModule(
             graph_type=graph_type,
-            n=50,
+            num_nodes=50,
+            graph_config=graph_config,
             same_graph_all_splits=True,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=4,
-            **kwargs,
         )
         dm.setup()
 
@@ -66,7 +66,7 @@ class TestSyntheticGraphs:
         assert np.allclose(np.diag(A), 0), "Diagonal should be zero (no self-loops)"
 
     @pytest.mark.parametrize(
-        "graph_type,kwargs",
+        "graph_type,graph_config",
         [
             ("sbm", {"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3}),
             ("erdos_renyi", {"p": 0.1}),
@@ -74,17 +74,17 @@ class TestSyntheticGraphs:
             ("tree", {}),
         ],
     )
-    def test_same_graph_all_splits(self, graph_type: str, kwargs: dict):
+    def test_same_graph_all_splits(self, graph_type: str, graph_config: dict):
         """Test that same_graph_all_splits=True uses identical graphs."""
         dm = SingleGraphDataModule(
             graph_type=graph_type,
-            n=50,
+            num_nodes=50,
+            graph_config=graph_config,
             same_graph_all_splits=True,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=4,
-            **kwargs,
         )
         dm.setup()
 
@@ -100,23 +100,23 @@ class TestSyntheticGraphs:
         ), "Train and test should be identical"
 
     @pytest.mark.parametrize(
-        "graph_type,kwargs",
+        "graph_type,graph_config",
         [
             ("sbm", {"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3}),
             ("erdos_renyi", {"p": 0.1}),
         ],
     )
-    def test_different_graphs_when_disabled(self, graph_type: str, kwargs: dict):
+    def test_different_graphs_when_disabled(self, graph_type: str, graph_config: dict):
         """Test that same_graph_all_splits=False uses different graphs."""
         dm = SingleGraphDataModule(
             graph_type=graph_type,
-            n=50,
+            num_nodes=50,
+            graph_config=graph_config,
             same_graph_all_splits=False,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=4,
-            **kwargs,
         )
         dm.setup()
 
@@ -131,7 +131,7 @@ class TestSyntheticGraphs:
         ), "Train and test should differ"
 
     @pytest.mark.parametrize(
-        "graph_type,kwargs",
+        "graph_type,graph_config",
         [
             ("sbm", {"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3}),
             ("erdos_renyi", {"p": 0.1}),
@@ -139,18 +139,18 @@ class TestSyntheticGraphs:
             ("tree", {}),
         ],
     )
-    def test_dataloader_batch_shape(self, graph_type: str, kwargs: dict):
+    def test_dataloader_batch_shape(self, graph_type: str, graph_config: dict):
         """Test that dataloaders return correctly shaped batches."""
         batch_size = 4
         dm = SingleGraphDataModule(
             graph_type=graph_type,
-            n=50,
+            num_nodes=50,
+            graph_config=graph_config,
             same_graph_all_splits=True,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=batch_size,
-            **kwargs,
         )
         dm.setup()
 
@@ -172,14 +172,13 @@ class TestNetworkXGraphs:
         """Test ring of cliques graph generation."""
         dm = SingleGraphDataModule(
             graph_type="ring_of_cliques",
-            n=20,  # Ignored for this type
+            num_nodes=20,  # Ignored for this type
+            graph_config={"num_cliques": 4, "clique_size": 5},
             same_graph_all_splits=True,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=4,
-            num_cliques=4,
-            clique_size=5,
         )
         dm.setup()
 
@@ -194,17 +193,19 @@ class TestNetworkXGraphs:
         """Test LFR benchmark graph generation."""
         dm = SingleGraphDataModule(
             graph_type="lfr",
-            n=200,  # LFR needs large n for community constraints
+            num_nodes=200,  # LFR needs large n for community constraints
+            graph_config={
+                "tau1": 2.0,
+                "tau2": 1.1,
+                "mu": 0.1,
+                "average_degree": 8,
+                "min_community": 15,
+            },
             same_graph_all_splits=True,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=4,
-            tau1=2.0,
-            tau2=1.1,
-            mu=0.1,
-            average_degree=8,
-            min_community=15,
         )
         dm.setup()
 
@@ -218,14 +219,13 @@ class TestNetworkXGraphs:
         """Test same graph protocol for ring of cliques."""
         dm = SingleGraphDataModule(
             graph_type="ring_of_cliques",
-            n=20,
+            num_nodes=20,
+            graph_config={"num_cliques": 4, "clique_size": 5},
             same_graph_all_splits=True,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=4,
-            num_cliques=4,
-            clique_size=5,
         )
         dm.setup()
 
@@ -255,13 +255,13 @@ class TestPyGGraphs:
 
         dm = SingleGraphDataModule(
             graph_type=graph_type,
-            n=0,  # Ignored for PyG
+            num_nodes=0,  # Ignored for PyG
+            graph_config={"graph_idx": 0},
             same_graph_all_splits=True,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=4,
-            graph_idx=0,
         )
         dm.setup()
 
@@ -283,13 +283,13 @@ class TestPyGGraphs:
 
         dm = SingleGraphDataModule(
             graph_type="pyg_enzymes",
-            n=0,
+            num_nodes=0,
+            graph_config={"graph_idx": 0},
             same_graph_all_splits=True,
             num_train_samples=10,
             num_val_samples=5,
             num_test_samples=5,
             batch_size=4,
-            graph_idx=0,
         )
         dm.setup()
 
@@ -304,17 +304,17 @@ class TestEdgeCases:
         """Test that unknown graph types raise ValueError."""
         dm = SingleGraphDataModule(
             graph_type="unknown_type",
-            n=50,
+            num_nodes=50,
             same_graph_all_splits=True,
         )
-        with pytest.raises(ValueError, match="Unknown graph type"):
+        with pytest.raises(ValueError, match="unknown_type"):
             dm.setup()
 
     def test_setup_required_before_access(self):
         """Test that accessing graphs before setup raises RuntimeError."""
         dm = SingleGraphDataModule(
             graph_type="sbm",
-            n=50,
+            num_nodes=50,
             same_graph_all_splits=True,
         )
         with pytest.raises(RuntimeError, match="Call setup"):
@@ -322,23 +322,23 @@ class TestEdgeCases:
 
     def test_reproducibility_with_seed(self):
         """Test that the same seed produces identical graphs."""
-        kwargs = {"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3}
+        graph_config = {"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3}
 
         dm1 = SingleGraphDataModule(
             graph_type="sbm",
-            n=50,
+            num_nodes=50,
+            graph_config=graph_config,
             train_seed=42,
             same_graph_all_splits=True,
-            **kwargs,
         )
         dm1.setup()
 
         dm2 = SingleGraphDataModule(
             graph_type="sbm",
-            n=50,
+            num_nodes=50,
+            graph_config=graph_config,
             train_seed=42,
             same_graph_all_splits=True,
-            **kwargs,
         )
         dm2.setup()
 
@@ -346,23 +346,23 @@ class TestEdgeCases:
 
     def test_different_seeds_produce_different_graphs(self):
         """Test that different seeds produce different graphs."""
-        kwargs = {"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3}
+        graph_config = {"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3}
 
         dm1 = SingleGraphDataModule(
             graph_type="sbm",
-            n=50,
+            num_nodes=50,
+            graph_config=graph_config,
             train_seed=42,
             same_graph_all_splits=True,
-            **kwargs,
         )
         dm1.setup()
 
         dm2 = SingleGraphDataModule(
             graph_type="sbm",
-            n=50,
+            num_nodes=50,
+            graph_config=graph_config,
             train_seed=123,
             same_graph_all_splits=True,
-            **kwargs,
         )
         dm2.setup()
 

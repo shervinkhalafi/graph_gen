@@ -47,8 +47,8 @@ def sample_batch() -> torch.Tensor:
 @pytest.fixture
 def data_module() -> GraphDataModule:
     return GraphDataModule(
-        dataset_name="sbm",
-        dataset_config={"num_nodes": N_NODES, "num_graphs": 8},
+        graph_type="sbm",
+        graph_config={"num_nodes": N_NODES, "num_graphs": 8},
         batch_size=4,
         noise_levels=[0.1, 0.2],
     )

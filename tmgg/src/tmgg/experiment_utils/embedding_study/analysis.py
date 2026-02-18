@@ -118,53 +118,6 @@ def analyze_results(
     return summaries
 
 
-def compare_methods(
-    results_path: Path | str,
-) -> list[tuple[str, str, int]]:
-    """Compare embedding methods pairwise.
-
-    For each graph, determines which method achieved the smallest
-    dimension. Returns win counts.
-
-    Parameters
-    ----------
-    results_path
-        Path to JSON results file.
-
-    Returns
-    -------
-    list
-        List of (method1, method2, wins_for_method1) tuples.
-    """
-    with open(results_path) as f:
-        data = json.load(f)
-
-    # Get all embedding types
-    etypes = set()
-    for study in data:
-        etypes.update(study["results"].keys())
-    etypes_list = sorted(etypes)
-
-    # Count wins
-    wins: dict[tuple[str, str], int] = {}
-    for t1 in etypes_list:
-        for t2 in etypes_list:
-            if t1 < t2:
-                wins[(t1, t2)] = 0
-
-    for study in data:
-        results = study["results"]
-        for t1 in etypes_list:
-            for t2 in etypes_list:
-                if t1 < t2 and t1 in results and t2 in results:
-                    d1 = results[t1]["min_dimension"]
-                    d2 = results[t2]["min_dimension"]
-                    if d1 < d2:
-                        wins[(t1, t2)] += 1
-
-    return [(t1, t2, w) for (t1, t2), w in wins.items()]
-
-
 def print_summary(summaries: dict[str, DimensionSummary]) -> None:
     """Print formatted summary of embedding study results.
 

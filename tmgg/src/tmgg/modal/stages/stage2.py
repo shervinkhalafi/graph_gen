@@ -1,11 +1,11 @@
-"""Stage 2: Core Validation - Modal execution.
-
-Validates generalization across configurations and compares with DiGress.
-Budget: 166.5 GPU-hours
+"""Stage 2: Core Validation — configuration generation.
 
 .. deprecated::
-    This module is deprecated. Use YAML stage_definitions/ + generate_configs
-    + launch_sweep pipeline instead.
+    The ``run_stage2`` Modal function and ``main`` entrypoint have been
+    removed. Use YAML ``stage_definitions/`` + ``generate_configs`` +
+    ``launch_sweep`` pipeline instead.
+
+    ``generate_stage2_configs`` is retained for downstream use.
 """
 
 from __future__ import annotations
@@ -14,19 +14,9 @@ import copy
 import warnings
 from typing import Any
 
-from tmgg.modal.app import app
-from tmgg.modal.runner import (
-    experiment_image,
-    run_single_experiment,
-    run_single_experiment_fast,
-    tigris_secret,
-    wandb_secret,
-)
-from tmgg.modal.stages.stage1 import validate_prefix
-from tmgg.modal.storage import get_storage_from_env
-
 warnings.warn(
-    "This module is deprecated. Use YAML stage_definitions/ + generate_configs + launch_sweep pipeline.",
+    "tmgg.modal.stages.stage2 is deprecated. "
+    "Use YAML stage_definitions/ + generate_configs + launch_sweep pipeline.",
     DeprecationWarning,
     stacklevel=2,
 )
@@ -58,7 +48,7 @@ def generate_stage2_configs(
 ) -> list[dict[str, Any]]:
     """Generate experiment configurations for Stage 2.
 
-    Uses Hydra composition to properly resolve config defaults and interpolations.
+    Uses Hydra composition to resolve config defaults and interpolations.
 
     Parameters
     ----------
@@ -123,209 +113,3 @@ def generate_stage2_configs(
                     configs.append(config_dict)
 
     return configs
-
-
-@app.function(
-    image=experiment_image,
-    secrets=[tigris_secret, wandb_secret],
-    timeout=7200,  # 2 hours for orchestration
-)
-def run_stage2(
-    gpu_type: str = "debug",
-    use_stage1_best: bool = True,
-    dry_run: bool = False,
-    additional_tags: list[str] | None = None,
-    path_prefix: str = "",
-    stage1_prefix: str = "",
-) -> dict[str, Any]:
-    """Run Stage 2: Core Validation experiments on Modal.
-
-    Parameters
-    ----------
-    gpu_type
-        GPU tier for experiments.
-    use_stage1_best
-        If True, use Stage 1 best config to narrow search.
-    dry_run
-        If True, print configs without running.
-    additional_tags
-        Extra W&B tags to add to all experiments.
-    path_prefix
-        Storage path prefix for Stage 2 results (e.g., "2025-01-05").
-    stage1_prefix
-        Storage path prefix for Stage 1 results. Defaults to path_prefix.
-
-    Returns
-    -------
-    dict
-        Stage results summary.
-    """
-    _ = additional_tags  # TODO: Integrate with TaskInput when stage2 is refactored
-    from datetime import datetime
-
-    # Resolve stage1_prefix: defaults to path_prefix if not specified
-    effective_stage1_prefix = stage1_prefix or path_prefix
-    if path_prefix:
-        print(f"Using storage prefix: {path_prefix}")
-    if effective_stage1_prefix and effective_stage1_prefix != path_prefix:
-        print(f"Using Stage 1 prefix: {effective_stage1_prefix}")
-
-    # Load Stage 1 best config if requested
-    best_stage1 = None
-    if use_stage1_best:
-        stage1_storage = get_storage_from_env(path_prefix=effective_stage1_prefix)
-        if stage1_storage:
-            try:
-                stage1_summary = stage1_storage.download_metrics("stage1_poc_summary")
-                best_run_id = stage1_summary.get("best_run_id")
-                if best_run_id:
-                    best_result = stage1_storage.download_metrics(
-                        f"results/{best_run_id}"
-                    )
-                    best_stage1 = best_result.get("config")
-                    print(f"Using Stage 1 best config: {best_run_id}")
-            except Exception as e:
-                print(f"Could not load Stage 1 results: {e}")
-
-    configs = generate_stage2_configs(best_stage1)
-    print(f"Stage 2: Generated {len(configs)} experiment configurations")
-
-    if dry_run:
-        print("Dry run - configurations:")
-        for i, cfg in enumerate(configs[:5]):
-            print(f"  [{i}] {cfg.get('run_id', 'unknown')}")
-        if len(configs) > 5:
-            print(f"  ... and {len(configs) - 5} more")
-        return {"status": "dry_run", "num_configs": len(configs)}
-
-    # Check for completed runs with fine-grained status
-    from tmgg.modal.result_status import (
-        ResultStatus,
-        filter_configs_by_status,
-        summarize_status_map,
-    )
-
-    storage = get_storage_from_env(path_prefix=path_prefix)
-    configs, status_map = filter_configs_by_status(
-        storage,
-        configs,
-        skip_statuses={ResultStatus.COMPLETE},
-        required_metrics=["best_val_loss"],
-    )
-    print(f"Result status: {summarize_status_map(status_map)}")
-
-    if not configs:
-        print("All experiments completed!")
-        return {"status": "completed", "message": "All experiments already done"}
-
-    print(f"Running {len(configs)} experiments")
-    started_at = datetime.now().isoformat()
-
-    # Select function based on GPU tier
-    # DiGress benefits from faster GPUs
-    if gpu_type in ("fast", "multi", "h100"):
-        results = list(run_single_experiment_fast.map(configs))
-    else:
-        results = list(run_single_experiment.map(configs))
-
-    # Aggregate results
-    completed_results = [r for r in results if r.get("status") == "completed"]
-    failed_results = [r for r in results if r.get("status") == "failed"]
-
-    # Log storage warnings from individual runs
-    for result in completed_results:
-        warnings = result.get("storage_warnings")
-        if warnings:
-            for w in warnings:
-                print(f"  Warning: {w}")
-
-    # Validate metrics helper
-    def get_val_loss(result: dict[str, Any]) -> float | None:
-        """Extract validation loss, returning None if missing or invalid."""
-        metrics = result.get("metrics", {})
-        loss = metrics.get("best_val_loss")
-        if loss is None or loss == float("inf"):
-            return None
-        return loss
-
-    # Track results without valid metrics
-    results_without_metrics = []
-
-    # Find best result by architecture (only considering valid metrics)
-    best_by_arch = {}
-    for result in completed_results:
-        val_loss = get_val_loss(result)
-        if val_loss is None:
-            results_without_metrics.append(result)
-            continue
-
-        arch = result.get("config", {}).get("model", "unknown")
-        if arch not in best_by_arch or val_loss < best_by_arch[arch]["val_loss"]:
-            best_by_arch[arch] = {
-                "run_id": result.get("run_id"),
-                "val_loss": val_loss,
-            }
-
-    if results_without_metrics:
-        print(
-            f"Warning: {len(results_without_metrics)} completed runs missing best_val_loss metric:"
-        )
-        for r in results_without_metrics[:5]:
-            print(f"  - {r.get('run_id', 'unknown')}")
-        if len(results_without_metrics) > 5:
-            print(f"  ... and {len(results_without_metrics) - 5} more")
-
-    # Upload stage summary
-    summary = {
-        "stage": "stage2_validation",
-        "started_at": started_at,
-        "completed_at": datetime.now().isoformat(),
-        "total_experiments": len(results),
-        "completed": len(completed_results),
-        "failed": len(failed_results),
-        "best_by_architecture": best_by_arch,
-    }
-
-    if storage:
-        storage.upload_metrics(summary, "stage2_validation_summary")
-
-    print(f"Stage 2 complete: {len(completed_results)}/{len(results)} succeeded")
-    print("Best results by architecture:")
-    for arch, data in best_by_arch.items():
-        print(f"  {arch}: {data['run_id']} (val_loss={data['val_loss']:.6f})")
-
-    return summary
-
-
-@app.local_entrypoint()
-def main(
-    gpu: str = "standard",
-    use_stage1_best: bool = True,
-    dry_run: bool = False,
-    additional_tags: str = "",
-    prefix: str = "",
-    stage1_prefix: str = "",
-):
-    """Local entry point for Stage 2.
-
-    Usage
-    -----
-    modal run tmgg_modal/stages/stage2.py --gpu fast
-    modal run tmgg_modal/stages/stage2.py --additional-tags "experiment,v2"
-    modal run tmgg_modal/stages/stage2.py --prefix 2025-01-05
-    modal run tmgg_modal/stages/stage2.py --prefix 2025-01-05 --stage1-prefix 2025-01-04
-    """
-    # Validate prefixes before sending to Modal
-    path_prefix = validate_prefix(prefix)
-    s1_prefix = validate_prefix(stage1_prefix)
-
-    tags = [t.strip() for t in additional_tags.split(",") if t.strip()]
-    result = run_stage2.remote(
-        gpu_type=gpu,
-        use_stage1_best=use_stage1_best,
-        dry_run=dry_run,
-        additional_tags=tags or None,
-        path_prefix=path_prefix,
-        stage1_prefix=s1_prefix,
-    )
-    print(f"Stage 2 result: {result}")

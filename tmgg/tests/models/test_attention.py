@@ -3,7 +3,8 @@
 import pytest
 import torch
 
-from tmgg.models.attention import MultiHeadAttention, MultiLayerAttention
+from tmgg.models.attention import MultiLayerAttention
+from tmgg.models.layers import MultiHeadAttention
 
 
 class TestMultiHeadAttention:

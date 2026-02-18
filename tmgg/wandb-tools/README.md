@@ -1,6 +1,6 @@
 # W&B Tools
 
-Standalone uv scripts for W&B data export, aggregation, and analysis. Each script is self-contained with inline dependencies and can be run directly with `uv run`.
+Standalone uv scripts for W&B data export, aggregation, and analysis. Each script is self-contained with inline dependencies and can be run directly with `uv run`. W&B project naming conventions and logging configuration are documented in [`docs/experiments.md`](../docs/experiments.md).
 
 ## Prerequisites
 

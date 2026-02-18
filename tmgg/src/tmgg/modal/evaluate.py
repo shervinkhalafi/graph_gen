@@ -1,7 +1,8 @@
-"""Modal function for MMD evaluation of trained DiGress checkpoints.
+"""MMD evaluation logic for trained DiGress checkpoints.
 
-Provides a Modal function that evaluates trained checkpoints using MMD metrics
-against train/val/test splits from the same data distribution used during training.
+No ``import modal`` at module level. The ``@app.function`` decorated
+wrappers live in ``_functions.py``; this module provides the underlying
+evaluation logic as plain functions.
 """
 
 from __future__ import annotations
@@ -12,16 +13,9 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
-import modal
-
-from tmgg.modal.app import DEFAULT_SCALEDOWN_WINDOW, GPU_CONFIGS, app
-from tmgg.modal.image import create_tmgg_image
-from tmgg.modal.volumes import OUTPUTS_MOUNT, get_volume_mounts
-
-if TYPE_CHECKING:
-    pass
+from tmgg.modal.volumes import OUTPUTS_MOUNT
 
 logger = logging.getLogger(__name__)
 
@@ -93,47 +87,13 @@ class EvaluationOutput:
     timestamp: str = ""
 
 
-# Create experiment image with fallback for testing
-try:
-    from tmgg.modal.paths import discover_tmgg_path
+def run_mmd_evaluation(task_dict: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate checkpoint MMD metrics.
 
-    _tmgg_path = discover_tmgg_path()
-    experiment_image = create_tmgg_image(_tmgg_path)
-except (ImportError, RuntimeError):
-    # During testing with mocked modal, image creation may fail
-    experiment_image = None
-
-# Modal secrets for Tigris storage and W&B
-tigris_secret = modal.Secret.from_name(
-    "tigris-credentials",
-    required_keys=[
-        "TMGG_TIGRIS_BUCKET",
-        "TMGG_TIGRIS_ACCESS_KEY",
-        "TMGG_TIGRIS_SECRET_KEY",
-    ],
-)
-
-wandb_secret = modal.Secret.from_name(
-    "wandb-credentials",
-    required_keys=["WANDB_API_KEY"],
-)
-
-
-@app.function(
-    name="modal_evaluate_mmd",
-    image=experiment_image,
-    gpu=GPU_CONFIGS["standard"],  # A10G sufficient for evaluation
-    timeout=3600,  # 1 hour max
-    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
-    secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
-)
-def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
-    """Evaluate checkpoint MMD metrics on Modal.
-
-    This function runs inside a Modal container with GPU access and mounted volumes.
-    It loads a trained checkpoint, reconstructs the data module to get reference
-    graphs, generates samples from the model, and computes MMD metrics.
+    This is the core evaluation logic called by the Modal-decorated
+    wrapper in ``_functions.py``. It loads a trained checkpoint,
+    reconstructs the data module to get reference graphs, generates
+    samples from the model, and computes MMD metrics.
 
     Parameters
     ----------
@@ -157,32 +117,27 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
         load_model_from_checkpoint,
     )
 
-    # Configure logging for Modal container
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
-        force=True,  # Override any existing config in Modal
+        force=True,
     )
-    logger = logging.getLogger("mmd_eval")
+    eval_logger = logging.getLogger("mmd_eval")
 
-    # Reconstruct input
     task = EvaluationInput(**task_dict)
     run_id = task.run_id
 
-    # Start timing
     start_total = time.time()
 
-    # Log startup with all params
-    logger.info("=== MMD Evaluation Starting ===")
-    logger.info(f"run_id: {run_id}")
-    logger.info(f"checkpoint: {task.checkpoint_path or 'last.ckpt'}")
-    logger.info(f"splits: {task.splits}")
-    logger.info(f"num_samples: {task.num_samples}")
-    logger.info(f"num_steps: {task.num_steps}")
-    logger.info(f"mmd_kernel: {task.mmd_kernel}")
+    eval_logger.info("=== MMD Evaluation Starting ===")
+    eval_logger.info(f"run_id: {run_id}")
+    eval_logger.info(f"checkpoint: {task.checkpoint_path or 'last.ckpt'}")
+    eval_logger.info(f"splits: {task.splits}")
+    eval_logger.info(f"num_samples: {task.num_samples}")
+    eval_logger.info(f"num_steps: {task.num_steps}")
+    eval_logger.info(f"mmd_kernel: {task.mmd_kernel}")
 
-    # Resolve paths
     output_dir = Path(OUTPUTS_MOUNT) / run_id
     config_path = output_dir / "config.yaml"
 
@@ -191,10 +146,8 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
     else:
         checkpoint_path = output_dir / "checkpoints" / "last.ckpt"
 
-    # Extract checkpoint name (without .ckpt extension) for output filename
-    checkpoint_name = checkpoint_path.stem  # e.g., "last", "best", "epoch_50"
+    checkpoint_name = checkpoint_path.stem
 
-    # Validate paths exist
     if not config_path.exists():
         return asdict(
             EvaluationOutput(
@@ -218,22 +171,18 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
         )
 
     try:
-        # Load config
-        logger.info(f"Loading config from: {config_path}")
+        eval_logger.info(f"Loading config from: {config_path}")
         config = OmegaConf.load(config_path)
 
-        # Load model
-        logger.info(f"Loading model from: {checkpoint_path}")
+        eval_logger.info(f"Loading model from: {checkpoint_path}")
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = load_model_from_checkpoint(checkpoint_path, device)
-        logger.info("Model loaded successfully")
+        eval_logger.info("Model loaded successfully")
 
-        # Reconstruct data module from config
-        logger.info("Reconstructing data module...")
+        eval_logger.info("Reconstructing data module...")
         data_module = _reconstruct_data_module(config)
         data_module.setup()
 
-        # Get reference graphs for each split
         split_data = {
             "train": data_module._train_data,
             "val": data_module._val_data,
@@ -244,28 +193,25 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
 
         for split in task.splits:
             if split not in split_data:
-                logger.warning(f"Unknown split '{split}', skipping")
+                eval_logger.warning(f"Unknown split '{split}', skipping")
                 continue
 
             ref_data = split_data[split]
             if ref_data is None or len(ref_data) == 0:
-                logger.warning(f"No data for split '{split}', skipping")
+                eval_logger.warning(f"No data for split '{split}', skipping")
                 continue
 
             split_start = time.time()
-            logger.info(
+            eval_logger.info(
                 f"[{split}] Starting evaluation ({len(ref_data)} reference graphs)"
             )
 
-            # Determine number of samples (use min of requested and available)
             num_eval = min(task.num_samples, len(ref_data))
-            num_nodes = ref_data.shape[1]  # Assuming shape is (N, num_nodes, num_nodes)
+            num_nodes = ref_data.shape[1]
 
-            # Select reference subset
             ref_subset = ref_data[:num_eval]
 
-            # Generate samples
-            logger.info(
+            eval_logger.info(
                 f"[{split}] Generating {num_eval} graphs ({task.num_steps} steps)..."
             )
             gen_start = time.time()
@@ -275,12 +221,12 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
                     num_nodes=num_nodes,
                     num_steps=task.num_steps,
                 )
-            logger.info(
-                f"[{split}] Generation complete: {len(generated)} graphs in {time.time() - gen_start:.1f}s"
+            eval_logger.info(
+                f"[{split}] Generation complete: {len(generated)} graphs "
+                f"in {time.time() - gen_start:.1f}s"
             )
 
-            # Convert to NetworkX for MMD computation
-            logger.info(f"[{split}] Computing MMD metrics...")
+            eval_logger.info(f"[{split}] Computing MMD metrics...")
             ref_nx = [adjacency_to_networkx(g) for g in ref_subset]
             gen_nx = [adjacency_to_networkx(g) for g in generated]
 
@@ -292,14 +238,13 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
             )
 
             results[split] = mmd_results.to_dict()
-            logger.info(
+            eval_logger.info(
                 f"[{split}] MMD: degree={mmd_results.degree_mmd:.4f}, "
                 f"clustering={mmd_results.clustering_mmd:.4f}, "
                 f"spectral={mmd_results.spectral_mmd:.4f}"
             )
-            logger.info(f"[{split}] Completed in {time.time() - split_start:.1f}s")
+            eval_logger.info(f"[{split}] Completed in {time.time() - split_start:.1f}s")
 
-        # Save results to volume with checkpoint-specific filename
         eval_output_path = output_dir / f"mmd_evaluation_{checkpoint_name}.json"
         eval_data = {
             "run_id": run_id,
@@ -317,7 +262,7 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
         }
         with open(eval_output_path, "w") as f:
             json.dump(eval_data, f, indent=2)
-        logger.info(f"Results saved to: {eval_output_path}")
+        eval_logger.info(f"Results saved to: {eval_output_path}")
 
         output = EvaluationOutput(
             run_id=run_id,
@@ -335,14 +280,16 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
             timestamp=datetime.now().isoformat(),
         )
 
-        logger.info(f"=== Evaluation complete in {time.time() - start_total:.1f}s ===")
+        eval_logger.info(
+            f"=== Evaluation complete in {time.time() - start_total:.1f}s ==="
+        )
         return asdict(output)
 
     except Exception as e:
         import traceback
 
         error_msg = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
-        logger.error(f"Evaluation failed: {error_msg}")
+        eval_logger.error(f"Evaluation failed: {error_msg}")
 
         return asdict(
             EvaluationOutput(
@@ -355,55 +302,7 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
         )
 
 
-def _reconstruct_data_module(config):
-    """Reconstruct GraphDistributionDataModule from saved config.
-
-    Parameters
-    ----------
-    config
-        OmegaConf configuration loaded from config.yaml.
-
-    Returns
-    -------
-    GraphDistributionDataModule
-        Configured data module ready for setup().
-    """
-    from tmgg.experiments.gaussian_diffusion_generative.datamodule import (
-        GraphDistributionDataModule,
-    )
-
-    data_cfg = config.get("data", {})
-
-    # Extract parameters from config - handle both direct and nested configs
-    dataset_type = data_cfg.get("dataset_type", "sbm")
-    num_nodes = data_cfg.get("num_nodes", 20)
-    num_graphs = data_cfg.get("num_graphs", 1000)
-    train_ratio = data_cfg.get("train_ratio", 0.8)
-    val_ratio = data_cfg.get("val_ratio", 0.1)
-    batch_size = data_cfg.get("batch_size", 32)
-    seed = data_cfg.get("seed", 42)
-    dataset_config = dict(data_cfg.get("dataset_config", {}))
-
-    return GraphDistributionDataModule(
-        dataset_type=dataset_type,
-        num_nodes=num_nodes,
-        num_graphs=num_graphs,
-        train_ratio=train_ratio,
-        val_ratio=val_ratio,
-        batch_size=batch_size,
-        seed=seed,
-        dataset_config=dataset_config,
-    )
-
-
-@app.function(
-    name="modal_list_checkpoints",
-    image=experiment_image,
-    timeout=60,
-    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
-)
-def modal_list_checkpoints(run_id: str) -> dict[str, Any]:
+def list_checkpoints_for_run(run_id: str) -> dict[str, Any]:
     """List all checkpoints available for a run.
 
     Parameters
@@ -427,7 +326,6 @@ def modal_list_checkpoints(run_id: str) -> dict[str, Any]:
             "checkpoints": [],
         }
 
-    # Find all .ckpt files
     checkpoint_files = sorted(checkpoints_dir.glob("*.ckpt"))
     checkpoints = [
         {
@@ -445,30 +343,39 @@ def modal_list_checkpoints(run_id: str) -> dict[str, Any]:
     }
 
 
-# Variants for different GPU tiers
-@app.function(
-    name="modal_evaluate_mmd_debug",
-    image=experiment_image,
-    gpu=GPU_CONFIGS["debug"],  # T4 for quick tests
-    timeout=1800,  # 30 min
-    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
-    secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
-)
-def modal_evaluate_mmd_debug(task_dict: dict[str, Any]) -> dict[str, Any]:
-    """Evaluate on debug (T4) GPU tier - delegates to modal_evaluate_mmd."""
-    return modal_evaluate_mmd.local(task_dict)
+def _reconstruct_data_module(config: Any) -> Any:
+    """Reconstruct MultiGraphDataModule from saved config.
 
+    Parameters
+    ----------
+    config
+        OmegaConf configuration loaded from config.yaml.
 
-@app.function(
-    name="modal_evaluate_mmd_fast",
-    image=experiment_image,
-    gpu=GPU_CONFIGS["fast"],  # A100 for larger evaluations
-    timeout=7200,  # 2 hours
-    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
-    secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
-)
-def modal_evaluate_mmd_fast(task_dict: dict[str, Any]) -> dict[str, Any]:
-    """Evaluate on fast (A100) GPU tier - delegates to modal_evaluate_mmd."""
-    return modal_evaluate_mmd.local(task_dict)
+    Returns
+    -------
+    MultiGraphDataModule
+        Configured data module ready for setup().
+    """
+    from tmgg.experiment_utils.data.multigraph_data_module import MultiGraphDataModule
+
+    data_cfg = config.get("data", {})
+
+    graph_type = data_cfg.get("graph_type", "sbm")
+    num_nodes = data_cfg.get("num_nodes", 20)
+    num_graphs = data_cfg.get("num_graphs", 1000)
+    train_ratio = data_cfg.get("train_ratio", 0.8)
+    val_ratio = data_cfg.get("val_ratio", 0.1)
+    batch_size = data_cfg.get("batch_size", 32)
+    seed = data_cfg.get("seed", 42)
+    graph_config = dict(data_cfg.get("graph_config", {}))
+
+    return MultiGraphDataModule(
+        graph_type=graph_type,
+        num_nodes=num_nodes,
+        num_graphs=num_graphs,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        batch_size=batch_size,
+        seed=seed,
+        graph_config=graph_config,
+    )

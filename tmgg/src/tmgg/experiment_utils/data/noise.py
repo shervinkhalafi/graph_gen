@@ -5,17 +5,28 @@ import torch
 from scipy.linalg import expm
 
 
-def random_skew_symmetric_matrix(n: int) -> np.ndarray:
-    """
-    Create a random n×n skew-symmetric matrix.
+def random_skew_symmetric_matrix(
+    n: int, rng: np.random.Generator | None = None
+) -> np.ndarray:
+    """Create a random n x n skew-symmetric matrix.
 
-    Args:
-        n: Matrix dimension
+    Parameters
+    ----------
+    n
+        Matrix dimension.
+    rng
+        NumPy random generator for reproducibility. When ``None``, a fresh
+        ``np.random.default_rng()`` is created (independent of the global
+        numpy RNG state).
 
-    Returns:
-        Skew-symmetric matrix
+    Returns
+    -------
+    np.ndarray
+        Skew-symmetric matrix of shape ``(n, n)``.
     """
-    A = np.random.rand(n, n)
+    if rng is None:
+        rng = np.random.default_rng()
+    A = rng.random((n, n))
     return (A - A.T) / 2
 
 

@@ -1,7 +1,8 @@
 """Tests for SyntheticCategoricalDataModule.
 
 Verifies that synthetic graph generation, categorical conversion, splitting,
-collation, marginals computation, and round-trip fidelity all behave correctly.
+collation, marginals computation, round-trip fidelity, and size distribution
+interface all behave correctly.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import torch
 
 from tmgg.data.batches import CategoricalBatch
 from tmgg.experiment_utils.data.conversions import categorical_to_adjacency
+from tmgg.experiment_utils.data.size_distribution import SizeDistribution
 from tmgg.experiments.discrete_diffusion_generative.datamodule import (
     SyntheticCategoricalDataModule,
 )
@@ -26,7 +28,7 @@ def small_dm() -> SyntheticCategoricalDataModule:
     80/10/10 split, producing 80 train, 10 val, 10 test graphs.
     """
     dm = SyntheticCategoricalDataModule(
-        dataset_type="sbm",
+        graph_type="sbm",
         num_nodes=20,
         num_graphs=100,
         train_ratio=0.8,
@@ -42,14 +44,14 @@ def small_dm() -> SyntheticCategoricalDataModule:
 def er_dm() -> SyntheticCategoricalDataModule:
     """An Erdos-Renyi data module to test non-SBM graph types."""
     dm = SyntheticCategoricalDataModule(
-        dataset_type="er",
+        graph_type="er",
         num_nodes=15,
         num_graphs=50,
         train_ratio=0.8,
         val_ratio=0.1,
         batch_size=4,
         seed=99,
-        dataset_config={"p": 0.3},
+        graph_config={"p": 0.3},
     )
     dm.setup()
     return dm
@@ -308,3 +310,92 @@ class TestRoundTrip:
         # Mask out padded positions for comparison
         mask_2d = node_mask.unsqueeze(-1) & node_mask.unsqueeze(-2)
         assert torch.allclose(recovered * mask_2d.float(), expected * mask_2d.float())
+
+
+# -- TestSizeDistribution ---------------------------------------------------
+
+
+class TestSizeDistribution:
+    """Verify the size distribution interface on SyntheticCategoricalDataModule.
+
+    For fixed-size synthetic data, ``get_size_distribution`` returns a
+    degenerate distribution and ``sample_n_nodes`` returns a constant
+    tensor. These tests confirm both the datamodule integration and the
+    contract that the generative pipeline relies on.
+    """
+
+    def test_default_is_degenerate(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        """Fixed-size data should produce a degenerate distribution."""
+        dist = small_dm.get_size_distribution()
+        assert dist.is_degenerate
+        assert dist.sizes == (20,)
+        assert dist.max_size == 20
+
+    def test_train_split(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        """Training split should also be degenerate for fixed-size data."""
+        dist = small_dm.get_size_distribution("train")
+        assert dist.is_degenerate
+        assert dist.sizes == (20,)
+        # All 80 training graphs have 20 nodes
+        assert dist.counts == (80,)
+
+    def test_val_split(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        dist = small_dm.get_size_distribution("val")
+        assert dist.is_degenerate
+        assert dist.counts == (10,)
+
+    def test_test_split(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        dist = small_dm.get_size_distribution("test")
+        assert dist.is_degenerate
+        assert dist.counts == (10,)
+
+    def test_invalid_split_raises(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        with pytest.raises(ValueError, match="Unknown split"):
+            small_dm.get_size_distribution("predict")
+
+    def test_before_setup_returns_fixed(self) -> None:
+        """Before setup, should fall back to SizeDistribution.fixed(num_nodes)."""
+        dm = SyntheticCategoricalDataModule(num_graphs=10, num_nodes=15)
+        dist = dm.get_size_distribution("train")
+        assert dist == SizeDistribution.fixed(15)
+
+    def test_sample_n_nodes_shape(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        """sample_n_nodes should return a 1-D tensor of the requested size."""
+        result = small_dm.sample_n_nodes(4)
+        assert result.shape == (4,)
+        assert result.dtype == torch.long
+
+    def test_sample_n_nodes_all_equal(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        """For fixed-size data, all sampled sizes should equal num_nodes."""
+        result = small_dm.sample_n_nodes(16)
+        assert (result == 20).all()
+
+    def test_serialization_roundtrip(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        """The distribution should survive a to_dict/from_dict round-trip."""
+        dist = small_dm.get_size_distribution("train")
+        restored = SizeDistribution.from_dict(dist.to_dict())
+        assert restored == dist

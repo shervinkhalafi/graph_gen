@@ -7,19 +7,14 @@ new noise samples and unseen graph instances from the same distribution.
 
 from typing import Any, override
 
-import networkx as nx
 import numpy as np
 import numpy.typing as npt
-import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from tmgg.experiment_utils.data.sbm import generate_sbm_adjacency
-from tmgg.experiment_utils.data.synthetic_graphs import (
-    generate_erdos_renyi_graphs,
-    generate_regular_graphs,
-    generate_tree_graphs,
-)
+from tmgg.experiment_utils.data.base_data_module import BaseGraphDataModule
+from tmgg.experiment_utils.data.sbm import generate_sbm_batch
+from tmgg.experiment_utils.data.synthetic_graphs import SyntheticGraphDataset
 
 
 class SingleGraphDataset(Dataset[torch.Tensor]):
@@ -52,7 +47,7 @@ class SingleGraphDataset(Dataset[torch.Tensor]):
         return self.graph
 
 
-class SingleGraphDataModule(pl.LightningDataModule):
+class SingleGraphDataModule(BaseGraphDataModule):
     """Lightning DataModule for single-graph training protocol.
 
     Supports two modes controlled by `same_graph_all_splits`:
@@ -70,15 +65,18 @@ class SingleGraphDataModule(pl.LightningDataModule):
     ----------
     graph_type : str
         Type of graph to generate. Supported types:
-        - "sbm": Stochastic Block Model
-        - "erdos_renyi": Erdős-Rényi random graphs
-        - "regular": d-regular graphs
-        - "tree": Random trees
-        - "ring_of_cliques": NetworkX ring of cliques
-        - "lfr": LFR benchmark graphs (community structure)
-        - "pyg_enzymes", "pyg_qm9", "pyg_proteins": PyG datasets (sample one)
-    n : int
+        - ``"sbm"``: Stochastic Block Model
+        - ``"erdos_renyi"``: Erdos-Renyi random graphs
+        - ``"regular"``: d-regular graphs
+        - ``"tree"``: Random trees
+        - ``"ring_of_cliques"``: NetworkX ring of cliques
+        - ``"lfr"``: LFR benchmark graphs (community structure)
+        - ``"pyg_enzymes"``, ``"pyg_qm9"``, ``"pyg_proteins"``: PyG datasets
+    num_nodes : int
         Number of nodes.
+    graph_config : dict or None
+        Additional parameters for graph generation (e.g., ``p`` for ER,
+        ``d`` for regular, SBM parameters).
     num_train_samples : int
         Number of training samples per epoch (noise realizations).
     num_val_samples : int
@@ -93,7 +91,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
         Seed for generating the training graph.
     val_test_seed : int
         Seed for generating validation/test graphs (used only when
-        same_graph_all_splits=False).
+        ``same_graph_all_splits=False``).
     same_graph_all_splits : bool
         If True, val/test use the same graph as training (Stage 1 protocol).
         If False, val/test use different graphs (Stage 2+ protocol).
@@ -101,49 +99,43 @@ class SingleGraphDataModule(pl.LightningDataModule):
         Noise levels used for evaluation (passed to LightningModule).
     noise_type : str
         Type of noise to apply.
-    **graph_kwargs
-        Additional parameters for graph generation (e.g., p for ER, d for
-        regular, SBM parameters).
 
     Examples
     --------
     >>> dm = SingleGraphDataModule(
     ...     graph_type="sbm",
-    ...     n=50,
+    ...     num_nodes=50,
+    ...     graph_config={"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3},
     ...     num_train_samples=1000,
     ...     num_val_samples=100,
     ...     num_test_samples=100,
     ...     batch_size=16,
-    ...     p_intra=0.7,
-    ...     p_inter=0.05,
-    ...     num_blocks=3,
     ... )
     >>> dm.setup()
     >>> train_loader = dm.train_dataloader()
     """
 
     graph_type: str
-    n: int
+    num_nodes: int
     num_train_samples: int
     num_val_samples: int
     num_test_samples: int
-    batch_size: int
-    num_workers: int
     train_seed: int
     val_test_seed: int
     same_graph_all_splits: bool
     noise_levels: list[float]
     noise_type: str
-    graph_kwargs: dict[str, Any]
+    graph_config: dict[str, Any]
     train_graph: npt.NDArray[np.float32] | None
     val_graph: npt.NDArray[np.float32] | None
     test_graph: npt.NDArray[np.float32] | None
-    _actual_n: int
+    _actual_num_nodes: int
 
     def __init__(
         self,
         graph_type: str = "sbm",
-        n: int = 50,
+        num_nodes: int = 50,
+        graph_config: dict[str, Any] | None = None,  # pyright: ignore[reportExplicitAny]
         num_train_samples: int = 1000,
         num_val_samples: int = 100,
         num_test_samples: int = 100,
@@ -154,32 +146,38 @@ class SingleGraphDataModule(pl.LightningDataModule):
         same_graph_all_splits: bool = False,
         noise_levels: list[float] | None = None,
         noise_type: str = "digress",
-        **graph_kwargs: Any,
     ):
-        super().__init__()
+        super().__init__(
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=True,
+            seed=train_seed,
+        )
         self.save_hyperparameters()
 
         self.graph_type = graph_type.lower()
-        self.n = n
+        self.num_nodes = num_nodes
+        self.graph_config = graph_config or {}
         self.num_train_samples = num_train_samples
         self.num_val_samples = num_val_samples
         self.num_test_samples = num_test_samples
-        self.batch_size = batch_size
-        self.num_workers = num_workers
         self.train_seed = train_seed
         self.val_test_seed = val_test_seed
         self.same_graph_all_splits = same_graph_all_splits
         self.noise_levels = noise_levels or [0.01, 0.05, 0.1, 0.2, 0.3]
         self.noise_type = noise_type
-        self.graph_kwargs = graph_kwargs
 
         self.train_graph = None
         self.val_graph = None
         self.test_graph = None
-        self._actual_n = n
+        self._actual_num_nodes = num_nodes
 
     def _generate_graph(self, seed: int) -> npt.NDArray[np.float32]:
         """Generate a single graph of the specified type.
+
+        For SBM, delegates to ``generate_sbm_batch(num_graphs=1)``.
+        For PyG datasets, uses ``_load_pyg_graph``. For all other types,
+        delegates to ``SyntheticGraphDataset(num_graphs=1)``.
 
         Parameters
         ----------
@@ -189,71 +187,30 @@ class SingleGraphDataModule(pl.LightningDataModule):
         Returns
         -------
         np.ndarray
-            Adjacency matrix of shape (n, n).
+            Adjacency matrix of shape ``(n, n)`` with dtype float32.
         """
         if self.graph_type == "sbm":
-            # Generate SBM graph
-            p_intra: float = self.graph_kwargs.get("p_intra", 0.7)
-            p_inter: float = self.graph_kwargs.get("p_inter", 0.05)
-            num_blocks: int = self.graph_kwargs.get("num_blocks", 3)
-
-            rng = np.random.default_rng(seed)
-            # Roughly equal block sizes
-            block_sizes = [self.n // num_blocks] * num_blocks
-            block_sizes[-1] += self.n - sum(block_sizes)
-
-            A = generate_sbm_adjacency(block_sizes, p_intra, p_inter, rng)  # pyright: ignore[reportConstantRedefinition]  # math notation
-            # Ensure symmetry (use upper triangle)
-            A = np.triu(A) + np.triu(A, 1).T  # pyright: ignore[reportConstantRedefinition]  # math notation
-            np.fill_diagonal(A, 0)  # No self-loops
-            return A.astype(np.float32)
-
-        elif self.graph_type == "erdos_renyi":
-            p: float = self.graph_kwargs.get("p", 0.1)
-            A = generate_erdos_renyi_graphs(self.n, p, 1, seed=seed)[0]  # pyright: ignore[reportConstantRedefinition]  # math notation
-            return A
-
-        elif self.graph_type == "regular":
-            d: int = self.graph_kwargs.get("d", 3)
-            A = generate_regular_graphs(self.n, d, 1, seed=seed)[0]  # pyright: ignore[reportConstantRedefinition]  # math notation
-            return A
-
-        elif self.graph_type == "tree":
-            A = generate_tree_graphs(self.n, 1, seed=seed)[0]  # pyright: ignore[reportConstantRedefinition]  # math notation
-            return A
-
-        elif self.graph_type == "ring_of_cliques":
-            num_cliques: int = self.graph_kwargs.get("num_cliques", 4)
-            clique_size: int = self.graph_kwargs.get("clique_size", 5)
-            G = nx.ring_of_cliques(num_cliques, clique_size)
-            A = nx.to_numpy_array(G)  # pyright: ignore[reportConstantRedefinition]  # math notation
-            return A.astype(np.float32)
-
-        elif self.graph_type == "lfr":
-            # LFR benchmark graph with planted community structure
-            tau1: float = self.graph_kwargs.get("tau1", 3.0)
-            tau2: float = self.graph_kwargs.get("tau2", 1.5)
-            mu: float = self.graph_kwargs.get("mu", 0.1)
-            avg_degree: int = self.graph_kwargs.get("average_degree", 5)
-            min_community: int = self.graph_kwargs.get("min_community", 10)
-            G = nx.LFR_benchmark_graph(  # pyright: ignore[reportConstantRedefinition]  # math notation
-                self.n,
-                tau1=tau1,
-                tau2=tau2,
-                mu=mu,
-                average_degree=avg_degree,
-                min_community=min_community,
+            return generate_sbm_batch(
+                num_graphs=1,
+                num_nodes=self.num_nodes,
+                num_blocks=self.graph_config.get("num_blocks", 3),
+                p_intra=self.graph_config.get("p_intra", 0.7),
+                p_inter=self.graph_config.get("p_inter", 0.05),
                 seed=seed,
-            )
-            A = nx.to_numpy_array(G)  # pyright: ignore[reportConstantRedefinition]  # math notation
-            return A.astype(np.float32)
+            )[0]
 
-        elif self.graph_type.startswith("pyg_"):
-            # Load from PyTorch Geometric dataset
+        if self.graph_type.startswith("pyg_"):
             return self._load_pyg_graph(seed)
 
-        else:
-            raise ValueError(f"Unknown graph type: {self.graph_type}")
+        # All other types: delegate to SyntheticGraphDataset
+        dataset = SyntheticGraphDataset(
+            graph_type=self.graph_type,
+            n=self.num_nodes,
+            num_graphs=1,
+            seed=seed,
+            **self.graph_config,
+        )
+        return dataset.get_adjacency_matrices()[0]
 
     def _load_pyg_graph(self, seed: int) -> npt.NDArray[np.float32]:
         """Load a single graph from a PyTorch Geometric dataset.
@@ -278,7 +235,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
             ) from e
 
         dataset_name = self.graph_type.lower()
-        root: str = self.graph_kwargs.get("root", f"./data/{dataset_name}")
+        root: str = self.graph_config.get("root", f"./data/{dataset_name}")
 
         # Load dataset (downloads if necessary)
         # ENZYMES and PROTEINS are TUDataset collections, QM9 is standalone
@@ -295,7 +252,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
             )
 
         # Select graph by index or use seed to pick one
-        graph_idx: int | None = self.graph_kwargs.get("graph_idx", None)
+        graph_idx: int | None = self.graph_config.get("graph_idx", None)
         if graph_idx is None:
             rng = np.random.default_rng(seed)
             graph_idx = int(rng.integers(0, len(dataset)))
@@ -320,7 +277,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
         A_np = (A_np > 0).astype(np.float32)
 
         # Update n to match actual graph size (override user's n)
-        self._actual_n = A_np.shape[0]
+        self._actual_num_nodes = A_np.shape[0]
 
         return A_np
 
@@ -357,13 +314,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
             raise RuntimeError("Call setup() before accessing dataloaders")
 
         dataset = SingleGraphDataset(self.train_graph, self.num_train_samples)
-        return DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
+        return self._make_dataloader(dataset, shuffle=True)
 
     @override
     def val_dataloader(self) -> DataLoader[torch.Tensor]:
@@ -372,13 +323,7 @@ class SingleGraphDataModule(pl.LightningDataModule):
             raise RuntimeError("Call setup() before accessing dataloaders")
 
         dataset = SingleGraphDataset(self.val_graph, self.num_val_samples)
-        return DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
+        return self._make_dataloader(dataset, shuffle=False)
 
     @override
     def test_dataloader(self) -> DataLoader[torch.Tensor]:
@@ -387,13 +332,16 @@ class SingleGraphDataModule(pl.LightningDataModule):
             raise RuntimeError("Call setup() before accessing dataloaders")
 
         dataset = SingleGraphDataset(self.test_graph, self.num_test_samples)
-        return DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
+        return self._make_dataloader(dataset, shuffle=False)
+
+    @override
+    def get_dataset_info(self) -> dict[str, Any]:
+        """Return metadata about the dataset."""
+        return {
+            "graph_type": self.graph_type,
+            "num_nodes": self.num_nodes,
+            "same_graph_all_splits": self.same_graph_all_splits,
+        }
 
     def get_train_graph(self) -> npt.NDArray[np.float32]:
         """Return the training graph.

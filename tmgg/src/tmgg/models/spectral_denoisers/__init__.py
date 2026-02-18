@@ -61,10 +61,6 @@ from tmgg.models.spectral_denoisers.shrinkage_wrapper import (
 )
 from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
 
-# Backward-compat aliases until correct replacements are built
-SelfAttentionDenoiserWithMLP = BilinearDenoiserWithMLP
-MultiLayerSelfAttentionDenoiser = MultiLayerBilinearDenoiser
-
 __all__ = [
     # Base classes
     "SpectralDenoiser",

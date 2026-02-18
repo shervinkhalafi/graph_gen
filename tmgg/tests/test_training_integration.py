@@ -161,8 +161,8 @@ class TestTrainingPipeline:
 
         # Create datamodule with noise_levels (required by training_step)
         data_module = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 20, "num_graphs": 4},
+            graph_type="sbm",
+            graph_config={"num_nodes": 20, "num_graphs": 4},
             batch_size=4,
             noise_levels=minimal_config.noise_levels,
         )
@@ -197,8 +197,8 @@ class TestTrainingPipeline:
 
         # Create minimal data module
         data_module = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={
+            graph_type="sbm",
+            graph_config={
                 "num_nodes": 20,
                 "num_graphs": 10,
             },
@@ -241,8 +241,8 @@ class TestTrainingPipeline:
 
         # Create data module with fixed data for deterministic test
         data_module = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={
+            graph_type="sbm",
+            graph_config={
                 "num_nodes": 15,
                 "num_graphs": 5,
             },
@@ -295,8 +295,8 @@ class TestDataModuleIntegration:
 
         noise_levels = [0.05, 0.1, 0.2]
         data_module = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 10, "num_graphs": 5},
+            graph_type="sbm",
+            graph_config={"num_nodes": 10, "num_graphs": 5},
             noise_levels=noise_levels,
         )
 
@@ -319,8 +319,8 @@ class TestDataModuleIntegration:
         # Create data module with different noise levels
         dm_noise_levels = [0.05, 0.15, 0.25]
         data_module = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={
+            graph_type="sbm",
+            graph_config={
                 "num_nodes": 10,
                 "num_graphs": 5,
                 "block_sizes": [5, 5],  # Fixed block sizes to simplify setup
@@ -465,8 +465,8 @@ class TestShrinkageModelTypes:
 
         # Set up datamodule with noise_levels
         data_module = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 15, "num_graphs": 3},
+            graph_type="sbm",
+            graph_config={"num_nodes": 15, "num_graphs": 3},
             batch_size=3,
             noise_levels=[0.1],
         )

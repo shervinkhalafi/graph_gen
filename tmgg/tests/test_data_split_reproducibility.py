@@ -27,8 +27,8 @@ def test_sbm_splits_reproducible():
     from tmgg.experiment_utils.data.data_module import GraphDataModule
 
     common = dict(
-        dataset_name="sbm",
-        dataset_config={
+        graph_type="sbm",
+        graph_config={
             "num_nodes": 12,
             "p_intra": 0.8,
             "p_inter": 0.1,
@@ -43,7 +43,7 @@ def test_sbm_splits_reproducible():
         batch_size=4,
         num_workers=0,
         seed=42,
-        num_samples_per_graph=10,
+        samples_per_graph=10,
     )
 
     dm1 = GraphDataModule(**common)
@@ -89,8 +89,8 @@ def test_different_seeds_produce_different_splits():
     from tmgg.experiment_utils.data.data_module import GraphDataModule
 
     base = dict(
-        dataset_name="sbm",
-        dataset_config={
+        graph_type="sbm",
+        graph_config={
             "num_nodes": 12,
             "p_intra": 0.8,
             "p_inter": 0.1,
@@ -104,7 +104,7 @@ def test_different_seeds_produce_different_splits():
         noise_levels=[0.1],
         batch_size=4,
         num_workers=0,
-        num_samples_per_graph=10,
+        samples_per_graph=10,
     )
 
     dm1 = GraphDataModule(**base, seed=42)

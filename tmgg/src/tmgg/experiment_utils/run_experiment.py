@@ -20,10 +20,30 @@ from tmgg.experiment_utils.setup import (
     set_seed,
 )
 
+# Matches the `save_last: true` setting in base/callbacks/default.yaml
+_LAST_CHECKPOINT = "last.ckpt"
 
-def _is_training_complete(checkpoint_path: Path, max_steps: int) -> bool:
+
+def _find_last_checkpoint(checkpoint_dir: Path) -> Path | None:
+    """Find the most recent 'last' checkpoint in the directory.
+
+    Matches ``last.ckpt`` (standard) or ``last-v*.ckpt`` (Lightning version
+    counter, which creates ``last-v1.ckpt``, ``last-v2.ckpt``, etc. when
+    a checkpoint with that name already exists).
+
+    Returns None if no checkpoint is found.
+    """
+    exact = checkpoint_dir / _LAST_CHECKPOINT
+    if exact.exists():
+        return exact
+    # Fallback: Lightning version counter produces last-v1.ckpt, last-v2.ckpt, etc.
+    candidates = sorted(checkpoint_dir.glob("last-v*.ckpt"))
+    return candidates[-1] if candidates else None
+
+
+def _is_training_complete(checkpoint_path: Path | None, max_steps: int) -> bool:
     """Check if checkpoint has reached max_steps."""
-    if not checkpoint_path.exists():
+    if checkpoint_path is None or not checkpoint_path.exists():
         return False
     ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
     return ckpt.get("global_step", 0) >= max_steps
@@ -42,7 +62,7 @@ def run_experiment(
 
     # Check if experiment is already complete (skip W&B run creation if so)
     checkpoint_dir = Path(config.paths.output_dir) / "checkpoints"
-    last_ckpt = checkpoint_dir / "last.ckpt"
+    last_ckpt = _find_last_checkpoint(checkpoint_dir)
     test_results_path = Path(config.paths.output_dir) / "test_results.json"
 
     training_complete = _is_training_complete(last_ckpt, config.trainer.max_steps)
@@ -76,11 +96,11 @@ def run_experiment(
     # Run sanity check if enabled
     maybe_run_sanity_check(config=config, data_module=data_module, model=model)  # pyright: ignore[reportArgumentType]
 
-    # Checkpoint resumption: look for last.ckpt unless force_fresh is set
+    # Checkpoint resumption: look for last checkpoint unless force_fresh is set
     ckpt_path = None
     if config.get("force_fresh", False):
         loguru.info(f"force_fresh=True, starting fresh in: {config.paths.output_dir}")
-    elif last_ckpt.exists():
+    elif last_ckpt is not None:
         ckpt_path = str(last_ckpt)
         loguru.info(f"Resuming from checkpoint: {ckpt_path}")
     else:

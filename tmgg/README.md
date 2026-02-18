@@ -120,8 +120,6 @@ uv run tmgg-spectral-arch logger=wandb
 | `tmgg-grid-search` | Hyperparameter grid search |
 | `tmgg-wandb-export` | Export W&B metrics to CSV |
 | `tmgg-tb-export` | Export TensorBoard metrics |
-| `tmgg-modal-stage1` | Modal stage 1 runner |
-| `tmgg-modal-stage2` | Modal stage 2 runner |
 | `tmgg-eigenstructure` | Eigenstructure study (collect, analyze, noised, compare) |
 | `tmgg-embedding-study` | Embedding dimension study (run, analyze) |
 
@@ -145,33 +143,26 @@ Each CLI command logs to a specific W&B project (when `logger=wandb`). The proje
 | CLI Commands | W&B Project | Base Config |
 |-------------|-------------|-------------|
 | `tmgg-gnn`, `tmgg-gnn-transformer`, `tmgg-spectral-arch`, `tmgg-digress`, `tmgg-baseline` | `architecture-study` | `base_config_{gnn,gnn_transformer,spectral_arch,digress,baseline}.yaml` |
-| `tmgg-gaussian-gen` | `diffusion-study` | `base_config_gaussian_diffusion.yaml` |
+| `tmgg-gaussian-gen` | `gaussian-diffusion` | `base_config_gaussian_diffusion.yaml` |
 | `tmgg-discrete-gen`, `tmgg-discrete-eval` | `discrete-diffusion` | `base_config_discrete_diffusion_generative.yaml` |
 | `tmgg-grid-search` | `tmgg-grid-search-4k` | `grid_search_base.yaml` |
 
-The shared `base_config_training.yaml` defaults to `sandbox`, which individual configs override.
+The shared `base_config_training.yaml` defaults to `base-config`, which individual configs override.
 
 ## Experiment Analysis
 
-Scripts for analyzing W&B experiment results and generating reports:
+W&B experiment data is managed through standalone scripts in `wandb-tools/`:
 
 | Script | Description |
 |--------|-------------|
-| `scripts/fetch_wandb_runs.py` | Fetch runs from W&B to JSON |
-| `scripts/analyze_experiments.py` | Download data, hyperparameter importance analysis |
-| `scripts/analyze_wandb_runs.py` | Analyze exported JSON with grouping/filtering |
-| `scripts/experiment_breakdown.py` | Generate breakdown tables by semantic groupings |
-| `scripts/semantic_analysis.py` | Statistical significance tests across groupings |
+| `wandb-tools/export_runs.py` | Export W&B runs to parquet files |
+| `wandb-tools/aggregate_runs.py` | Aggregate and postprocess exported data |
+| `wandb-tools/analyze_runs.py` | CLI analysis of aggregated run data |
+| `wandb-tools/list_entities.py` | List accessible W&B teams and projects |
 
 ```bash
-# Full analysis pipeline
-uv run scripts/analyze_experiments.py
-
-# Use cached data (skip download)
-uv run scripts/analyze_experiments.py --skip-download
-
-# Generate all breakdown reports
-uv run scripts/experiment_breakdown.py --mode full
+# Export runs from a W&B project
+uv run wandb-tools/export_runs.py --entity graph_denoise_team --project architecture-study
 ```
 
 ### Key Findings (Eigenstructure Study)

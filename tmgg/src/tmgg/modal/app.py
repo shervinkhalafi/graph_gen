@@ -1,37 +1,32 @@
-"""Modal App definition and GPU configurations.
+"""Modal app constants and GPU configurations.
 
-Provides the central Modal App instance and GPU tier mappings
-used across all stage runners.
+Pure constants — no ``import modal`` at module level. The actual
+``modal.App`` instance lives in ``_functions.py``, the sole deployment
+entry-point.
 """
 
-import modal
-
-# Modal App for TMGG spectral denoising experiments
-app = modal.App("tmgg-spectral")
+# App name shared between deployment (_functions.py) and runtime
+# lookups (runner.py uses modal.Function.from_name with this name).
+MODAL_APP_NAME = "tmgg-spectral"
 
 # GPU tier configurations
 # Maps logical names to Modal GPU specifications (string format)
 GPU_CONFIGS = {
-    # Development/testing tier (cheapest)
     "debug": "T4",
-    # Standard tier for most experiments
     "standard": "A10G",
-    # Fast tier for larger models or time-sensitive runs
     "fast": "A100-40GB",
-    # Multi-GPU for DiGress or very large experiments
     "multi": "A100-40GB:2",
-    # H100 tier for maximum performance (if available)
     "h100": "H100",
 }
 
 # Default timeouts per GPU tier (in seconds)
 # Set to 24 hours to avoid premature termination during long experiments
 DEFAULT_TIMEOUTS = {
-    "debug": 86400,  # 24 hours
-    "standard": 86400,  # 24 hours
-    "fast": 86400,  # 24 hours
-    "multi": 86400,  # 24 hours
-    "h100": 86400,  # 24 hours
+    "debug": 86400,
+    "standard": 86400,
+    "fast": 86400,
+    "multi": 86400,
+    "h100": 86400,
 }
 
 # How long containers stay warm after completing a task (in seconds)

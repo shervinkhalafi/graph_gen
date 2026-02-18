@@ -263,23 +263,20 @@ class GenerativeLightningModule(pl.LightningModule):
 
         return {"loss": loss}
 
-    @override
-    def validation_step(
-        self, batch: torch.Tensor, batch_idx: int
-    ) -> dict[str, torch.Tensor]:
-        """Validation step: accumulate reference graphs for MMD evaluation.
+    def _eval_step(self, batch: torch.Tensor, prefix: str) -> dict[str, torch.Tensor]:
+        """Shared evaluation logic for validation and test steps.
 
         Parameters
         ----------
         batch
             Batch of clean adjacency matrices.
-        batch_idx
-            Batch index.
+        prefix
+            Logging prefix, e.g. ``"val"`` or ``"test"``.
 
         Returns
         -------
         dict
-            Dictionary with validation loss.
+            Dictionary with ``{prefix}_loss`` key.
         """
         target = batch
 
@@ -288,7 +285,7 @@ class GenerativeLightningModule(pl.LightningModule):
         for i in range(batch.shape[0]):
             self.mmd_evaluator.accumulate(adjacency_to_networkx(batch[i]))
 
-        # Compute validation loss at a fixed noise level (mid-schedule)
+        # Compute loss at a fixed noise level (mid-schedule)
         mid_eps = float(self.noise_schedule[self.num_diffusion_steps // 2])
         noisy = self.noise_generator.add_noise(batch, mid_eps)
         output = self.forward(noisy)
@@ -300,14 +297,19 @@ class GenerativeLightningModule(pl.LightningModule):
             predictions = self.model.logits_to_graph(output)  # pyright: ignore[reportCallIssue]
             accuracy = (predictions == target).float().mean()
 
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/accuracy", accuracy, on_step=False, on_epoch=True)
+        self.log(f"{prefix}/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f"{prefix}/accuracy", accuracy, on_step=False, on_epoch=True)
 
-        return {"val_loss": loss}
+        return {f"{prefix}_loss": loss}
 
-    @override
-    def on_validation_epoch_end(self) -> None:
-        """Generate graphs and compute MMD metrics at end of validation."""
+    def _eval_epoch_end(self, prefix: str) -> None:
+        """Shared epoch-end logic: generate graphs and compute MMD metrics.
+
+        Parameters
+        ----------
+        prefix
+            Logging prefix, e.g. ``"val"`` or ``"test"``.
+        """
         num_nodes = self.mmd_evaluator.num_nodes
         if self.mmd_evaluator.num_ref_graphs < 2 or num_nodes is None:
             self.mmd_evaluator.clear()
@@ -318,19 +320,31 @@ class GenerativeLightningModule(pl.LightningModule):
         results = self.mmd_evaluator.evaluate(gen_graphs)
 
         if results is not None:
-            self.log("val/degree_mmd", results.degree_mmd, prog_bar=True)
-            self.log("val/clustering_mmd", results.clustering_mmd)
-            self.log("val/spectral_mmd", results.spectral_mmd)
+            self.log(f"{prefix}/degree_mmd", results.degree_mmd, prog_bar=True)
+            self.log(f"{prefix}/clustering_mmd", results.clustering_mmd)
+            self.log(f"{prefix}/spectral_mmd", results.spectral_mmd)
+
+    @override
+    def validation_step(
+        self, batch: torch.Tensor, batch_idx: int
+    ) -> dict[str, torch.Tensor]:
+        """Validation step: accumulate reference graphs for MMD evaluation."""
+        return self._eval_step(batch, "val")
+
+    @override
+    def on_validation_epoch_end(self) -> None:
+        """Generate graphs and compute MMD metrics at end of validation."""
+        self._eval_epoch_end("val")
 
     @override
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> dict[str, torch.Tensor]:
-        """Test step: same as validation."""
-        return self.validation_step(batch, batch_idx)
+        """Test step: accumulate reference graphs for MMD evaluation."""
+        return self._eval_step(batch, "test")
 
     @override
     def on_test_epoch_end(self) -> None:
         """Compute MMD metrics at end of test epoch."""
-        self.on_validation_epoch_end()
+        self._eval_epoch_end("test")
 
     def _sample_graphs_for_eval(
         self,

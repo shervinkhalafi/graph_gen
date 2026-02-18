@@ -36,12 +36,19 @@ dependencies = [
   "safetensors>=0.4.0",      # Fast tensor serialization for eigenstructure study
   "polars>=1.0.0",           # Used by modal/cli/aggregate_mmd.py
   "scikit-learn>=1.3.0",     # RF importance analysis in tmgg.analysis.statistics
+  "pot>=0.9.0",              # Python Optimal Transport (EMD kernel for MMD metrics)
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
 ray = ["ray[default]>=2.10.0"]  # Optional: local distributed execution with Ray
 docs = ["pymdown-extensions", "pygments", "mkdocstrings-python"]
+analysis = [
+    # graph-tool: install via conda-forge (not pip-installable)
+    #   conda install -c conda-forge graph-tool
+    # ORCA: compile from source in src/tmgg/experiment_utils/orca/
+    #   cd src/tmgg/experiment_utils/orca && g++ -O2 -std=c++11 -o orca orca.cpp
+]
 
 [project.scripts]
 # Denoising experiment CLIs

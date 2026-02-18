@@ -1,5 +1,6 @@
 """Public API for data utilities."""
 
+from .base_data_module import BaseGraphDataModule
 from .data_module import GraphDataModule
 from .dataset import AdjacencyMatrixDataset, GraphDataset, PermutedAdjacencyDataset
 from .dataset_wrappers import (
@@ -13,6 +14,7 @@ from .eigendecomposition import (
     compute_spectral_distance,
     compute_top_k_eigendecomposition,
 )
+from .multigraph_data_module import MultiGraphDataModule
 from .noise import (
     add_digress_noise,
     add_edge_flip_noise,
@@ -35,6 +37,8 @@ from .single_graph_data_module import SingleGraphDataModule
 
 __all__ = [
     # Data Modules
+    "BaseGraphDataModule",
+    "MultiGraphDataModule",
     "GraphDataModule",
     "SingleGraphDataModule",
     # Datasets

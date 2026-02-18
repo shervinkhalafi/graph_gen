@@ -5,9 +5,9 @@ defaults:
   - single_graph_base
 
 graph_type: sbm
-n: 50
+num_nodes: 50
 
-# SBM community structure parameters
-p_intra: 0.7   # Edge probability within blocks
-p_inter: 0.05  # Edge probability between blocks
-num_blocks: 3
+graph_config:
+  p_intra: 0.7   # Edge probability within blocks
+  p_inter: 0.05  # Edge probability between blocks
+  num_blocks: 3

@@ -17,6 +17,7 @@ Invariants
   without error on a tiny SBM dataset.
 """
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,8 +48,8 @@ def sample_batch() -> torch.Tensor:
 @pytest.fixture
 def data_module() -> GraphDataModule:
     return GraphDataModule(
-        dataset_name="sbm",
-        dataset_config={"num_nodes": N_NODES, "num_graphs": 8},
+        graph_type="sbm",
+        graph_config={"num_nodes": N_NODES, "num_graphs": 8},
         batch_size=4,
         noise_levels=[0.1, 0.2],
     )
@@ -137,3 +138,92 @@ class TestDigressFullFlow:
         trainer.test(module, data_module)
 
         assert trainer.current_epoch == 1
+
+
+class TestMMDEvaluation:
+    """Verify MMD metric wiring in DigressDenoisingLightningModule.
+
+    The denoising experiment shares MMDEvaluator with the generative
+    experiment so that both report comparable degree/clustering/spectral
+    MMD metrics. These tests check that:
+
+    1. The evaluator exists and accumulates reference graphs during validation.
+    2. Generated graphs are produced and MMD results are non-None.
+    3. The evaluator state resets between epochs.
+    """
+
+    def test_mmd_evaluator_exists(
+        self,
+        module: DigressDenoisingLightningModule,
+    ) -> None:
+        """Module should have an MMDEvaluator attribute."""
+        assert hasattr(module, "mmd_evaluator")
+        assert module.mmd_evaluator.num_ref_graphs == 0
+
+    def test_accumulates_reference_graphs(
+        self,
+        module: DigressDenoisingLightningModule,
+        data_module: GraphDataModule,
+        sample_batch: torch.Tensor,
+    ) -> None:
+        """validation_step should accumulate clean graphs in the evaluator."""
+        mock_trainer = MagicMock(spec=pl.Trainer)
+        mock_trainer.datamodule = data_module
+        mock_trainer.sanity_checking = False
+        module._trainer = mock_trainer  # pyright: ignore[reportPrivateUsage]
+
+        with patch.object(module, "log", return_value=None):
+            module.validation_step(sample_batch, batch_idx=0)
+
+        assert module.mmd_evaluator.num_ref_graphs == sample_batch.size(0)
+
+    def test_mmd_results_computed(
+        self,
+        module: DigressDenoisingLightningModule,
+        data_module: GraphDataModule,
+        sample_batch: torch.Tensor,
+    ) -> None:
+        """on_validation_epoch_end should produce finite MMD results.
+
+        We manually accumulate enough reference graphs (>= 2), set
+        global_step > 0, then trigger the epoch-end hook to verify
+        the evaluator produces non-None results.
+        """
+        from tmgg.experiment_utils.mmd_metrics import adjacency_to_networkx
+
+        mock_trainer = MagicMock(spec=pl.Trainer)
+        mock_trainer.datamodule = data_module
+        mock_trainer.sanity_checking = False
+        module._trainer = mock_trainer  # pyright: ignore[reportPrivateUsage]
+        module._mmd_num_nodes = N_NODES
+
+        # Manually accumulate reference graphs
+        module.mmd_evaluator.set_num_nodes(N_NODES)
+        for i in range(sample_batch.size(0)):
+            module.mmd_evaluator.accumulate(
+                adjacency_to_networkx(sample_batch[i].numpy())
+            )
+
+        assert module.mmd_evaluator.num_ref_graphs >= 2
+
+        logged_metrics: dict[str, float] = {}
+
+        def capture_log(name: str, value: float, **kwargs: Any) -> None:  # pyright: ignore[reportExplicitAny]
+            logged_metrics[name] = value
+
+        with (
+            patch.object(module, "log", side_effect=capture_log),
+            patch.object(
+                type(module),
+                "global_step",
+                new_callable=lambda: property(lambda self: 1),
+            ),
+        ):
+            module.on_validation_epoch_end()
+
+        # Evaluator should have been cleared
+        assert module.mmd_evaluator.num_ref_graphs == 0
+        # MMD metrics should have been logged
+        assert "val/degree_mmd" in logged_metrics
+        assert "val/clustering_mmd" in logged_metrics
+        assert "val/spectral_mmd" in logged_metrics

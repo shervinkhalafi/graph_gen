@@ -270,35 +270,3 @@ class EmbeddingCollector:
         save_safetensors(tensors, embeddings_path)
 
         return stats_path, embeddings_path
-
-    def save_stats_only(self, filename: str = "embedding_study.json") -> Path:
-        """Save only stats to JSON (legacy compatibility).
-
-        Parameters
-        ----------
-        filename
-            Output filename.
-
-        Returns
-        -------
-        Path
-            Path to the saved file.
-        """
-        if self.output_dir is None:
-            raise ValueError("No output_dir specified")
-
-        output_path = self.output_dir / filename
-
-        data = []
-        for study in self.studies:
-            data.append(
-                {
-                    "metadata": asdict(study.metadata),
-                    "results": study.results,
-                }
-            )
-
-        with open(output_path, "w") as f:
-            json.dump(data, f, indent=2)
-
-        return output_path

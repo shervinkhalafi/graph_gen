@@ -1,0 +1,20 @@
+# Discrete diffusion generative: initial sanity check
+# Single architecture (default backbone), narrow sweep to validate
+# the pipeline end-to-end before scaling up
+#
+# To run a broader sweep later, add discrete_small to architectures
+# and expand the hyperparameter grid (lambda_E, data.num_nodes, etc.)
+
+name: stage_discrete_gen
+base_config: base_config_discrete_diffusion_generative
+
+architectures:
+  - models/discrete/discrete_default
+
+hyperparameters:
+  learning_rate: [1e-4, 1e-3]
+  "model.diffusion_steps": [100, 500]
+
+seeds: [1, 2]
+
+run_id_template: "discrete_gen_{arch}_{diffusion_steps}_{lr}_s{seed}"

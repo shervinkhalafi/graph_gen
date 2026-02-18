@@ -1,38 +1,51 @@
 """Modal volume management for dataset caching.
 
-Provides persistent volumes for caching datasets between runs,
-avoiding repeated downloads and preprocessing.
+No ``import modal`` at module level. Volume objects are created lazily
+via ``_create_volume()`` — called at decoration time inside
+``_functions.py`` or at runtime inside a Modal container.
 """
 
-import modal
+from __future__ import annotations
 
-# Persistent volume for dataset caching
-# This volume persists across function invocations
-datasets_volume = modal.Volume.from_name(
-    "tmgg-datasets",
-    create_if_missing=True,
-)
+from typing import TYPE_CHECKING, Any
 
-# Volume for temporary outputs (cleared between runs)
-outputs_volume = modal.Volume.from_name(
-    "tmgg-outputs",
-    create_if_missing=True,
-)
+if TYPE_CHECKING:
+    import modal
 
-# Volume for eigenstructure study data (eigendecompositions, analysis results)
-eigenstructure_volume = modal.Volume.from_name(
-    "tmgg-eigenstructure",
-    create_if_missing=True,
-)
-
-# Mount paths within containers
+# Mount paths within containers (pure constants, no modal dependency)
 DATASETS_MOUNT = "/data/datasets"
 OUTPUTS_MOUNT = "/data/outputs"
 EIGENSTRUCTURE_MOUNT = "/data/eigenstructure"
 
+# Volume names in Modal
+DATASETS_VOLUME_NAME = "tmgg-datasets"
+OUTPUTS_VOLUME_NAME = "tmgg-outputs"
+EIGENSTRUCTURE_VOLUME_NAME = "tmgg-eigenstructure"
 
-def get_volume_mounts() -> dict[str, modal.Volume]:
+
+def _create_volume(name: str) -> modal.Volume:
+    """Create or retrieve a Modal volume by name.
+
+    Parameters
+    ----------
+    name
+        Modal volume name.
+
+    Returns
+    -------
+    modal.Volume
+        Volume handle (creates if missing).
+    """
+    import modal as _modal
+
+    return _modal.Volume.from_name(name, create_if_missing=True)
+
+
+def get_volume_mounts() -> dict[str, Any]:
     """Get volume mount configuration for Modal functions.
+
+    Only call at decoration time (inside ``_functions.py``) or at runtime
+    inside a Modal container.
 
     Returns
     -------
@@ -40,13 +53,13 @@ def get_volume_mounts() -> dict[str, modal.Volume]:
         Mapping of mount paths to volumes.
     """
     return {
-        DATASETS_MOUNT: datasets_volume,
-        OUTPUTS_MOUNT: outputs_volume,
-        EIGENSTRUCTURE_MOUNT: eigenstructure_volume,
+        DATASETS_MOUNT: _create_volume(DATASETS_VOLUME_NAME),
+        OUTPUTS_MOUNT: _create_volume(OUTPUTS_VOLUME_NAME),
+        EIGENSTRUCTURE_MOUNT: _create_volume(EIGENSTRUCTURE_VOLUME_NAME),
     }
 
 
-def get_eigenstructure_volume_mounts() -> dict[str, modal.Volume]:
+def get_eigenstructure_volume_mounts() -> dict[str, Any]:
     """Get volume mount configuration for eigenstructure study functions.
 
     Returns
@@ -55,13 +68,46 @@ def get_eigenstructure_volume_mounts() -> dict[str, modal.Volume]:
         Mapping of mount paths to eigenstructure volume.
     """
     return {
-        EIGENSTRUCTURE_MOUNT: eigenstructure_volume,
+        EIGENSTRUCTURE_MOUNT: _create_volume(EIGENSTRUCTURE_VOLUME_NAME),
     }
+
+
+def get_eigenstructure_volume() -> Any:
+    """Get the eigenstructure volume for ``commit()`` calls.
+
+    Returns
+    -------
+    modal.Volume
+        The eigenstructure volume handle.
+    """
+    return _create_volume(EIGENSTRUCTURE_VOLUME_NAME)
+
+
+def get_datasets_volume() -> Any:
+    """Get the datasets volume.
+
+    Returns
+    -------
+    modal.Volume
+        The datasets volume handle.
+    """
+    return _create_volume(DATASETS_VOLUME_NAME)
+
+
+def get_outputs_volume() -> Any:
+    """Get the outputs volume.
+
+    Returns
+    -------
+    modal.Volume
+        The outputs volume handle.
+    """
+    return _create_volume(OUTPUTS_VOLUME_NAME)
 
 
 def ensure_dataset_cached(
     dataset_name: str,
-    volume: modal.Volume | None = None,
+    volume: Any | None = None,
 ) -> str:
     """Ensure a dataset is cached in the volume.
 
@@ -70,7 +116,7 @@ def ensure_dataset_cached(
     dataset_name
         Name of the dataset (e.g., "qm9", "enzymes").
     volume
-        Volume to cache to. Defaults to datasets_volume.
+        Volume to cache to. Defaults to datasets volume.
 
     Returns
     -------
@@ -79,28 +125,20 @@ def ensure_dataset_cached(
     """
     from pathlib import Path
 
-    vol = volume or datasets_volume
+    vol = volume or get_datasets_volume()
     cache_path = Path(DATASETS_MOUNT) / dataset_name
 
-    # Check if already cached
     if cache_path.exists():
         return str(cache_path)
 
-    # Download and cache the dataset
-    # This depends on the dataset type
     if dataset_name in ("qm9", "enzymes", "proteins"):
         _cache_pyg_dataset(dataset_name, cache_path)
-    else:
-        # Synthetic datasets are generated, not cached
-        pass
 
-    # Commit changes to volume
     vol.commit()
-
     return str(cache_path)
 
 
-def _cache_pyg_dataset(name: str, cache_path) -> None:
+def _cache_pyg_dataset(name: str, cache_path: Any) -> None:
     """Download and cache a PyTorch Geometric dataset.
 
     Parameters
@@ -123,13 +161,12 @@ def _cache_pyg_dataset(name: str, cache_path) -> None:
         elif name in ("enzymes", "proteins"):
             TUDataset(root=str(cache_path), name=name.upper())
     except ImportError:
-        # PyG not available, skip caching
         pass
 
 
 def clear_outputs_volume() -> None:
     """Clear the outputs volume for a fresh run."""
-    outputs_volume.reload()
+    get_outputs_volume().reload()
 
 
 def list_cached_datasets() -> list[str]:

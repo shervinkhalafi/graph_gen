@@ -9,6 +9,9 @@ num_workers: 4
 pin_memory: true
 batch_size: 100
 
-# Default validation and test splits for non-SBM datasets
-val_split: 0.2
-test_split: 0.2
+# Default train/val split ratios (remainder goes to test)
+train_ratio: 0.6
+val_ratio: 0.2
+
+# Reproducibility seed (interpolated from global config)
+seed: ${seed}

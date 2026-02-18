@@ -30,6 +30,7 @@ from tmgg.experiment_utils.mmd_metrics import (
     compute_mmd_from_adjacencies,
     compute_mmd_metrics,
     compute_spectral_histogram,
+    gaussian_emd_kernel,
     gaussian_kernel,
     gaussian_tv_kernel,
 )
@@ -159,6 +160,87 @@ class TestKernels:
         k_small = gaussian_tv_kernel(x, y, sigma=0.1)
         k_large = gaussian_tv_kernel(x, y, sigma=10.0)
         assert k_large > k_small
+
+
+class TestGaussianEmdKernel:
+    """Tests for the gaussian_emd kernel using POT (Python Optimal Transport).
+
+    The EMD kernel replaces pyemd with the actively maintained POT library.
+    It computes the Wasserstein distance between histogram PMFs using a
+    Toeplitz distance matrix, then wraps it in a Gaussian kernel.
+    """
+
+    def test_identical_histograms(self) -> None:
+        """EMD of identical histograms is zero, so kernel should be 1.0."""
+        x = np.array([1, 2, 3, 4, 5])
+        k = gaussian_emd_kernel(x, x, sigma=1.0)
+        assert k == pytest.approx(1.0, abs=1e-6)
+
+    def test_different_histograms(self) -> None:
+        """Disjoint mass should produce kernel < 1."""
+        x = np.array([1, 0, 0, 0, 0])
+        y = np.array([0, 0, 0, 0, 1])
+        k = gaussian_emd_kernel(x, y, sigma=1.0)
+        assert k < 1.0
+        assert k > 0.0
+
+    def test_symmetric(self) -> None:
+        """EMD kernel should be symmetric: k(x,y) == k(y,x)."""
+        x = np.array([1, 2, 3])
+        y = np.array([3, 2, 1])
+        assert gaussian_emd_kernel(x, y) == pytest.approx(
+            gaussian_emd_kernel(y, x), abs=1e-10
+        )
+
+    def test_sigma_effect(self) -> None:
+        """Larger sigma should give higher kernel values for different histograms."""
+        x = np.array([1, 0, 0])
+        y = np.array([0, 0, 1])
+        k_small = gaussian_emd_kernel(x, y, sigma=0.1)
+        k_large = gaussian_emd_kernel(x, y, sigma=10.0)
+        assert k_large > k_small
+
+    def test_distance_scaling(self) -> None:
+        """Distance scaling reduces effective bin distance, increasing kernel value."""
+        x = np.array([1, 0, 0, 0, 0])
+        y = np.array([0, 0, 0, 0, 1])
+        k_unscaled = gaussian_emd_kernel(x, y, sigma=1.0, distance_scaling=1.0)
+        k_scaled = gaussian_emd_kernel(x, y, sigma=1.0, distance_scaling=10.0)
+        assert k_scaled > k_unscaled
+
+    def test_different_lengths(self) -> None:
+        """Histograms of different lengths should be padded and compared."""
+        x = np.array([1, 2, 3])
+        y = np.array([1, 2, 3, 4, 5])
+        k = gaussian_emd_kernel(x, y, sigma=1.0)
+        assert 0 < k <= 1.0
+
+
+class TestMMDWithEmdKernel:
+    """Tests for MMD computation using the gaussian_emd kernel."""
+
+    def test_mmd_identical_with_emd(self) -> None:
+        """MMD with EMD kernel between identical samples should be near zero."""
+        samples = [np.array([1, 2, 3, 4]) for _ in range(10)]
+        mmd = compute_mmd(samples, samples, kernel="gaussian_emd")
+        assert mmd == pytest.approx(0.0, abs=0.01)
+
+    def test_mmd_different_with_emd(self) -> None:
+        """MMD with EMD kernel between different distributions should be positive."""
+        samples1 = [np.array([1, 0, 0, 0, 0]) for _ in range(10)]
+        samples2 = [np.array([0, 0, 0, 0, 1]) for _ in range(10)]
+        mmd = compute_mmd(samples1, samples2, kernel="gaussian_emd")
+        assert mmd > 0
+
+    def test_mmd_metrics_with_emd(self) -> None:
+        """Full MMD pipeline should work with gaussian_emd kernel."""
+        ref_graphs = [nx.erdos_renyi_graph(15, 0.3, seed=i) for i in range(5)]
+        gen_graphs = [nx.erdos_renyi_graph(15, 0.3, seed=i + 100) for i in range(5)]
+        results = compute_mmd_metrics(ref_graphs, gen_graphs, kernel="gaussian_emd")
+        assert isinstance(results, MMDResults)
+        assert results.degree_mmd >= 0
+        assert results.clustering_mmd >= 0
+        assert results.spectral_mmd >= 0
 
 
 class TestMMDComputation:

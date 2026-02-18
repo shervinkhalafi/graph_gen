@@ -73,17 +73,30 @@ class TestEvaluateAcrossNoiseLevelsUsesInjectedGenerator:
         return dm
 
     def test_spy_generator_called_for_each_noise_level(self) -> None:
-        """The injected generator should be called once per noise level."""
+        """The injected generator should be called num_eval_samples times per noise level."""
         spy = _SpyNoiseGenerator()
         model = self._make_dummy_model()
         dm = self._make_dummy_data_module()
         noise_levels = [0.01, 0.1, 0.5]
+        num_eval_samples = 3
 
-        evaluate_across_noise_levels(model, dm, noise_levels, noise_generator=spy)
+        evaluate_across_noise_levels(
+            model,
+            dm,
+            noise_levels,
+            noise_generator=spy,
+            num_eval_samples=num_eval_samples,
+        )
 
-        assert len(spy.calls) == len(noise_levels)
+        assert len(spy.calls) == len(noise_levels) * num_eval_samples
         recorded_eps = [eps for _, eps in spy.calls]
-        assert recorded_eps == noise_levels
+        # Each noise level should appear num_eval_samples times consecutively
+        for i, eps in enumerate(noise_levels):
+            start = i * num_eval_samples
+            assert (
+                recorded_eps[start : start + num_eval_samples]
+                == [eps] * num_eval_samples
+            )
 
     def test_add_edge_flip_noise_no_longer_imported(self) -> None:
         """The module should not import add_edge_flip_noise at all.

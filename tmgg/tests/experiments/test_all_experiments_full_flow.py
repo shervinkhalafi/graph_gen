@@ -52,8 +52,8 @@ def _tiny_trainer() -> pl.Trainer:
 def denoising_data_module() -> GraphDataModule:
     """Tiny SBM data module shared by all denoising experiments."""
     return GraphDataModule(
-        dataset_name="sbm",
-        dataset_config={"num_nodes": N_NODES, "num_graphs": N_GRAPHS},
+        graph_type="sbm",
+        graph_config={"num_nodes": N_NODES, "num_graphs": N_GRAPHS},
         batch_size=BATCH_SIZE,
         noise_levels=NOISE_LEVELS,
     )
@@ -182,8 +182,8 @@ class TestGaussianGenerativeFullFlow:
     """gaussian_diffusion_generative: diffusion training + MMD validation."""
 
     def test_train_val_test(self) -> None:
-        from tmgg.experiments.gaussian_diffusion_generative.datamodule import (
-            GraphDistributionDataModule,
+        from tmgg.experiment_utils.data.multigraph_data_module import (
+            MultiGraphDataModule,
         )
         from tmgg.experiments.gaussian_diffusion_generative.lightning_module import (
             GenerativeLightningModule,
@@ -196,12 +196,12 @@ class TestGaussianGenerativeFullFlow:
             eval_num_samples=4,
             learning_rate=1e-3,
         )
-        datamodule = GraphDistributionDataModule(
-            dataset_type="sbm",
+        datamodule = MultiGraphDataModule(
+            graph_type="sbm",
             num_nodes=N_NODES,
             num_graphs=N_GRAPHS,
             batch_size=BATCH_SIZE,
-            dataset_config={"num_blocks": 2, "p_in": 0.7, "p_out": 0.1},
+            graph_config={"num_blocks": 2, "p_in": 0.7, "p_out": 0.1},
             seed=42,
         )
         trainer = _tiny_trainer()

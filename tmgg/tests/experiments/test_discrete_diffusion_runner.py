@@ -22,14 +22,34 @@ from typing import Any
 
 import pytest
 import torch
+from hydra import compose, initialize_config_dir
+from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
 
 from tmgg.experiment_utils.run_experiment import _is_training_complete
 
+EXP_CONFIG_DIR = Path(__file__).resolve().parents[2] / "src" / "tmgg" / "exp_configs"
 
-def _load_config_as_dict(path: Path) -> dict[str, Any]:
-    """Load a YAML config and return as a plain dict for test assertions."""
-    cfg = OmegaConf.load(path)
+
+def _compose_config(tmp_path: Path) -> dict[str, Any]:
+    """Compose the discrete diffusion config via Hydra and return as dict.
+
+    Uses Hydra's ``compose`` API so that defaults (model configs, base
+    infra) are resolved, matching what the runner sees at launch time.
+    Overrides disable loggers and S3-dependent interpolations that
+    require runtime state.
+    """
+    overrides = [
+        f"paths.output_dir={tmp_path}",
+        f"paths.results_dir={tmp_path}/results",
+        f"hydra.run.dir={tmp_path}",
+        "~logger",
+    ]
+    with initialize_config_dir(version_base=None, config_dir=str(EXP_CONFIG_DIR)):
+        cfg = compose(
+            config_name="base_config_discrete_diffusion_generative",
+            overrides=overrides,
+        )
     result = OmegaConf.to_container(cfg, resolve=False)
     assert isinstance(result, dict)
     return result  # pyright: ignore[reportReturnType]
@@ -41,27 +61,36 @@ def _load_config_as_dict(path: Path) -> dict[str, Any]:
 
 
 class TestConfigLoads:
-    """Verify the YAML config parses and contains expected structure."""
+    """Verify the Hydra-composed config contains expected structure.
+
+    After restructuring, the model architecture comes from a Hydra
+    default (``models/discrete/discrete_default@model``), so raw
+    ``OmegaConf.load`` on the base YAML no longer sees ``_target_``.
+    These tests use Hydra ``compose`` to resolve defaults, matching
+    the actual runner behaviour.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_hydra(self) -> None:  # pyright: ignore[reportReturnType]
+        """Clear Hydra global state before each test."""
+        GlobalHydra.instance().clear()
+        yield  # pyright: ignore[reportReturnType]
+        GlobalHydra.instance().clear()
 
     @pytest.fixture()
-    def config_path(self) -> Path:
-        """Path to the discrete diffusion base config."""
-        return (
-            Path(__file__).resolve().parents[2]
-            / "src"
-            / "tmgg"
-            / "exp_configs"
-            / "base_config_discrete_diffusion_generative.yaml"
+    def cfg(self, tmp_path: Path) -> dict[str, Any]:
+        """Hydra-composed discrete diffusion config as a plain dict."""
+        return _compose_config(tmp_path)
+
+    def test_yaml_parses(self) -> None:
+        """Raw YAML should load as valid OmegaConf without syntax errors."""
+        raw = OmegaConf.load(
+            EXP_CONFIG_DIR / "base_config_discrete_diffusion_generative.yaml"
         )
+        assert OmegaConf.is_config(raw)
 
-    def test_yaml_parses(self, config_path: Path) -> None:
-        """Config should load as valid OmegaConf without syntax errors."""
-        cfg = OmegaConf.load(config_path)
-        assert OmegaConf.is_config(cfg)
-
-    def test_has_model_section(self, config_path: Path) -> None:
+    def test_has_model_section(self, cfg: dict[str, Any]) -> None:
         """Model section must contain _target_ and nested model/noise_schedule."""
-        cfg = _load_config_as_dict(config_path)
         assert "model" in cfg
         model_cfg = cfg["model"]
         assert "_target_" in model_cfg
@@ -72,23 +101,19 @@ class TestConfigLoads:
             "PredefinedNoiseScheduleDiscrete"
         )
 
-    def test_has_data_section(self, config_path: Path) -> None:
+    def test_has_data_section(self, cfg: dict[str, Any]) -> None:
         """Data section must target SyntheticCategoricalDataModule."""
-        cfg = _load_config_as_dict(config_path)
         assert "data" in cfg
         assert cfg["data"]["_target_"].endswith("SyntheticCategoricalDataModule")
 
-    def test_callbacks_monitor_nll(self, config_path: Path) -> None:
+    def test_callbacks_monitor_nll(self, cfg: dict[str, Any]) -> None:
         """Callbacks must monitor val/epoch_NLL, not val/loss."""
-        cfg = _load_config_as_dict(config_path)
         callbacks = cfg["callbacks"]
         assert callbacks["early_stopping"]["monitor"] == "val/epoch_NLL"
         assert callbacks["checkpoint"]["monitor"] == "val/epoch_NLL"
 
-    def test_target_classes_importable(self, config_path: Path) -> None:
+    def test_target_classes_importable(self, cfg: dict[str, Any]) -> None:
         """All _target_ strings must resolve to importable Python classes."""
-        cfg = _load_config_as_dict(config_path)
-
         targets = [
             cfg["model"]["_target_"],
             cfg["model"]["model"]["_target_"],

@@ -8,7 +8,8 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
-from tmgg.models.attention import MultiHeadAttention, MultiLayerAttention
+from tmgg.models.attention import MultiLayerAttention
+from tmgg.models.layers import MultiHeadAttention
 
 
 # Custom strategies for generating test data

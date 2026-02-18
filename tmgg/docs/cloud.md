@@ -247,6 +247,83 @@ result = coordinator.run_stage(
 )
 ```
 
+## Config serialization for remote execution
+
+A generated config must survive serialization, network transit, and reconstruction inside a Modal container before it can drive an experiment. Understanding this pipeline is essential for debugging Modal execution failures, since errors can originate at any stage.
+
+### Data flow
+
+```
+config_builder.build()
+  │  DictConfig with ${...} interpolations
+  ▼
+prepare_config_for_remote()          ← strips paths, logger, resolves interpolations
+  │  plain dict (JSON-safe)
+  ▼
+JSON file on disk  ─── or ───  ModalRunner wraps directly
+  │                                │
+  ▼                                ▼
+spawn_single / launch_sweep     runner._prepare_task()
+  │  reads JSON, builds dict       │  calls prepare_config_for_remote(),
+  │                                │  wraps into TaskInput
+  ▼                                ▼
+task_dict sent to Modal via .spawn() / .remote()
+  │
+  ▼
+modal_execute_task(task_dict)        ← Modal container entry point
+  │  reconstructs TaskInput(**task_dict)
+  ▼
+execute_task(task, get_storage)      ← resolves paths, rebuilds OmegaConf, runs experiment
+  │
+  ▼
+run_experiment(config) → TaskOutput
+```
+
+Two invocation paths converge at the Modal function boundary. The **programmatic path** (`ModalRunner`) calls `prepare_config_for_remote()` directly, then wraps the result into a `TaskInput`. The **CLI path** (`spawn_single`, `launch_sweep`) reads a pre-serialized JSON file and builds the `task_dict` manually. Both produce the same `dict[str, Any]` that Modal transmits to the container.
+
+### `prepare_config_for_remote()`
+
+Defined in `src/tmgg/experiment_utils/task.py`. Transforms a live `DictConfig` into a JSON-safe dict by handling three categories of values that cannot survive serialization:
+
+1. **Paths** (`paths.output_dir`, `paths.results_dir`) are set to `None`. These reference `${hydra:runtime.output_dir}`, which only resolves during a Hydra run. The worker sets them from `TMGG_OUTPUT_BASE` and the run ID.
+
+2. **Logger config** is removed entirely. It contains `${oc.env:WANDB_API_KEY}` and similar interpolations that require environment variables unavailable at serialization time. Before removal, W&B settings (entity, project, tags, log_model) are extracted into a `_wandb_config` dict that travels with the config. The worker's `create_loggers()` reconstructs loggers from this dict plus the container's environment.
+
+3. **All remaining interpolations** are resolved via `OmegaConf.to_container(resolve=True)`. If any interpolation is unresolvable, this raises `ValueError` immediately rather than letting a broken config reach the worker.
+
+### `TaskInput` and `TaskOutput`
+
+These dataclasses (in `task.py`) define the serialization contract between caller and worker.
+
+**`TaskInput`** contains everything the worker needs:
+- `config: dict` — the serialized config (output of `prepare_config_for_remote()`)
+- `run_id: str` — unique identifier for this experiment
+- `gpu_tier: str` — which GPU tier was requested (informational inside the container)
+- `timeout_seconds: int` — maximum wall-clock time
+- `additional_tags: list[str]` — extra W&B tags merged at execution time
+
+**`TaskOutput`** is returned to the caller:
+- `run_id`, `status` (`completed` / `failed` / `timeout`), `metrics: dict`
+- `checkpoint_uri` — remote URI on Tigris, if a checkpoint was uploaded
+- `error_message` — populated only on failure
+- `started_at`, `completed_at` — ISO timestamps; `duration_seconds` — wall-clock time
+
+Both are transmitted as plain dicts (via `dataclasses.asdict`), not as pickled objects.
+
+### Worker-side reconstruction (`execute_task`)
+
+`execute_task()` runs inside the Modal container. It reverses the serialization steps:
+
+1. **Path resolution.** Reads `TMGG_OUTPUT_BASE` from the environment (defaults to `/data/outputs` on Modal volumes, `./outputs` locally) and constructs `{base}/{run_id}/` for output and `{base}/{run_id}/results/` for results.
+
+2. **Config reconstruction.** Wraps the plain dict back into an `OmegaConf` `DictConfig`, injects the resolved paths, and merges `additional_tags` into `_wandb_config.tags`.
+
+3. **Confirmation tracking.** Writes `confirmation.json` to the output directory at start, completion, and failure. This provides a storage-independent audit trail on the Modal volume, useful when W&B or Tigris uploads fail.
+
+4. **Experiment execution.** Calls `run_experiment(config)`, which handles the full training/testing/evaluation loop. On success, uploads the best checkpoint and final metrics to Tigris via the storage backend.
+
+5. **Error propagation.** On failure, records the error in both Tigris and the volume confirmation file, then re-raises the exception. There is no graceful fallback.
+
 ## Troubleshooting
 
 ### "Modal app not deployed"

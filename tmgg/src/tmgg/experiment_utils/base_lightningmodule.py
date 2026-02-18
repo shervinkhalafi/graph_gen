@@ -234,7 +234,27 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
 
     @abstractmethod
     def _make_model(self, *args: Any, **kwargs: Any) -> DenoisingModel:  # pyright: ignore[reportExplicitAny]
-        """Create and return the denoising model for this experiment."""
+        """Create and return the denoising model for this experiment.
+
+        **Template Method contract.** This method is called during
+        ``DenoisingLightningModule.__init__`` (from ``super().__init__()``),
+        so it runs *before* the subclass ``__init__`` body finishes.
+        Implementations may read configuration in two ways:
+
+        1. **Via ``**kwargs``** -- the base ``__init__`` forwards subclass-
+           specific keyword arguments it received.  GNN and Hybrid modules
+           use this approach and need no extra state.
+        2. **Via ``self.hparams``** -- if the subclass calls
+           ``self.save_hyperparameters()`` *before* ``super().__init__()``,
+           all constructor parameters are available in ``self.hparams`` by the
+           time this method executes.  Spectral, Baseline, and Digress
+           modules use this approach.
+
+        Subclasses that follow approach (2) **must** call
+        ``self.save_hyperparameters()`` as the first statement of their
+        ``__init__``, before ``super().__init__()``.  Failing to do so will
+        cause ``self.hparams`` reads here to return empty/default values.
+        """
         pass
 
     @override
@@ -398,9 +418,12 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
     def _val_or_test(self, mode: str, batch: torch.Tensor) -> dict[str, torch.Tensor]:
         target: torch.Tensor = batch
 
-        # Evaluate across all eval noise levels
-        mode_loss_mean: float = 0.0
-        batch_metrics_mean: defaultdict[str, float] = defaultdict(lambda: 0.0)
+        # Evaluate across all eval noise levels, accumulating as tensors so that
+        # Lightning can apply proper batch-size weighting when on_epoch=True.
+        mode_loss_sum = torch.tensor(0.0, device=batch.device)
+        metrics_sum: defaultdict[str, torch.Tensor] = defaultdict(
+            lambda: torch.tensor(0.0, device=batch.device)
+        )
         N: int = len(self.eval_noise_levels)
         for eps in self.eval_noise_levels:
             # Add noise
@@ -422,7 +445,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             predictions: torch.Tensor = self.model.predict(output)
             batch_metrics: dict[str, float] = compute_batch_metrics(target, predictions)
 
-            # Log metrics
+            # Log per-noise-level metrics
             self.log(
                 f"{mode}_{eps}/loss",
                 mode_loss,
@@ -439,21 +462,21 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
             if self.log_spectral_deltas:
                 self._log_spectral_deltas(mode, eps, target, batch_noisy, predictions)
 
-            mode_loss_mean += mode_loss.item() / N
+            mode_loss_sum = mode_loss_sum + mode_loss
             for k, v in batch_metrics.items():
-                batch_metrics_mean[k] += v / N
+                metrics_sum[k] = metrics_sum[k] + torch.tensor(v, device=batch.device)
 
-        # Log metrics
+        # Log noise-level-averaged metrics as tensors for correct batch weighting
+        mode_loss_mean: torch.Tensor = mode_loss_sum / N
         self.log(
             f"{mode}/loss", mode_loss_mean, on_step=False, on_epoch=True, prog_bar=True
         )
-        for metric_name, value in batch_metrics_mean.items():
-            self.log(f"{mode}/{metric_name}", value, on_step=False, on_epoch=True)
-        mode_loss_mean_tensor: torch.Tensor = torch.tensor(mode_loss_mean)
-        batch_metrics_mean_dict: dict[str, torch.Tensor] = {
-            k: torch.tensor(v) for k, v in batch_metrics_mean.items()
+        metrics_mean: dict[str, torch.Tensor] = {
+            k: v / N for k, v in metrics_sum.items()
         }
-        return {f"{mode}_loss": mode_loss_mean_tensor, **batch_metrics_mean_dict}
+        for metric_name, value in metrics_mean.items():
+            self.log(f"{mode}/{metric_name}", value, on_step=False, on_epoch=True)
+        return {f"{mode}_loss": mode_loss_mean, **metrics_mean}
 
     def _log_spectral_deltas(
         self,
@@ -530,7 +553,7 @@ class DenoisingLightningModule(pl.LightningModule, abc.ABC):
     @override
     def on_validation_epoch_end(self) -> None:
         """Called at the end of validation for visualization (step-based)."""
-        if self.global_step % self.visualization_interval == 0:
+        if self.global_step > 0 and self.global_step % self.visualization_interval == 0:
             _ = self._log_visualizations("val")
 
     @override

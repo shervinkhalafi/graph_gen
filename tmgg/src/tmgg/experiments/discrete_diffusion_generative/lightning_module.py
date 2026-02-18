@@ -385,6 +385,18 @@ class DiscreteDiffusionLightningModule(pl.LightningModule):
         """Compute the three VLB components: KL prior, diffusion KL, reconstruction."""
         return self._eval_step(batch)
 
+    def on_validation_epoch_start(self) -> None:
+        """Clear VLB accumulators at the start of each validation epoch.
+
+        Guards against stale tensors mixing with fresh data if the previous
+        epoch's ``_log_vlb_and_mmd`` raised (e.g. OOM during MMD).
+        """
+        self._val_nll.clear()
+        self._val_kl_prior.clear()
+        self._val_kl_diffusion.clear()
+        self._val_reconstruction.clear()
+        self.mmd_evaluator.clear()
+
     def on_validation_epoch_end(self) -> None:
         """Log epoch-mean VLB components and compute MMD metrics."""
         self._log_vlb_and_mmd("val")
@@ -398,6 +410,18 @@ class DiscreteDiffusionLightningModule(pl.LightningModule):
     ) -> dict[str, Tensor]:
         """Compute VLB components and accumulate reference graphs, same as validation."""
         return self._eval_step(batch)
+
+    def on_test_epoch_start(self) -> None:
+        """Clear VLB accumulators at the start of each test epoch.
+
+        Guards against stale tensors mixing with fresh data if the previous
+        epoch's ``_log_vlb_and_mmd`` raised (e.g. OOM during MMD).
+        """
+        self._val_nll.clear()
+        self._val_kl_prior.clear()
+        self._val_kl_diffusion.clear()
+        self._val_reconstruction.clear()
+        self.mmd_evaluator.clear()
 
     def on_test_epoch_end(self) -> None:
         """Log epoch-mean VLB components and compute MMD metrics for test set."""

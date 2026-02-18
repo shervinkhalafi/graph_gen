@@ -31,24 +31,26 @@ from tests.integration_utils import (
     run_cli_command,
 )
 
-# All CLI runners to test with their expected base config
+# All CLI runners to test with their expected base config and DataModule category.
+# The data_module category determines which data-reduction overrides are safe.
 EXPERIMENT_RUNNERS = [
-    ("tmgg-digress", "base_config_digress"),
-    ("tmgg-gnn", "base_config_gnn"),
-    ("tmgg-gnn-transformer", "base_config_gnn_transformer"),
-    ("tmgg-spectral-arch", "base_config_spectral_arch"),
-    ("tmgg-grid-search", "grid_search_base"),
-    ("tmgg-discrete-gen", "base_config_discrete_diffusion_generative"),
+    ("tmgg-digress", "base_config_digress", "denoising"),
+    ("tmgg-gnn", "base_config_gnn", "denoising"),
+    ("tmgg-gnn-transformer", "base_config_gnn_transformer", "denoising"),
+    ("tmgg-spectral-arch", "base_config_spectral_arch", "denoising"),
+    ("tmgg-grid-search", "grid_search_base", "denoising"),
+    ("tmgg-discrete-gen", "base_config_discrete_diffusion_generative", "generative"),
 ]
 
-# Stage configs tested via unified tmgg-experiment CLI
+# Stage configs tested via unified tmgg-experiment CLI, with DataModule category.
+# Most stages use SingleGraphDataModule; stage1_sanity uses multi-graph GraphDataModule.
 STAGE_CONFIGS = [
-    "stage1_poc",
-    "stage1_sanity",
-    "stage2_validation",
-    "stage3_diversity",
-    "stage4_benchmarks",
-    "stage5_full",
+    ("stage1_poc", "single_graph"),
+    ("stage1_sanity", "denoising"),
+    ("stage2_validation", "single_graph"),
+    ("stage3_diversity", "single_graph"),
+    ("stage4_benchmarks", "single_graph"),
+    ("stage5_full", "single_graph"),
 ]
 
 
@@ -57,16 +59,16 @@ STAGE_CONFIGS = [
 class TestExperimentRunners:
     """Tests for experiment-type CLI runners (attention, gnn, etc.)."""
 
-    @pytest.mark.parametrize("runner_cmd,base_config", EXPERIMENT_RUNNERS)
+    @pytest.mark.parametrize("runner_cmd,base_config,dm_type", EXPERIMENT_RUNNERS)
     def test_runner_executes_brief_training(
-        self, runner_cmd: str, base_config: str, tmp_path: Path
+        self, runner_cmd: str, base_config: str, dm_type: str, tmp_path: Path
     ) -> None:
         """Verify runner completes 2 training steps without error.
 
         This test invokes the runner via subprocess with overrides that
         limit training to 2 steps on CPU with minimal data.
         """
-        overrides = get_quick_training_overrides(tmp_path)
+        overrides = get_quick_training_overrides(tmp_path, data_module=dm_type)
         cmd = ["uv", "run", runner_cmd, *overrides]
 
         try:
@@ -88,16 +90,16 @@ class TestExperimentRunners:
 class TestUnifiedExperimentRunner:
     """Tests for the unified tmgg-experiment CLI with stage configs."""
 
-    @pytest.mark.parametrize("stage_config", STAGE_CONFIGS)
+    @pytest.mark.parametrize("stage_config,dm_type", STAGE_CONFIGS)
     def test_stage_executes_brief_training(
-        self, stage_config: str, tmp_path: Path
+        self, stage_config: str, dm_type: str, tmp_path: Path
     ) -> None:
         """Verify tmgg-experiment with stage override completes training.
 
         The unified CLI uses +stage=<name> to compose stage configs on top
         of base_config_spectral_arch.
         """
-        overrides = get_quick_training_overrides(tmp_path)
+        overrides = get_quick_training_overrides(tmp_path, data_module=dm_type)
         # Ensure single-experiment mode (not sweep)
         overrides.append("sweep=false")
         cmd = ["uv", "run", "tmgg-experiment", f"+stage={stage_config}", *overrides]

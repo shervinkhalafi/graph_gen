@@ -196,12 +196,14 @@ def create_loggers(config: DictConfig) -> list[Logger]:
 
         # Use preserved config if available, otherwise fall back to top-level keys
         if wandb_cfg:
-            project = wandb_cfg.get("project", config.get("wandb_project", "sandbox"))
+            project = wandb_cfg.get(
+                "project", config.get("wandb_project", "remote-exec-fallback")
+            )
             entity = wandb_cfg.get("entity", config.get("wandb_entity"))
             tags = wandb_cfg.get("tags", [])
             log_model = wandb_cfg.get("log_model", False)
         else:
-            project = config.get("wandb_project", "sandbox")
+            project = config.get("wandb_project", "remote-exec-fallback")
             entity = config.get("wandb_entity")
             tags = []
             log_model = False
@@ -424,44 +426,34 @@ def log_metrics(
     loggers = [lg for lg in loggers if lg is not None]
 
     for lg in loggers:
-        try:
-            if isinstance(lg, TensorBoardLogger):
-                # TensorBoard logs scalars one at a time
-                for key, value in metrics.items():
-                    lg.experiment.add_scalar(key, value, global_step=step or 0)
+        if isinstance(lg, TensorBoardLogger):
+            # TensorBoard logs scalars one at a time
+            for key, value in metrics.items():
+                lg.experiment.add_scalar(key, value, global_step=step or 0)
 
-            elif isinstance(lg, WandbLogger):
-                # W&B can log all metrics at once
-                lg.experiment.log(metrics)
+        elif isinstance(lg, WandbLogger):
+            # W&B can log all metrics at once
+            lg.experiment.log(metrics)
 
-            elif isinstance(lg, CSVLogger):
-                # Write metrics directly to a CSV file in the log directory
-                import csv
+        elif isinstance(lg, CSVLogger):
+            # Write metrics directly to a CSV file in the log directory
+            import csv
 
-                csv_dir = Path(lg.log_dir)
-                csv_dir.mkdir(parents=True, exist_ok=True)
-                csv_path = csv_dir / "manual_metrics.csv"
+            csv_dir = Path(lg.log_dir)
+            csv_dir.mkdir(parents=True, exist_ok=True)
+            csv_path = csv_dir / "manual_metrics.csv"
 
-                # Check if file exists to determine if we need headers
-                file_exists = csv_path.exists()
+            # Check if file exists to determine if we need headers
+            file_exists = csv_path.exists()
 
-                # Prepare row with optional step column
-                row_data: dict[str, float | int | None] = (
-                    {"step": step} if step is not None else {}
-                )
-                row_data.update(metrics)
+            # Prepare row with optional step column
+            row_data: dict[str, float | int | None] = (
+                {"step": step} if step is not None else {}
+            )
+            row_data.update(metrics)
 
-                with open(csv_path, "a", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=list(row_data.keys()))
-                    if not file_exists:
-                        writer.writeheader()
-                    writer.writerow(row_data)
-
-            # Add other logger types as needed
-            # elif isinstance(lg, MLFlowLogger):
-            #     for key, value in metrics.items():
-            #         lg.experiment.log_metric(key, value, step=step)
-
-        except Exception as e:
-            # Log errors but don't fail the entire logging process
-            print(f"Failed to log metrics to {type(lg).__name__}: {str(e)}")
+            with open(csv_path, "a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=list(row_data.keys()))
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow(row_data)

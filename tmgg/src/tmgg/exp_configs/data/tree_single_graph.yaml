@@ -5,4 +5,4 @@ defaults:
   - single_graph_base
 
 graph_type: tree
-n: 50
+num_nodes: 50

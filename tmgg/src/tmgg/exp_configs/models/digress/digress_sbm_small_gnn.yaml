@@ -28,7 +28,7 @@ noise_type: ${data.noise_type}
 noise_levels: ${data.noise_levels}
 eval_noise_levels: ${eval_noise_levels}
 fixed_noise_seed: ${fixed_noise_seed}
-seed: 42
+seed: ${seed}
 
 # Small model (4 layers, scaled-down dims)
 use_eigenvectors: true
@@ -40,6 +40,9 @@ hidden_dims:
   de: 32
   dy: 32
   n_head: 4
+  dim_ffX: 128
+  dim_ffE: 32
+  dim_ffy: 128
   use_gnn_q: true    # GNN for query projection
   use_gnn_k: true    # GNN for key projection
   use_gnn_v: true    # GNN for value projection

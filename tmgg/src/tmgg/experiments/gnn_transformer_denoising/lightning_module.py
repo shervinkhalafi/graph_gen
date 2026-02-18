@@ -61,6 +61,10 @@ class HybridDenoisingLightningModule(DenoisingLightningModule):
             rotation_k: Dimension for rotation noise skew matrix
             seed: Random seed for reproducible noise generation
         """
+        # Populate self.hparams before super().__init__() so that subclass
+        # params are captured. See the Template Method contract on _make_model.
+        self.save_hyperparameters()
+
         super().__init__(
             gnn_num_layers=gnn_num_layers,
             gnn_num_terms=gnn_num_terms,

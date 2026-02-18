@@ -126,7 +126,7 @@ class TestEndToEndTraining:
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
         # Training with rotation noise
-        skew = random_skew_symmetric_matrix(k)
+        skew = random_skew_symmetric_matrix(k, rng=np.random.default_rng(42))
         initial_loss: float | None = None
         _ = model.train()
 

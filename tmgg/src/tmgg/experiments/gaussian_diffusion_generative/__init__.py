@@ -5,14 +5,10 @@ using discrete denoising diffusion and evaluating them with MMD metrics on
 graph-theoretic properties (degree distribution, clustering, spectral).
 """
 
-from tmgg.experiments.gaussian_diffusion_generative.datamodule import (
-    GraphDistributionDataModule,
-)
 from tmgg.experiments.gaussian_diffusion_generative.lightning_module import (
     GenerativeLightningModule,
 )
 
 __all__ = [
     "GenerativeLightningModule",
-    "GraphDistributionDataModule",
 ]

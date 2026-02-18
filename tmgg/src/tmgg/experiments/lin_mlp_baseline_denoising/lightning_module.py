@@ -67,10 +67,10 @@ class BaselineLightningModule(DenoisingLightningModule):
                 f"got '{model_type}'"
             )
 
-        self._model_type = model_type
-        self._max_nodes = max_nodes
-        self._hidden_dim = hidden_dim
-        self._num_layers = num_layers
+        # Populate self.hparams before super().__init__() because
+        # _make_model (called during super().__init__) reads from it.
+        # See the Template Method contract on _make_model.
+        self.save_hyperparameters()
 
         super().__init__(
             learning_rate=learning_rate,
@@ -82,17 +82,20 @@ class BaselineLightningModule(DenoisingLightningModule):
     def _make_model(self, *args: Any, **kwargs: Any) -> DenoisingModel:
         """Instantiate the baseline model via the shared factory.
 
+        Reads architecture parameters from ``self.hparams``.
+
         Returns
         -------
         DenoisingModel
             Configured baseline model.
         """
+        hp = self.hparams
         config: dict[str, Any] = {
-            "max_nodes": self._max_nodes,
-            "hidden_dim": self._hidden_dim,
-            "num_layers": self._num_layers,
+            "max_nodes": hp["max_nodes"],
+            "hidden_dim": hp["hidden_dim"],
+            "num_layers": hp["num_layers"],
         }
-        model = create_model(self._model_type, config)
+        model = create_model(hp["model_type"], config)
         assert isinstance(model, DenoisingModel)
         return model
 
@@ -104,11 +107,12 @@ class BaselineLightningModule(DenoisingLightningModule):
         str
             Human-readable model name.
         """
+        hp = self.hparams
         name_map = {
             "linear": "Linear Baseline",
-            "mlp": f"MLP Baseline (h={self._hidden_dim})",
+            "mlp": f"MLP Baseline (h={hp['hidden_dim']})",
         }
-        return name_map.get(self._model_type, self._model_type)
+        return name_map.get(hp["model_type"], hp["model_type"])
 
     def get_model_config(self) -> dict[str, Any]:
         """Get model configuration for logging.
@@ -119,5 +123,5 @@ class BaselineLightningModule(DenoisingLightningModule):
             Model configuration dictionary.
         """
         config = self.model.get_config()
-        config["model_type"] = self._model_type
+        config["model_type"] = self.hparams["model_type"]
         return config

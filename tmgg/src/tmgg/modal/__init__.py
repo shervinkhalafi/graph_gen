@@ -2,25 +2,30 @@
 
 This package provides Modal-specific implementations for running
 TMGG experiments on cloud GPUs with Tigris S3 storage.
+
+No ``import modal`` at package level. The ``modal.App`` and all
+``@app.function`` decorators live in ``_functions.py``, the sole
+deployment entry-point. Runtime code uses ``modal.Function.from_name()``
+lazily inside method bodies.
 """
 
-from tmgg.modal.app import GPU_CONFIGS, app
+from tmgg.modal.app import GPU_CONFIGS, MODAL_APP_NAME
 from tmgg.modal.runner import (
     ModalNotDeployedError,
     ModalRunner,
-    SpawnedTask,
+    ModalSpawnedTask,
     check_modal_deployment,
-    modal_execute_task,
+    create_runner,
 )
 from tmgg.modal.storage import TigrisStorage
 
 __all__ = [
-    "app",
     "GPU_CONFIGS",
-    "ModalRunner",
+    "MODAL_APP_NAME",
     "ModalNotDeployedError",
-    "SpawnedTask",
+    "ModalRunner",
+    "ModalSpawnedTask",
     "TigrisStorage",
     "check_modal_deployment",
-    "modal_execute_task",
+    "create_runner",
 ]

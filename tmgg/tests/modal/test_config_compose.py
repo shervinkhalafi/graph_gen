@@ -14,45 +14,12 @@ Invariants:
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock
-
 import pytest
 
-# Mock modal before importing tmgg modules
-mock_modal = MagicMock()
-mock_modal.exception = MagicMock()
-mock_modal.exception.NotFoundError = type("NotFoundError", (Exception,), {})
-sys.modules["modal"] = mock_modal
-sys.modules["modal.exception"] = mock_modal.exception
-
-# Direct module loading to avoid import side effects
-_modal_base_path = Path(__file__).parent.parent.parent / "src" / "tmgg" / "modal"
-
-
-def _load_module(name: str, path: Path):
-    """Load a module directly from file path."""
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-# Load paths module (needed for exp_configs resolution)
-_paths_module = _load_module("tmgg.modal.paths", _modal_base_path / "paths.py")
-
-# Load config_compose module
-_config_compose_module = _load_module(
-    "tmgg.modal.config_compose", _modal_base_path / "config_compose.py"
+from tmgg.modal.config_compose import (
+    compose_config,
+    compose_config_as_dict,
 )
-
-compose_config = _config_compose_module.compose_config
-compose_config_as_dict = _config_compose_module.compose_config_as_dict
-hydra_config_context = _config_compose_module.hydra_config_context
 
 
 class TestComposeConfig:

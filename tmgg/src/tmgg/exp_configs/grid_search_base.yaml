@@ -37,8 +37,8 @@ logger:
 
 # Training steps computed from data config (200 epochs, validate every 5)
 trainer:
-  max_steps: ${epochs_to_steps:${data.num_samples_per_graph},${data.batch_size},200}
-  val_check_interval: ${epochs_to_steps:${data.num_samples_per_graph},${data.batch_size},5}
+  max_steps: ${epochs_to_steps:${data.samples_per_graph},${data.batch_size},200}
+  val_check_interval: ${epochs_to_steps:${data.samples_per_graph},${data.batch_size},5}
   gradient_clip_val: 1.0
   enable_checkpointing: true
   enable_model_summary: true
@@ -68,7 +68,7 @@ model:
 
 # Evaluation settings (step-based, 50 epochs between visualizations)
 evaluation:
-  visualization_interval: ${epochs_to_steps:${data.num_samples_per_graph},${data.batch_size},50}
+  visualization_interval: ${epochs_to_steps:${data.samples_per_graph},${data.batch_size},50}
   final_eval_noise_levels: ${data.noise_levels}
 
 # Grid search parameters (to be swept)

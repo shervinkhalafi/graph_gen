@@ -61,6 +61,7 @@ def load_checkpoint_with_fallback[T: pl.LightningModule](
     checkpoint_path = Path(checkpoint_path)
 
     # Attempt normal loading
+    saved_type_error: TypeError | None = None
     try:
         return module_class.load_from_checkpoint(
             str(checkpoint_path),
@@ -71,6 +72,7 @@ def load_checkpoint_with_fallback[T: pl.LightningModule](
     except TypeError as e:
         if "unexpected keyword argument" not in str(e):
             raise
+        saved_type_error = e
 
     # Introspect __init__ to find accepted parameters
     sig = inspect.signature(module_class.__init__)
@@ -80,7 +82,7 @@ def load_checkpoint_with_fallback[T: pl.LightningModule](
         p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
     )
     if has_var_keyword:
-        raise  # **kwargs accepts anything, filtering won't help
+        raise saved_type_error  # **kwargs accepts anything, filtering won't help
 
     # Load checkpoint and filter hyperparameters
     checkpoint = torch.load(

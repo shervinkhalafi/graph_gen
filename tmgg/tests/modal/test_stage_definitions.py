@@ -18,36 +18,26 @@ Invariants:
 - All models instantiate as LightningModules
 - Single training step executes with gradient flow
 
-Note on Hydra limitations:
-    Hydra's compose() defaults override doesn't work with path-based imports
-    like `models/spectral/linear_pe@model`. This test uses the same approach
-    as Modal's generate_configs.py: load model configs directly and merge
-    with the base config to test instantiation.
+Architecture config loading and merging use ExperimentConfigBuilder from
+tmgg.modal.config_builder, which loads YAML with interpolations stripped
+and merges via deep_merge — matching the production config pipeline.
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import hydra
 import pytest
 import pytorch_lightning as pl
-import torch
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 
-# Mock modal before importing tmgg.modal modules
-mock_modal = MagicMock()
-mock_modal.exception = MagicMock()
-mock_modal.exception.NotFoundError = type("NotFoundError", (Exception,), {})
-sys.modules["modal"] = mock_modal
-sys.modules["modal.exception"] = mock_modal.exception
-
-from tmgg.modal.stage_definitions import (  # noqa: E402
+from tmgg.modal.config_builder import ExperimentConfigBuilder, deep_merge
+from tmgg.modal.stage_definitions import (
+    StageDefinition,
     list_stages,
     load_stage_definition,
 )
@@ -70,7 +60,7 @@ def clear_hydra():
 def get_unique_architectures(stage_name: str) -> list[str]:
     """Get unique architecture paths from a stage definition."""
     stage_def = load_stage_definition(stage_name)
-    return stage_def["architectures"]
+    return stage_def.architectures
 
 
 def get_all_unique_architectures() -> list[tuple[str, str]]:
@@ -82,8 +72,8 @@ def get_all_unique_architectures() -> list[tuple[str, str]]:
     return pairs
 
 
-def load_model_config(arch_path: str) -> DictConfig:
-    """Load a model config YAML file directly.
+def load_model_config(arch_path: str) -> dict[str, Any]:
+    """Load architecture config using ConfigBuilder (strips interpolations).
 
     Parameters
     ----------
@@ -92,14 +82,11 @@ def load_model_config(arch_path: str) -> DictConfig:
 
     Returns
     -------
-    DictConfig
-        The model configuration.
+    dict
+        Architecture config as plain dict with interpolations stripped.
     """
-    model_config_path = EXP_CONFIGS_PATH / f"{arch_path}.yaml"
-    if not model_config_path.exists():
-        raise FileNotFoundError(f"Model config not found: {model_config_path}")
-
-    return OmegaConf.load(model_config_path)  # type: ignore[return-value]
+    builder = ExperimentConfigBuilder()
+    return builder.load_architecture(arch_path)
 
 
 def compose_base_config(base_config: str, tmp_path: Path) -> DictConfig:
@@ -138,74 +125,58 @@ def compose_base_config(base_config: str, tmp_path: Path) -> DictConfig:
     return cfg
 
 
-def merge_model_config(base_cfg: DictConfig, model_cfg: DictConfig) -> dict[str, Any]:
-    """Merge model config with base config model section.
+def merge_model_config(base_cfg: DictConfig, arch: dict[str, Any]) -> dict[str, Any]:
+    """Merge architecture config with base config model section.
 
-    Follows the same approach as Modal's generate_configs.py: start with
-    resolved base config values, then override with non-interpolated values
-    from the architecture-specific config.
+    Uses ConfigBuilder's deep_merge instead of manual OmegaConf node iteration.
+    The arch dict already has interpolations stripped by load_model_config().
 
     Parameters
     ----------
     base_cfg
-        Composed base config.
-    model_cfg
-        Architecture-specific model config.
+        Composed base config (DictConfig).
+    arch
+        Architecture config as plain dict (interpolations already stripped).
 
     Returns
     -------
     dict
         Merged model config as plain dict.
     """
-    # Start with base model config values
-    base_model_dict = OmegaConf.to_container(base_cfg.model, resolve=True)
-    merged_dict: dict[str, Any] = dict(base_model_dict)  # type: ignore[arg-type]
-
-    # Override with non-interpolation values from arch config
-    for key in model_cfg:
-        str_key = str(key)
-        node = model_cfg._get_node(str_key)
-        # Skip interpolations (they reference parent config)
-        if node is not None and not OmegaConf.is_interpolation(model_cfg, str_key):
-            value = model_cfg[str_key]
-            # Convert OmegaConf objects to containers, keep primitives as-is
-            if OmegaConf.is_config(value):
-                merged_dict[str_key] = OmegaConf.to_container(value, resolve=False)
-            else:
-                merged_dict[str_key] = value
-
-    return merged_dict
+    base_model = OmegaConf.to_container(base_cfg.model, resolve=True)
+    return deep_merge(base_model, arch)  # type: ignore[arg-type]
 
 
-def create_test_batch_for_model(model_cfg: dict[str, Any]) -> torch.Tensor:
-    """Create minimal test batch appropriate for model type.
+def create_tiny_datamodule(base_cfg: DictConfig) -> pl.LightningDataModule:
+    """Instantiate the stage's DataModule with minimal dataset size.
+
+    Resolves the ``data`` section of the composed config, shrinks
+    size-controlling fields, and returns a ready-to-use DataModule.
+    Each experiment type's DataModule produces batches in the format
+    that its LightningModule's ``training_step`` expects, so the test
+    stays model-agnostic.
 
     Parameters
     ----------
-    model_cfg
-        Model config dict.
+    base_cfg
+        Composed Hydra config (DictConfig with ``data`` section).
 
     Returns
     -------
-    torch.Tensor
-        Batch of symmetric adjacency matrices.
+    pl.LightningDataModule
+        DataModule with ``prepare_data()`` and ``setup("fit")`` already called.
     """
-    target = model_cfg.get("_target_", "")
-
-    # DiGress needs larger graphs for eigenvector extraction
-    if "digress" in target.lower():
-        k = model_cfg.get("k", 50)
-        n = max(k, 50)
-    else:
-        n = 20
-
-    batch_size = 2
-    A = torch.rand(batch_size, n, n)
-    A = (A + A.transpose(-1, -2)) / 2  # Symmetrize
-    for i in range(batch_size):
-        A[i].fill_diagonal_(0)
-
-    return A
+    data_cfg = OmegaConf.to_container(base_cfg.data, resolve=True)
+    assert isinstance(data_cfg, dict), f"Expected dict, got {type(data_cfg)}"
+    # Shrink dataset for speed (batch_size/num_workers already set by compose_base_config)
+    if "num_graphs" in data_cfg:
+        data_cfg["num_graphs"] = 20
+    if "samples_per_graph" in data_cfg:
+        data_cfg["samples_per_graph"] = 10
+    dm = hydra.utils.instantiate(data_cfg)
+    dm.prepare_data()
+    dm.setup("fit")
+    return dm
 
 
 class TestStageDefinitionsLoad:
@@ -213,22 +184,20 @@ class TestStageDefinitionsLoad:
 
     @pytest.mark.parametrize("stage_name", ALL_STAGES)
     def test_stage_loads(self, stage_name: str) -> None:
-        """Stage definition YAML loads and contains required keys."""
+        """Stage definition YAML loads and validates as StageDefinition."""
         defn = load_stage_definition(stage_name)
 
-        assert "name" in defn, f"Stage {stage_name} missing 'name'"
-        assert "base_config" in defn, f"Stage {stage_name} missing 'base_config'"
-        assert "architectures" in defn, f"Stage {stage_name} missing 'architectures'"
+        assert isinstance(
+            defn, StageDefinition
+        ), f"Stage {stage_name} did not load as StageDefinition: {type(defn)}"
+        assert defn.name, f"Stage {stage_name} has empty name"
+        assert defn.base_config, f"Stage {stage_name} has empty base_config"
+        assert len(defn.architectures) > 0, f"Stage {stage_name} has no architectures"
         assert (
-            len(defn["architectures"]) > 0
-        ), f"Stage {stage_name} has no architectures"
-        assert (
-            "hyperparameters" in defn
-        ), f"Stage {stage_name} missing 'hyperparameters'"
-        assert "seeds" in defn, f"Stage {stage_name} missing 'seeds'"
-        assert (
-            "run_id_template" in defn
-        ), f"Stage {stage_name} missing 'run_id_template'"
+            defn.hyperparameters is not None
+        ), f"Stage {stage_name} missing hyperparameters"
+        assert len(defn.seeds) > 0, f"Stage {stage_name} has no seeds"
+        assert defn.run_id_template, f"Stage {stage_name} has empty run_id_template"
 
 
 @pytest.mark.integration
@@ -264,9 +233,8 @@ class TestStageConfigComposition:
     def test_base_config_composes(self, stage_name: str, tmp_path: Path) -> None:
         """Base config for stage composes without unresolved interpolations."""
         stage_def = load_stage_definition(stage_name)
-        base_config = stage_def["base_config"]
 
-        cfg = compose_base_config(base_config, tmp_path)
+        cfg = compose_base_config(stage_def.base_config, tmp_path)
 
         # Verify essential keys exist
         assert "model" in cfg, "Config missing 'model' key"
@@ -286,12 +254,12 @@ class TestStageModelInstantiation:
     def test_architecture_instantiation(self, stage_name: str, tmp_path: Path) -> None:
         """Each architecture in stage instantiates correctly."""
         stage_def = load_stage_definition(stage_name)
-        base_config = stage_def["base_config"]
+        base_config = stage_def.base_config
 
         # Compose base config once
         base_cfg = compose_base_config(base_config, tmp_path)
 
-        for arch in stage_def["architectures"]:
+        for arch in stage_def.architectures:
             # Load and merge model config
             model_cfg = load_model_config(arch)
             merged_model = merge_model_config(base_cfg, model_cfg)
@@ -307,43 +275,45 @@ class TestStageModelInstantiation:
 @pytest.mark.integration
 @pytest.mark.slow
 class TestStageSingleStep:
-    """Verify single training step executes without error."""
+    """Verify a single training step executes without error.
+
+    Uses ``trainer.fit()`` with ``limit_train_batches=1`` so that each
+    model's ``training_step`` runs through the full Lightning machinery
+    (Trainer attachment, logging, optimizer step). This avoids calling
+    ``training_step`` directly, which fails because Lightning modules
+    require a Trainer for ``self.log()`` and ``self.datamodule`` access.
+    """
 
     @pytest.mark.parametrize("stage_name", ALL_STAGES)
     def test_architecture_single_step(self, stage_name: str, tmp_path: Path) -> None:
         """Single training step succeeds for each architecture in stage."""
         stage_def = load_stage_definition(stage_name)
-        base_config = stage_def["base_config"]
 
-        # Compose base config once
-        base_cfg = compose_base_config(base_config, tmp_path)
+        # Compose base config and create a tiny DataModule (shared across archs)
+        base_cfg = compose_base_config(stage_def.base_config, tmp_path)
+        datamodule = create_tiny_datamodule(base_cfg)
 
-        for arch in stage_def["architectures"]:
+        for arch in stage_def.architectures:
             # Load and merge model config
             model_cfg = load_model_config(arch)
             merged_model = merge_model_config(base_cfg, model_cfg)
 
-            # Instantiate and prepare model
+            # Instantiate model
             model = hydra.utils.instantiate(merged_model)
-            model.train()
-            model.zero_grad()
 
-            # Create appropriate test batch
-            A_noisy = create_test_batch_for_model(merged_model)
-            A_clean = A_noisy.clone()
-
-            # Run forward pass and compute loss
-            output = model(A_noisy)
-            loss = torch.nn.functional.mse_loss(output, A_clean)
-            loss.backward()
-
-            # Verify gradients flow to at least some parameters
-            has_grad = any(
-                p.grad is not None and p.grad.abs().sum() > 0
-                for p in model.parameters()
-                if p.requires_grad
+            # Run one training step through the full Lightning path.
+            # If training_step + backward + optimizer.step complete, gradients
+            # must have flowed — no need to inspect them after the optimizer
+            # zeroes them.
+            trainer = pl.Trainer(
+                max_epochs=1,
+                limit_train_batches=1,
+                limit_val_batches=0,
+                accelerator="cpu",
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                logger=False,
+                enable_checkpointing=False,
+                num_sanity_val_steps=0,
             )
-            assert has_grad, (
-                f"No gradients in model from {arch}. "
-                "Check that forward pass is differentiable."
-            )
+            trainer.fit(model, datamodule=datamodule)

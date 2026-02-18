@@ -13,38 +13,23 @@ across Modal and Ray backends. The key invariants are:
 
 from __future__ import annotations
 
-# Use importlib to load the module directly without going through tmgg.__init__
-# This avoids triggering unrelated import errors in other parts of the package
-import importlib.util
 import json
 import os
-import sys
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from omegaconf import DictConfig, OmegaConf
 
-_task_path = (
-    Path(__file__).parent.parent.parent
-    / "src"
-    / "tmgg"
-    / "experiment_utils"
-    / "task.py"
+import tmgg.experiment_utils.task as _task_module
+from tmgg.experiment_utils.task import (
+    TaskInput,
+    TaskOutput,
+    _resolve_execution_paths,
+    execute_task,
+    prepare_config_for_remote,
 )
-_spec = importlib.util.spec_from_file_location("tmgg.experiment_utils.task", _task_path)
-assert _spec is not None and _spec.loader is not None
-_task_module = importlib.util.module_from_spec(_spec)
-sys.modules["tmgg.experiment_utils.task"] = _task_module
-_spec.loader.exec_module(_task_module)
-
-TaskInput = _task_module.TaskInput
-TaskOutput = _task_module.TaskOutput
-_resolve_execution_paths = _task_module._resolve_execution_paths
-execute_task = _task_module.execute_task
-prepare_config_for_remote = _task_module.prepare_config_for_remote
 
 
 class TestTaskInputOutput:

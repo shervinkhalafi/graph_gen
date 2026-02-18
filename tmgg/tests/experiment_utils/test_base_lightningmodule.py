@@ -322,9 +322,7 @@ class TestSchedulerConfiguration:
 
         assert isinstance(result, dict)
         assert "lr_scheduler" in result
-        lr_sched_cfg = result["lr_scheduler"]
-        assert isinstance(lr_sched_cfg, dict)
-        scheduler = lr_sched_cfg["scheduler"]
+        scheduler = result["lr_scheduler"]["scheduler"]
         assert isinstance(
             scheduler, torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
         )
@@ -342,9 +340,7 @@ class TestSchedulerConfiguration:
 
         assert isinstance(result, dict)
         assert "lr_scheduler" in result
-        lr_sched_cfg = result["lr_scheduler"]
-        assert isinstance(lr_sched_cfg, dict)
-        scheduler = lr_sched_cfg["scheduler"]
+        scheduler = result["lr_scheduler"]["scheduler"]
         assert isinstance(scheduler, torch.optim.lr_scheduler.StepLR)
 
     def test_cosine_warmup_scheduler_creation(self) -> None:
@@ -369,9 +365,7 @@ class TestSchedulerConfiguration:
 
         assert isinstance(result, dict)
         assert "lr_scheduler" in result
-        lr_sched_cfg = result["lr_scheduler"]
-        assert isinstance(lr_sched_cfg, dict)
-        scheduler = lr_sched_cfg["scheduler"]
+        scheduler = result["lr_scheduler"]["scheduler"]
         assert isinstance(scheduler, torch.optim.lr_scheduler.LambdaLR)
 
     def test_cosine_warmup_fraction_config(self) -> None:

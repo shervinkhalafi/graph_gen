@@ -101,26 +101,10 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         optimizer_type: str = "adamw",
         **kwargs: Any,
     ):
-        self._model_type = model_type
-        self._k = k
-        self._max_nodes = max_nodes
-        self._use_bias = use_bias
-        self._polynomial_degree = polynomial_degree
-        self._d_k = d_k
-        self._mlp_hidden_dim = mlp_hidden_dim
-        self._mlp_num_layers = mlp_num_layers
-        # MultiLayerSelfAttention
-        self._d_model = d_model
-        self._num_heads = num_heads
-        self._num_layers = num_layers
-        self._use_mlp = use_mlp
-        self._transformer_mlp_hidden_dim = transformer_mlp_hidden_dim
-        self._dropout = dropout
-        # Shrinkage wrapper
-        self._shrinkage_max_rank = shrinkage_max_rank
-        self._shrinkage_aggregation = shrinkage_aggregation
-        self._shrinkage_hidden_dim = shrinkage_hidden_dim
-        self._shrinkage_mlp_layers = shrinkage_mlp_layers
+        # Populate self.hparams before super().__init__() because
+        # _make_model (called during super().__init__) reads from it.
+        # See the Template Method contract on _make_model.
+        self.save_hyperparameters()
 
         super().__init__(
             learning_rate=learning_rate,
@@ -132,31 +116,36 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
     def _make_model(self, *args: Any, **kwargs: Any) -> DenoisingModel:
         """Instantiate the spectral denoising model via the shared factory.
 
+        Reads all architecture parameters from ``self.hparams``, which the
+        subclass ``__init__`` populates via ``save_hyperparameters()`` before
+        calling ``super().__init__()``.
+
         Returns
         -------
         DenoisingModel
             Configured spectral denoiser model.
         """
+        hp = self.hparams
         config: dict[str, Any] = {
-            "k": self._k,
-            "max_nodes": self._max_nodes,
-            "use_bias": self._use_bias,
-            "polynomial_degree": self._polynomial_degree,
-            "d_k": self._d_k,
-            "mlp_hidden_dim": self._mlp_hidden_dim,
-            "mlp_num_layers": self._mlp_num_layers,
-            "d_model": self._d_model,
-            "num_heads": self._num_heads,
-            "num_layers": self._num_layers,
-            "use_mlp": self._use_mlp,
-            "transformer_mlp_hidden_dim": self._transformer_mlp_hidden_dim,
-            "dropout": self._dropout,
-            "shrinkage_max_rank": self._shrinkage_max_rank,
-            "shrinkage_aggregation": self._shrinkage_aggregation,
-            "shrinkage_hidden_dim": self._shrinkage_hidden_dim,
-            "shrinkage_mlp_layers": self._shrinkage_mlp_layers,
+            "k": hp["k"],
+            "max_nodes": hp["max_nodes"],
+            "use_bias": hp["use_bias"],
+            "polynomial_degree": hp["polynomial_degree"],
+            "d_k": hp["d_k"],
+            "mlp_hidden_dim": hp["mlp_hidden_dim"],
+            "mlp_num_layers": hp["mlp_num_layers"],
+            "d_model": hp["d_model"],
+            "num_heads": hp["num_heads"],
+            "num_layers": hp["num_layers"],
+            "use_mlp": hp["use_mlp"],
+            "transformer_mlp_hidden_dim": hp["transformer_mlp_hidden_dim"],
+            "dropout": hp["dropout"],
+            "shrinkage_max_rank": hp["shrinkage_max_rank"],
+            "shrinkage_aggregation": hp["shrinkage_aggregation"],
+            "shrinkage_hidden_dim": hp["shrinkage_hidden_dim"],
+            "shrinkage_mlp_layers": hp["shrinkage_mlp_layers"],
         }
-        model = create_model(self._model_type, config)
+        model = create_model(hp["model_type"], config)
         assert isinstance(model, DenoisingModel)
         return model
 
@@ -168,17 +157,18 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
         str
             Human-readable model name.
         """
+        hp = self.hparams
         name_map = {
             "linear_pe": "Linear PE",
-            "filter_bank": f"Filter Bank (K={self._polynomial_degree})",
-            "self_attention": f"Self-Attention (d_k={self._d_k})",
-            "self_attention_mlp": f"Self-Attention+MLP (d_k={self._d_k}, h={self._mlp_hidden_dim})",
+            "filter_bank": f"Filter Bank (K={hp['polynomial_degree']})",
+            "self_attention": f"Self-Attention (d_k={hp['d_k']})",
+            "self_attention_mlp": f"Self-Attention+MLP (d_k={hp['d_k']}, h={hp['mlp_hidden_dim']})",
             "multilayer_self_attention": (
-                f"MultiLayer-SA (L={self._num_layers}, d={self._d_model}, "
-                f"h={self._num_heads}, mlp={self._use_mlp})"
+                f"MultiLayer-SA (L={hp['num_layers']}, d={hp['d_model']}, "
+                f"h={hp['num_heads']}, mlp={hp['use_mlp']})"
             ),
         }
-        return name_map.get(self._model_type, self._model_type)
+        return name_map.get(hp["model_type"], hp["model_type"])
 
     def get_model_config(self) -> dict[str, Any]:
         """Get model configuration for logging.
@@ -189,5 +179,5 @@ class SpectralDenoisingLightningModule(DenoisingLightningModule):
             Model configuration dictionary.
         """
         config = self.model.get_config()
-        config["model_type"] = self._model_type
+        config["model_type"] = self.hparams["model_type"]
         return config

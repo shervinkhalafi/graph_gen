@@ -21,9 +21,7 @@ import pytest
 import pytorch_lightning as pl
 import torch
 
-from tmgg.experiments.gaussian_diffusion_generative.datamodule import (
-    GraphDistributionDataModule,
-)
+from tmgg.experiment_utils.data.multigraph_data_module import MultiGraphDataModule
 from tmgg.experiments.gaussian_diffusion_generative.lightning_module import (
     GenerativeLightningModule,
 )
@@ -217,12 +215,12 @@ class TestGenerativeE2EPerDataset:
             eval_num_samples=8,
         )
 
-        datamodule = GraphDistributionDataModule(
-            dataset_type=dataset_type,
+        datamodule = MultiGraphDataModule(
+            graph_type=dataset_type,
             num_nodes=16,
             num_graphs=20,
             batch_size=4,
-            dataset_config=DATASET_CONFIGS[dataset_type],
+            graph_config=DATASET_CONFIGS[dataset_type],
             seed=42,
         )
 
@@ -245,12 +243,12 @@ class TestGenerativeDataModule:
     @pytest.mark.parametrize("dataset_type", list(DATASET_CONFIGS.keys()))
     def test_datamodule_setup(self, dataset_type: str) -> None:
         """DataModule should set up train/val/test splits correctly."""
-        datamodule = GraphDistributionDataModule(
-            dataset_type=dataset_type,
+        datamodule = MultiGraphDataModule(
+            graph_type=dataset_type,
             num_nodes=16,
             num_graphs=20,
             batch_size=4,
-            dataset_config=DATASET_CONFIGS[dataset_type],
+            graph_config=DATASET_CONFIGS[dataset_type],
             seed=42,
         )
 
@@ -269,12 +267,12 @@ class TestGenerativeDataModule:
     @pytest.mark.parametrize("dataset_type", list(DATASET_CONFIGS.keys()))
     def test_generated_graphs_are_valid(self, dataset_type: str) -> None:
         """Generated graphs should be binary, symmetric, with zero diagonal."""
-        datamodule = GraphDistributionDataModule(
-            dataset_type=dataset_type,
+        datamodule = MultiGraphDataModule(
+            graph_type=dataset_type,
             num_nodes=16,
             num_graphs=10,
             batch_size=4,
-            dataset_config=DATASET_CONFIGS[dataset_type],
+            graph_config=DATASET_CONFIGS[dataset_type],
             seed=42,
         )
 

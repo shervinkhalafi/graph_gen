@@ -5,8 +5,8 @@ defaults:
   - single_graph_base
 
 graph_type: pyg_enzymes
-n: 0  # Ignored for PyG datasets (determined by selected graph)
+num_nodes: 0  # Ignored for PyG datasets (determined by selected graph)
 
-# PyG dataset parameters
-graph_idx: 0  # Index of graph to use (0 = first graph in dataset)
-root: ./data/pyg_enzymes
+graph_config:
+  graph_idx: 0  # Index of graph to use (0 = first graph in dataset)
+  root: ./data/pyg_enzymes
