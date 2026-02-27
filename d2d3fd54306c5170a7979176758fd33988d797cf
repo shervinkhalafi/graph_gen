@@ -1,0 +1,39 @@
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  80cae374e4d5f1df 18,157-158,190-191,226-227
+tmgg/tests/experiments/test_discrete_diffusion_evaluate.py
+  80cae374e4d5f1df 221-222
+tmgg/tests/experiments/test_categorical_datamodule.py
+  80cae374e4d5f1df 13,74-75,77,80,83-87,107-108,110-112,128,134-135,137-138,141-146,154,162,169-171,274-275,278,280-281,284,293-294,296-297
+tmgg/tests/test_datamodule_contracts.py
+  80cae374e4d5f1df 391-395,450-451
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/datamodule.py
+  80cae374e4d5f1df 4,8,19,26-27,29,31,38,46-47,107-109,129,135,138,141,144,155-156,161-163,167-168,212,217,219,223,228,230,234,239,241,280,302
+tmgg/src/tmgg/data/graph_types.py
+  80cae374e4d5f1df 94-106
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/lightning_module.py
+  80cae374e4d5f1df 360,362,387,412,437,439,926-938
+tmgg/tests/experiment_utils/test_conversions.py
+  80cae374e4d5f1df 1,10-13,19,37-38,41-46,50-52,56-57,62,64-65,69-70,76-81,84-85,88-90,102-103,112-118,125-126,130-131,133-140,144-149,153-158,162-164,166-167,171-173,175-176,186-192,194,196-197,203-207,209-217
+tmgg/scripts/validate_discrete_diffusion.py
+  80cae374e4d5f1df 310-311
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "d2d3fd54306c5170a7979176758fd33988d797cf",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 232,
+      "total_deletions": 217,
+      "accepted_lines": 230,
+      "overriden_lines": 0
+    }
+  }
+}
