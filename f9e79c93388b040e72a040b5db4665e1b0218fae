@@ -1,0 +1,29 @@
+tmgg/wandb-tools/analyze_runs.py
+  80cae374e4d5f1df 13-14,29,363
+tmgg/wandb-tools/test_wandb_parsing.py
+  80cae374e4d5f1df 1-95
+tmgg/wandb-tools/aggregate_runs.py
+  80cae374e4d5f1df 13,27
+tmgg/wandb-tools/wandb_parsing.py
+  80cae374e4d5f1df 4-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "f9e79c93388b040e72a040b5db4665e1b0218fae",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 104,
+      "total_deletions": 21,
+      "accepted_lines": 103,
+      "overriden_lines": 0
+    }
+  }
+}
