@@ -1,0 +1,41 @@
+tmgg/src/tmgg/models/digress/diffusion_utils.py
+  80cae374e4d5f1df 9,238,262,271,280,304,337,458-461,469,473-474,502
+tmgg/tests/models/test_discrete_transformer.py
+  80cae374e4d5f1df 13,52,57,60
+tmgg/tests/models/test_diffusion_utils.py
+  80cae374e4d5f1df 1,5,9-10,18,21-22,24-26,33-34,43-45,60,62-64,70,75,81,83,85-86,88-90,100-104
+tmgg/tests/models/test_graph_types.py
+  80cae374e4d5f1df 1-284
+tmgg/src/tmgg/models/digress/transformer_model.py
+  80cae374e4d5f1df 15,661,724,726,744
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/lightning_module.py
+  80cae374e4d5f1df 42-47,93,245-246,248,257,262-264,268,280,330,332-341,343,346-349,351,364-366,447-449,454,607-608,624-626,635-637,649-651,674,701,703-709,729,733,813,831,850-856,915
+tmgg/src/tmgg/models/digress/discrete_transformer.py
+  80cae374e4d5f1df 11-12,99,120
+tmgg/src/tmgg/models/digress/noise_schedule.py
+  80cae374e4d5f1df 12,154,169,191,195,209,230,232,239,257,298,313,331,335,349,370,372,379,389
+tmgg/src/tmgg/models/digress/graph_types.py
+  80cae374e4d5f1df 1-229
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  80cae374e4d5f1df 148,162-164,167,194-196,230-232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "34ea5912b8c17513abc56fdebc698d0909d63b8b",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 679,
+      "total_deletions": 228,
+      "accepted_lines": 677,
+      "overriden_lines": 0
+    }
+  }
+}
