@@ -1,0 +1,55 @@
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/lightning_module.py
+  80cae374e4d5f1df 18,212,219,228-230,239,268,274,283-284,287-289,293,332,343,449-457
+tmgg/src/tmgg/experiments/_shared_utils/base_lightningmodule.py
+  80cae374e4d5f1df 354-362,381,387,396-397,400,403,430-432,436,438,443,480,559,564,606-607
+tmgg/tests/experiment_utils/test_base_lightningmodule.py
+  80cae374e4d5f1df 32,258,271,276,459,474
+tmgg/tests/experiment_utils/test_data_module.py
+  80cae374e4d5f1df 26,270-274
+tmgg/tests/experiments/test_baseline_denoising_module.py
+  80cae374e4d5f1df 27,36,48-51,83,103
+tmgg/tests/test_generative_integration.py
+  80cae374e4d5f1df 24,75-79,83-85,90-91,97,101,111,163,171,175,184,333
+tmgg/tests/test_training_integration.py
+  80cae374e4d5f1df 25,177,179,480,482
+tmgg/tests/test_datamodule_contracts.py
+  80cae374e4d5f1df 21,63-65,68-69,72-73,110,125-126,169-171,194,252-254,258-259,263-264,280
+tmgg/src/tmgg/data/dataset.py
+  80cae374e4d5f1df 9-10,62,67-68,88,90
+tmgg/src/tmgg/data/single_graph_data_module.py
+  80cae374e4d5f1df 16,21,36,40,46,48,312,319,323,330,334,341
+tmgg/src/tmgg/experiments/digress_denoising/lightning_module.py
+  80cae374e4d5f1df 7,99,105,107-108,110-111,146,150,152-153,155-156
+tmgg/tests/test_data_generation.py
+  80cae374e4d5f1df 22,422-426,434-438,452-453,457-461,469-470,472,475,477-478,495-497
+tmgg/tests/test_integration.py
+  80cae374e4d5f1df 20,32,44-45,51,70-71,112,137-138,170,203-204,245,262-263,287,298,320-321,344,362,383,406,433,456,473
+tmgg/tests/test_single_graph_datasets.py
+  80cae374e4d5f1df 24,163-165,169-170
+tmgg/src/tmgg/data/data_module.py
+  80cae374e4d5f1df 245,250,254,263,272
+tmgg/tests/experiments/test_digress_denoising_module.py
+  80cae374e4d5f1df 28,37,49-52,87,104,174-175,186,192,210,212
+tmgg/src/tmgg/data/multigraph_data_module.py
+  80cae374e4d5f1df 22,32-33,41-42,363,368,372,377,381,386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "7095736f1997a7917582d2bb50ad10f4308c8abc",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 265,
+      "total_deletions": 181,
+      "accepted_lines": 245,
+      "overriden_lines": 0
+    }
+  }
+}
