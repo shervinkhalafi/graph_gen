@@ -1,0 +1,33 @@
+tmgg/src/tmgg/modal/__init__.py
+  80cae374e4d5f1df 16,25
+tmgg/src/tmgg/hydra_plugins/tmgg_launcher/launcher.py
+  80cae374e4d5f1df 1,4,15,21-22,27,46,60,63,108-109,118,124-125,136,196
+tmgg/tests/modal/test_runner.py
+  80cae374e4d5f1df 22,189,199,218,248,279,299
+tmgg/tests/hydra_plugins/test_launcher_parallel.py
+  80cae374e4d5f1df 15
+tmgg/src/tmgg/modal/runner.py
+  80cae374e4d5f1df 1,25,38-66,197,216,244,262,266
+tmgg/tests/test_hydra_launcher.py
+  80cae374e4d5f1df 35,99-101,108,145-146,289-291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "0d94e81c12fad0912254512afe89ccb563c4f76d",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 79,
+      "total_deletions": 72,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
