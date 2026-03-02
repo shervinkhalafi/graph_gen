@@ -1,0 +1,38 @@
+tmgg/src/tmgg/diffusion/__init__.py
+  cc1e779a0652bf00 1
+tmgg/tach.toml
+  cc1e779a0652bf00 41,45-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "32f80234dfbd40768c42702438f3ec57b2272b75",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 49,
+      "overriden_lines": 0
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 1,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
