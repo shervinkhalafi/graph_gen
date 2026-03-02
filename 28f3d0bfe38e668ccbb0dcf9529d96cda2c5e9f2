@@ -1,0 +1,44 @@
+tmgg/src/tmgg/modal/cli/evaluate.py
+  84db5ca37602cea4 1-5,12,15-17,19-20,23,25-27,29-30,32-53,56-57,59,63-65,67,70-88,90-98,102-111,127-145,152-178,181-191,193,195,197-200,203-204,209,211,213,215,217,219-223,226-230,232-235,237-242,246-256,258,260-261,263-288
+tmgg/src/tmgg/modal/cli/aggregate.py
+  84db5ca37602cea4 1-5,18,25-29,31,33-34,44-45,71,76,81,90,93-96,98,101,112,115,121,138,149,151,156,158,160,163,170-172,177,182-184,188,204-224,227-228,230,239-245,248-250,252-256,258-262,264,266-268,270,272-274,276,278-279,282-306,309-312,315,317-319,322-323,325,327-328,330-332,334,336-337,341,343-344,347,349-351,354,356,361-362,364,367-370,372-374,376-377,379,385
+tmgg/pyproject.toml
+  84db5ca37602cea4 37,79-80
+tmgg/src/tmgg/modal/cli/__init__.py
+  84db5ca37602cea4 1,3-4,6,8,10-29
+tmgg/mise.toml
+  84db5ca37602cea4 71,75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "28f3d0bfe38e668ccbb0dcf9529d96cda2c5e9f2",
+  "prompts": {
+    "84db5ca37602cea4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4afaf44f-e0e7-4f60-ba6b-f11fe103393f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 473,
+      "total_deletions": 674,
+      "accepted_lines": 410,
+      "overriden_lines": 2
+    },
+    "aa0bc78c7de6cc34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "581f7663-8192-4028-b018-3b39418fabaa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 544,
+      "total_deletions": 52,
+      "accepted_lines": 541,
+      "overriden_lines": 0
+    }
+  }
+}
