@@ -1,0 +1,90 @@
+tmgg/src/tmgg/experiments/embedding_study/embeddings/dimension_search.py
+  84db5ca37602cea4 16-18,22,26,30-33
+tmgg/src/tmgg/experiments/embedding_study/embeddings/orthogonal.py
+  84db5ca37602cea4 24
+tmgg/src/tmgg/experiments/embedding_study/embeddings/fitters/__init__.py
+  84db5ca37602cea4 9,19-20
+tmgg/tests/experiments/test_embeddings.py
+  84db5ca37602cea4 23,34,46,326,348,537,564,590,629
+tmgg/src/tmgg/experiments/embedding_study/embeddings/fitters/gauge_stabilized.py
+  84db5ca37602cea4 25-26
+tmgg/src/tmgg/experiments/embedding_study/collector.py
+  84db5ca37602cea4 18
+tmgg/src/tmgg/experiments/embedding_study/embeddings/lpca.py
+  84db5ca37602cea4 15
+tmgg/src/tmgg/experiments/embedding_study/execute.py
+  84db5ca37602cea4 51
+tmgg/src/tmgg/experiments/embedding_study/embeddings/dot_product.py
+  84db5ca37602cea4 12
+tmgg/src/tmgg/experiments/embedding_study/embeddings/fitters/gradient.py
+  84db5ca37602cea4 15
+tmgg/src/tmgg/experiments/embedding_study/embeddings/fitters/spectral.py
+  84db5ca37602cea4 11-12,16
+tmgg/src/tmgg/experiments/embedding_study/cli.py
+  84db5ca37602cea4 20
+tmgg/src/tmgg/experiments/embedding_study/embeddings/dot_threshold.py
+  84db5ca37602cea4 17
+tmgg/src/tmgg/experiments/embedding_study/embeddings/distance_threshold.py
+  84db5ca37602cea4 19
+tmgg/src/tmgg/experiments/embedding_study/embeddings/__init__.py
+  84db5ca37602cea4 14,20,25-26,30,34-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "610d4eaecf925c59ee23d9b0f568218cdfa46dbb",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 147,
+      "overriden_lines": 0
+    },
+    "84db5ca37602cea4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4afaf44f-e0e7-4f60-ba6b-f11fe103393f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 44,
+      "total_deletions": 44,
+      "accepted_lines": 43,
+      "overriden_lines": 1
+    },
+    "aa0bc78c7de6cc34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "581f7663-8192-4028-b018-3b39418fabaa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 90,
+      "overriden_lines": 0
+    },
+    "c2e68b57ea4fd6ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b8c0b3d-5620-4ca5-891c-ee666b04eecf",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 416,
+      "overriden_lines": 0
+    }
+  }
+}
