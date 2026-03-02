@@ -1,0 +1,151 @@
+tmgg/src/tmgg/hydra_plugins/tmgg_launcher/launcher.py
+  c2e68b57ea4fd6ce 13,88-91,188-206
+tmgg/src/tmgg/data/synthetic_graphs.py
+  aa0bc78c7de6cc34 647,680,693-694,820,822-823
+  c2e68b57ea4fd6ce 59,103,201,239,293,332,401,438,470,499,528,562,594
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/runner.py
+  c2e68b57ea4fd6ce 29
+tmgg/src/tmgg/experiments/exp_configs/_base_infra.yaml
+  c2e68b57ea4fd6ce 4,20,57-60
+tmgg/src/tmgg/modal/cli/__init__.py
+  c2e68b57ea4fd6ce 16-17,25,27
+tmgg/docs/data.md
+  aa0bc78c7de6cc34 262
+tmgg/tests/test_synthetic_graphs.py
+  aa0bc78c7de6cc34 163,170,176,183,188-190,197,202,208,214,223,379,386,392,398,403,413,421,428,435,441
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/evaluate_checkpoint.py
+  c2e68b57ea4fd6ce 29,80-81,94
+  aa0bc78c7de6cc34 117
+tmgg/src/tmgg/experiments/exp_configs/README.md
+  c2e68b57ea4fd6ce 8,14,19-20,22-28,75,133,135,137,139-141,143-144,146-147,150-152,154,157-159,162,164-165,168,170,173,188-189
+tmgg/src/tmgg/models/spectral_denoisers/filter_bank.py
+  c2e68b57ea4fd6ce 205-209
+tmgg/tests/debug/test_learning_sanity.py
+  c2e68b57ea4fd6ce 87
+tmgg/src/tmgg/experiments/exp_configs/base/logger/default.yaml
+  c2e68b57ea4fd6ce 20
+tmgg/src/tmgg/experiments/_shared_utils/logging.py
+  c2e68b57ea4fd6ce 141,143-144,148-151,158-161,164
+tmgg/src/tmgg/experiments/exp_configs/base/progress_bar/default.yaml
+  c2e68b57ea4fd6ce 6
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/runner.py
+  c2e68b57ea4fd6ce 28
+tmgg/src/tmgg/experiments/_shared_utils/mmd_metrics.py
+  c2e68b57ea4fd6ce 55-56,63-67,77-78
+tmgg/src/tmgg/modal/_functions.py
+  c2e68b57ea4fd6ce 90,96,98-101,172-182,184-192,202-210,227-228,246-247,252-254,268-269,282-283,296-297
+tmgg/src/tmgg/experiments/exp_configs/hydra/launcher/tmgg_modal.yaml
+  c2e68b57ea4fd6ce 5
+tmgg/src/tmgg/experiments/exp_configs/base/trainer/default.yaml
+  c2e68b57ea4fd6ce 21
+tmgg/src/tmgg/experiments/digress_denoising/lightning_module.py
+  c2e68b57ea4fd6ce 9,11
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/lightning_module.py
+  c2e68b57ea4fd6ce 25,167-168,428-429,450,466-467,496-504,510-511,566,601-611,619-626,628-632
+tmgg/src/tmgg/experiments/exp_configs/base/lightning_base.yaml
+  c2e68b57ea4fd6ce 6,17
+tmgg/src/tmgg/data/single_graph_data_module.py
+  aa0bc78c7de6cc34 209
+tmgg/src/tmgg/experiments/eigenstructure_study/collector.py
+  aa0bc78c7de6cc34 217
+tmgg/src/tmgg/modal/cli/run.py
+  c2e68b57ea4fd6ce 1-12,14-40,42-179
+tmgg/src/tmgg/data/_split.py
+  aa0bc78c7de6cc34 1-42
+tmgg/tests/test_integration.py
+  c2e68b57ea4fd6ce 39
+  aa0bc78c7de6cc34 12,43
+tmgg/src/tmgg/experiments/_shared_utils/base_lightningmodule.py
+  c2e68b57ea4fd6ce 430,615-616,699-702
+tmgg/src/tmgg/models/digress/diffusion_utils.py
+  c2e68b57ea4fd6ce 310-313
+tmgg/src/tmgg/models/digress/extra_features.py
+  c2e68b57ea4fd6ce 226-231,233-248,250,255-256,258,264-266,269-270,274,281-287,290-294,296-301,331,333,336,339,342
+tmgg/tests/test_shared_sampling.py
+  c2e68b57ea4fd6ce 19
+tmgg/tests/hydra_plugins/test_launcher_parallel.py
+  c2e68b57ea4fd6ce 26-27
+tmgg/tests/test_data_generation.py
+  aa0bc78c7de6cc34 428,446
+  c2e68b57ea4fd6ce 199-200,202-204,212,215-216
+tmgg/src/tmgg/modal/_lib/config_resolution.py
+  c2e68b57ea4fd6ce 1-25,27-33,35-162
+tmgg/src/tmgg/data/pyg_datasets.py
+  aa0bc78c7de6cc34 195,197-199
+tmgg/pyproject.toml
+  80cae374e4d5f1df 62,74-76
+tmgg/src/tmgg/models/digress/noise_schedule.py
+  c2e68b57ea4fd6ce 34-35,59-60,64,120
+tmgg/src/tmgg/data/__init__.py
+  aa0bc78c7de6cc34 30,33,46-47
+tmgg/tests/experiment_utils/test_mmd_evaluator.py
+  c2e68b57ea4fd6ce 21
+tmgg/tests/test_hydra_launcher.py
+  c2e68b57ea4fd6ce 141-142,144,287-288,290
+tmgg/src/tmgg/data/multigraph_data_module.py
+  aa0bc78c7de6cc34 21,150,170,172
+tmgg/src/tmgg/experiments/_shared_utils/optimizer_config.py
+  c2e68b57ea4fd6ce 74,138,140-144
+tmgg/src/tmgg/data/noise.py
+  c2e68b57ea4fd6ce 96-97,111-113,122-123,251,265-267,278-279
+tmgg/src/tmgg/data/sbm.py
+  c2e68b57ea4fd6ce 8-9,12,14-15,17-21,23,26-28,46,122
+tmgg/src/tmgg/experiments/_shared_utils/run_experiment.py
+  c2e68b57ea4fd6ce 59-60,81-83,260-264
+tmgg/tests/test_digress_checkpoint_compat.py
+  c2e68b57ea4fd6ce 17
+tmgg/src/tmgg/experiments/_shared_utils/reference_graphs.py
+  c2e68b57ea4fd6ce 52-53,66
+  aa0bc78c7de6cc34 89
+  80cae374e4d5f1df 1-51,54-65,67-88,90-95
+tmgg/tests/experiment_utils/test_optimizer_config.py
+  c2e68b57ea4fd6ce 118-119,122-123,126-127
+tmgg/tests/debug/test_digress_sanity.py
+  c2e68b57ea4fd6ce 61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "c49e66ca00bab95c79f4df4cdbf226038a9834b3",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 144,
+      "overriden_lines": 0
+    },
+    "aa0bc78c7de6cc34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "581f7663-8192-4028-b018-3b39418fabaa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 92,
+      "overriden_lines": 0
+    },
+    "c2e68b57ea4fd6ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b8c0b3d-5620-4ca5-891c-ee666b04eecf",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 329,
+      "total_deletions": 219,
+      "accepted_lines": 706,
+      "overriden_lines": 5
+    }
+  }
+}
