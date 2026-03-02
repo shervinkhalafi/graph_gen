@@ -1,0 +1,60 @@
+tmgg/src/tmgg/models/layers/pearl_embedding.py
+  84db5ca37602cea4 20-21,155
+tmgg/tests/models/test_attention_properties.py
+  84db5ca37602cea4 127,129-131,321,323
+tmgg/tests/test_audit_fixes.py
+  84db5ca37602cea4 147,160
+tmgg/tests/models/test_layers.py
+  84db5ca37602cea4 124-125,127-130,141,147,163,169
+tmgg/src/tmgg/models/layers/mha_layer.py
+  84db5ca37602cea4 72,74-75,77,79,81,84-86,137
+tmgg/src/tmgg/models/base.py
+  84db5ca37602cea4 135-140,142,144,146-147
+tmgg/src/tmgg/models/layers/graph_ops.py
+  84db5ca37602cea4 1-59
+tmgg/src/tmgg/models/attention/attention.py
+  84db5ca37602cea4 93
+tmgg/tests/models/test_attention.py
+  84db5ca37602cea4 53
+tmgg/src/tmgg/models/layers/__init__.py
+  84db5ca37602cea4 3,19,21
+tmgg/src/tmgg/models/digress/transformer_model.py
+  84db5ca37602cea4 17
+tmgg/src/tmgg/models/layers/gcn.py
+  84db5ca37602cea4 4-5,44-45,97-98
+tmgg/src/tmgg/models/layers/nvgcn_layer.py
+  84db5ca37602cea4 16-17,41,75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "a2d1cdad2ceec0968a22fc8e3bd73a6234ca438d",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 104,
+      "overriden_lines": 0
+    },
+    "84db5ca37602cea4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4afaf44f-e0e7-4f60-ba6b-f11fe103393f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 132,
+      "total_deletions": 270,
+      "accepted_lines": 118,
+      "overriden_lines": 0
+    }
+  }
+}
