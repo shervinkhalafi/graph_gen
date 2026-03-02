@@ -1,0 +1,62 @@
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/self_attention_mlp.yaml
+  84db5ca37602cea4 6
+tmgg/src/tmgg/models/spectral_denoisers/shrinkage_wrapper.py
+  84db5ca37602cea4 341,344-348,353-355
+tmgg/tests/test_generative_integration.py
+  84db5ca37602cea4 52-53
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  84db5ca37602cea4 94
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/nodevar_gnn.yaml
+  84db5ca37602cea4 10,13
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/symmetric_gnn.yaml
+  84db5ca37602cea4 10
+tmgg/tests/test_training_integration.py
+  84db5ca37602cea4 102-103
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/lightning_module.py
+  84db5ca37602cea4 48,466-467
+tmgg/src/tmgg/models/factory.py
+  84db5ca37602cea4 294
+tmgg/tests/models/test_factory_registry.py
+  84db5ca37602cea4 17,19-20,25
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/standard_gnn.yaml
+  84db5ca37602cea4 6
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/multilayer_self_attention.yaml
+  84db5ca37602cea4 6
+tmgg/src/tmgg/experiments/gnn_denoising/lightning_module.py
+  84db5ca37602cea4 17,38,77
+tmgg/src/tmgg/experiments/spectral_arch_denoising/lightning_module.py
+  84db5ca37602cea4 28-29,41,43,45,47,49,55,163-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "507ca58b82c314ecbc0dee8119d3d107876fe715",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 97,
+      "overriden_lines": 0
+    },
+    "84db5ca37602cea4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4afaf44f-e0e7-4f60-ba6b-f11fe103393f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 47,
+      "total_deletions": 45,
+      "accepted_lines": 42,
+      "overriden_lines": 0
+    }
+  }
+}
