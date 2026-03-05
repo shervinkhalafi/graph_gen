@@ -1,0 +1,53 @@
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/evaluate_cli.py
+  cc1e779a0652bf00 6-9,23,76-77,79,96,99,101-102,104-105
+tmgg/src/tmgg/experiments/exp_configs/base_config_discrete_diffusion_generative.yaml
+  cc1e779a0652bf00 10,21-22,25,27,83
+tmgg/src/tmgg/experiments/digress_denoising/lightning_module.py
+  cc1e779a0652bf00 83
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/evaluate.py
+  cc1e779a0652bf00 4,42,68
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_small.yaml
+  cc1e779a0652bf00 4,6-7,9,13-28,31-32,34-39,43-44
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  cc1e779a0652bf00 1,9-11,22-26,46-47,51-63,68-73,75-77,92-113,118,140,144,147,149-150,154-155,159,165,169-170,172-173,177,179,181,184,186-187,194-197,199-200,208,211,219,221-225,227,230-232,236,240,243,245-248,250-258,260,262-266,274,279-280,285,294,310-312
+tmgg/src/tmgg/diffusion/sampler.py
+  cc1e779a0652bf00 6,81,185-187,189-191
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_default.yaml
+  cc1e779a0652bf00 4,6-7,9,13-28,31-32,34-39,43-44
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_official.yaml
+  cc1e779a0652bf00 8,10-11,13,15,26-34,36-40,42-43,45-51,57-59
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_eigenvec.yaml
+  cc1e779a0652bf00 10,12-13,15,17-18,30-38,40-44,46-47,49-54,58-59
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/__init__.py
+  cc1e779a0652bf00 8-10
+tmgg/tests/experiments/test_discrete_diffusion_runner.py
+  cc1e779a0652bf00 1,15,69-71,94,98-112,115-123,125-131,145,148-149,151,201-202,209-213,220-230,232-234,236-239,245-261,268
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  cc1e779a0652bf00 261,263-265,268-272,283-285,287-295,297-317
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/lightning_module.py
+  cc1e779a0652bf00 375,421
+tmgg/src/tmgg/experiments/_shared_utils/graph_evaluator.py
+  cc1e779a0652bf00 186,223-231,233,235-243
+tmgg/tests/experiments/test_discrete_diffusion_evaluate.py
+  cc1e779a0652bf00 1,6-7,26-30,54-62,64-66,68-71,73-89,104,222,229,231-235,237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "f1e3f04cbdefa5f295d5c66e6b94e19739d64035",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 534,
+      "total_deletions": 530,
+      "accepted_lines": 1260,
+      "overriden_lines": 1
+    }
+  }
+}
