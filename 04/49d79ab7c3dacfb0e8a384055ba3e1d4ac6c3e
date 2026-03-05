@@ -1,0 +1,56 @@
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_small.yaml
+  cc1e779a0652bf00 3
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_official.yaml
+  cc1e779a0652bf00 7
+tmgg/tests/test_generative_integration.py
+  cc1e779a0652bf00 1,4-5,8,29-34,50-90,410-599
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/__init__.py
+  cc1e779a0652bf00 6-9,12,18
+tmgg/src/tmgg/experiments/_shared_utils/diffusion_module.py
+  cc1e779a0652bf00 22,127-148,178,180-182,185,254-257
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_default.yaml
+  cc1e779a0652bf00 3
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/__init__.py
+  cc1e779a0652bf00 7-12,15,24
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  cc1e779a0652bf00 28,70,72,74,86,88-93,95,107-117,119,131-138,143,158,160-164,166,209-248
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  cc1e779a0652bf00 20,25-50
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_eigenvec.yaml
+  cc1e779a0652bf00 1
+tmgg/src/tmgg/experiments/exp_configs/base_config_discrete_diffusion_generative.yaml
+  cc1e779a0652bf00 11-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "0449d79ab7c3dacfb0e8a384055ba3e1d4ac6c3e",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 49,
+      "overriden_lines": 0
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 1045,
+      "total_deletions": 788,
+      "accepted_lines": 697,
+      "overriden_lines": 0
+    }
+  }
+}

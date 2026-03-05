@@ -1,0 +1,100 @@
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/symmetric_gnn.yaml
+  cc1e779a0652bf00 7,11
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_vanilla.yaml
+  cc1e779a0652bf00 6-10
+tmgg/src/tmgg/experiments/exp_configs/models/hybrid/hybrid_with_transformer.yaml
+  cc1e779a0652bf00 3,5,7,30
+tmgg/tests/test_training_integration.py
+  cc1e779a0652bf00 26,78-79,81,95,97-102,104-109,112-113,117-119,121,123,135,137,152,155,157,159,168,170-171,178,180,219,221,240,245-246,293,296-299,302,334,340,347-348,350,377,382,385,387,410,412,438,440,442,450,452-453,464,472-473,475,482-483,487-488
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/self_attention_mlp.yaml
+  cc1e779a0652bf00 4,8,11-12
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/self_attention.yaml
+  cc1e779a0652bf00 4,8
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_vanilla.yaml
+  cc1e779a0652bf00 6-10
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/self_attention_strict_shrinkage.yaml
+  cc1e779a0652bf00 5,9,12-13
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_gnn.yaml
+  cc1e779a0652bf00 7-11
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_qk.yaml
+  cc1e779a0652bf00 4,6,8,37
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_highlr.yaml
+  cc1e779a0652bf00 6-10
+tmgg/src/tmgg/experiments/exp_configs/models/hybrid/hybrid_gnn_only.yaml
+  cc1e779a0652bf00 7,9,11
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small.yaml
+  cc1e779a0652bf00 6-10
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_vanilla_gnn.yaml
+  cc1e779a0652bf00 7-11
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/multilayer_self_attention.yaml
+  cc1e779a0652bf00 4,8,18-19
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_spectral_all.yaml
+  cc1e779a0652bf00 4,6,8,39
+tmgg/src/tmgg/experiments/spectral_arch_denoising/__init__.py
+  cc1e779a0652bf00 15,20
+tmgg/src/tmgg/models/factory.py
+  cc1e779a0652bf00 367-376,379,385-386
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_spectral_qk.yaml
+  cc1e779a0652bf00 4,6,8,39
+tmgg/src/tmgg/experiments/exp_configs/base/lightning_base.yaml
+  cc1e779a0652bf00 2
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/standard_gnn.yaml
+  cc1e779a0652bf00 3,7,21
+tmgg/src/tmgg/experiments/exp_configs/models/baselines/linear.yaml
+  cc1e779a0652bf00 5,9
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/linear_pe.yaml
+  cc1e779a0652bf00 4,8,12-15
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_v.yaml
+  cc1e779a0652bf00 4,6,8,37
+tmgg/src/tmgg/experiments/exp_configs/models/baselines/mlp.yaml
+  cc1e779a0652bf00 5,9
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/self_attention_relaxed_shrinkage.yaml
+  cc1e779a0652bf00 5,9,12-13
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/nodevar_gnn.yaml
+  cc1e779a0652bf00 7,11
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer.yaml
+  cc1e779a0652bf00 3,5,7,32
+tmgg/tests/experiments/test_digress_denoising_module.py
+  cc1e779a0652bf00 1-2,13-16,34,38-45,78,80-82,86,95,100,102-103,107,112,114,124,160-162,165-166,170-172,177-181,184,187-188,192,201,203-204,206,210,225-226,229,231,235,243,245,250,253
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_all.yaml
+  cc1e779a0652bf00 4,6,8,37
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/filter_bank.yaml
+  cc1e779a0652bf00 4,8,10-13
+tmgg/src/tmgg/experiments/lin_mlp_baseline_denoising/__init__.py
+  cc1e779a0652bf00 3,8
+tmgg/tests/experiments/test_baseline_denoising_module.py
+  cc1e779a0652bf00 1,6,8,28,62,64,66-70,72,89,91-92,104,106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "cd436b4267646c68d45b376a4765892864181fb8",
+  "prompts": {
+    "80cae374e4d5f1df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f50d9b0-06ae-42ab-9031-76daf16e839b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 49,
+      "overriden_lines": 0
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 4,
+      "accepted_lines": 267,
+      "overriden_lines": 0
+    }
+  }
+}
