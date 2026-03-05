@@ -1,0 +1,55 @@
+tmgg/tests/experiments/test_discrete_diffusion_evaluate.py
+  cc1e779a0652bf00 55-56,81,203,256
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/__init__.py
+  cc1e779a0652bf00 12
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  cc1e779a0652bf00 42,44,70
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  cc1e779a0652bf00 280
+tmgg/src/tmgg/models/factory.py
+  cc1e779a0652bf00 363,367-369,371-372,374-384,388,394-395
+tmgg/tests/experiments/test_discrete_diffusion_runner.py
+  cc1e779a0652bf00 102,197
+tmgg/tests/models/test_factory_registry.py
+  cc1e779a0652bf00 30
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/lightning_module.py
+  cc1e779a0652bf00 73,97
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/README.md
+  cc1e779a0652bf00 20
+tmgg/scripts/validate_discrete_diffusion.py
+  cc1e779a0652bf00 239
+tmgg/tests/models/test_digress_gnn_projections.py
+  cc1e779a0652bf00 326-327,329-330,344,347,351
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_eigenvec.yaml
+  cc1e779a0652bf00 9,25,27-28,30
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_default.yaml
+  cc1e779a0652bf00 1,19
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_small.yaml
+  cc1e779a0652bf00 1,19
+tmgg/src/tmgg/experiments/digress_denoising/lightning_module.py
+  cc1e779a0652bf00 212,221,223-227,235
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_official.yaml
+  cc1e779a0652bf00 27
+tmgg/src/tmgg/experiments/exp_configs/base_config_discrete_diffusion_generative.yaml
+  cc1e779a0652bf00 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "6141b1addd764b7bb020134670a4f13058646125",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 91,
+      "total_deletions": 67,
+      "accepted_lines": 827,
+      "overriden_lines": 0
+    }
+  }
+}
