@@ -1,0 +1,27 @@
+tmgg/src/tmgg/experiments/_shared_utils/denoising_module.py
+  cc1e779a0652bf00 3,8-12,28-30,33-37,39-40,111-113,117-127,136-140,143,148,211,220,286,288,368,376
+tmgg/src/tmgg/experiments/_shared_utils/diffusion_module.py
+  cc1e779a0652bf00 61-63,90,113,344-345,350,353,358,362,368,404-408
+tmgg/tests/experiment_utils/test_denoising_module.py
+  cc1e779a0652bf00 88-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "d1e679f1f80cfb2eea0926396fe31d9116b23cd6",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 75,
+      "total_deletions": 43,
+      "accepted_lines": 819,
+      "overriden_lines": 0
+    }
+  }
+}
