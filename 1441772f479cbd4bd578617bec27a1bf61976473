@@ -1,0 +1,27 @@
+tmgg/tests/diffusion/conftest.py
+  cc1e779a0652bf00 1-23
+tmgg/tests/diffusion/test_noise_process.py
+  cc1e779a0652bf00 92
+tmgg/tests/diffusion/test_sampler.py
+  cc1e779a0652bf00 100,111,114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "1441772f479cbd4bd578617bec27a1bf61976473",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 10,
+      "accepted_lines": 1040,
+      "overriden_lines": 0
+    }
+  }
+}
