@@ -1,0 +1,49 @@
+tmgg/tests/diffusion/test_schedule.py
+  cc1e779a0652bf00 26,32,37,81,93,98,110,138,140,152
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_default.yaml
+  cc1e779a0652bf00 25
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  cc1e779a0652bf00 35
+tmgg/src/tmgg/diffusion/sampler.py
+  cc1e779a0652bf00 92,104,112,143,171-173,294,306,314,344,364
+tmgg/src/tmgg/experiments/_shared_utils/diffusion_module.py
+  cc1e779a0652bf00 159
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_official.yaml
+  cc1e779a0652bf00 36
+tmgg/tests/experiments/test_discrete_diffusion_runner.py
+  cc1e779a0652bf00 228
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  cc1e779a0652bf00 68
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  cc1e779a0652bf00 201,259
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_eigenvec.yaml
+  cc1e779a0652bf00 40
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_small.yaml
+  cc1e779a0652bf00 25
+tmgg/scripts/validate_discrete_diffusion.py
+  cc1e779a0652bf00 258
+tmgg/src/tmgg/diffusion/schedule.py
+  cc1e779a0652bf00 148
+tmgg/tests/test_generative_integration.py
+  cc1e779a0652bf00 68,212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "9d5016ce24b5e11bb1bfb1a8d42a1a90a735fad0",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 43,
+      "accepted_lines": 1049,
+      "overriden_lines": 0
+    }
+  }
+}
