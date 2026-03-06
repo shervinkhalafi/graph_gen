@@ -1,0 +1,29 @@
+tmgg/src/tmgg/experiments/_shared_utils/diffusion_module.py
+  cc1e779a0652bf00 345-360
+tmgg/tests/diffusion/test_sampler.py
+  cc1e779a0652bf00 306-330,446-469
+tmgg/src/tmgg/diffusion/sampler.py
+  cc1e779a0652bf00 114,316
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  cc1e779a0652bf00 566-604
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "059ae7febcfe8ac23090cd24c771385a3aa587c7",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 108,
+      "total_deletions": 0,
+      "accepted_lines": 1119,
+      "overriden_lines": 0
+    }
+  }
+}
