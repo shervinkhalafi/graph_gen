@@ -1,0 +1,23 @@
+tmgg/src/tmgg/data/noising/noise.py
+  cc1e779a0652bf00 320,322-337,339,342-344,348-355,368,371-373,407,449,456-458,517-519
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "1c562b07b50337f544b912e65b12a4193a1899d8",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 47,
+      "total_deletions": 9,
+      "accepted_lines": 46,
+      "overriden_lines": 0
+    }
+  }
+}
