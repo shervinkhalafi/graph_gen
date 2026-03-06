@@ -1,0 +1,35 @@
+tmgg/src/tmgg/diffusion/noise_process.py
+  cc1e779a0652bf00 244,247,252,271,277-280,282,284,306,364,408,477
+tmgg/src/tmgg/diffusion/sampler.py
+  cc1e779a0652bf00 155
+tmgg/tests/diffusion/test_noise_process.py
+  cc1e779a0652bf00 230-231,252
+tmgg/src/tmgg/experiments/_shared_utils/diffusion_module.py
+  cc1e779a0652bf00 181
+tmgg/src/tmgg/diffusion/__init__.py
+  cc1e779a0652bf00 8,24
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  cc1e779a0652bf00 595
+tmgg/src/tmgg/diffusion/protocols.py
+  cc1e779a0652bf00 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "5de0965d19ccf5ca81307920f802d64da6ed0bb0",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 53,
+      "total_deletions": 25,
+      "accepted_lines": 52,
+      "overriden_lines": 0
+    }
+  }
+}
