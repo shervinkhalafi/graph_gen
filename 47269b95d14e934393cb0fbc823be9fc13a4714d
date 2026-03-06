@@ -1,0 +1,51 @@
+tmgg/tests/test_integration.py
+  cc1e779a0652bf00 142
+tmgg/src/tmgg/data/data_modules/data_module.py
+  cc1e779a0652bf00 18-22
+tmgg/src/tmgg/data/data_modules/multigraph_data_module.py
+  cc1e779a0652bf00 21-23,28-31
+tmgg/src/tmgg/data/data_modules/single_graph_data_module.py
+  cc1e779a0652bf00 15-18
+tmgg/src/tmgg/data/__init__.py
+  cc1e779a0652bf00 5-9,11,13-21,28,66-67
+tmgg/src/tmgg/data/datasets/__init__.py
+  cc1e779a0652bf00 1-20
+tmgg/src/tmgg/data/data_modules/__init__.py
+  cc1e779a0652bf00 1-15
+tmgg/src/tmgg/experiments/eigenstructure_study/noised_collector.py
+  cc1e779a0652bf00 129-130
+tmgg/src/tmgg/experiments/eigenstructure_study/collector.py
+  cc1e779a0652bf00 253-254
+tmgg/src/tmgg/data/noising/__init__.py
+  cc1e779a0652bf00 1-37
+tmgg/src/tmgg/data/datasets/graph_dataset.py
+  cc1e779a0652bf00 15
+tmgg/src/tmgg/experiments/_shared_utils/sanity_check.py
+  cc1e779a0652bf00 540
+tmgg/src/tmgg/data/datasets/synthetic_graphs.py
+  cc1e779a0652bf00 820
+tmgg/docs/plans/2026-03-05-phase3-corrections-and-completion.md
+  cc1e779a0652bf00 1-64,66-749
+tmgg/src/tmgg/data/datasets/pyg_datasets.py
+  cc1e779a0652bf00 195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "47269b95d14e934393cb0fbc823be9fc13a4714d",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 116,
+      "total_deletions": 56,
+      "accepted_lines": 863,
+      "overriden_lines": 1
+    }
+  }
+}
