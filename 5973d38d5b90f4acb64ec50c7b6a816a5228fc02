@@ -1,0 +1,23 @@
+tmgg/src/tmgg/experiments/_shared_utils/diffusion_module.py
+  cc1e779a0652bf00 235,238-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "5973d38d5b90f4acb64ec50c7b6a816a5228fc02",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 2,
+      "accepted_lines": 1019,
+      "overriden_lines": 0
+    }
+  }
+}
