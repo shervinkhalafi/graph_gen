@@ -1,0 +1,27 @@
+tmgg/src/tmgg/experiments/_shared_utils/diffusion_module.py
+  cc1e779a0652bf00 236,360
+tmgg/tests/diffusion/test_noise_process.py
+  cc1e779a0652bf00 148,165,183,216,242
+tmgg/src/tmgg/diffusion/noise_process.py
+  cc1e779a0652bf00 64-66,107-109,138-139,148,153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "c295239f0b5a1ff90538ce57658aa9505a4346eb",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 62,
+      "accepted_lines": 1030,
+      "overriden_lines": 0
+    }
+  }
+}
