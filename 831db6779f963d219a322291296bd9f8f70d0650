@@ -1,0 +1,29 @@
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  cc1e779a0652bf00 28,34
+tmgg/src/tmgg/experiments/exp_configs/data/regular_spectral.yaml
+  cc1e779a0652bf00 5
+tmgg/src/tmgg/experiments/exp_configs/base_config_discrete_diffusion_generative.yaml
+  cc1e779a0652bf00 47-48
+tmgg/src/tmgg/experiments/exp_configs/base_config_digress.yaml
+  cc1e779a0652bf00 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "831db6779f963d219a322291296bd9f8f70d0650",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 1699,
+      "total_deletions": 143,
+      "accepted_lines": 2575,
+      "overriden_lines": 0
+    }
+  }
+}
