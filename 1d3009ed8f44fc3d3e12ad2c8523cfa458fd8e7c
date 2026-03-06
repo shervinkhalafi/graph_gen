@@ -1,0 +1,43 @@
+tmgg/tests/diffusion/test_noise_process.py
+  cc1e779a0652bf00 105,107,142,146,159,163,174,178-183,188,190-226,228-229,235,239
+tmgg/tests/test_generative_integration.py
+  cc1e779a0652bf00 62,66-68,200-201,205-208
+tmgg/src/tmgg/experiments/_shared_utils/denoising_module.py
+  cc1e779a0652bf00 126
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  cc1e779a0652bf00 56
+tmgg/src/tmgg/diffusion/noise_process.py
+  cc1e779a0652bf00 3,13-14,23,44,50-53,56-58,118-123,127,129,131,166,171-173,182,184,194-196,202-214,237,259-260,268,273-275,315,343,401-403,449,509-513,519-521
+tmgg/src/tmgg/diffusion/sampler.py
+  cc1e779a0652bf00 166-167,197-209,212-225,231-251,373-374,376
+tmgg/tests/diffusion/test_sampler.py
+  cc1e779a0652bf00 126-127
+tmgg/src/tmgg/diffusion/protocols.py
+  cc1e779a0652bf00 19-22,25,27
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  cc1e779a0652bf00 195,199-201
+tmgg/src/tmgg/models/digress/noise_schedule.py
+  cc1e779a0652bf00 4-5,10,14-15,27-30,32,37-48,50,68,83,98,144,149,161-166,169-170,173,178-179,182-189,191-194,196,212,227,242
+tmgg/tests/models/test_noise_schedule.py
+  cc1e779a0652bf00 283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "1d3009ed8f44fc3d3e12ad2c8523cfa458fd8e7c",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 112,
+      "total_deletions": 100,
+      "accepted_lines": 1268,
+      "overriden_lines": 2
+    }
+  }
+}
