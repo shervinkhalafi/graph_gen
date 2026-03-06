@@ -1,0 +1,27 @@
+tmgg/src/tmgg/diffusion/protocols.py
+  cc1e779a0652bf00 26,28-32,34-47
+tmgg/src/tmgg/diffusion/schedule.py
+  cc1e779a0652bf00 285,287-290
+tmgg/src/tmgg/diffusion/__init__.py
+  cc1e779a0652bf00 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "f604593ac71b6182156824b58691d7502fd50a8e",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 8,
+      "accepted_lines": 1052,
+      "overriden_lines": 0
+    }
+  }
+}
