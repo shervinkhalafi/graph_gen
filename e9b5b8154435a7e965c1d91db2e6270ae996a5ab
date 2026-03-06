@@ -1,0 +1,57 @@
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  cc1e779a0652bf00 52,410
+tmgg/tests/diffusion/test_schedule.py
+  cc1e779a0652bf00 25,27,31,36,47,52,65,129,193
+tmgg/tests/diffusion/test_noise_process.py
+  cc1e779a0652bf00 95,206-207,379
+tmgg/scripts/validate_discrete_diffusion.py
+  cc1e779a0652bf00 244
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_eigenvec.yaml
+  cc1e779a0652bf00 44
+tmgg/tests/diffusion/test_noise_process_vlb.py
+  cc1e779a0652bf00 39
+tmgg/src/tmgg/experiments/_shared_utils/denoising_module.py
+  cc1e779a0652bf00 124
+tmgg/tests/test_generative_integration.py
+  cc1e779a0652bf00 60,202,209,212
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_default.yaml
+  cc1e779a0652bf00 29
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  cc1e779a0652bf00 37,41
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_small.yaml
+  cc1e779a0652bf00 29
+tmgg/src/tmgg/diffusion/schedule.py
+  cc1e779a0652bf00 26,44,48,80,83,90
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  cc1e779a0652bf00 193,251
+tmgg/tests/diffusion/test_sampler.py
+  cc1e779a0652bf00 103,109,128
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_official.yaml
+  cc1e779a0652bf00 40
+tmgg/tests/experiments/test_discrete_diffusion_runner.py
+  cc1e779a0652bf00 220
+tmgg/tests/models/test_noise_schedule.py
+  cc1e779a0652bf00 49
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  cc1e779a0652bf00 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "e9b5b8154435a7e965c1d91db2e6270ae996a5ab",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 43,
+      "total_deletions": 43,
+      "accepted_lines": 1055,
+      "overriden_lines": 0
+    }
+  }
+}
