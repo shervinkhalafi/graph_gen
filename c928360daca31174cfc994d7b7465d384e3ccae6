@@ -1,0 +1,23 @@
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  cc1e779a0652bf00 315-394,396,399,402,404-516
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "c928360daca31174cfc994d7b7465d384e3ccae6",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 199,
+      "total_deletions": 1,
+      "accepted_lines": 946,
+      "overriden_lines": 3
+    }
+  }
+}
