@@ -1,0 +1,23 @@
+tmgg/src/tmgg/models/digress/graph_types.py
+  cc1e779a0652bf00 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "16c89c39b6ad7edbbf702e24b9224eca4e772ea2",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 1274,
+      "total_deletions": 223,
+      "accepted_lines": 1205,
+      "overriden_lines": 0
+    }
+  }
+}
