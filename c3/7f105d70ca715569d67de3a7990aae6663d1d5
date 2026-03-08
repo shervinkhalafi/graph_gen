@@ -1,0 +1,25 @@
+tmgg/src/tmgg/data/datasets/pyg_datasets.py
+  cc1e779a0652bf00 98-101
+tmgg/src/tmgg/data/data_modules/single_graph_data_module.py
+  cc1e779a0652bf00 220-222,233,235-238,251,253-255,257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "c37f105d70ca715569d67de3a7990aae6663d1d5",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 41,
+      "accepted_lines": 2587,
+      "overriden_lines": 0
+    }
+  }
+}
