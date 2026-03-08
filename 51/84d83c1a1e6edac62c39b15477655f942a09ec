@@ -1,0 +1,31 @@
+tmgg/src/tmgg/models/gnn/nvgnn.py
+  cc1e779a0652bf00 7,39-40
+tmgg/src/tmgg/models/layers/__init__.py
+  cc1e779a0652bf00 3,18
+tmgg/src/tmgg/models/layers/eigen_embedding.py
+  cc1e779a0652bf00 128-164
+tmgg/src/tmgg/models/gnn/gnn.py
+  cc1e779a0652bf00 9,53-54
+tmgg/src/tmgg/models/gnn/gnn_sym.py
+  cc1e779a0652bf00 9,53-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "5184d83c1a1e6edac62c39b15477655f942a09ec",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 43,
+      "accepted_lines": 2617,
+      "overriden_lines": 1
+    }
+  }
+}
