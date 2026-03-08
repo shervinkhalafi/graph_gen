@@ -1,0 +1,29 @@
+tmgg/src/tmgg/experiments/_shared_utils/spectral_deltas.py
+  cc1e779a0652bf00 1-12,24-127,182-185,188
+tmgg/src/tmgg/experiments/_shared_utils/metrics.py
+  cc1e779a0652bf00 3-7,13,16-17,19-20,22-27,37-39,53,55-57,59-61,64-67,69-70,72-73,75,85-87,103-105,107-109,112-115,117-125,127-128,130
+tmgg/src/tmgg/experiments/eigenstructure_study/analyzer.py
+  cc1e779a0652bf00 17-23,185-194,199-202,214-215,220,228-231,243-244,249-250
+tmgg/src/tmgg/experiments/eigenstructure_study/__init__.py
+  cc1e779a0652bf00 23-28,72,77-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "1b4e640c19842dc5344ac4501852cf03c982d206",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 240,
+      "total_deletions": 189,
+      "accepted_lines": 2406,
+      "overriden_lines": 0
+    }
+  }
+}
