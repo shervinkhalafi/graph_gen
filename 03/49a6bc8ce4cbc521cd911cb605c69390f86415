@@ -1,0 +1,23 @@
+tmgg/tests/experiment_utils/test_graph_structure_metrics.py
+  cc1e779a0652bf00 1,23,48,67,69-72,78,84,88-89,95,99,130-131,181,201,219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "0349a6bc8ce4cbc521cd911cb605c69390f86415",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 88,
+      "accepted_lines": 2198,
+      "overriden_lines": 0
+    }
+  }
+}
