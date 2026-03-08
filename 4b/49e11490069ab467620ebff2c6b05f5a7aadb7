@@ -1,0 +1,29 @@
+tmgg/src/tmgg/models/spectral_denoisers/filter_bank.py
+  cc1e779a0652bf00 154,156
+tmgg/src/tmgg/models/layers/graph_ops.py
+  cc1e779a0652bf00 8-9,62-89
+tmgg/src/tmgg/models/layers/spectral_projection.py
+  cc1e779a0652bf00 89,91
+tmgg/src/tmgg/models/layers/__init__.py
+  cc1e779a0652bf00 7,25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "4b49e11490069ab467620ebff2c6b05f5a7aadb7",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 36,
+      "total_deletions": 32,
+      "accepted_lines": 2605,
+      "overriden_lines": 0
+    }
+  }
+}
