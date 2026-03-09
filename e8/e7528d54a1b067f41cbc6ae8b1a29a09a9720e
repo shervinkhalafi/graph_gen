@@ -1,0 +1,41 @@
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_spectral_qk.yaml
+  cc1e779a0652bf00 14
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_all.yaml
+  cc1e779a0652bf00 14
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_qk.yaml
+  cc1e779a0652bf00 14
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_spectral_all.yaml
+  cc1e779a0652bf00 14
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_gnn.yaml
+  cc1e779a0652bf00 21
+tmgg/src/tmgg/models/factory.py
+  cc1e779a0652bf00 235-250,402-421,426,430
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_vanilla_gnn.yaml
+  cc1e779a0652bf00 21
+tmgg/docs/reports/2026-03-06-post-class-cleanup/SUMMARY.md
+  cc1e779a0652bf00 329
+tmgg/src/tmgg/models/digress/transformer_model.py
+  cc1e779a0652bf00 547,586-608,611-615,813,842
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_v.yaml
+  cc1e779a0652bf00 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "e8e7528d54a1b067f41cbc6ae8b1a29a09a9720e",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 68,
+      "total_deletions": 16,
+      "accepted_lines": 2255,
+      "overriden_lines": 0
+    }
+  }
+}
