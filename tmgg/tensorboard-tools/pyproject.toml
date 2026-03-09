@@ -1,0 +1,9 @@
+[project]
+name = "tensorboard-tools"
+version = "0.1.0"
+description = "TensorBoard export and analysis tools for TMGG"
+requires-python = ">=3.12"
+dependencies = [
+    "tensorboard>=2.20.0",
+    "pandas>=2.0.0",
+]

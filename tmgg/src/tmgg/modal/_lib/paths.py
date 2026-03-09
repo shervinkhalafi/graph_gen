@@ -41,9 +41,9 @@ def discover_tmgg_path() -> Path:
             "(missing src/tmgg directory)"
         )
 
-    # modal/ is at src/tmgg/modal/, so go up 4 levels to get to tmgg root
-    # paths.py -> modal/ -> tmgg/ -> src/ -> tmgg_root/
-    return Path(__file__).parent.parent.parent.parent
+    # _lib/ is at src/tmgg/modal/_lib/, so go up 5 levels to get to tmgg root
+    # paths.py -> _lib/ -> modal/ -> tmgg/ -> src/ -> tmgg_root/
+    return Path(__file__).parent.parent.parent.parent.parent
 
 
 def _is_valid_tmgg_path(path: Path) -> bool:
