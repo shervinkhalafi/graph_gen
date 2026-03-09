@@ -1,0 +1,25 @@
+tmgg/src/tmgg/experiments/_shared_utils/optimizer_config.py
+  cc1e779a0652bf00 157,159,164-167,172,193,196,201-203
+tmgg/tests/experiment_utils/test_optimizer_config.py
+  cc1e779a0652bf00 269-270,272-273,275-276,284,287,290-291,293-294,296,304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "7cef584f4f7eef86981bb65227b54c687e5d2a20",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 114,
+      "total_deletions": 123,
+      "accepted_lines": 2287,
+      "overriden_lines": 0
+    }
+  }
+}
