@@ -1,0 +1,46 @@
+tmgg/src/tmgg/experiments/_shared_utils/spectral_utils/laplacian.py
+  bd90562f4cfd5fae 1,3-4,11-14,16,21-29,34,36-39,42,44,53,55-58
+tmgg/tests/experiment_utils/test_eigenstructure_study.py
+  bd90562f4cfd5fae 97,164,184,203,998-999,1001,1018
+tmgg/src/tmgg/experiments/eigenstructure_study/__init__.py
+  bd90562f4cfd5fae 19
+tmgg/src/tmgg/experiments/_shared_utils/spectral_utils/subspace.py
+  bd90562f4cfd5fae 1,3-5,13-18,20,22-24,28-29,31-33,38-40,42-44,46,48-51,53-56,59-60,62,64-66,70-72,74,79,81-83,85-87
+tmgg/src/tmgg/experiments/_shared_utils/spectral_utils/spectral_deltas.py
+  bd90562f4cfd5fae 17-18,130,136-151,157-160,165,167,172-175,179-184,201,220-221
+tmgg/tests/experiment_utils/test_spectral_deltas.py
+  bd90562f4cfd5fae 3-4,277-278,281,283,294,300,302-303,314,321,324,330,336,342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "d1a1aab322b5faaf04ef5a2de5043d7702b9b21d",
+  "prompts": {
+    "58c72150032c4124": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5569c02d-dac9-4f24-abcf-eab3fc3f28ba",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 494,
+      "total_deletions": 0,
+      "accepted_lines": 494,
+      "overriden_lines": 0
+    },
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 159,
+      "total_deletions": 212,
+      "accepted_lines": 149,
+      "overriden_lines": 0
+    }
+  }
+}
