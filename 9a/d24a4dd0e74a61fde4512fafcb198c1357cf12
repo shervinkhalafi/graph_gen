@@ -1,0 +1,31 @@
+tmgg/src/tmgg/models/digress/diffusion_sampling.py
+  cc1e779a0652bf00 12-14
+tmgg/tests/models/test_diffusion_utils.py
+  cc1e779a0652bf00 18
+tmgg/src/tmgg/models/spectral_denoisers/bilinear.py
+  cc1e779a0652bf00 17,309-311,327-332,360
+tmgg/src/tmgg/models/digress/graph_types.py
+  cc1e779a0652bf00 3-4
+tmgg/tests/models/test_graph_types.py
+  cc1e779a0652bf00 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "9ad24a4dd0e74a61fde4512fafcb198c1357cf12",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 19,
+      "total_deletions": 56,
+      "accepted_lines": 2196,
+      "overriden_lines": 0
+    }
+  }
+}
