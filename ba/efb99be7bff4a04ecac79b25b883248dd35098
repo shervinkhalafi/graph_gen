@@ -1,0 +1,19 @@
+tmgg/src/tmgg/models/layers/__init__.py
+  58c72150032c4124 1
+tmgg/tests/models/test_gnn_properties.py
+  58c72150032c4124 13-14
+tmgg/docs/plans/2026-03-09-models-cleanup.md
+  58c72150032c4124 1-494
+tmgg/src/tmgg/models/layers/eigen_embedding.py
+  58c72150032c4124 3,14,64,73,79
+tmgg/tests/test_audit_fixes.py
+  58c72150032c4124 29
+tmgg/tests/models/test_gnn.py
+  58c72150032c4124 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "baefb99be7bff4a04ecac79b25b883248dd35098",
+  "prompts": {}
+}
