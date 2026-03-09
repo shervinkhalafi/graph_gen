@@ -1,0 +1,40 @@
+tmgg/src/tmgg/experiments/_shared_utils/graph_evaluator.py
+  bd90562f4cfd5fae 37-38,105-106,108-110,112-115,143-146,401,467
+tmgg/tests/experiment_utils/test_graph_evaluator.py
+  bd90562f4cfd5fae 39,41
+tmgg/src/tmgg/experiments/_shared_utils/orca/__init__.py
+  bd90562f4cfd5fae 79-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "2145a336547f42cf38b9bf5707b3895684314980",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 114,
+      "accepted_lines": 301,
+      "overriden_lines": 0
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2178,
+      "overriden_lines": 0
+    }
+  }
+}
