@@ -1,0 +1,23 @@
+tmgg/tach.toml
+  bd90562f4cfd5fae 28,40-43,46-74,77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "e28dbbf7172be706f2a7ca89952344505e180dbb",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 7,
+      "accepted_lines": 37,
+      "overriden_lines": 0
+    }
+  }
+}
