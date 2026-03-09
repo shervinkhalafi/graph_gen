@@ -1,0 +1,23 @@
+tmgg/src/tmgg/models/spectral_denoisers/bilinear.py
+  cc1e779a0652bf00 490-510,536,565-567,579
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "6d593c32caa1176bfbfbd6c6913eedc1767991c8",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 80,
+      "total_deletions": 80,
+      "accepted_lines": 2256,
+      "overriden_lines": 0
+    }
+  }
+}
