@@ -1,0 +1,23 @@
+tmgg/docs/reports/2026-03-06-post-class-cleanup/SUMMARY.md
+  cc1e779a0652bf00 90-91,93-94,99-100,125-126,298-299,301,309,350
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "e452e0d288af7936d8abd39f48bb7324b6c3fa74",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 13,
+      "accepted_lines": 2191,
+      "overriden_lines": 0
+    }
+  }
+}
