@@ -1,0 +1,52 @@
+tmgg/src/tmgg/experiments/_shared_utils/graph_evaluator.py
+  bd90562f4cfd5fae 118,155,252,275,312,468,475,482,485,490
+tmgg/src/tmgg/experiments/eigenstructure_study/noised_collector.py
+  bd90562f4cfd5fae 347,540
+tmgg/src/tmgg/experiments/_shared_utils/spectral_deltas.py
+  bd90562f4cfd5fae 9-12,29,52,79,101,182-185
+tmgg/tests/experiment_utils/test_graph_evaluator.py
+  bd90562f4cfd5fae 11
+tmgg/src/tmgg/experiments/eigenstructure_study/analyzer.py
+  bd90562f4cfd5fae 18,21,191,210,220,239
+tmgg/src/tmgg/experiments/_shared_utils/metrics.py
+  bd90562f4cfd5fae 23-24,62,87,99,124
+tmgg/tests/experiment_utils/test_graph_structure_metrics.py
+  bd90562f4cfd5fae 24-27,50,53,58,69,78,84,89,99,115,121,127,131,149,164,202,212,220,224
+tmgg/src/tmgg/experiments/eigenstructure_study/__init__.py
+  bd90562f4cfd5fae 24-26,72-75
+tmgg/tests/experiment_utils/test_eigenstructure_study.py
+  bd90562f4cfd5fae 20-21,848,859,875,891
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "6513e27d75a04cf479918c860580c1cecfe2bc46",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 75,
+      "total_deletions": 79,
+      "accepted_lines": 341,
+      "overriden_lines": 2
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2178,
+      "overriden_lines": 0
+    }
+  }
+}
