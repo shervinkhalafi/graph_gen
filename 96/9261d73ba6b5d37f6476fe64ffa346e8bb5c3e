@@ -1,0 +1,23 @@
+tmgg/src/tmgg/models/gnn/gnn_sym.py
+  cc1e779a0652bf00 1,9,12,15-19,30-35,37-38,42,57-58,61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "969261d73ba6b5d37f6476fe64ffa346e8bb5c3e",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2230,
+      "overriden_lines": 0
+    }
+  }
+}
