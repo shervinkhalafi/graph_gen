@@ -1,0 +1,35 @@
+tmgg/src/tmgg/models/layers/eigen_embedding.py
+  58c72150032c4124 11
+tmgg/tests/test_audit_fixes.py
+  58c72150032c4124 34
+tmgg/src/tmgg/models/digress/transformer_model.py
+  58c72150032c4124 623
+tmgg/src/tmgg/models/spectral_denoisers/__init__.py
+  58c72150032c4124 47
+tmgg/src/tmgg/models/layers/__init__.py
+  58c72150032c4124 9,13,25
+tmgg/src/tmgg/models/spectral_denoisers/base_spectral.py
+  58c72150032c4124 19
+tmgg/src/tmgg/models/digress/extra_features.py
+  58c72150032c4124 245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "e141526b4117c7efeff830d66125d525de609d71",
+  "prompts": {
+    "58c72150032c4124": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5569c02d-dac9-4f24-abcf-eab3fc3f28ba",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 6,
+      "accepted_lines": 503,
+      "overriden_lines": 0
+    }
+  }
+}
