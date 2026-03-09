@@ -1,0 +1,43 @@
+tmgg/src/tmgg/experiments/eigenstructure_study/collector.py
+  bd90562f4cfd5fae 15
+tmgg/src/tmgg/experiments/_shared_utils/spectral_utils/spectral_deltas.py
+  bd90562f4cfd5fae 19,192
+tmgg/src/tmgg/experiments/eigenstructure_study/analyzer.py
+  bd90562f4cfd5fae 17,20
+tmgg/tests/experiment_utils/test_spectral_deltas.py
+  bd90562f4cfd5fae 26,231
+tmgg/src/tmgg/experiments/eigenstructure_study/__init__.py
+  bd90562f4cfd5fae 19,23,72
+tmgg/src/tmgg/experiments/_shared_utils/metrics.py
+  bd90562f4cfd5fae 4,22
+tmgg/src/tmgg/experiments/eigenstructure_study/noised_collector.py
+  bd90562f4cfd5fae 17,340,487
+tmgg/tests/experiment_utils/test_eigenstructure.py
+  bd90562f4cfd5fae 22
+tmgg/src/tmgg/experiments/_shared_utils/spectral_utils/__init__.py
+  bd90562f4cfd5fae 1-29
+tmgg/tests/experiment_utils/test_eigenstructure_study.py
+  bd90562f4cfd5fae 19,910,943,974,1001
+tmgg/src/tmgg/experiments/_shared_utils/denoising_module.py
+  bd90562f4cfd5fae 425
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "415a6abd32a840165337db373223ac21ac1f362b",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 53,
+      "total_deletions": 24,
+      "accepted_lines": 51,
+      "overriden_lines": 1
+    }
+  }
+}
