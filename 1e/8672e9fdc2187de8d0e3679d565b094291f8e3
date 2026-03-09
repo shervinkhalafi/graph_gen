@@ -1,0 +1,45 @@
+tmgg/src/tmgg/experiments/_shared_utils/evaluation_metrics/__init__.py
+  bd90562f4cfd5fae 1-21
+tmgg/tests/experiment_utils/test_metrics.py
+  bd90562f4cfd5fae 7
+tmgg/tests/test_audit_fixes.py
+  bd90562f4cfd5fae 21
+tmgg/tests/experiment_utils/test_mmd_metrics.py
+  bd90562f4cfd5fae 22
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/evaluate_cli.py
+  bd90562f4cfd5fae 26
+tmgg/src/tmgg/experiments/_shared_utils/evaluation_metrics/graph_evaluator.py
+  bd90562f4cfd5fae 33,37-40
+tmgg/tests/experiment_utils/test_graph_evaluator.py
+  bd90562f4cfd5fae 27
+tmgg/tests/experiment_utils/test_graph_structure_metrics.py
+  bd90562f4cfd5fae 23,173,201,219
+tmgg/tests/modal/test_evaluate.py
+  bd90562f4cfd5fae 58
+tmgg/scripts/validate_discrete_diffusion.py
+  bd90562f4cfd5fae 62
+tmgg/src/tmgg/experiments/_shared_utils/__init__.py
+  bd90562f4cfd5fae 11-12
+tmgg/tests/test_digress_checkpoint_compat.py
+  bd90562f4cfd5fae 310,328,349,378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "1e8672e9fdc2187de8d0e3679d565b094291f8e3",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 56,
+      "total_deletions": 33,
+      "accepted_lines": 43,
+      "overriden_lines": 13
+    }
+  }
+}
