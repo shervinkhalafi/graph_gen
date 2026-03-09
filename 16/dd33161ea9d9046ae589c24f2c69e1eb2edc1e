@@ -1,0 +1,42 @@
+tmgg/src/tmgg/experiments/_shared_utils/logging.py
+  bd90562f4cfd5fae 1,3-5,10,21,428-515
+tmgg/src/tmgg/experiments/_shared_utils/run_experiment.py
+  bd90562f4cfd5fae 11
+tmgg/src/tmgg/experiments/_shared_utils/base_graph_module.py
+  bd90562f4cfd5fae 19
+tmgg/tests/experiment_utils/test_model_logging.py
+  bd90562f4cfd5fae 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "16dd33161ea9d9046ae589c24f2c69e1eb2edc1e",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 100,
+      "total_deletions": 6,
+      "accepted_lines": 367,
+      "overriden_lines": 0
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2178,
+      "overriden_lines": 0
+    }
+  }
+}
