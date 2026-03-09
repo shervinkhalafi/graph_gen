@@ -1,0 +1,23 @@
+tmgg/src/tmgg/experiments/exp_configs/grid_search_base.yaml
+  cc1e779a0652bf00 61-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "4c6edd10b833721a13cdd329471b83d28ba2f722",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2180,
+      "overriden_lines": 0
+    }
+  }
+}
