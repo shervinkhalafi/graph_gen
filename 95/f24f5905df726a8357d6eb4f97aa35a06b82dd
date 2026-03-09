@@ -1,0 +1,39 @@
+tmgg/tests/experiment_utils/test_checkpoint_utils.py
+  bd90562f4cfd5fae 32
+tmgg/src/tmgg/experiments/_shared_utils/__init__.py
+  bd90562f4cfd5fae 10-12
+tmgg/tests/experiment_utils/test_base_graph_module.py
+  bd90562f4cfd5fae 240
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  bd90562f4cfd5fae 30
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/__init__.py
+  bd90562f4cfd5fae 1-21
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/base_graph_module.py
+  bd90562f4cfd5fae 19
+tmgg/tests/test_digress_checkpoint_compat.py
+  bd90562f4cfd5fae 17
+tmgg/tests/test_scheduler_interval.py
+  bd90562f4cfd5fae 23
+tmgg/tests/experiment_utils/test_optimizer_config.py
+  bd90562f4cfd5fae 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "95f24f5905df726a8357d6eb4f97aa35a06b82dd",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 54,
+      "total_deletions": 33,
+      "accepted_lines": 36,
+      "overriden_lines": 14
+    }
+  }
+}
