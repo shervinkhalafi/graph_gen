@@ -1,0 +1,63 @@
+tmgg/src/tmgg/diffusion/protocols.py
+  58c72150032c4124 9
+tmgg/src/tmgg/experiments/exp_configs/_base_infra.yaml
+  bd90562f4cfd5fae 42-43
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/train_loss_discrete.py
+  58c72150032c4124 8
+tmgg/src/tmgg/models/digress/transformer_model.py
+  58c72150032c4124 21-25
+  bd90562f4cfd5fae 426
+tmgg/src/tmgg/diffusion/schedule.py
+  58c72150032c4124 3
+tmgg/src/tmgg/diffusion/diffusion_sampling.py
+  58c72150032c4124 6
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  bd90562f4cfd5fae 323-331,346
+tmgg/src/tmgg/diffusion/sampler.py
+  58c72150032c4124 31
+tmgg/src/tmgg/diffusion/__init__.py
+  58c72150032c4124 16,37,42
+tmgg/src/tmgg/diffusion/noise_process.py
+  58c72150032c4124 31-32
+tmgg/src/tmgg/experiments/_shared_utils/evaluation_metrics/graph_evaluator.py
+  bd90562f4cfd5fae 72,75,78,86-87,370-373,392,399,406,411,475,477,482,484,491-493,496-498,501,503
+tmgg/src/tmgg/diffusion/transitions.py
+  58c72150032c4124 15
+tmgg/tests/models/test_graph_types.py
+  58c72150032c4124 16
+tmgg/tests/test_beta_schedule_edge_classes.py
+  58c72150032c4124 22,35,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "450ffc8d41a45d28543da77aa491a313ed19e1a6",
+  "prompts": {
+    "58c72150032c4124": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5569c02d-dac9-4f24-abcf-eab3fc3f28ba",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 40,
+      "total_deletions": 31,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    },
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 18,
+      "accepted_lines": 41,
+      "overriden_lines": 0
+    }
+  }
+}
