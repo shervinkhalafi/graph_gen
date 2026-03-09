@@ -1,0 +1,47 @@
+tmgg/src/tmgg/experiments/_shared_utils/orchestration/__init__.py
+  bd90562f4cfd5fae 1-15
+tmgg/src/tmgg/experiments/spectral_arch_denoising/runner.py
+  bd90562f4cfd5fae 13
+tmgg/tests/experiment_utils/test_run_experiment_preflight.py
+  bd90562f4cfd5fae 17
+tmgg/src/tmgg/experiments/lin_mlp_baseline_denoising/runner.py
+  bd90562f4cfd5fae 12
+tmgg/src/tmgg/experiments/_shared_utils/orchestration/experiment_setup.py
+  bd90562f4cfd5fae 82
+tmgg/src/tmgg/experiments/grid_search_runner.py
+  bd90562f4cfd5fae 8
+tmgg/src/tmgg/experiments/_shared_utils/orchestration/run_experiment.py
+  bd90562f4cfd5fae 18
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/runner.py
+  bd90562f4cfd5fae 13
+tmgg/src/tmgg/experiments/gnn_denoising/runner.py
+  bd90562f4cfd5fae 12
+tmgg/src/tmgg/experiments/gnn_transformer_denoising/runner.py
+  bd90562f4cfd5fae 12
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/runner.py
+  bd90562f4cfd5fae 12
+tmgg/src/tmgg/experiments/digress_denoising/runner.py
+  bd90562f4cfd5fae 12
+tmgg/src/tmgg/experiments/_shared_utils/__init__.py
+  bd90562f4cfd5fae 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "2a15f06f589e909dfbc18e0f7b1c9c63ced726c1",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 32,
+      "total_deletions": 17,
+      "accepted_lines": 27,
+      "overriden_lines": 4
+    }
+  }
+}
