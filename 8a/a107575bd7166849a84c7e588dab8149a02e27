@@ -1,0 +1,33 @@
+tmgg/tests/models/test_digress_gnn_projections.py
+  cc1e779a0652bf00 20,29-34,142,144,167,169,192,194,224-245
+tmgg/src/tmgg/data/datasets/graph_types.py
+  cc1e779a0652bf00 1,8-12,167-170,172,174-176,178-184,189,191,193,199-205,281-306
+tmgg/scripts/validate_discrete_diffusion.py
+  cc1e779a0652bf00 343
+tmgg/tests/models/test_digress_spectral_projections.py
+  cc1e779a0652bf00 21,128-130,133,158-160,163,191-192
+tmgg/src/tmgg/models/digress/transformer_model.py
+  cc1e779a0652bf00 12,129,143-145,153,354,368-370,382-385,387-390,397-398,653-654,658-660,667-668,670,674-677,679-681,683-686,688-691,694-695,698-699,701-708,710-717,719,722,858-859
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  cc1e779a0652bf00 324-325
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "8aa107575bd7166849a84c7e588dab8149a02e27",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 195,
+      "total_deletions": 117,
+      "accepted_lines": 2358,
+      "overriden_lines": 0
+    }
+  }
+}
