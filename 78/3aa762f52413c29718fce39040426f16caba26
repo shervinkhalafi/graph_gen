@@ -1,0 +1,31 @@
+tmgg/src/tmgg/models/__init__.py
+  cc1e779a0652bf00 6,26
+tmgg/tests/models/test_hybrid_properties.py
+  cc1e779a0652bf00 329,341,343-348,361-362
+tmgg/src/tmgg/models/base.py
+  cc1e779a0652bf00 1,4,8,13-27
+tmgg/src/tmgg/models/factory.py
+  cc1e779a0652bf00 314-320,325
+tmgg/src/tmgg/models/hybrid/hybrid.py
+  cc1e779a0652bf00 11,22,27,35-36,43-49,69-70,110-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "783aa762f52413c29718fce39040426f16caba26",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 2259,
+      "overriden_lines": 0
+    }
+  }
+}
