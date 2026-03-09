@@ -1,0 +1,29 @@
+tmgg/src/tmgg/experiments/_shared_utils/__init__.py
+  cc1e779a0652bf00 12,19
+tmgg/tests/test_digress_checkpoint_compat.py
+  cc1e779a0652bf00 310,328,349,378
+tmgg/src/tmgg/experiments/_shared_utils/reference_graphs.py
+  cc1e779a0652bf00 1-68
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/evaluate_cli.py
+  cc1e779a0652bf00 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "79428caaf16ca84c42167b5a071062bb51866a04",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 75,
+      "total_deletions": 5,
+      "accepted_lines": 2253,
+      "overriden_lines": 0
+    }
+  }
+}
