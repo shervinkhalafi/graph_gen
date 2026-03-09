@@ -1,0 +1,70 @@
+tmgg/src/tmgg/experiments/exp_configs/data/regular_spectral.yaml
+  cc1e779a0652bf00 3
+tmgg/src/tmgg/experiments/exp_configs/data/pyg_enzymes.yaml
+  cc1e779a0652bf00 4
+tmgg/src/tmgg/experiments/exp_configs/data/er_spectral.yaml
+  cc1e779a0652bf00 3
+tmgg/src/tmgg/experiments/exp_configs/data/lfr_spectral.yaml
+  cc1e779a0652bf00 3
+tmgg/src/tmgg/experiments/exp_configs/data/nx_star.yaml
+  cc1e779a0652bf00 17
+tmgg/src/tmgg/experiments/_shared_utils/run_experiment.py
+  cc1e779a0652bf00 193-195
+tmgg/tests/test_training_integration.py
+  cc1e779a0652bf00 42,275-276,279,283-284,286
+tmgg/src/tmgg/experiments/exp_configs/data/nx.yaml
+  cc1e779a0652bf00 18
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_highlr.yaml
+  cc1e779a0652bf00 15
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small.yaml
+  cc1e779a0652bf00 15
+tmgg/src/tmgg/experiments/exp_configs/data/tree_spectral.yaml
+  cc1e779a0652bf00 3
+tmgg/src/tmgg/data/data_modules/single_graph_data_module.py
+  cc1e779a0652bf00 101-102,104-105
+tmgg/src/tmgg/experiments/exp_configs/data/nx_square.yaml
+  cc1e779a0652bf00 17
+tmgg/src/tmgg/data/data_modules/data_module.py
+  cc1e779a0652bf00 97-98,100-101
+tmgg/src/tmgg/experiments/exp_configs/data/ring_of_cliques.yaml
+  cc1e779a0652bf00 3
+tmgg/src/tmgg/experiments/exp_configs/data/single_graph_base.yaml
+  cc1e779a0652bf00 26-28
+tmgg/src/tmgg/data/datasets/synthetic_graphs.py
+  cc1e779a0652bf00 10
+tmgg/src/tmgg/experiments/exp_configs/data/pyg_proteins.yaml
+  cc1e779a0652bf00 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "53dcc3bc1eb07bfb5d4d4de8c0c4e63e1386ac1e",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 269,
+      "total_deletions": 0,
+      "accepted_lines": 269,
+      "overriden_lines": 0
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 159,
+      "accepted_lines": 2218,
+      "overriden_lines": 0
+    }
+  }
+}
