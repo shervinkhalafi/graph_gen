@@ -1,22 +1,22 @@
 """Forward pass sanity tests for spectral denoising models.
 
-These tests verify that models produce non-zero logits and that gradients
-flow to parameters. A model that outputs near-zero logits will produce
-sigmoid(0) = 0.5 predictions, indicating training failure.
+These tests verify that models produce non-trivial outputs and that gradients
+flow to parameters. A model that outputs uniform edge probabilities indicates
+training failure.
 
 Test Rationale
 --------------
 - test_model_produces_nonzero_logits: Verifies untrained model doesn't start
-  at a degenerate point where logits are exactly zero.
-- test_gradients_flow_to_parameters: Confirms BCEWithLogitsLoss gradients
-  actually reach model parameters through the forward pass.
+  at a degenerate point where edge logits are exactly zero.
+- test_gradients_flow_to_parameters: Confirms loss gradients actually reach
+  model parameters through the forward pass.
 - test_baseline_produces_nonzero_logits: Same check for baseline models.
 """
 
 import pytest
 import torch
-import torch.nn.functional as F
 
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
@@ -29,45 +29,48 @@ class TestSpectralModelsForwardSanity:
     """Verify spectral denoising models produce valid outputs."""
 
     @pytest.fixture
-    def identity_adjacency(self):
-        """Create identity adjacency matrix batch."""
-        return torch.eye(32).unsqueeze(0)
+    def identity_data(self):
+        """Create identity adjacency matrix batch as GraphData."""
+        return GraphData.from_adjacency(torch.eye(32).unsqueeze(0))
 
     @pytest.fixture
-    def random_adjacency(self):
-        """Create random symmetric adjacency matrix batch."""
+    def random_data(self):
+        """Create random symmetric adjacency matrix batch as GraphData."""
         A = torch.rand(4, 32, 32)
-        A = (A + A.transpose(-2, -1)) / 2  # Symmetrize
-        return A
+        A = (A + A.transpose(-2, -1)) / 2
+        return GraphData.from_adjacency(A)
 
-    def test_linear_pe_produces_nonzero_logits(self, identity_adjacency):
-        """Verify LinearPE doesn't output exactly zero logits."""
+    def test_linear_pe_produces_nonzero_logits(self, identity_data):
+        """Verify LinearPE doesn't output uniform edge probabilities."""
         model = LinearPE(k=8, max_nodes=32)
-        logits = model(identity_adjacency)
+        result = model(identity_data)
 
-        # Logits should not be exactly zero
-        assert logits.abs().mean() > 1e-6, (
-            f"LinearPE outputs near-zero logits: mean={logits.mean():.2e}, "
-            f"std={logits.std():.2e}"
+        # Edge-channel logits should not be exactly zero
+        edge_logits = result.E[..., 1]
+        assert edge_logits.abs().mean() > 1e-6, (
+            f"LinearPE outputs near-zero edge logits: mean={edge_logits.mean():.2e}, "
+            f"std={edge_logits.std():.2e}"
         )
 
-    def test_filter_bank_produces_nonzero_logits(self, identity_adjacency):
-        """Verify GraphFilterBank doesn't output exactly zero logits."""
+    def test_filter_bank_produces_nonzero_logits(self, identity_data):
+        """Verify GraphFilterBank doesn't output uniform edge probabilities."""
         model = GraphFilterBank(k=8, polynomial_degree=5)
-        logits = model(identity_adjacency)
+        result = model(identity_data)
 
+        edge_logits = result.E[..., 1]
         assert (
-            logits.abs().mean() > 1e-6
-        ), f"GraphFilterBank outputs near-zero logits: mean={logits.mean():.2e}"
+            edge_logits.abs().mean() > 1e-6
+        ), f"GraphFilterBank outputs near-zero edge logits: mean={edge_logits.mean():.2e}"
 
-    def test_self_attention_produces_nonzero_logits(self, identity_adjacency):
-        """Verify SelfAttentionDenoiser doesn't output exactly zero logits."""
+    def test_self_attention_produces_nonzero_logits(self, identity_data):
+        """Verify SelfAttentionDenoiser doesn't output uniform edge probabilities."""
         model = SelfAttentionDenoiser(k=8, d_k=64)
-        logits = model(identity_adjacency)
+        result = model(identity_data)
 
+        edge_logits = result.E[..., 1]
         assert (
-            logits.abs().mean() > 1e-6
-        ), f"SelfAttentionDenoiser outputs near-zero logits: mean={logits.mean():.2e}"
+            edge_logits.abs().mean() > 1e-6
+        ), f"SelfAttentionDenoiser outputs near-zero edge logits: mean={edge_logits.mean():.2e}"
 
     @pytest.mark.parametrize(
         "model_class,kwargs",
@@ -77,18 +80,14 @@ class TestSpectralModelsForwardSanity:
             (SelfAttentionDenoiser, {"k": 8, "d_k": 64}),
         ],
     )
-    def test_gradients_flow_to_parameters(
-        self, model_class, kwargs, identity_adjacency
-    ):
-        """Verify BCEWithLogitsLoss gradients reach model parameters."""
+    def test_gradients_flow_to_parameters(self, model_class, kwargs, identity_data):
+        """Verify loss gradients reach model parameters."""
         model = model_class(**kwargs)
 
-        # Forward pass
-        logits = model(identity_adjacency)
-        target = torch.ones_like(logits) * 0.5  # Uniform target
-
-        # Compute loss and backward
-        loss = F.binary_cross_entropy_with_logits(logits, target)
+        result = model(identity_data)
+        # Use only edge-probability channel: both channels of 2-class encoding
+        # sum to 1.0 per position, so E.sum() is constant with zero gradient.
+        loss = result.E[..., 1].sum()
         loss.backward()
 
         # Check that at least some parameters have gradients
@@ -111,35 +110,35 @@ class TestBaselineModelsForwardSanity:
     """Verify baseline models produce valid outputs."""
 
     @pytest.fixture
-    def random_adjacency(self):
-        """Create random symmetric adjacency matrix batch."""
+    def random_data(self):
+        """Create random symmetric adjacency matrix batch as GraphData."""
         A = torch.rand(4, 32, 32)
         A = (A + A.transpose(-2, -1)) / 2
-        return A
+        return GraphData.from_adjacency(A)
 
-    def test_linear_baseline_produces_nonzero_logits(self, random_adjacency):
-        """Verify LinearBaseline doesn't output exactly zero logits.
+    def test_linear_baseline_produces_nonzero_logits(self, random_data):
+        """Verify LinearBaseline doesn't output uniform edge probabilities.
 
-        Note: LinearBaseline starts at identity, so initial output ≈ input.
-        With random input, output should be non-zero.
+        LinearBaseline starts at identity, so initial output ~ input.
+        With random input, output should be non-trivial.
         """
         model = LinearBaseline(max_nodes=32)
-        logits = model(random_adjacency)
+        result = model(random_data)
 
-        # With identity initialization, output ≈ input (which is non-zero)
+        edge_logits = result.E[..., 1]
         assert (
-            logits.abs().mean() > 0.1
-        ), f"LinearBaseline outputs near-zero logits: mean={logits.mean():.2e}"
+            edge_logits.abs().mean() > 0.1
+        ), f"LinearBaseline outputs near-zero edge logits: mean={edge_logits.mean():.2e}"
 
-    def test_mlp_baseline_produces_nonzero_logits(self, random_adjacency):
-        """Verify MLPBaseline doesn't output exactly zero logits."""
+    def test_mlp_baseline_produces_nonzero_logits(self, random_data):
+        """Verify MLPBaseline doesn't output uniform edge probabilities."""
         model = MLPBaseline(max_nodes=32, hidden_dim=256)
-        logits = model(random_adjacency)
+        result = model(random_data)
 
-        # MLP should produce some output from random initialization
+        edge_logits = result.E[..., 1]
         assert (
-            logits.abs().mean() > 1e-6
-        ), f"MLPBaseline outputs near-zero logits: mean={logits.mean():.2e}"
+            edge_logits.abs().mean() > 1e-6
+        ), f"MLPBaseline outputs near-zero edge logits: mean={edge_logits.mean():.2e}"
 
     @pytest.mark.parametrize(
         "model_class,kwargs",
@@ -148,17 +147,15 @@ class TestBaselineModelsForwardSanity:
             (MLPBaseline, {"max_nodes": 32, "hidden_dim": 256}),
         ],
     )
-    def test_baseline_gradients_flow(self, model_class, kwargs, random_adjacency):
+    def test_baseline_gradients_flow(self, model_class, kwargs, random_data):
         """Verify baseline model gradients flow properly."""
         model = model_class(**kwargs)
 
-        logits = model(random_adjacency)
-        target = (random_adjacency > 0.5).float()
-
-        loss = F.binary_cross_entropy_with_logits(logits, target)
+        result = model(random_data)
+        # Use only edge-probability channel to avoid constant-sum gradient trap.
+        loss = result.E[..., 1].sum()
         loss.backward()
 
-        # Check gradients exist and are non-trivial
         has_grad = False
         for _, param in model.named_parameters():
             if param.grad is not None and param.grad.abs().max() > 1e-10:

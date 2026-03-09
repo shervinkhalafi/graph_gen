@@ -10,6 +10,7 @@ Tests cover:
 import pytest
 import torch
 
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.layers import PEARLEmbedding, SpectralProjectionLayer
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
@@ -183,9 +184,9 @@ class TestAsymmetricLinearPE:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        assert output.shape == (2, 20, 20)
+        assert result.to_adjacency().shape == (2, 20, 20)
 
     def test_asymmetric_output_differs_from_symmetric(self):
         """Test asymmetric produces different output than symmetric."""
@@ -197,12 +198,13 @@ class TestAsymmetricLinearPE:
 
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
+        data = GraphData.from_adjacency(A)
 
-        out_sym = model_sym(A)
-        out_asym = model_asym(A)
+        out_sym = model_sym(data)
+        out_asym = model_asym(data)
 
-        # Different parameterizations should give different outputs
-        assert not torch.allclose(out_sym, out_asym)
+        # Different parameterizations should give different raw edge features
+        assert not torch.allclose(out_sym.E, out_asym.E)
 
 
 class TestAsymmetricGraphFilterBank:
@@ -231,9 +233,9 @@ class TestAsymmetricGraphFilterBank:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        assert output.shape == (2, 20, 20)
+        assert result.to_adjacency().shape == (2, 20, 20)
 
 
 class TestPEARLIntegration:
@@ -246,9 +248,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        assert output.shape == (2, 20, 20)
+        assert result.to_adjacency().shape == (2, 20, 20)
         assert model.embedding_source == "pearl_random"
 
     def test_filter_bank_with_pearl(self):
@@ -263,9 +265,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        assert output.shape == (2, 20, 20)
+        assert result.to_adjacency().shape == (2, 20, 20)
 
     def test_self_attention_with_pearl(self):
         """Test SelfAttentionDenoiser with PEARL embeddings."""
@@ -276,9 +278,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        assert output.shape == (2, 20, 20)
+        assert result.to_adjacency().shape == (2, 20, 20)
 
     def test_pearl_basis_mode_integration(self):
         """Test B-PEARL integration."""
@@ -289,9 +291,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 30, 30)
         A = (A + A.transpose(-1, -2)) / 2
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        assert output.shape == (2, 30, 30)
+        assert result.to_adjacency().shape == (2, 30, 30)
 
     def test_invalid_embedding_source(self):
         """Test invalid embedding source raises error."""

@@ -1,6 +1,6 @@
 {
   "data": {
-    "_target_": "tmgg.experiment_utils.data.SingleGraphDataModule",
+    "_target_": "tmgg.data.SingleGraphDataModule",
     "same_graph_all_splits": true,
     "train_seed": 42,
     "val_test_seed": 123,

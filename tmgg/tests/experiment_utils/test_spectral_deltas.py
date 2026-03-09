@@ -1,7 +1,7 @@
 """Tests for spectral delta metrics module.
 
-This module tests compute_spectral_deltas and compute_spectral_deltas_summary
-functions which provide training-time spectral analysis between clean and
+This module tests compute_spectral_deltas (including its reduce='mean' mode)
+which provides training-time spectral analysis between clean and
 noisy/denoised graphs.
 
 Testing Strategy:
@@ -23,9 +23,8 @@ import math
 
 import torch
 
-from tmgg.experiment_utils.spectral_deltas import (
+from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
     compute_spectral_deltas,
-    compute_spectral_deltas_summary,
 )
 
 
@@ -228,7 +227,7 @@ class TestComputeSpectralDeltas:
         A_disconnected = create_disconnected_graph(n).unsqueeze(0)
 
         # Compute Laplacian eigenvalues
-        from tmgg.experiment_utils.eigenstructure_study.laplacian import (
+        from tmgg.experiments._shared_utils.spectral_utils.laplacian import (
             compute_laplacian,
         )
 
@@ -275,13 +274,13 @@ class TestComputeSpectralDeltas:
         assert deltas_k2["subspace_distance"].shape == (1,)
 
 
-class TestComputeSpectralDeltasSummary:
-    """Tests for compute_spectral_deltas_summary function."""
+class TestComputeSpectralDeltasReduceMean:
+    """Tests for compute_spectral_deltas with reduce='mean'."""
 
     def test_returns_float_values(self):
-        """Summary should return dict of floats, not tensors.
+        """reduce='mean' should return dict of floats, not tensors.
 
-        Rationale: Summary function is designed for logging, which expects
+        Rationale: reduce='mean' is designed for logging, which expects
         Python floats, not tensors.
         """
         batch_size, n = 4, 8
@@ -292,16 +291,16 @@ class TestComputeSpectralDeltasSummary:
             [create_random_symmetric(n, seed=i + 100) for i in range(batch_size)]
         )
 
-        summary = compute_spectral_deltas_summary(A_clean, A_other)
+        summary = compute_spectral_deltas(A_clean, A_other, reduce="mean")
 
         for key, val in summary.items():
             assert isinstance(val, float), f"{key} should be float, got {type(val)}"
 
     def test_matches_deltas_mean(self):
-        """Summary values should match mean of compute_spectral_deltas results.
+        """reduce='mean' values should match mean of unreduced results.
 
-        Rationale: Summary is just a convenience wrapper that computes mean
-        over the batch dimension.
+        Rationale: reduce='mean' averages over the batch dimension, so
+        values must match manual .mean().item() on per-graph tensors.
         """
         batch_size, n = 5, 10
         A_clean = torch.stack(
@@ -312,35 +311,35 @@ class TestComputeSpectralDeltasSummary:
         )
 
         deltas = compute_spectral_deltas(A_clean, A_other)
-        summary = compute_spectral_deltas_summary(A_clean, A_other)
+        summary = compute_spectral_deltas(A_clean, A_other, reduce="mean")
 
         for key in deltas:
             expected_mean = deltas[key].mean().item()
             assert abs(summary[key] - expected_mean) < 1e-6, f"Mismatch in {key}"
 
     def test_2d_input_returns_floats(self):
-        """2D input should still return float dict.
+        """2D input with reduce='mean' should still return float dict.
 
         Rationale: Even with single graph (which produces scalar tensors),
-        the summary should return Python floats.
+        reduce='mean' should return Python floats.
         """
         n = 8
         A_clean = create_random_symmetric(n, seed=555)
         A_other = create_random_symmetric(n, seed=666)
 
-        summary = compute_spectral_deltas_summary(A_clean, A_other)
+        summary = compute_spectral_deltas(A_clean, A_other, reduce="mean")
 
         for key, val in summary.items():
             assert isinstance(val, float), f"{key} should be float for 2D input"
 
     def test_expected_keys(self):
-        """Summary should contain all four expected metric keys.
+        """reduce='mean' should contain all four expected metric keys.
 
         Rationale: Verify the API contract - all metrics should be present.
         """
         A = create_random_symmetric(8, seed=777).unsqueeze(0)
 
-        summary = compute_spectral_deltas_summary(A, A)
+        summary = compute_spectral_deltas(A, A, reduce="mean")
 
         expected_keys = {
             "eigengap_delta",

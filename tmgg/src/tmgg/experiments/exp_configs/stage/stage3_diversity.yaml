@@ -1,0 +1,36 @@
+# @package _global_
+# Stage 3: Dataset Diversity
+#
+# Budget: 400 GPU-hours (future work, beyond 200h budget)
+# Goal: Validate across all graph families
+#
+# Uses same optimizer settings as stage1_poc for fair comparison
+
+defaults:
+  - override /data: sbm_single_graph
+
+# Stage identifier
+stage: stage3_diversity
+
+# Optimizer settings (harmonized: adamw + minimal weight_decay + amsgrad)
+learning_rate: 1e-2
+weight_decay: 1e-12
+optimizer_type: adamw
+amsgrad: true
+scheduler_config:
+  type: none
+
+# Model settings
+model:
+  k: 50
+
+# Default noise levels (overridden in sweep)
+noise_levels: [0.1]
+eval_noise_levels: [0.1]
+
+# Trigger condition (from tex):
+# Run if Stage 2 shows strong generalization (<3% error on multi-graph)
+# and matches DiGress performance
+trigger_conditions:
+  stage2_multi_graph_error_threshold: 0.03
+  stage2_digress_comparison: "match_or_exceed"

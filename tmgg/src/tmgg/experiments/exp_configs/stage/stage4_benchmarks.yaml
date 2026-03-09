@@ -1,0 +1,34 @@
+# @package _global_
+# Stage 4: Real-World Benchmarks
+#
+# Budget: 300 GPU-hours (future work)
+# Goal: Validate on practical benchmark datasets from PyTorch Geometric
+#
+# Uses same optimizer settings as stage1_poc for fair comparison
+
+defaults:
+  - override /data: sbm_single_graph
+
+# Stage identifier
+stage: stage4_benchmarks
+
+# Optimizer settings (harmonized: adamw + minimal weight_decay + amsgrad)
+learning_rate: 1e-2
+weight_decay: 1e-12
+optimizer_type: adamw
+amsgrad: true
+scheduler_config:
+  type: none
+
+# Model settings
+model:
+  k: 32
+
+# Default noise levels (overridden in sweep)
+noise_levels: [0.1]
+eval_noise_levels: [0.1]
+
+# Trigger condition:
+# Run if Stage 3 validates cross-family generalization
+trigger_conditions:
+  stage3_cross_family_validation: true

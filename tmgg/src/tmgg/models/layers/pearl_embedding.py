@@ -17,6 +17,8 @@ Two variants:
 import torch
 import torch.nn as nn
 
+from .graph_ops import sym_normalize_adjacency
+
 
 class PEARLEmbedding(nn.Module):
     """PEARL positional encoding via GNN message passing.
@@ -104,13 +106,6 @@ class PEARLEmbedding(nn.Module):
             [nn.LayerNorm(hidden_dim) for _ in range(num_layers)]
         )
 
-    def _normalize_adjacency(self, A: torch.Tensor) -> torch.Tensor:
-        """Compute symmetric normalized adjacency D^{-1/2} A D^{-1/2}."""
-        D = A.sum(dim=-1)  # (batch, n)
-        D_inv_sqrt = torch.where(D > 0, D.pow(-0.5), torch.zeros_like(D))
-        D_inv_sqrt_mat = torch.diag_embed(D_inv_sqrt)
-        return torch.bmm(torch.bmm(D_inv_sqrt_mat, A), D_inv_sqrt_mat)
-
     def forward(self, A: torch.Tensor) -> torch.Tensor:
         """Generate PEARL embeddings from adjacency matrix.
 
@@ -157,7 +152,7 @@ class PEARLEmbedding(nn.Module):
         X = X.to(dtype=torch.float32)
 
         # Normalize adjacency for message passing
-        A_norm = self._normalize_adjacency(A.to(dtype=torch.float32))
+        A_norm = sym_normalize_adjacency(A.to(dtype=torch.float32))
 
         # GNN message passing
         for layer, norm in zip(self.layers, self.layer_norms, strict=True):

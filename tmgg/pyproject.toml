@@ -10,10 +10,6 @@ dependencies = [
   "pytorch-lightning>=2.0.0",
   "hydra-core>=1.3.0",
   "omegaconf>=2.3.0",
-  "zensical",
-  "pymdown-extensions",
-  "pygments",
-  "mkdocstrings-python",
   "numpy>=1.21.0",
   "scipy>=1.7.0",
   "matplotlib>=3.5.0",
@@ -23,49 +19,60 @@ dependencies = [
   "networkx>=3.5",
   "tensorboardx>=2.6.4",
   "loguru>=0.7.3",
-  "tensorboard>=2.20.0",
   "jupyter>=1.1.1",
   "torchshow>=0.5.2",
   "click>=8.0.0",
-  "pyarrow>=14.0.0",
-  "tenacity>=8.0.0",
   "pandas>=2.0.0",
   "seaborn>=0.13.2",
   "s3fs>=2025.12.0",
-  "tbparse>=0.0.9",
-  "tensorflow>=2.18.0",  # NumPy 2.x compatibility (tbparse dep)
   "torch-geometric>=2.5.0",  # PyG for benchmark datasets (QM9, ENZYMES, etc.)
   "modal>=0.64.0",           # Modal cloud execution (required for ModalRunner)
   "boto3>=1.26.0",           # S3-compatible storage for Tigris/AWS
   "safetensors>=0.4.0",      # Fast tensor serialization for eigenstructure study
-  "polars>=1.0.0",           # Fast DataFrame operations for results aggregation
+  "polars>=1.0.0",           # Used by tmgg-modal aggregate
+  "pot>=0.9.0",              # Python Optimal Transport (EMD kernel for MMD metrics)
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
 ray = ["ray[default]>=2.10.0"]  # Optional: local distributed execution with Ray
+docs = ["pymdown-extensions", "pygments", "mkdocstrings-python"]
+analysis = [
+    # graph-tool: install via conda-forge (not pip-installable)
+    #   conda install -c conda-forge graph-tool
+    # ORCA: compile from source in src/tmgg/experiments/_shared_utils/orca/
+    #   cd src/tmgg/experiments/_shared_utils/orca && g++ -O2 -std=c++11 -o orca orca.cpp
+]
 
 [project.scripts]
+# Denoising experiment CLIs
 tmgg-digress = "tmgg.experiments.digress_denoising.runner:main"
 tmgg-gnn = "tmgg.experiments.gnn_denoising.runner:main"
-tmgg-hybrid = "tmgg.experiments.hybrid_denoising.runner:main"
-tmgg-grid-search = "tmgg.experiments.grid_search_runner:main"
+tmgg-gnn-transformer = "tmgg.experiments.gnn_transformer_denoising.runner:main"
+tmgg-spectral-arch = "tmgg.experiments.spectral_arch_denoising.runner:main"
+tmgg-baseline = "tmgg.experiments.lin_mlp_baseline_denoising.runner:main"
+# Generative experiment CLIs
+tmgg-gaussian-gen = "tmgg.experiments.gaussian_diffusion_generative.runner:main"
+tmgg-discrete-gen = "tmgg.experiments.discrete_diffusion_generative.runner:main"
+tmgg-discrete-eval = "tmgg.experiments.discrete_diffusion_generative.evaluate_cli:main"
 # Unified experiment runner (replaces tmgg-stage1..5)
 # Usage: tmgg-experiment +stage=stage1_poc
 tmgg-experiment = "tmgg.experiments.stages.runner:main"
-# Spectral denoising (generic entry point)
-tmgg-spectral = "tmgg.experiments.spectral_denoising.runner:main"
-# W&B data export utility
-tmgg-wandb-export = "tmgg.experiment_utils.wandb_export.cli:main"
-# TensorBoard data export utility
-tmgg-tb-export = "tmgg.experiment_utils.tensorboard_export.cli:main"
-# Modal stage runners (for direct Modal execution)
-tmgg-modal-stage1 = "tmgg.modal.stages.stage1:main"
-tmgg-modal-stage2 = "tmgg.modal.stages.stage2:main"
+tmgg-grid-search = "tmgg.experiments.grid_search_runner:main"
+# Export tools (now separate workspace members: wandb-tools, tensorboard-tools)
 # Eigenstructure study CLI
-tmgg-eigenstructure = "tmgg.experiment_utils.eigenstructure_study.cli:main"
+tmgg-eigenstructure = "tmgg.experiments.eigenstructure_study.cli:main"
+# Eigenstructure study Hydra entry point
+tmgg-eigenstructure-exp = "tmgg.experiments.eigenstructure_study.runner:main"
 # Embedding dimension study CLI
-tmgg-embedding-study = "tmgg.experiment_utils.embedding_study.cli:main"
+tmgg-embedding-study = "tmgg.experiments.embedding_study.cli:main"
+# Embedding dimension study Hydra entry point
+tmgg-embedding-study-exp = "tmgg.experiments.embedding_study.runner:main"
+# Modal cloud orchestration CLI
+tmgg-modal = "tmgg.modal.cli:main"
+
+[tool.uv.workspace]
+members = ["wandb-tools", "tensorboard-tools"]
 
 [build-system]
 requires = ["hatchling"]
@@ -79,7 +86,7 @@ packages = ["src/tmgg"]
 
 # Include YAML config files in the wheel for Modal/cloud deployments
 [tool.hatch.build.targets.wheel.force-include]
-"src/tmgg/exp_configs" = "tmgg/exp_configs"
+"src/tmgg/experiments/exp_configs" = "tmgg/experiments/exp_configs"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/tmgg/**/*.py", "src/tmgg/**/*.yaml", "src/tmgg/**/*.yml"]
@@ -144,7 +151,7 @@ known-first-party = ["tmgg"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 include = ["src/tmgg", "tests"]
-exclude = ["**/__pycache__", "**/typings"]
+exclude = ["**/__pycache__", "**/typings", "tests/archived"]
 reportMissingImports = true
 reportMissingTypeStubs = false  # Don't complain about missing stubs for torch etc.
 reportConstantRedefinition = false  # Allow uppercase tensor vars (X, E, Q, K, V) to be reassigned

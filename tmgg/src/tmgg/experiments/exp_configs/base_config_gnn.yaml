@@ -1,0 +1,10 @@
+# GNN denoising experiments
+
+defaults:
+  - base_config_denoising
+  - models/gnn/standard_gnn@model
+  - _self_
+
+experiment_name: "gnn_denoising"
+wandb_project: architecture-study
+_cli_cmd: tmgg-gnn

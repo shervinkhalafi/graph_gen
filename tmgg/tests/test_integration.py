@@ -8,15 +8,15 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from tmgg.experiment_utils.data import (
-    PermutedAdjacencyDataset,
-    add_digress_noise,
+from tmgg.data import (
+    GraphDataset,
+    add_edge_flip_noise,
     add_gaussian_noise,
     add_rotation_noise,
-    compute_eigendecomposition,
     generate_sbm_adjacency,
     random_skew_symmetric_matrix,
 )
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
 from tmgg.models.hybrid import create_sequential_model
@@ -28,26 +28,26 @@ class TestEndToEndTraining:
     @pytest.fixture
     def training_data(
         self,
-    ) -> tuple[DataLoader[torch.Tensor], list[torch.Tensor]]:
+    ) -> tuple[DataLoader[GraphData], list[torch.Tensor]]:
         """Create sample training data."""
         # Generate a few SBM graphs
         block_sizes_list = [[5, 5], [3, 3, 4], [7, 3]]
         adjacency_matrices: list[torch.Tensor] = []
 
         for block_sizes in block_sizes_list:
-            A = generate_sbm_adjacency(block_sizes, p=1.0, q=0.0)
+            A = generate_sbm_adjacency(block_sizes, p_intra=1.0, p_inter=0.0)
             adjacency_matrices.append(torch.tensor(A, dtype=torch.float32))
 
         # Create dataset
-        dataset = PermutedAdjacencyDataset(adjacency_matrices, num_samples=50)
-        dataloader: DataLoader[torch.Tensor] = DataLoader(
-            dataset, batch_size=10, shuffle=True
+        dataset = GraphDataset(adjacency_matrices, num_samples=50)
+        dataloader: DataLoader[GraphData] = DataLoader(
+            dataset, batch_size=10, shuffle=True, collate_fn=GraphData.collate
         )
 
         return dataloader, adjacency_matrices
 
     def test_gnn_training_pipeline(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Test GNN training end-to-end."""
         dataloader, adjacency_matrices = training_data
@@ -66,14 +66,16 @@ class TestEndToEndTraining:
 
         for _ in range(5):
             epoch_loss = 0.0
-            for batch in dataloader:
+            for graph_batch in dataloader:
+                batch = graph_batch.to_adjacency()
                 # Add noise
-                batch_noisy = add_digress_noise(batch, p=0.1)
+                batch_noisy = add_edge_flip_noise(batch, p=0.1)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
-                # Forward pass - GNN returns adjacency logits directly
-                logits = model(batch_noisy)
+                # Forward pass - GNN returns GraphData, extract logits
+                result = model(GraphData.from_adjacency(batch_noisy))
+                logits = result.E[..., 1]
                 A_pred = torch.sigmoid(logits)
 
                 # Compute loss
@@ -98,16 +100,17 @@ class TestEndToEndTraining:
         _ = model.eval()
         with torch.no_grad():
             test_batch = adjacency_matrices[0].unsqueeze(0)
-            test_noisy = add_digress_noise(test_batch, p=0.1)
+            test_noisy = add_edge_flip_noise(test_batch, p=0.1)
 
-            logits = model(test_noisy.float())
+            result = model(GraphData.from_adjacency(test_noisy.float()))
+            logits = result.E[..., 1]
             A_pred = torch.sigmoid(logits)
 
             assert A_pred.shape == test_batch.shape
             assert torch.all(A_pred >= 0) and torch.all(A_pred <= 1)
 
     def test_attention_training_pipeline(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Test attention model training end-to-end.
 
@@ -126,24 +129,25 @@ class TestEndToEndTraining:
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
         # Training with rotation noise
-        skew = random_skew_symmetric_matrix(k)
+        skew = random_skew_symmetric_matrix(k, rng=np.random.default_rng(42))
         initial_loss: float | None = None
         _ = model.train()
 
         for _ in range(5):
             epoch_loss = 0.0
-            for batch in dataloader:
+            for graph_batch in dataloader:
+                batch = graph_batch.to_adjacency()
                 # Add rotation noise
                 batch_noisy = add_rotation_noise(batch, eps=0.1, skew=skew)
-                _, V_noisy = compute_eigendecomposition(batch_noisy)
+                _, V_noisy = torch.linalg.eigh(batch_noisy.float())
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
                 # Use only top k eigenvectors
                 V_input = V_noisy[:, :, :k].float()
 
-                # Forward pass - model returns single tensor
-                A_pred = model(V_input)
+                # Forward pass via raw attention (eigenvectors aren't adjacency)
+                A_pred = model.apply_attention(V_input)
 
                 # Compute loss
                 loss = criterion(A_pred, batch)
@@ -164,7 +168,7 @@ class TestEndToEndTraining:
         assert avg_loss < initial_loss
 
     def test_hybrid_training_pipeline(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Test hybrid model training end-to-end."""
         dataloader, adjacency_matrices = training_data
@@ -197,14 +201,16 @@ class TestEndToEndTraining:
 
         for _ in range(5):
             epoch_loss = 0.0
-            for batch in dataloader:
+            for graph_batch in dataloader:
+                batch = graph_batch.to_adjacency()
                 # Add Gaussian noise
                 batch_noisy = add_gaussian_noise(batch, eps=0.1)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
-                # Forward pass - model returns logits, apply sigmoid for probabilities
-                logits = model(batch_noisy)
+                # Forward pass - model returns GraphData, extract logits
+                result = model(GraphData.from_adjacency(batch_noisy))
+                logits = result.E[..., 1]
                 A_pred = torch.sigmoid(logits)
 
                 # Compute loss
@@ -231,14 +237,15 @@ class TestEndToEndTraining:
             test_batch = adjacency_matrices[0].unsqueeze(0)
             test_noisy = add_gaussian_noise(test_batch, eps=0.1)
 
-            logits = model(test_noisy.float())
+            result = model(GraphData.from_adjacency(test_noisy.float()))
+            logits = result.E[..., 1]
             A_pred = torch.sigmoid(logits)
 
             assert A_pred.shape == test_batch.shape
             assert torch.all(A_pred >= 0) and torch.all(A_pred <= 1)
 
     def test_multi_noise_level_training(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Test training with multiple noise levels."""
         dataloader, _ = training_data
@@ -255,17 +262,19 @@ class TestEndToEndTraining:
 
         _ = model.train()
         for _ in range(3):
-            for batch in dataloader:
+            for graph_batch in dataloader:
+                batch = graph_batch.to_adjacency()
                 # Sample random noise level
                 eps: float = np.random.choice(noise_levels)
 
                 # Add noise
-                batch_noisy = add_digress_noise(batch, p=eps)
+                batch_noisy = add_edge_flip_noise(batch, p=eps)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
-                # Forward pass - GNN returns adjacency logits directly
-                logits = model(batch_noisy)
+                # Forward pass - GNN returns GraphData, extract logits
+                result = model(GraphData.from_adjacency(batch_noisy))
+                logits = result.E[..., 1]
                 A_pred = torch.sigmoid(logits)
 
                 # Compute loss
@@ -279,18 +288,19 @@ class TestEndToEndTraining:
         # Test on each noise level
         _ = model.eval()
         with torch.no_grad():
-            test_batch = dataloader.dataset[0].unsqueeze(0)
+            test_batch = dataloader.dataset[0].to_adjacency().unsqueeze(0)
 
             for eps in noise_levels:
-                test_noisy = add_digress_noise(test_batch, p=eps)
-                logits = model(test_noisy.float())
+                test_noisy = add_edge_flip_noise(test_batch, p=eps)
+                result = model(GraphData.from_adjacency(test_noisy.float()))
+                logits = result.E[..., 1]
                 A_pred = torch.sigmoid(logits)
 
                 assert A_pred.shape == test_batch.shape
                 assert torch.all(A_pred >= 0) and torch.all(A_pred <= 1)
 
     def test_learning_rate_scheduling(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Test training with learning rate scheduling."""
         dataloader, _ = training_data
@@ -312,13 +322,15 @@ class TestEndToEndTraining:
 
         _ = model.train()
         for _ in range(10):
-            for batch in dataloader:
+            for graph_batch in dataloader:
+                batch = graph_batch.to_adjacency()
                 batch_noisy = add_gaussian_noise(batch, eps=0.1)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
                 # Forward pass
-                A_pred = model(batch_noisy)
+                result = model(GraphData.from_adjacency(batch_noisy))
+                A_pred = result.E[..., 1]
                 loss = criterion(A_pred, batch)
 
                 # Backward pass
@@ -335,7 +347,7 @@ class TestEndToEndTraining:
         assert min(lrs) < 0.1  # LR decreased at some point
 
     def test_gradient_flow_with_regularization(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Test gradients flow with eigenvalue regularization.
 
@@ -353,11 +365,12 @@ class TestEndToEndTraining:
         model = GNN(num_layers=2, feature_dim_out=5, eigenvalue_reg=1e-3)
         _ = model.float()
 
-        batch = next(iter(dataloader))
-        batch_noisy = add_digress_noise(batch, p=0.1).float()
+        batch = next(iter(dataloader)).to_adjacency()
+        batch_noisy = add_edge_flip_noise(batch, p=0.1).float()
         batch = batch.float()
 
-        logits = model(batch_noisy)
+        result = model(GraphData.from_adjacency(batch_noisy))
+        logits = result.E[..., 1]
         output = torch.sigmoid(logits)
         loss = torch.mean((output - batch) ** 2)
         loss.backward()
@@ -374,7 +387,7 @@ class TestEndToEndTraining:
         assert params_with_grad > 0, "No parameters have gradients"
 
     def test_gradient_flow_hybrid_model(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Test gradient flow in hybrid model with relaxed tolerance.
 
@@ -397,11 +410,12 @@ class TestEndToEndTraining:
         model = create_sequential_model(gnn_config, transformer_config)
         _ = model.float()
 
-        batch = next(iter(dataloader))
-        batch_noisy = add_digress_noise(batch, p=0.1).float()
+        batch = next(iter(dataloader)).to_adjacency()
+        batch_noisy = add_edge_flip_noise(batch, p=0.1).float()
         batch = batch.float()
 
-        output = model(batch_noisy)
+        result = model(GraphData.from_adjacency(batch_noisy))
+        output = result.E[..., 1]
         loss = torch.mean((output - batch) ** 2)
         loss.backward()
 
@@ -424,7 +438,7 @@ class TestEndToEndTraining:
         ), f"Only {grad_ratio:.1%} of parameters have meaningful gradients"
 
     def test_gradient_flow_without_regularization(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Verify model parameter gradients work regardless of eigenvalue degeneracy.
 
@@ -447,10 +461,11 @@ class TestEndToEndTraining:
         model = GNN(num_layers=2, feature_dim_out=5, eigenvalue_reg=0.0)
         _ = model.float()
 
-        batch = next(iter(dataloader))
+        batch = next(iter(dataloader)).to_adjacency()
         batch = batch.float()
 
-        logits = model(batch)
+        result = model(GraphData.from_adjacency(batch))
+        logits = result.E[..., 1]
         output = torch.sigmoid(logits)
         loss = torch.mean((output - batch) ** 2)
         loss.backward()
@@ -464,7 +479,7 @@ class TestEndToEndTraining:
                 ), f"Zero gradient for {name}"
 
     def test_input_gradient_nan_with_degenerate_eigenvalues(
-        self, training_data: tuple[DataLoader[torch.Tensor], list[torch.Tensor]]
+        self, training_data: tuple[DataLoader[GraphData], list[torch.Tensor]]
     ) -> None:
         """Document that input gradients (∂V/∂A) DO have NaN with degeneracy.
 

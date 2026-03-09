@@ -1,293 +1,31 @@
-"""Tests for Modal runner and result status tracking.
+"""Tests for Modal runner.
 
 Test rationale:
-    The Modal runner orchestrates experiment execution on cloud GPUs.
-    Result status tracking enables intelligent resume behavior for long sweeps.
-
-    These components are critical because:
-    1. GPU time is expensive (Stage 2 = 166.5 hours)
-    2. Incorrect resume logic can skip incomplete experiments or re-run completed ones
-    3. Timeout handling prevents silent failures
+    The Modal runner orchestrates experiment execution on cloud GPUs
+    via the CLI transport (modal_run_cli). These tests verify runner
+    initialization, deployment checks, spawn mechanics, and result
+    handling.
 
 Invariants:
-    - ModalRunner.run_experiment returns ExperimentResult
-    - ResultStatus correctly categorizes experiment outcomes
-    - filter_configs_by_status respects skip_statuses parameter
+    - ModalRunner.spawn_experiment returns SpawnedTask with valid run_id
+    - Deployment check fails fast when the Modal app is not deployed
+    - spawn() passes (cmd, config_yaml, run_id) to the Modal function
 """
 
-import importlib.util
-import sys
-from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import modal.exception
 import pytest
 
-# Mock modal before importing tmgg_modal modules to avoid image creation at import time
-# Create a comprehensive mock with exception submodule
-mock_modal = MagicMock()
-mock_modal.exception = MagicMock()
-mock_modal.exception.NotFoundError = type("NotFoundError", (Exception,), {})
-sys.modules["modal"] = mock_modal
-sys.modules["modal.exception"] = mock_modal.exception
-
-# Use importlib to load modal modules directly without going through tmgg.__init__
-# This avoids triggering unrelated import errors in other parts of the package
-_modal_base_path = Path(__file__).parent.parent.parent / "src" / "tmgg" / "modal"
-_experiment_utils_path = (
-    Path(__file__).parent.parent.parent / "src" / "tmgg" / "experiment_utils"
+from tmgg.modal.app import DEFAULT_TIMEOUTS, GPU_CONFIGS
+from tmgg.modal.runner import (
+    ExperimentResult,
+    ModalNotDeployedError,
+    ModalRunner,
+    ModalSpawnedTask,
+    check_modal_deployment,
+    create_runner,
 )
-
-
-def _load_module(name: str, path: Path):
-    """Load a module directly from file path."""
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-# Load the modules we need - order matters due to dependencies
-
-# Load experiment_utils.task first (runner depends on it)
-_task_module = _load_module(
-    "tmgg.experiment_utils.task", _experiment_utils_path / "task.py"
-)
-
-# Load modal modules
-_app_module = _load_module("tmgg.modal.app", _modal_base_path / "app.py")
-_storage_module = _load_module("tmgg.modal.storage", _modal_base_path / "storage.py")
-_volumes_module = _load_module("tmgg.modal.volumes", _modal_base_path / "volumes.py")
-_image_module = _load_module("tmgg.modal.image", _modal_base_path / "image.py")
-_paths_module = _load_module("tmgg.modal.paths", _modal_base_path / "paths.py")
-
-# Load cloud base for ExperimentResult
-_cloud_base_path = _experiment_utils_path / "cloud" / "base.py"
-_cloud_base_module = _load_module("tmgg.experiment_utils.cloud.base", _cloud_base_path)
-
-# Now load runner after its dependencies are available
-_runner_module = _load_module("tmgg.modal.runner", _modal_base_path / "runner.py")
-
-# Load result_status module
-_result_status_module = _load_module(
-    "tmgg.modal.result_status", _modal_base_path / "result_status.py"
-)
-
-# Extract what we need from loaded modules
-GPU_CONFIGS = _app_module.GPU_CONFIGS
-DEFAULT_TIMEOUTS = _app_module.DEFAULT_TIMEOUTS
-ModalRunner = _runner_module.ModalRunner
-ModalNotDeployedError = _runner_module.ModalNotDeployedError
-ModalSpawnedTask = _runner_module.ModalSpawnedTask
-SpawnedTask = _cloud_base_module.SpawnedTask  # Protocol for isinstance checks
-check_modal_deployment = _runner_module.check_modal_deployment
-create_runner = _runner_module.create_runner
-modal_execute_task = _runner_module.modal_execute_task
-ExperimentResult = _cloud_base_module.ExperimentResult
-ResultStatus = _result_status_module.ResultStatus
-check_result_status = _result_status_module.check_result_status
-filter_configs_by_status = _result_status_module.filter_configs_by_status
-summarize_status_map = _result_status_module.summarize_status_map
-TaskInput = _task_module.TaskInput
-TaskOutput = _task_module.TaskOutput
-
-
-class TestResultStatus:
-    """Tests for ResultStatus enum and check_result_status function."""
-
-    @pytest.fixture
-    def mock_storage(self):
-        """Create a mock storage backend."""
-        return MagicMock()
-
-    def test_missing_when_result_not_found(self, mock_storage):
-        """Should return MISSING when storage.exists returns False."""
-        mock_storage.exists.return_value = False
-
-        status = check_result_status(mock_storage, "run-123")
-
-        assert status == ResultStatus.MISSING
-
-    def test_complete_with_valid_metrics(self, mock_storage):
-        """Should return COMPLETE when all required metrics present."""
-        mock_storage.exists.return_value = True
-        mock_storage.download_metrics.return_value = {
-            "metrics": {"best_val_loss": 0.123},
-            "completed_at": datetime.now().isoformat(),
-        }
-
-        status = check_result_status(mock_storage, "run-123")
-
-        assert status == ResultStatus.COMPLETE
-
-    def test_partial_when_metric_missing(self, mock_storage):
-        """Should return PARTIAL when required metric is None."""
-        mock_storage.exists.return_value = True
-        mock_storage.download_metrics.return_value = {
-            "metrics": {"other_metric": 0.5},  # Missing best_val_loss
-        }
-
-        status = check_result_status(mock_storage, "run-123")
-
-        assert status == ResultStatus.PARTIAL
-
-    def test_partial_when_metric_is_inf(self, mock_storage):
-        """Should return PARTIAL when metric is infinity (failed run)."""
-        mock_storage.exists.return_value = True
-        mock_storage.download_metrics.return_value = {
-            "metrics": {"best_val_loss": float("inf")},
-        }
-
-        status = check_result_status(mock_storage, "run-123")
-
-        assert status == ResultStatus.PARTIAL
-
-    def test_stale_when_older_than_threshold(self, mock_storage):
-        """Should return STALE when result is older than max_age_hours."""
-        mock_storage.exists.return_value = True
-        old_time = datetime.now() - timedelta(hours=48)
-        mock_storage.download_metrics.return_value = {
-            "metrics": {"best_val_loss": 0.123},
-            "completed_at": old_time.isoformat(),
-        }
-
-        status = check_result_status(
-            mock_storage,
-            "run-123",
-            max_age_hours=24,  # 24 hour threshold
-        )
-
-        assert status == ResultStatus.STALE
-
-    def test_complete_when_within_age_threshold(self, mock_storage):
-        """Should return COMPLETE when result is within max_age_hours."""
-        mock_storage.exists.return_value = True
-        recent_time = datetime.now() - timedelta(hours=12)
-        mock_storage.download_metrics.return_value = {
-            "metrics": {"best_val_loss": 0.123},
-            "completed_at": recent_time.isoformat(),
-        }
-
-        status = check_result_status(
-            mock_storage,
-            "run-123",
-            max_age_hours=24,  # 24 hour threshold
-        )
-
-        assert status == ResultStatus.COMPLETE
-
-    def test_custom_required_metrics(self, mock_storage):
-        """Should check custom required_metrics list."""
-        mock_storage.exists.return_value = True
-        mock_storage.download_metrics.return_value = {
-            "metrics": {"best_val_loss": 0.1, "accuracy": 0.95},
-        }
-
-        # Missing "f1_score" from custom requirements
-        status = check_result_status(
-            mock_storage,
-            "run-123",
-            required_metrics=["best_val_loss", "accuracy", "f1_score"],
-        )
-
-        assert status == ResultStatus.PARTIAL
-
-
-class TestFilterConfigsByStatus:
-    """Tests for filter_configs_by_status function."""
-
-    @pytest.fixture
-    def mock_storage(self):
-        """Create a mock storage backend."""
-        return MagicMock()
-
-    @pytest.fixture
-    def sample_configs(self):
-        """Sample experiment configs for testing."""
-        return [
-            {"run_id": "run-1", "lr": 1e-3},
-            {"run_id": "run-2", "lr": 1e-4},
-            {"run_id": "run-3", "lr": 1e-5},
-        ]
-
-    def test_returns_all_configs_when_storage_is_none(self, sample_configs):
-        """When storage is None, all configs should be returned as MISSING."""
-        filtered, status_map = filter_configs_by_status(None, sample_configs)
-
-        assert len(filtered) == 3
-        assert all(s == ResultStatus.MISSING for s in status_map.values())
-
-    def test_filters_complete_results_by_default(self, mock_storage, sample_configs):
-        """By default, should skip COMPLETE results."""
-
-        # run-1 is complete, run-2 and run-3 are missing
-        def mock_exists(key):
-            return "run-1" in key
-
-        def mock_download(run_id):
-            if "run-1" in run_id:
-                return {"metrics": {"best_val_loss": 0.1}}
-            raise FileNotFoundError()
-
-        mock_storage.exists.side_effect = mock_exists
-        mock_storage.download_metrics.side_effect = mock_download
-
-        filtered, status_map = filter_configs_by_status(mock_storage, sample_configs)
-
-        # run-1 should be skipped
-        assert len(filtered) == 2
-        assert all(cfg["run_id"] != "run-1" for cfg in filtered)
-        assert status_map["run-1"] == ResultStatus.COMPLETE
-        assert status_map["run-2"] == ResultStatus.MISSING
-
-    def test_custom_skip_statuses(self, mock_storage, sample_configs):
-        """Should respect custom skip_statuses parameter."""
-        # All are complete
-        mock_storage.exists.return_value = True
-        mock_storage.download_metrics.return_value = {"metrics": {"best_val_loss": 0.1}}
-
-        # Don't skip anything
-        filtered, _ = filter_configs_by_status(
-            mock_storage, sample_configs, skip_statuses=set()
-        )
-
-        assert len(filtered) == 3
-
-    def test_status_map_contains_all_run_ids(self, mock_storage, sample_configs):
-        """Status map should contain entries for all configs."""
-        mock_storage.exists.return_value = False
-
-        _, status_map = filter_configs_by_status(mock_storage, sample_configs)
-
-        assert set(status_map.keys()) == {"run-1", "run-2", "run-3"}
-
-
-class TestSummarizeStatusMap:
-    """Tests for summarize_status_map function."""
-
-    def test_summarizes_all_statuses(self):
-        """Should include counts for all present statuses."""
-        status_map = {
-            "run-1": ResultStatus.COMPLETE,
-            "run-2": ResultStatus.COMPLETE,
-            "run-3": ResultStatus.PARTIAL,
-            "run-4": ResultStatus.MISSING,
-        }
-
-        summary = summarize_status_map(status_map)
-
-        assert "2 complete" in summary
-        assert "1 partial" in summary
-        assert "1 missing" in summary
-        assert "stale" not in summary  # No stale results
-
-    def test_empty_map_returns_no_results(self):
-        """Empty status map should return 'no results'."""
-        summary = summarize_status_map({})
-
-        assert summary == "no results"
 
 
 class TestDeploymentCheck:
@@ -301,43 +39,45 @@ class TestDeploymentCheck:
 
     def test_raises_when_function_not_found(self):
         """Should raise ModalNotDeployedError when function lookup fails."""
-        # Configure the mock to raise NotFoundError on hydrate
         mock_fn = MagicMock()
-        mock_fn.hydrate.side_effect = mock_modal.exception.NotFoundError(
+        mock_fn.hydrate.side_effect = modal.exception.NotFoundError(
             "Function not found"
         )
-        mock_modal.Function.from_name.return_value = mock_fn
 
-        with pytest.raises(ModalNotDeployedError) as exc_info:
-            check_modal_deployment()
+        with patch("modal.Function") as mock_Function:
+            mock_Function.from_name.return_value = mock_fn
+
+            with pytest.raises(ModalNotDeployedError) as exc_info:
+                check_modal_deployment()
 
         assert "not deployed" in str(exc_info.value)
         assert "mise run modal-deploy" in str(exc_info.value)
 
     def test_succeeds_when_function_deployed(self):
         """Should not raise when function is accessible."""
-        # Configure the mock to succeed
         mock_fn = MagicMock()
         mock_fn.hydrate.return_value = None  # Success
-        mock_modal.Function.from_name.return_value = mock_fn
 
-        # Should not raise
-        check_modal_deployment()
+        with patch("modal.Function") as mock_Function:
+            mock_Function.from_name.return_value = mock_fn
 
-        # Verify it tried to look up and hydrate
-        mock_modal.Function.from_name.assert_called_with(
-            "tmgg-spectral", "modal_execute_task"
-        )
-        mock_fn.hydrate.assert_called_once()
+            # Should not raise
+            check_modal_deployment()
+
+            # Verify it tried to look up and hydrate
+            mock_Function.from_name.assert_called_with("tmgg-spectral", "modal_run_cli")
+            mock_fn.hydrate.assert_called_once()
 
     def test_error_message_includes_instructions(self):
         """Error message should include deployment command."""
         mock_fn = MagicMock()
-        mock_fn.hydrate.side_effect = mock_modal.exception.NotFoundError("Not found")
-        mock_modal.Function.from_name.return_value = mock_fn
+        mock_fn.hydrate.side_effect = modal.exception.NotFoundError("Not found")
 
-        with pytest.raises(ModalNotDeployedError) as exc_info:
-            check_modal_deployment()
+        with patch("modal.Function") as mock_Function:
+            mock_Function.from_name.return_value = mock_fn
+
+            with pytest.raises(ModalNotDeployedError) as exc_info:
+                check_modal_deployment()
 
         error_msg = str(exc_info.value)
         assert "uv run modal deploy" in error_msg
@@ -347,57 +87,40 @@ class TestDeploymentCheck:
 class TestModalRunner:
     """Tests for ModalRunner experiment execution."""
 
-    @pytest.fixture
-    def mock_storage(self):
-        """Create a mock storage backend."""
-        return MagicMock()
-
-    def test_runner_initialization(self, mock_storage):
-        """ModalRunner should initialize with gpu_type and storage."""
-        runner = ModalRunner(
-            gpu_type="fast", storage=mock_storage, skip_deployment_check=True
-        )
+    def test_runner_initialization(self):
+        """ModalRunner should initialize with gpu_type."""
+        runner = ModalRunner(gpu_type="fast", skip_deployment_check=True)
 
         assert runner.gpu_type == "fast"
-        assert runner.storage is mock_storage
 
-    def test_runner_checks_deployment_by_default(self, mock_storage):
+    def test_runner_checks_deployment_by_default(self):
         """ModalRunner should call check_modal_deployment by default."""
-        # Configure mock to fail deployment check
         mock_fn = MagicMock()
-        mock_fn.hydrate.side_effect = mock_modal.exception.NotFoundError("Not deployed")
-        mock_modal.Function.from_name.return_value = mock_fn
+        mock_fn.hydrate.side_effect = modal.exception.NotFoundError("Not deployed")
 
-        with pytest.raises(ModalNotDeployedError):
-            ModalRunner(gpu_type="standard", storage=mock_storage)
+        with patch("modal.Function") as mock_Function:
+            mock_Function.from_name.return_value = mock_fn
 
-    def test_runner_skips_deployment_check_when_requested(self, mock_storage):
+            with pytest.raises(ModalNotDeployedError):
+                ModalRunner(gpu_type="standard")
+
+    def test_runner_skips_deployment_check_when_requested(self):
         """ModalRunner should skip deployment check when skip_deployment_check=True."""
-        # Configure mock to fail deployment check
-        mock_fn = MagicMock()
-        mock_fn.hydrate.side_effect = mock_modal.exception.NotFoundError("Not deployed")
-        mock_modal.Function.from_name.return_value = mock_fn
-
-        # Should not raise when skip_deployment_check=True
-        runner = ModalRunner(
-            gpu_type="standard", storage=mock_storage, skip_deployment_check=True
-        )
+        runner = ModalRunner(gpu_type="standard", skip_deployment_check=True)
 
         assert runner.gpu_type == "standard"
 
     def test_create_runner_factory(self):
         """create_runner should create ModalRunner with default settings."""
-        # Configure mock for successful deployment check
         mock_fn = MagicMock()
         mock_fn.hydrate.return_value = None
-        mock_modal.Function.from_name.return_value = mock_fn
 
-        with patch.dict("os.environ", {}, clear=True):
+        with patch("modal.Function") as mock_Function:
+            mock_Function.from_name.return_value = mock_fn
+
             runner = create_runner(gpu_type="standard")
 
             assert runner.gpu_type == "standard"
-            # Storage should be None when env not configured
-            assert runner.storage is None
 
 
 class TestExperimentResult:
@@ -463,7 +186,7 @@ class TestModalSpawnedTask:
         ModalSpawnedTask is the handle returned by spawn_experiment() that allows
         tracking experiment status. It must be serializable (for persistence)
         and contain all necessary tracking information. It implements the
-        SpawnedTask protocol.
+        ModalSpawnedTask dataclass.
     """
 
     def test_spawned_task_creation(self):
@@ -473,7 +196,7 @@ class TestModalSpawnedTask:
         assert task.run_id == "test-123"
         assert task.gpu_tier == "standard"
         assert task.function_call is None  # Optional
-        assert isinstance(task, SpawnedTask)  # Implements protocol
+        assert isinstance(task, ModalSpawnedTask)  # Implements protocol
 
     def test_spawned_task_with_function_call(self):
         """ModalSpawnedTask should accept optional function_call handle."""
@@ -487,43 +210,20 @@ class TestModalSpawnedTask:
         assert task.function_call is mock_call
 
 
-class TestModalExecuteTask:
-    """Tests for the modal_execute_task Modal function.
-
-    Test rationale:
-        modal_execute_task wraps the unified execute_task() logic. It must
-        correctly convert TaskInput dict -> TaskInput -> execute_task -> TaskOutput dict.
-    """
-
-    def test_modal_execute_task_uses_task_abstraction(self):
-        """modal_execute_task should use the unified TaskInput/TaskOutput."""
-        # The function signature accepts dict[str, Any] and returns dict[str, Any]
-        # Verify it's properly decorated as a Modal function
-        assert hasattr(modal_execute_task, "spawn")
-        assert hasattr(modal_execute_task, "remote")
-        assert hasattr(modal_execute_task, "map")
-
-
 class TestSpawnMethods:
     """Tests for ModalRunner spawn methods.
 
     Test rationale:
         spawn_experiment() and spawn_sweep() enable fire-and-forget execution.
-        They must return SpawnedTask handles with valid run_ids and call
-        Modal's spawn() method for detached execution.
+        They must return ModalSpawnedTask handles with valid run_ids and call
+        Modal's spawn() with the CLI transport arguments (cmd, config_yaml, run_id).
     """
 
     @pytest.fixture
-    def mock_storage(self):
-        """Create a mock storage backend."""
-        return MagicMock()
-
-    @pytest.fixture
-    def runner(self, mock_storage):
+    def runner(self):
         """Create a ModalRunner with deployment check skipped."""
         return ModalRunner(
             gpu_type="standard",
-            storage=mock_storage,
             skip_deployment_check=True,
         )
 
@@ -533,44 +233,70 @@ class TestSpawnMethods:
 
         config = OmegaConf.create(
             {
+                "_cli_cmd": "tmgg-discrete-gen",
                 "model": {"hidden_dim": 64},
                 "paths": {"output_dir": "/tmp", "results_dir": "/tmp"},
             }
         )
 
-        # Mock the Modal function's spawn method
         mock_fn_call = MagicMock()
-        mock_modal.Function.from_name.return_value.spawn.return_value = mock_fn_call
+        with patch("modal.Function") as mock_Function:
+            mock_Function.from_name.return_value.spawn.return_value = mock_fn_call
 
-        task = runner.spawn_experiment(config)
+            task = runner.spawn_experiment(config)
 
-        assert isinstance(task, SpawnedTask)
+        assert isinstance(task, ModalSpawnedTask)
         assert task.run_id is not None
         assert len(task.run_id) == 8  # UUID[:8]
         assert task.gpu_tier == "standard"
 
+    def test_spawn_experiment_passes_cli_args(self, runner):
+        """spawn() should receive (cmd, config_yaml, run_id) positional args."""
+        from omegaconf import OmegaConf
+
+        config = OmegaConf.create(
+            {
+                "_cli_cmd": "tmgg-discrete-gen",
+                "model": {"hidden_dim": 64},
+            }
+        )
+
+        mock_fn_call = MagicMock()
+        with patch("modal.Function") as mock_Function:
+            mock_spawn = mock_Function.from_name.return_value.spawn
+            mock_spawn.return_value = mock_fn_call
+
+            task = runner.spawn_experiment(config)
+
+        # Verify spawn was called with (cmd, config_yaml, run_id)
+        mock_spawn.assert_called_once()
+        call_args = mock_spawn.call_args[0]
+        assert call_args[0] == "tmgg-discrete-gen"
+        assert "hidden_dim: 64" in call_args[1]  # config_yaml
+        assert call_args[2] == task.run_id
+
     def test_spawn_sweep_returns_list_of_spawned_tasks(self, runner):
-        """spawn_sweep should return list of SpawnedTask handles."""
+        """spawn_sweep should return list of ModalSpawnedTask handles."""
         from omegaconf import OmegaConf
 
         configs = [
             OmegaConf.create(
                 {
+                    "_cli_cmd": "tmgg-discrete-gen",
                     "model": {"hidden_dim": dim},
-                    "paths": {"output_dir": "/tmp", "results_dir": "/tmp"},
                 }
             )
             for dim in [32, 64, 128]
         ]
 
-        # Mock the Modal function's spawn method
         mock_fn_call = MagicMock()
-        mock_modal.Function.from_name.return_value.spawn.return_value = mock_fn_call
+        with patch("modal.Function") as mock_Function:
+            mock_Function.from_name.return_value.spawn.return_value = mock_fn_call
 
-        tasks = runner.spawn_sweep(configs)
+            tasks = runner.spawn_sweep(configs)
 
         assert len(tasks) == 3
-        assert all(isinstance(t, SpawnedTask) for t in tasks)
+        assert all(isinstance(t, ModalSpawnedTask) for t in tasks)
         # Each task should have a unique run_id
         run_ids = [t.run_id for t in tasks]
         assert len(set(run_ids)) == 3
@@ -581,15 +307,105 @@ class TestSpawnMethods:
 
         config = OmegaConf.create(
             {
+                "_cli_cmd": "tmgg-discrete-gen",
                 "model": {"hidden_dim": 64},
-                "paths": {"output_dir": "/tmp", "results_dir": "/tmp"},
             }
         )
 
         mock_fn_call = MagicMock()
-        mock_modal.Function.from_name.return_value.spawn.return_value = mock_fn_call
+        with patch("modal.Function") as mock_Function:
+            mock_Function.from_name.return_value.spawn.return_value = mock_fn_call
 
-        task = runner.spawn_experiment(config)
+            task = runner.spawn_experiment(config)
 
         assert task.run_id in runner._active_runs
         assert runner._active_runs[task.run_id] is task
+
+
+@pytest.mark.modal
+class TestModalSmoke:
+    """Smoke tests that submit real experiments to Modal (T4 debug tier).
+
+    One representative architecture per base config type. Exercises the full
+    path: config composition -> YAML serialization -> Modal container ->
+    CLI subprocess -> result return.
+
+    Skipped by default. Run with ``pytest -m modal -v --tb=long``.
+    Requires the ``igor-26028`` Modal profile with ``tmgg-spectral`` deployed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_modal(self, require_modal_profile):
+        pass
+
+    SMOKE_CONFIGS = [
+        ("base_config_spectral_arch", "models/spectral/linear_pe", "spectral"),
+    ]
+
+    @pytest.mark.parametrize(
+        "base_config,arch,desc",
+        SMOKE_CONFIGS,
+        ids=[c[2] for c in SMOKE_CONFIGS],
+    )
+    def test_modal_single_step(self, base_config, arch, desc, tmp_path):
+        """Submit max_steps=1 experiment to Modal debug tier, verify completion."""
+        import uuid
+        from pathlib import Path
+
+        import modal
+        from hydra import compose, initialize_config_dir
+        from hydra.core.global_hydra import GlobalHydra
+        from omegaconf import OmegaConf
+
+        # 1. Compose base config
+        exp_configs = (
+            Path(__file__).parent.parent.parent
+            / "src"
+            / "tmgg"
+            / "experiments"
+            / "exp_configs"
+        )
+        overrides = [
+            f"paths.output_dir={tmp_path}",
+            f"paths.results_dir={tmp_path}/results",
+            "trainer.max_steps=2",
+            "trainer.accelerator=auto",
+            "~logger",
+            "data.batch_size=2",
+            "data.num_workers=0",
+            "seed=42",
+            f"hydra.run.dir={tmp_path}",
+        ]
+
+        GlobalHydra.instance().clear()
+        with initialize_config_dir(version_base=None, config_dir=str(exp_configs)):
+            cfg = compose(config_name=base_config, overrides=overrides)
+
+        # 2. Load and merge architecture (replaces deleted config_builder)
+        import yaml
+
+        arch_yaml = exp_configs / f"{arch}.yaml"
+        with open(arch_yaml) as f:
+            arch_config = yaml.safe_load(f)
+
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+        assert isinstance(cfg_dict, dict)
+        base_model = cfg_dict.get("model", {})
+        merged_model = {**base_model, **arch_config}
+        cfg_dict["model"] = merged_model
+
+        # 3. Serialize to YAML and submit via modal_run_cli_debug
+        run_id = f"smoke_{desc}_{uuid.uuid4().hex[:6]}"
+        config_yaml = OmegaConf.to_yaml(OmegaConf.create(cfg_dict), resolve=True)
+
+        fn = modal.Function.from_name("tmgg-spectral", "modal_run_cli_debug")
+        result = fn.remote("tmgg-discrete-gen", config_yaml, run_id)
+
+        # 4. Validate
+        assert result["status"] == "completed", (
+            f"Expected completed, got {result['status']}: "
+            f"{result.get('error', 'no error')}"
+        )
+        assert result["run_id"] == run_id
+
+        GlobalHydra.instance().clear()

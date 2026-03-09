@@ -8,7 +8,7 @@ We analyzed five graph datasets commonly used in graph generation experiments:
 
 | Dataset | Type | Configuration | # Graphs |
 |---------|------|---------------|----------|
-| SBM | Stochastic Block Model | 20 nodes, 2-4 blocks, p_intra=1.0, q_inter=0.0 | 100 |
+| SBM | Stochastic Block Model | 20 nodes, 2-4 blocks, p_intra=1.0, p_inter=0.0 | 100 |
 | ER | Erdős-Rényi | 50 nodes, p=0.1 | 100 |
 | Tree | Random Spanning Trees | 50 nodes | 100 |
 | Regular | 3-Regular | 50 nodes, d=3 | 100 |

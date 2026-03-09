@@ -90,7 +90,10 @@ def assert_training_success(result: subprocess.CompletedProcess[str]) -> None:
             )
 
 
-def get_quick_training_overrides(output_dir: Path) -> list[str]:
+def get_quick_training_overrides(
+    output_dir: Path,
+    data_module: str = "denoising",
+) -> list[str]:
     """Generate Hydra overrides for a minimal training run.
 
     These overrides configure the experiment to complete in seconds by:
@@ -103,13 +106,22 @@ def get_quick_training_overrides(output_dir: Path) -> list[str]:
     ----------
     output_dir
         Directory for experiment outputs.
+    data_module
+        DataModule category. Determines which data-reduction overrides
+        are safe to apply:
+        ``"denoising"`` — GraphDataModule (has ``samples_per_graph``,
+        SBM partition params);
+        ``"single_graph"`` — SingleGraphDataModule (has
+        ``num_train_samples``, ``num_val_samples``, ``num_test_samples``);
+        ``"generative"`` — MultiGraphDataModule or
+        SyntheticCategoricalDataModule (has ``num_graphs``).
 
     Returns
     -------
     list[str]
         Hydra override strings.
     """
-    return [
+    overrides = [
         f"paths.output_dir={output_dir}",
         f"paths.results_dir={output_dir}/results",
         "trainer.max_steps=2",
@@ -120,22 +132,32 @@ def get_quick_training_overrides(output_dir: Path) -> list[str]:
         # StepProgressBar, which conflict with False settings
         # Disable logger config (tensorboard/wandb) - falls back to CSVLogger
         "~logger",
-        # Data reduction - common keys that exist in base_dataloader
+        # Data reduction - common keys that exist in all DataModules
         "data.batch_size=2",
         "data.num_workers=0",
-        # Reduce samples/partitions - use ++ to add if not present
-        "++data.num_samples_per_graph=4",
-        "++data.dataset_config.num_train_partitions=2",
-        "++data.dataset_config.num_test_partitions=2",
-        # For SingleGraphDataModule (stage configs)
-        "++data.num_train_samples=8",
-        "++data.num_val_samples=4",
-        "++data.num_test_samples=4",
-        # For GraphDataModule pattern
-        "++data.dataset_config.num_graphs=4",
         # Set hydra run dir to output dir
         f"hydra.run.dir={output_dir}",
     ]
+
+    if data_module == "denoising":
+        overrides += [
+            "++data.samples_per_graph=4",
+            "++data.graph_config.num_train_partitions=2",
+            "++data.graph_config.num_test_partitions=2",
+            "++data.graph_config.num_graphs=4",
+        ]
+    elif data_module == "single_graph":
+        overrides += [
+            "++data.num_train_samples=8",
+            "++data.num_val_samples=4",
+            "++data.num_test_samples=4",
+        ]
+    elif data_module == "generative":
+        overrides += [
+            "data.num_graphs=20",
+        ]
+
+    return overrides
 
 
 def build_runner_command(
@@ -147,7 +169,7 @@ def build_runner_command(
     Parameters
     ----------
     runner
-        Name of the CLI runner (e.g., 'tmgg-spectral').
+        Name of the CLI runner (e.g., 'tmgg-spectral-arch').
     overrides
         List of Hydra override strings.
 

@@ -8,24 +8,30 @@ This document covers running experiments, interpreting results, and using the st
 
 ```bash
 # Run with default configuration
-uv run tmgg-attention
+uv run tmgg-spectral-arch
 
 # Override parameters
-uv run tmgg-gnn trainer.max_epochs=100 model.num_layers=4
+uv run tmgg-gnn trainer.max_steps=100000 model.num_layers=4
 
 # Different data configuration
-uv run tmgg-attention data=legacy_match
+uv run tmgg-spectral-arch data=sbm_default
 ```
 
 ### Available Commands
 
 | Command | Model Type | Base Config |
 |---------|------------|-------------|
-| `tmgg-attention` | Multi-layer attention | `base_config_attention.yaml` |
-| `tmgg-gnn` | Standard GNN | `base_config_gnn.yaml` |
-| `tmgg-hybrid` | GNN + Transformer | `base_config_hybrid.yaml` |
+| `tmgg-spectral-arch` | Spectral PE models | `base_config_spectral_arch.yaml` |
 | `tmgg-digress` | DiGress transformer | `base_config_digress.yaml` |
-| `tmgg-spectral` | Spectral PE models | `base_config_spectral.yaml` |
+| `tmgg-gnn` | Standard GNN | `base_config_gnn.yaml` |
+| `tmgg-gnn-transformer` | GNN + Transformer | `base_config_gnn_transformer.yaml` |
+| `tmgg-baseline` | Linear / MLP baselines | `base_config_baseline.yaml` |
+
+The `tmgg-baseline` command runs simple linear or MLP baselines for comparison. Override the model variant with `model=baselines/mlp`.
+
+### Discrete Diffusion
+
+The framework also supports discrete diffusion for generative graph modeling, where a model learns to reverse a categorical noise process. Training corrupts adjacency matrices according to a noise schedule (categorical transition matrices per Vignac et al. 2023) and trains the model to predict clean structure. See the [Generative Graph Modeling](#generative-graph-modeling) section for details and configuration.
 
 ### Sanity Checks
 
@@ -33,7 +39,7 @@ Validate setup without full training:
 
 ```bash
 # Run sanity check (tests data loading, forward pass, loss computation)
-uv run tmgg-attention sanity_check=true
+uv run tmgg-spectral-arch sanity_check=true
 
 # Fast dev run (one batch only)
 uv run tmgg-gnn trainer.fast_dev_run=true
@@ -47,8 +53,8 @@ Each run creates a timestamped directory:
 outputs/YYYY-MM-DD/HH-MM-SS/
 ├── config.yaml              # Resolved configuration
 ├── checkpoints/
-│   ├── model-epoch=05-val_loss=0.1234.ckpt
-│   ├── model-epoch=10-val_loss=0.0987.ckpt
+│   ├── model-step=005000-val_loss=0.1234.ckpt
+│   ├── model-step=010000-val_loss=0.0987.ckpt
 │   └── last.ckpt
 ├── tensorboard/             # TensorBoard logs (if enabled)
 │   └── events.out.tfevents.*
@@ -64,15 +70,15 @@ The framework saves:
 - Top 3 models by validation loss
 - Last checkpoint
 
-Checkpoint naming: `model-epoch={N}-val_loss={X}.ckpt`
+Checkpoint naming: `model-step={N}-val_loss={X}.ckpt`
 
 ### Loading Checkpoints
 
 ```python
-from tmgg.experiments.attention_denoising.lightning_module import AttentionDenoisingLightningModule
+from tmgg.experiments.spectral_arch_denoising.lightning_module import SpectralDenoisingLightningModule
 
-model = AttentionDenoisingLightningModule.load_from_checkpoint(
-    "outputs/.../checkpoints/model-epoch=10-val_loss=0.0987.ckpt"
+model = SpectralDenoisingLightningModule.load_from_checkpoint(
+    "outputs/.../checkpoints/model-step=010000-val_loss=0.0987.ckpt"
 )
 ```
 
@@ -81,7 +87,7 @@ model = AttentionDenoisingLightningModule.load_from_checkpoint(
 ### TensorBoard (Default)
 
 ```bash
-uv run tmgg-attention logger=tensorboard
+uv run tmgg-spectral-arch logger=tensorboard
 
 # View logs
 tensorboard --logdir outputs/
@@ -90,22 +96,24 @@ tensorboard --logdir outputs/
 ### Weights & Biases
 
 ```bash
-uv run tmgg-attention logger=wandb
+uv run tmgg-spectral-arch logger=wandb
 
 # Or with project name
-uv run tmgg-attention logger=wandb wandb.project="my-project"
+uv run tmgg-spectral-arch logger=wandb wandb_project="my-project"
 ```
+
+For analysis tools and exported data, see [`wandb-tools/README.md`](../wandb-tools/README.md).
 
 ### CSV Logger
 
 ```bash
-uv run tmgg-attention logger=csv
+uv run tmgg-spectral-arch logger=csv
 ```
 
 ### Multiple Loggers
 
 ```bash
-uv run tmgg-attention logger=multi  # TensorBoard + CSV
+uv run tmgg-spectral-arch logger=multi  # TensorBoard + CSV
 ```
 
 ## Metrics
@@ -115,7 +123,7 @@ The framework tracks these metrics:
 | Metric | Description |
 |--------|-------------|
 | `train/loss` | Training loss per step |
-| `val/loss` | Validation loss per epoch |
+| `val/loss` | Validation loss per validation check |
 | `test/loss` | Test loss (final evaluation) |
 | `train/loss_epoch` | Average training loss per epoch |
 
@@ -123,6 +131,22 @@ Additional metrics computed in final evaluation:
 - Eigenvalue error
 - Subspace distance
 - Reconstruction MAE/MSE
+
+> **Caveat:** Loss values are not comparable across experiment types.
+> Denoising uses BCEWithLogits, Gaussian generative uses MSE, and
+> discrete diffusion uses VLB/cross-entropy. Comparing `val/loss`
+> across these experiment families is meaningless — use MMD metrics
+> or graph-theoretic statistics for cross-experiment comparison.
+
+### Metric Regimes
+
+Denoising and generative experiments track fundamentally different metric sets, since they answer different questions (reconstruction quality vs. distributional fidelity).
+
+**Denoising** logs reconstruction quality against a known clean target: MSE, Frobenius error, eigenvalue error, subspace distance, and edge accuracy.
+
+**Generative** logs distributional similarity between generated and held-out reference graphs: MMD on degree distribution, clustering coefficient, and spectral statistics.
+
+These metric sets are not directly comparable. To bridge them, one can generate graphs from the generative model and compute reconstruction metrics against a held-out test set, or compute MMD statistics on the output of denoised graphs.
 
 ## Hyperparameter Sweeps
 
@@ -132,10 +156,10 @@ Run multiple configurations sequentially:
 
 ```bash
 # Single parameter sweep
-uv run tmgg-attention --multirun model.num_layers=4,8,16
+uv run tmgg-spectral-arch --multirun model.num_layers=4,8,16
 
 # Multiple parameters (grid search)
-uv run tmgg-attention --multirun \
+uv run tmgg-spectral-arch --multirun \
   model.num_layers=4,8 \
   model.learning_rate=0.001,0.01 \
   seed=1,2,3
@@ -354,23 +378,136 @@ _sweep_config:
     baseline: linear_pe
 ```
 
+## Generative Graph Modeling
+
+The generative pipeline trains diffusion-based models to *generate* new graphs from noise, rather than denoising a corrupted input. It reuses the same denoising architectures but wraps them in a discrete diffusion process with iterative sampling and MMD-based evaluation.
+
+### How It Works
+
+Training follows a standard discrete denoising diffusion objective: sample a random timestep, corrupt the clean adjacency matrix according to a noise schedule, and train the model to predict the clean graph. At inference time, the model starts from a random binary symmetric matrix and iteratively denoises it over the full schedule, producing a generated graph. Generated graphs are evaluated against held-out reference graphs using maximum mean discrepancy (MMD) on three graph-theoretic statistics: degree distribution, clustering coefficient distribution, and spectral properties.
+
+### Running Generative Experiments
+
+The generative runner uses its own Hydra config (`base_config_gaussian_diffusion.yaml`) and entry point:
+
+```bash
+# Default configuration (self_attention on SBM, 100 diffusion steps)
+uv run tmgg-gaussian-gen
+
+# Override model architecture
+uv run tmgg-gaussian-gen model.model_type=gnn
+
+# Override dataset and graph size
+uv run tmgg-gaussian-gen data.dataset_type=erdos_renyi data.num_nodes=100
+
+# Change noise schedule and diffusion steps
+uv run tmgg-gaussian-gen model.noise_schedule=linear model.num_diffusion_steps=200
+```
+
+> **Note:** Denoising experiments use version-based output directories
+> (`outputs/<experiment>/version_N/`) which support automatic resumption.
+> Generative experiments use timestamp-based directories
+> (`outputs/generative/YYYY-MM-DD_HH-MM-SS/`) which do not. To resume
+> a generative run, specify the checkpoint path explicitly via
+> `ckpt_path=<path>`.
+
+### Supported Architectures
+
+All eight denoising architectures are available for generative modeling, enabling direct ablation comparisons:
+
+| `model_type` | Architecture | Key Parameters |
+|-------------|-------------|----------------|
+| `linear_pe` | Linear positional encoding | `k`, `max_nodes`, `use_bias` |
+| `filter_bank` | Spectral polynomial filter bank | `k`, `polynomial_degree` |
+| `self_attention` | Query-key attention on eigenvectors | `k`, `d_k` |
+| `self_attention_mlp` | Self-attention with MLP post-processing | `k`, `d_k`, `mlp_hidden_dim`, `mlp_num_layers` |
+| `multilayer_attention` | Stacked transformer blocks | `k`, `d_model`, `num_heads`, `num_layers`, `dropout` |
+| `gnn` | Graph neural network | `num_layers`, `num_terms`, `feature_dim_in`, `feature_dim_out` |
+| `gnn_sym` | Symmetric GNN | `num_layers`, `num_terms`, `feature_dim_in`, `feature_dim_out` |
+| `hybrid` | EigenEmbedding + SelfAttentionDenoiser | `k`, `d_k`, `eigenvalue_reg` |
+| `bilinear` | Legacy query-key bilinear scoring (no softmax/values) | `k`, `d_k` |
+
+**Implementation note:** `model_type: self_attention` now implements correct Vaswani-style attention (softmax normalization over keys, weighted value aggregation). The previous implementation, which computed bilinear query-key scores without softmax or value projections, is preserved as `model_type: bilinear`.
+
+### Graph Distributions
+
+The `MultiGraphDataModule` generates synthetic graph collections for training. Supported distributions:
+
+| `dataset_type` | Description |
+|----------------|-------------|
+| `sbm` | Stochastic block model (configurable `num_blocks`, `p_intra`, `p_inter`) |
+| `regular` | d-regular graphs |
+| `tree` | Random trees |
+| `erdos_renyi` / `er` | Erdos-Renyi random graphs |
+| `watts_strogatz` / `ws` | Small-world graphs |
+| `random_geometric` / `rg` | Geometric proximity graphs |
+| `lfr` | LFR benchmark graphs |
+
+Dataset-specific parameters are passed through `data.dataset_config`. For SBM, the defaults are `num_blocks=2`, `p_intra=0.7`, `p_inter=0.1`.
+
+### Configuration Reference
+
+The base config (`exp_configs/base_config_gaussian_diffusion.yaml`) inherits shared training settings from `base_config_training.yaml` and adds generative-specific sections. Key parameters:
+
+```yaml
+model:
+  model_type: self_attention       # Architecture (see table above)
+  num_diffusion_steps: 100         # Number of diffusion timesteps
+  noise_schedule: cosine           # Schedule: linear, cosine, or quadratic
+  noise_type: digress              # Noise model: digress, gaussian, or rotation
+  loss_type: MSE                   # Loss: MSE or BCEWithLogits
+  mmd_kernel: gaussian             # MMD kernel: gaussian (L2) or gaussian_tv (DiGress)
+  mmd_sigma: 1.0                   # Gaussian kernel bandwidth
+  eval_num_samples: 100            # Graphs to generate for MMD evaluation
+
+data:
+  dataset_type: sbm                # Graph distribution (see table above)
+  num_nodes: 50                    # Nodes per graph
+  num_graphs: 1000                 # Total graphs to generate
+  batch_size: 32
+```
+
+**Noise type note:** `noise_type: digress` now implements categorical transition matrices following Vignac et al. (2023), where the forward process interpolates between the identity matrix and a uniform distribution over edge states. The previous implementation, which performed independent edge flips with a fixed probability, is preserved as `noise_type: edge_flip`.
+
+### Evaluation Metrics
+
+The generative module computes three MMD metrics at the end of each validation epoch, comparing generated graphs against held-out reference graphs:
+
+| Metric | Logged as | Description |
+|--------|-----------|-------------|
+| Degree MMD | `val/degree_mmd` | Divergence between degree distributions |
+| Clustering MMD | `val/clustering_mmd` | Divergence between clustering coefficient distributions |
+| Spectral MMD | `val/spectral_mmd` | Divergence between spectral (eigenvalue) distributions |
+
+Lower values indicate that generated graphs more closely match the reference distribution. The kernel type (`gaussian` or `gaussian_tv`) and bandwidth (`mmd_sigma`) control the sensitivity of these comparisons.
+
+### Example: SBM Generation with Multirun
+
+```bash
+# Sweep over architectures and diffusion steps
+uv run tmgg-gaussian-gen --multirun \
+  model.model_type=self_attention,filter_bank,gnn \
+  model.num_diffusion_steps=50,100,200 \
+  seed=1,2,3
+```
+
 ## Debugging
 
 ### Verbose Logging
 
 ```bash
 # Show full stack traces
-HYDRA_FULL_ERROR=1 uv run tmgg-attention
+HYDRA_FULL_ERROR=1 uv run tmgg-spectral-arch
 
 # Debug mode
-uv run tmgg-attention trainer.fast_dev_run=true
+uv run tmgg-spectral-arch trainer.fast_dev_run=true
 ```
 
 ### Common Issues
 
 **CUDA out of memory**: Reduce batch size
 ```bash
-uv run tmgg-attention data.batch_size=32
+uv run tmgg-spectral-arch data.batch_size=32
 ```
 
 **NaN gradients**: Enable eigenvalue regularization
@@ -380,7 +517,7 @@ uv run tmgg-gnn model.eigenvalue_reg=0.001
 
 **Slow training**: Check GPU availability
 ```bash
-uv run tmgg-attention trainer.accelerator=gpu
+uv run tmgg-spectral-arch trainer.accelerator=gpu
 ```
 
 ## Reproducibility
@@ -389,10 +526,10 @@ For reproducible experiments:
 
 ```bash
 # Set seed
-uv run tmgg-attention seed=42
+uv run tmgg-spectral-arch seed=42
 
 # Deterministic mode (slower but reproducible)
-uv run tmgg-attention trainer.deterministic=true
+uv run tmgg-spectral-arch trainer.deterministic=true
 ```
 
 The full configuration is saved in `outputs/.../config.yaml` for reproduction.
@@ -419,7 +556,7 @@ Analyze graph eigenstructure and how it changes under noise. CLI: `tmgg-eigenstr
 ```bash
 # Collect eigendecompositions for SBM graphs
 uv run tmgg-eigenstructure collect -d sbm \
-    -c '{"num_nodes": 50, "p_intra": 0.8, "q_inter": 0.1, "num_partitions": 100}'
+    -c '{"num_nodes": 50, "p_intra": 0.8, "p_inter": 0.1, "num_partitions": 100}'
 
 # Analyze collected data
 uv run tmgg-eigenstructure analyze -i results/eigenstructure_study

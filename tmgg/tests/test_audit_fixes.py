@@ -16,21 +16,22 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from tmgg.experiment_utils.metrics import (
-    compute_eigenvalue_error,
-    compute_subspace_distance,
+from tmgg.data import generate_sbm_adjacency
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+    compute_spectral_deltas,
 )
 from tmgg.models.attention.attention import MultiLayerAttention
 from tmgg.models.gnn.gnn_sym import GNNSymmetric
 from tmgg.models.gnn.nvgnn import NodeVarGNN
 from tmgg.models.hybrid.hybrid import SequentialDenoisingModel
-from tmgg.models.layers.eigen_embedding import EigenEmbedding
+from tmgg.models.layers.eigen_embedding import _EigenEmbedding as EigenEmbedding
 from tmgg.models.layers.gcn import GraphConvolutionLayer
 from tmgg.models.layers.masked_softmax import masked_softmax
 from tmgg.models.layers.mha_layer import MultiHeadAttention
 from tmgg.models.layers.nvgcn_layer import NodeVarGraphConvolutionLayer
+from tmgg.models.layers.topk_eigen import TopKEigenLayer
 from tmgg.models.spectral_denoisers.filter_bank import GraphFilterBank
-from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
 
 
 class TestIssue1AttentionScaling:
@@ -61,14 +62,11 @@ class TestIssue1AttentionScaling:
         layer = MultiHeadAttention(d_model=d_model, num_heads=num_heads)
         x = torch.randn(2, 10, d_model)
 
-        output, combined_scores = layer(x)
+        output = layer(x)
 
         # Output should be valid (no NaN/Inf)
         assert not torch.isnan(output).any(), "NaN in attention output"
         assert not torch.isinf(output).any(), "Inf in attention output"
-
-        # Combined scores are a learned combination, but should still be reasonable
-        assert not torch.isnan(combined_scores).any(), "NaN in combined scores"
 
 
 class TestIssue2SymmetryEnforcement:
@@ -145,7 +143,9 @@ class TestIssues4And5NodeVarGNNRedesign:
 
     def test_nvgcn_layer_is_node_agnostic(self):
         """NodeVarGraphConvolutionLayer should work with any graph size."""
-        layer = NodeVarGraphConvolutionLayer(num_terms=2, num_channels_in=8)
+        layer = NodeVarGraphConvolutionLayer(
+            num_terms=2, num_channels_in=8, num_channels_out=8
+        )
 
         # Test with different graph sizes
         for num_nodes in [5, 10, 20]:
@@ -156,7 +156,9 @@ class TestIssues4And5NodeVarGNNRedesign:
 
     def test_nvgcn_layer_no_dynamic_recreation(self):
         """Layer parameters should not be recreated on size change."""
-        layer = NodeVarGraphConvolutionLayer(num_terms=2, num_channels_in=8)
+        layer = NodeVarGraphConvolutionLayer(
+            num_terms=2, num_channels_in=8, num_channels_out=8
+        )
 
         # Store parameter ids
         param_ids_before = {id(p) for p in layer.parameters()}
@@ -172,18 +174,15 @@ class TestIssues4And5NodeVarGNNRedesign:
             param_ids_before == param_ids_after
         ), "Parameters were recreated during forward pass"
 
-    def test_nvgnn_returns_logits(self):
-        """NodeVarGNN.forward() should return raw logits, not sigmoid."""
+    def test_nvgnn_returns_graph_data(self):
+        """NodeVarGNN.forward() should return GraphData."""
         model = NodeVarGNN(num_layers=1, num_terms=2, feature_dim=5)
         A = torch.eye(10).unsqueeze(0)
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        # Logits can be outside [0, 1], sigmoid output cannot
-        # Check that output is not artificially bounded
-        # (With random init, raw logits typically exceed [-5, 5])
-        # Just verify model runs and returns correct shape
-        assert output.shape == (1, 10, 10), f"Unexpected shape {output.shape}"
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (1, 10, 10)
 
 
 class TestIssue6EigenvaluePowerNormalization:
@@ -201,10 +200,10 @@ class TestIssue6EigenvaluePowerNormalization:
         A = (A + A.transpose(-1, -2)) / 2
         A = A * 10  # Scale up eigenvalues
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        assert not torch.isnan(output).any(), "NaN in filter bank output"
-        assert not torch.isinf(output).any(), "Inf in filter bank output"
+        assert not torch.isnan(result.E).any(), "NaN in filter bank output"
+        assert not torch.isinf(result.E).any(), "Inf in filter bank output"
 
 
 class TestIssue7MetricsConvergenceHandling:
@@ -213,23 +212,22 @@ class TestIssue7MetricsConvergenceHandling:
     Rationale: ARPACK can fail to converge on ill-conditioned matrices.
     """
 
-    def test_eigenvalue_error_handles_sparse_matrix(self):
-        """compute_eigenvalue_error should not crash on sparse graphs."""
+    def test_eigenvalue_drift_handles_sparse_matrix(self):
+        """Eigenvalue drift should not crash on sparse graphs."""
         # Near-empty adjacency (can cause eigsh convergence issues)
-        A_true = np.eye(10) * 0.01
-        A_pred = np.eye(10) * 0.01
+        A_true = torch.eye(10) * 0.01
+        A_pred = torch.eye(10) * 0.01
 
-        # Should not raise ArpackNoConvergence
-        error = compute_eigenvalue_error(A_true, A_pred, k=4)
-        assert np.isfinite(error), f"Non-finite error: {error}"
+        deltas = compute_spectral_deltas(A_true, A_pred, k=4)
+        assert torch.isfinite(deltas["eigenvalue_drift"]).all()
 
     def test_subspace_distance_handles_sparse_matrix(self):
-        """compute_subspace_distance should not crash on sparse graphs."""
-        A_true = np.eye(10) * 0.01
-        A_pred = np.eye(10) * 0.01
+        """Subspace distance should not crash on sparse graphs."""
+        A_true = torch.eye(10) * 0.01
+        A_pred = torch.eye(10) * 0.01
 
-        distance = compute_subspace_distance(A_true, A_pred, k=4)
-        assert np.isfinite(distance), f"Non-finite distance: {distance}"
+        deltas = compute_spectral_deltas(A_true, A_pred, k=4)
+        assert torch.isfinite(deltas["subspace_distance"]).all()
 
 
 class TestIssue8SigmoidConsistency:
@@ -240,28 +238,33 @@ class TestIssue8SigmoidConsistency:
     """
 
     def test_attention_returns_logits(self):
-        """MultiLayerAttention.forward() should return logits."""
-        model = MultiLayerAttention(d_model=10, num_heads=2, num_layers=1)
-        x = torch.randn(2, 5, 10)
+        """MultiLayerAttention.forward() should return logits, not sigmoid output.
 
-        output = model(x)
+        d_model must match num_nodes because forward() extracts the adjacency
+        matrix (B, N, N) and feeds it through attention as (B, N, d_model=N).
+        """
+        num_nodes = 10
+        model = MultiLayerAttention(d_model=num_nodes, num_heads=2, num_layers=1)
+        A = torch.randn(2, num_nodes, num_nodes)
+        A = (A + A.transpose(-1, -2)) / 2
 
-        # Logits are unbounded; if sigmoid was applied, output would be in (0, 1)
-        # With zero-initialized output, logits can be negative or > 1
-        # Just verify shape for now
-        assert output.shape == (2, 5, 10)
+        result = model(GraphData.from_adjacency(A))
 
-    def test_gnn_symmetric_returns_logits(self):
-        """GNNSymmetric.forward() should return adjacency logits."""
+        assert isinstance(result, GraphData)
+        logits = result.E[..., 1]
+        assert logits.shape == (2, num_nodes, num_nodes)
+
+    def test_gnn_symmetric_returns_graph_data(self):
+        """GNNSymmetric.forward() should return GraphData."""
         model = GNNSymmetric(
             num_layers=1, num_terms=2, feature_dim_in=10, feature_dim_out=5
         )
         A = torch.eye(8).unsqueeze(0)
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        # forward() returns adjacency logits (single tensor)
-        assert output.shape == (1, 8, 8)
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (1, 8, 8)
 
 
 class TestIssue9DivisionGuards:
@@ -314,8 +317,9 @@ class TestIssue10ResidualShapeAssertion:
         A = torch.eye(8).unsqueeze(0)
 
         # Should work without error
-        output = model(A)
-        assert output.shape == (1, 8, 8), f"Unexpected output shape {output.shape}"
+        result = model(GraphData.from_adjacency(A))
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (1, 8, 8)
 
 
 class TestIssue11ZeroEigenvectorWarning:
@@ -391,16 +395,16 @@ class TestIssue13DivisionBySmallNorm:
     Rationale: For near-zero eigenvalues, norm can be very small.
     """
 
-    def test_eigenvalue_error_guards_small_norm(self):
-        """compute_eigenvalue_error should not overflow on small eigenvalues."""
+    def test_eigenvalue_drift_guards_small_norm(self):
+        """Eigenvalue drift should not overflow on small eigenvalues."""
         # Matrix with very small eigenvalues
-        A_true = np.eye(10) * 1e-10
-        A_pred = np.eye(10) * 1e-10
+        A_true = torch.eye(10) * 1e-10
+        A_pred = torch.eye(10) * 1e-10
 
-        error = compute_eigenvalue_error(A_true, A_pred, k=4)
+        deltas = compute_spectral_deltas(A_true, A_pred, k=4)
 
         # Should be finite, not inf or nan
-        assert np.isfinite(error), f"Non-finite error: {error}"
+        assert torch.isfinite(deltas["eigenvalue_drift"]).all()
 
 
 class TestIssue14GELUActivation:
@@ -410,3 +414,95 @@ class TestIssue14GELUActivation:
     """
 
     pass
+
+
+class TestSBMDiagonalAndSymmetry:
+    """Regression tests for SBM adjacency generation bugs (Step 0.1).
+
+    Bug 1 -- Self-loops on the diagonal: generate_sbm_adjacency produced
+    adjacency matrices where diagonal entries could be 1 (self-loops), because
+    random values were sampled for the full block including diagonal positions,
+    and never zeroed out afterward. Simple graphs must have zero diagonal.
+
+    Bug 2 -- Asymmetric intra-block edges: when i == j (diagonal blocks), the
+    code skipped the symmetrization branch (which only ran for i != j). Each
+    intra-block entry (r, c) was an independent Bernoulli draw, so A[r,c] could
+    differ from A[c,r] within the same community. Undirected graphs require
+    A == A.T everywhere, including within blocks.
+
+    These tests use seeded generators so failures are deterministic. The key
+    invariants -- zero diagonal and full symmetry -- must hold for all parameter
+    combinations, not just edge cases like p=1.0.
+    """
+
+    def test_diagonal_is_zero_deterministic(self):
+        """Diagonal must be zero for all tested (p, q) combinations.
+
+        With p < 1.0, diagonal entries would be randomly set to 0 or 1.
+        This test catches the missing np.fill_diagonal(adj_matrix, 0) call.
+        """
+        rng = np.random.default_rng(42)
+        test_cases = [
+            ([5, 5, 5], 0.8, 0.2),
+            ([3, 7], 0.5, 0.1),
+            ([10], 0.9, 0.0),
+            ([4, 4, 4, 4], 1.0, 0.5),
+            ([2, 3, 5], 0.3, 0.3),
+        ]
+        for block_sizes, p, q in test_cases:
+            A = generate_sbm_adjacency(block_sizes, p, q, rng=rng)
+            assert np.all(
+                np.diag(A) == 0
+            ), f"Self-loops found for block_sizes={block_sizes}, p={p}, q={q}"
+
+    def test_intra_block_symmetry(self):
+        """Intra-block (diagonal block) edges must be symmetric.
+
+        With p < 1.0, each entry is an independent Bernoulli draw. Without
+        explicit symmetrization of diagonal blocks, A[r,c] != A[c,r] for
+        many off-diagonal intra-block pairs. This test catches the missing
+        symmetrization in the i == j branch.
+        """
+        rng = np.random.default_rng(123)
+        test_cases = [
+            ([5, 5, 5], 0.5, 0.1),
+            ([8, 8], 0.3, 0.05),
+            ([10], 0.7, 0.0),
+            ([3, 4, 5, 6], 0.6, 0.2),
+        ]
+        for block_sizes, p, q in test_cases:
+            A = generate_sbm_adjacency(block_sizes, p, q, rng=rng)
+            assert np.allclose(
+                A, A.T
+            ), f"Asymmetry found for block_sizes={block_sizes}, p={p}, q={q}"
+
+    def test_full_matrix_symmetry(self):
+        """The entire adjacency matrix must be symmetric, not just inter-block.
+
+        This is the combined check: both intra- and inter-block portions must
+        satisfy A == A.T. With the bug, inter-block was symmetric but
+        intra-block was not.
+        """
+        rng = np.random.default_rng(999)
+        A = generate_sbm_adjacency([6, 6, 6], 0.4, 0.1, rng=rng)
+        diff = np.abs(A - A.T)
+        assert np.allclose(
+            diff, 0
+        ), f"Matrix not symmetric; max asymmetry = {diff.max()}"
+
+    def test_binary_values(self):
+        """Adjacency entries must be exactly 0 or 1 (no floats from averaging)."""
+        rng = np.random.default_rng(77)
+        A = generate_sbm_adjacency([5, 5], 0.5, 0.3, rng=rng)
+        unique_vals = np.unique(A)
+        assert set(unique_vals).issubset(
+            {0, 1}
+        ), f"Non-binary values found: {unique_vals}"
+
+    def test_shape_and_dtype(self):
+        """Output shape must match sum of block sizes, dtype should be numeric."""
+        rng = np.random.default_rng(0)
+        block_sizes = [3, 4, 5]
+        A = generate_sbm_adjacency(block_sizes, 0.5, 0.2, rng=rng)
+        n = sum(block_sizes)
+        assert A.shape == (n, n), f"Expected ({n}, {n}), got {A.shape}"

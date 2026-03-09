@@ -6,23 +6,23 @@ The framework uses Hydra for configuration management. This document covers the 
 
 ```
 exp_configs/
-├── base_config_attention.yaml     # Top-level for attention experiments
-├── base_config_gnn.yaml           # Top-level for GNN experiments
+├── base_config_spectral_arch.yaml  # Top-level for spectral experiments
 ├── base_config_digress.yaml       # Top-level for DiGress experiments
-├── base_config_hybrid.yaml        # Top-level for hybrid experiments
-├── base_config_spectral.yaml      # Top-level for spectral experiments
+├── base_config_gnn.yaml           # Top-level for GNN experiments
+├── base_config_gnn_transformer.yaml # Top-level for hybrid experiments
+├── base_config_gaussian_diffusion.yaml # Top-level for generative experiments
+├── base_config_training.yaml      # Top-level training config
 ├── base/
 │   ├── trainer/default.yaml       # PyTorch Lightning trainer settings
 │   └── logger/                    # tensorboard.yaml, wandb.yaml, csv.yaml
 ├── models/
-│   ├── attention/                 # multi_layer_attention.yaml
+│   ├── baselines/                 # linear.yaml, mlp.yaml
 │   ├── gnn/                       # standard_gnn.yaml, nodevar_gnn.yaml, symmetric_gnn.yaml
-│   ├── digress/                   # digress_transformer.yaml
+│   ├── digress/                   # digress_sbm_small.yaml, digress_sbm_small_highlr.yaml
 │   ├── hybrid/                    # hybrid_with_transformer.yaml
 │   └── spectral/                  # filter_bank.yaml, linear_pe.yaml, self_attention.yaml
 ├── data/
 │   ├── sbm_default.yaml           # SBM with n=20
-│   ├── legacy_match.yaml          # Legacy denoising replication
 │   └── ...
 └── stage/
     ├── stage1_poc.yaml            # Proof of concept
@@ -33,20 +33,93 @@ exp_configs/
     └── stage5_full.yaml           # Full validation (future)
 ```
 
+## Composition Chain
+
+Hydra composes configurations bottom-up. Each layer can override keys from layers below:
+
+```
+base/trainer/default.yaml     <- trainer settings (max_steps, val_check_interval, ...)
+base/logger/default.yaml      <- logger backends (tensorboard, wandb)
+base/callbacks/default.yaml   <- checkpointing, early stopping
+data/sbm_default.yaml         <- dataset configuration
+         |
+base_config_training.yaml     <- shared training infrastructure (optimizer, scheduler,
+         |                       seed, paths, noise config, sweep settings)
+         |
+base_config_<experiment>.yaml <- experiment-specific overrides (model, experiment_name,
+         |                       wandb_project, data section)
+         |
+stage/<stage>.yaml            <- stage-specific overrides (noise_levels, max_steps,
+         |                       per-stage sweep axes)
+         |
+models/<type>/<variant>.yaml  <- model architecture variants
+         |
+CLI overrides                 <- command-line Hydra overrides (highest priority)
+```
+
+The `_self_` directive in each config controls where that file's keys are inserted relative to its defaults. All base configs use `- _self_` as the last default, meaning the file's explicit keys override everything composed below.
+
 Each base config composes defaults from subdirectories:
 
 ```yaml
-# base_config_attention.yaml
+# base_config_spectral_arch.yaml
 defaults:
-  - models/attention/multi_layer_attention@model
+  - models/spectral/linear_pe@model
   - data: sbm_default
   - base/trainer/default@trainer
   - base/logger/tensorboard@logger
   - _self_
 
-experiment_name: "attention_denoising"
+experiment_name: "spectral_arch_denoising"
 seed: 42
 ```
+
+## Interpolation and `_self_` semantics
+
+### Lazy resolution
+
+OmegaConf `${key}` references resolve at access time, not at file load. The library builds a reference graph and evaluates each node only when its value is actually read. A model config can therefore declare `noise_type: ${data.noise_type}` before the `data` group is composed — the reference becomes valid once the full config tree exists.
+
+### Reference types
+
+Three forms of interpolation cover most use cases:
+
+```yaml
+# Same-level reference
+seed: 42
+run_name: "experiment_seed_${seed}"
+
+# Cross-section reference
+data:
+  noise_type: gaussian
+model:
+  noise_type: ${data.noise_type}
+
+# OmegaConf built-ins
+api_key: ${oc.env:WANDB_API_KEY}          # reads environment variable
+stage: ${oc.select:stage,default_stage}    # returns "default_stage" if `stage` is missing
+```
+
+### `_self_` placement
+
+In the `defaults:` list, `_self_` controls where the current file's explicit keys are inserted relative to composed defaults. All TMGG base configs place `- _self_` last:
+
+```yaml
+defaults:
+  - models/spectral/linear_pe@model
+  - data: sbm_default
+  - _self_         # file's keys override everything above
+```
+
+If `_self_` were first, composed defaults would override the file's explicit values instead.
+
+### Missing interpolation targets
+
+When code accesses a key whose `${...}` target does not exist, OmegaConf raises `InterpolationKeyError` immediately. There is no silent fallback to `None` or an empty string — resolution is fail-fast by design.
+
+### Batch generation context
+
+Architecture YAMLs contain `${learning_rate}`, `${noise_levels}`, and similar placeholders so they remain usable with Hydra's CLI for single-run local invocations. During batch config generation, `strip_interpolations()` in the config builder removes these entries before merging so the resolved values from Phase 1 survive the architecture merge. See the [config generation pipeline](how-to-run-experiments.md#config-generation-pipeline) for the full two-phase design.
 
 ## Hydra Override Syntax
 
@@ -54,16 +127,16 @@ Override parameters from the command line:
 
 ```bash
 # Simple override
-uv run tmgg-attention model.num_layers=16
+uv run tmgg-spectral-arch model.num_layers=16
 
 # Nested override
 uv run tmgg-gnn model.scheduler_config.T_0=10
 
 # List override (use quotes)
-uv run tmgg-attention 'data.noise_levels=[0.1,0.2,0.3]'
+uv run tmgg-spectral-arch 'data.noise_levels=[0.1,0.2,0.3]'
 
 # Switch config group
-uv run tmgg-gnn data=legacy_match
+uv run tmgg-gnn data=sbm_default
 
 # Switch model variant
 uv run tmgg-gnn model=gnn/nodevar_gnn
@@ -93,10 +166,10 @@ View the resolved configuration without running:
 
 ```bash
 # Print full config
-uv run tmgg-attention --cfg job
+uv run tmgg-spectral-arch --cfg job
 
 # Print specific group
-uv run tmgg-attention --cfg job --package model
+uv run tmgg-spectral-arch --cfg job --package model
 ```
 
 ## Multirun (Hyperparameter Sweeps)
@@ -105,13 +178,13 @@ Run multiple configurations:
 
 ```bash
 # Sweep over values
-uv run tmgg-attention --multirun model.num_layers=4,8,16
+uv run tmgg-spectral-arch --multirun model.num_layers=4,8,16
 
 # Multiple parameters
-uv run tmgg-attention --multirun model.num_layers=4,8 model.learning_rate=0.001,0.01
+uv run tmgg-spectral-arch --multirun model.num_layers=4,8 model.learning_rate=0.001,0.01
 
 # Grid search (all combinations)
-uv run tmgg-attention --multirun \
+uv run tmgg-spectral-arch --multirun \
   model.num_layers=4,8,16 \
   model.num_heads=4,8 \
   seed=1,2,3
@@ -119,21 +192,21 @@ uv run tmgg-attention --multirun \
 
 ## Model Configuration Reference
 
-### Attention Model
+### Spectral Model
 
 ```yaml
-# models/attention/multi_layer_attention.yaml
-_target_: tmgg.experiments.attention_denoising.lightning_module.AttentionDenoisingLightningModule
+# models/spectral/self_attention.yaml
+_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
 
-d_model: 20           # Model dimension (typically matches num_nodes)
-num_heads: 8          # Number of attention heads
-num_layers: 8         # Number of transformer layers
-d_k: null             # Key dimension (defaults to d_model // num_heads)
-d_v: null             # Value dimension (defaults to d_model // num_heads)
-dropout: 0.0          # Dropout rate
-bias: true            # Use bias in linear layers
-learning_rate: 0.001
-loss_type: "MSE"      # MSE or BCE
+model_type: self_attention
+k: 8                  # Number of eigenvectors
+d_k: 64               # Key dimension for self-attention
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+loss_type: ${loss_type}
 ```
 
 ### GNN Model
@@ -147,7 +220,6 @@ num_terms: 3          # Polynomial filter terms
 feature_dim_in: 20    # Input feature dimension
 feature_dim_out: 10   # Output feature dimension
 eigenvalue_reg: 0.0   # Eigenvalue regularization (0.001 helps gradient stability)
-domain: "standard"    # standard or inv-sigmoid
 ```
 
 ### Data Configuration
@@ -158,7 +230,7 @@ dataset_name: sbm
 dataset_config:
   num_nodes: 20
   p_intra: 1.0        # Intra-block edge probability
-  q_inter: 0.0        # Inter-block edge probability
+  p_inter: 0.0        # Inter-block edge probability
   min_blocks: 2
   max_blocks: 4
 
@@ -247,20 +319,19 @@ progress_bar:
 Create a new file in `exp_configs/models/`:
 
 ```yaml
-# models/attention/large_attention.yaml
-_target_: tmgg.experiments.attention_denoising.lightning_module.AttentionDenoisingLightningModule
+# models/spectral/self_attention_large.yaml
+_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
 
-d_model: 40
-num_heads: 16
-num_layers: 16
-dropout: 0.1
+model_type: self_attention
+k: 50
+d_k: 128
 learning_rate: 0.0005
 ```
 
 Use it:
 
 ```bash
-uv run tmgg-attention model=attention/large_attention
+uv run tmgg-spectral-arch model=spectral/self_attention_large
 ```
 
 ### New Data Configuration
@@ -273,7 +344,7 @@ dataset_name: sbm
 dataset_config:
   num_nodes: 100
   p_intra: 0.9
-  q_inter: 0.1
+  p_inter: 0.1
   min_blocks: 3
   max_blocks: 6
 
@@ -294,25 +365,25 @@ uv run tmgg-gnn data=sbm_large
 Create a file in `exp_configs/experiments/`:
 
 ```yaml
-# experiments/attention_long_training.yaml
+# experiments/spectral_long_training.yaml
 # @package _global_
 defaults:
-  - /base_config_attention
+  - /base_config_spectral
   - _self_
 
 model:
-  num_layers: 12
-  dropout: 0.1
+  k: 50
+  d_k: 128
 
 trainer:
-  max_epochs: 1000
+  max_steps: 100000
   gradient_clip_val: 0.5
 ```
 
 Use it:
 
 ```bash
-uv run tmgg-attention +experiments=attention_long_training
+uv run tmgg-spectral-arch +experiments=spectral_long_training
 ```
 
 ## Environment Variables
@@ -321,5 +392,5 @@ Hydra respects standard environment variables:
 
 ```bash
 # Override output directory
-HYDRA_FULL_ERROR=1 uv run tmgg-attention  # Show full stack traces
+HYDRA_FULL_ERROR=1 uv run tmgg-spectral-arch  # Show full stack traces
 ```

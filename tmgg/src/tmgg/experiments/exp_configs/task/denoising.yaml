@@ -1,0 +1,36 @@
+# @package _global_
+# Denoising task: loss function, noise parameters, data config, model-data sync.
+#
+# Loaded as a config group by all denoising experiment configs.
+# Generative experiments skip this entirely and define their own data/model sections.
+
+defaults:
+  - /data: sbm_default
+
+# Loss function (models output logits, BCEWithLogits applies sigmoid internally)
+loss_type: BCEWithLogits
+
+# Noise configuration
+noise_type: digress
+noise_levels: [0.01, 0.05, 0.1, 0.2, 0.3]
+eval_noise_levels: null  # Noise levels for evaluation. null = use noise_levels
+fixed_noise_seed: null  # Set to int for constant noise (sanity check mode)
+
+# Sync data module noise config with top-level settings.
+# Ensures LightningModule and DataModule hparams agree (Lightning merges them).
+data:
+  noise_levels: ${noise_levels}
+  noise_type: ${noise_type}
+
+# Model-data sync (merged into whichever model config is loaded).
+# Denoising models need noise_type/levels from the data config plus global
+# seed and spectral logging settings.
+model:
+  noise_type: ${data.noise_type}
+  noise_levels: ${data.noise_levels}
+  seed: ${seed}
+  spectral_k: ${spectral_k}
+  evaluator:
+    _target_: tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator.GraphEvaluator
+    eval_num_samples: 128
+  eval_num_samples: 128

@@ -15,21 +15,20 @@ outputs/
 wandb/
 wandb_export/
 analysis_output/
-reports/
+/reports/
 
 # debug scripts
 scripts/debug_*.py
 wandb_export_dataframes.tar.xz
 wandb_export_full.tar.xz
-data/
+/data/
 logs/
 .mcp.json
 
-# Large eigenstructure data (stored externally)
-eigenstructure_results_full/enzymes/
-eigenstructure_results_full/er/
-eigenstructure_results_full/proteins/
-eigenstructure_results_full/regular/
-eigenstructure_results_full/sbm/
-eigenstructure_results_full/tree/
+# ORCA compiled binary (auto-compiled from source)
+src/tmgg/experiment_utils/orca/orca
+
+# Eigenstructure data (archived externally)
+eigenstructure_results/
+eigenstructure_results_full/
 .env

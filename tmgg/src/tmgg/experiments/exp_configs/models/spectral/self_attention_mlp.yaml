@@ -1,0 +1,32 @@
+# Self-Attention denoiser with MLP post-processing
+# Â = MLP((V W_Q)(V W_K)^T / √d_k) (outputs logits)
+
+_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+
+model_type: bilinear_mlp
+
+model_config:
+  # Number of eigenvectors
+  k: 8
+  # Key dimension
+  d_k: 64
+  # MLP configuration
+  # Sweep: mlp_hidden_dim: {64, 128, 256}
+  mlp_hidden_dim: 128
+  mlp_num_layers: 2
+
+# Optimizer settings
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+# Scheduler
+scheduler_config: ${scheduler_config}
+
+# Noise settings
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+
+# Loss
+loss_type: ${loss_type}

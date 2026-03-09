@@ -4,23 +4,19 @@ import numpy as np
 import pytest
 import torch
 
-from tmgg.experiment_utils import (
-    AdjacencyMatrixDataset,
+from tmgg.data import (
     GraphDataset,
-    PermutedAdjacencyDataset,
-    add_digress_noise,
+    LogitNoiseGenerator,
+    add_edge_flip_noise,
     add_gaussian_noise,
+    add_logit_noise,
     add_rotation_noise,
-    compute_eigendecomposition,
+    create_noise_generator,
     generate_block_sizes,
     generate_sbm_adjacency,
     random_skew_symmetric_matrix,
 )
-from tmgg.experiment_utils.data import (
-    LogitNoiseGenerator,
-    add_logit_noise,
-    create_noise_generator,
-)
+from tmgg.data.datasets.graph_types import GraphData
 
 
 class TestSBMGeneration:
@@ -38,10 +34,11 @@ class TestSBMGeneration:
         assert np.all(A >= 0) and np.all(A <= 1)
         assert np.allclose(A, A.T)  # Symmetric
 
-        # Check block structure
-        assert np.all(A[:5, :5] == 1)  # First block all connected
-        assert np.all(A[5:10, 5:10] == 1)  # Second block all connected
-        assert np.all(A[10:15, 10:15] == 1)  # Third block all connected
+        # Check block structure (off-diagonal entries are 1, diagonal is 0)
+        for start in (0, 5, 10):
+            block = A[start : start + 5, start : start + 5]
+            assert np.all(np.diag(block) == 0), "No self-loops"
+            assert np.all(block + np.eye(5) == 1), "All off-diagonal are 1"
         assert np.all(A[:5, 5:10] == 0)  # No inter-block connections
 
     def test_generate_block_sizes(self):
@@ -62,13 +59,21 @@ class TestNoiseGeneration:
     """Test noise generation functions."""
 
     def test_random_skew_symmetric_matrix(self):
-        """Test skew-symmetric matrix generation."""
+        """Test skew-symmetric matrix generation with explicit RNG."""
         n = 5
-        S = random_skew_symmetric_matrix(n)
+        rng = np.random.default_rng(42)
+        S = random_skew_symmetric_matrix(n, rng=rng)
 
         assert S.shape == (n, n)
         assert np.allclose(S, -S.T)  # Skew-symmetric property
         assert np.allclose(np.diag(S), 0)  # Diagonal is zero
+
+    def test_random_skew_symmetric_matrix_reproducibility(self):
+        """Passing the same seed produces identical matrices."""
+        n = 5
+        S1 = random_skew_symmetric_matrix(n, rng=np.random.default_rng(99))
+        S2 = random_skew_symmetric_matrix(n, rng=np.random.default_rng(99))
+        assert np.array_equal(S1, S2)
 
     def test_add_gaussian_noise(self):
         """Test Gaussian noise addition."""
@@ -76,7 +81,7 @@ class TestNoiseGeneration:
         eps = 0.1
 
         A_noisy = add_gaussian_noise(A, eps)
-        eigenvalues, V = compute_eigendecomposition(A_noisy)
+        eigenvalues, V = torch.linalg.eigh(A_noisy.float())
 
         assert A_noisy.shape == A.shape
         assert isinstance(A_noisy, torch.Tensor)
@@ -103,7 +108,7 @@ class TestNoiseGeneration:
         eps = 0.1
 
         A_noisy = add_gaussian_noise(A, eps)
-        eigenvalues, V = compute_eigendecomposition(A_noisy)
+        eigenvalues, V = torch.linalg.eigh(A_noisy.float())
 
         assert A_noisy.shape == (batch_size, 5, 5)
         assert V.shape == (batch_size, 5, 5)
@@ -112,21 +117,21 @@ class TestNoiseGeneration:
         # Check that noise is different for each batch element
         assert not torch.allclose(A_noisy[0], A_noisy[1])
 
-    def test_add_digress_noise(self):
+    def test_add_edge_flip_noise(self):
         """Test digress (edge flipping) noise."""
         A = np.ones((5, 5))
         p = 0.0  # No flipping
 
-        A_noisy = add_digress_noise(A, p)
-        eigenvalues, V = compute_eigendecomposition(A_noisy)
+        A_noisy = add_edge_flip_noise(A, p)
+        eigenvalues, V = torch.linalg.eigh(A_noisy.float())
 
         assert torch.allclose(A_noisy, torch.ones(5, 5))
 
         # Test with some flipping
         A = np.zeros((5, 5))
         p = 1.0  # Flip all edges (not diagonal)
-        A_noisy = add_digress_noise(A, p)
-        eigenvalues, V = compute_eigendecomposition(A_noisy)
+        A_noisy = add_edge_flip_noise(A, p)
+        eigenvalues, V = torch.linalg.eigh(A_noisy.float())
 
         # Should flip all off-diagonal elements to 1, diagonal stays 0
         expected = torch.ones(5, 5) - torch.eye(5)
@@ -138,8 +143,8 @@ class TestNoiseGeneration:
         torch.manual_seed(0)
         A = np.eye(5)
         p = 0.2
-        A_noisy = add_digress_noise(A, p)
-        eigenvalues, V = compute_eigendecomposition(A_noisy)
+        A_noisy = add_edge_flip_noise(A, p)
+        eigenvalues, V = torch.linalg.eigh(A_noisy.float())
 
         # Check that some elements are flipped
         diff_count = torch.sum(A_noisy != torch.tensor(A, dtype=torch.float32))
@@ -151,18 +156,18 @@ class TestNoiseGeneration:
         )
         assert torch.allclose(reconstructed, A_noisy, atol=1e-5)
 
-    def test_add_digress_noise_symmetry(self):
+    def test_add_edge_flip_noise_symmetry(self):
         """Test that digress noise preserves symmetry."""
         # Create symmetric matrix
         A = np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1]], dtype=float)
         p = 0.3
 
-        A_noisy = add_digress_noise(A, p)
+        A_noisy = add_edge_flip_noise(A, p)
 
         # Check symmetry is preserved
         assert torch.allclose(A_noisy, A_noisy.T)
 
-    def test_add_digress_noise_discrete(self):
+    def test_add_edge_flip_noise_discrete(self):
         """Test that digress noise maintains discrete values (0 or 1 only)."""
         # Test various cases
         test_cases = [
@@ -177,7 +182,7 @@ class TestNoiseGeneration:
             A = (A + A.T) / 2
             A = (A > 0.5).astype(float)
 
-            A_noisy = add_digress_noise(A, p)
+            A_noisy = add_edge_flip_noise(A, p)
 
             # Check that all values are either 0 or 1
             unique_values = torch.unique(A_noisy)
@@ -190,15 +195,34 @@ class TestNoiseGeneration:
                 torch.abs(A_noisy - 0.5) < 1e-6
             ), "Found values close to 0.5"
 
+    def test_add_edge_flip_noise_signature(self):
+        """Signature includes A, p, and optional generator (torch.Generator).
+
+        The old ``rng: np.random.Generator`` was removed; the new
+        ``generator: torch.Generator | None`` provides seeded reproducibility
+        via PyTorch's generator protocol.
+        """
+        import inspect
+
+        sig = inspect.signature(add_edge_flip_noise)
+        param_names = list(sig.parameters.keys())
+        assert param_names == [
+            "A",
+            "p",
+            "generator",
+        ], f"Expected ['A', 'p', 'generator'], got {param_names}"
+        # generator defaults to None (keyword-only not required)
+        assert sig.parameters["generator"].default is None
+
     def test_add_rotation_noise(self):
         """Test rotation noise addition."""
         A = torch.eye(5).unsqueeze(0)  # Add batch dimension
         eps = 0.1
-        skew = random_skew_symmetric_matrix(5)
+        skew = random_skew_symmetric_matrix(5, rng=np.random.default_rng(0))
 
         A_noisy = add_rotation_noise(A, eps, skew)
-        eigenvalues, V_rot = compute_eigendecomposition(A_noisy)
-        eigenvalues_original, _ = compute_eigendecomposition(A)
+        eigenvalues, V_rot = torch.linalg.eigh(A_noisy.float())
+        eigenvalues_original, _ = torch.linalg.eigh(A.float())
 
         assert A_noisy.shape == A.shape
         assert V_rot.shape == (1, 5, 5)
@@ -218,11 +242,11 @@ class TestNoiseGeneration:
         """Test that rotation preserves orthogonality of eigenvectors."""
         A = torch.diag(torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])).unsqueeze(0)
         eps = 0.5
-        skew = random_skew_symmetric_matrix(5)
+        skew = random_skew_symmetric_matrix(5, rng=np.random.default_rng(1))
 
         A_noisy = add_rotation_noise(A, eps, skew)
-        eigenvalues, V_rot = compute_eigendecomposition(A_noisy)
-        eigenvalues_original, _ = compute_eigendecomposition(A)
+        eigenvalues, V_rot = torch.linalg.eigh(A_noisy.float())
+        eigenvalues_original, _ = torch.linalg.eigh(A.float())
 
         # Check eigenvectors are still orthonormal
         VTV = torch.matmul(V_rot.transpose(-2, -1), V_rot)
@@ -241,10 +265,12 @@ class TestNoiseGeneration:
         A_gauss = add_gaussian_noise(A_np, 0.1)
         assert isinstance(A_gauss, torch.Tensor)
 
-        A_digress = add_digress_noise(A_np, 0.1)
+        A_digress = add_edge_flip_noise(A_np, 0.1)
         assert isinstance(A_digress, torch.Tensor)
 
-        A_rot = add_rotation_noise(A_np, 0.1, random_skew_symmetric_matrix(5))
+        A_rot = add_rotation_noise(
+            A_np, 0.1, random_skew_symmetric_matrix(5, rng=np.random.default_rng(2))
+        )
         assert isinstance(A_rot, torch.Tensor)
 
 
@@ -391,17 +417,23 @@ class TestDatasets:
 
     def test_adjacency_matrix_dataset(self):
         """Test AdjacencyMatrixDataset."""
-        A = np.eye(5)
+        # Use a chain graph (identity only has self-loops, which are
+        # stripped by from_adjacency/to_adjacency by design)
+        A = np.zeros((5, 5))
+        for i in range(4):
+            A[i, i + 1] = A[i + 1, i] = 1.0
         num_samples = 10
 
-        dataset = AdjacencyMatrixDataset(A, num_samples)
+        dataset = GraphDataset(A, num_samples)
 
         assert len(dataset) == num_samples
 
         sample = dataset[0]
-        assert isinstance(sample, torch.Tensor)
-        assert sample.shape == (5, 5)
-        assert torch.allclose(sample.sum(dim=0), torch.ones(5))  # Permuted identity
+        assert isinstance(sample, GraphData)
+        adj = sample.to_adjacency()
+        assert adj.shape == (5, 5)
+        # Permutation preserves edge count: 4 undirected edges → 8 entries
+        assert adj.sum() == 8.0
 
     def test_permuted_adjacency_dataset(self):
         """Test PermutedAdjacencyDataset."""
@@ -410,17 +442,21 @@ class TestDatasets:
         matrices = [A1, A2]
         num_samples = 20
 
-        dataset = PermutedAdjacencyDataset(matrices, num_samples)
+        dataset = GraphDataset(matrices, num_samples)
 
         assert len(dataset) == num_samples
 
         sample = dataset[0]
-        assert isinstance(sample, torch.Tensor)
-        assert sample.shape == (5, 5)
+        assert isinstance(sample, GraphData)
+        assert sample.to_adjacency().shape == (5, 5)
 
     def test_unified_graph_dataset_single_matrix(self):
         """Test GraphDataset with single matrix."""
-        A = np.eye(5)
+        # Use a chain graph — identity only has self-loops, which are
+        # stripped by from_adjacency/to_adjacency by design.
+        A = np.zeros((5, 5))
+        for i in range(4):
+            A[i, i + 1] = A[i + 1, i] = 1.0
         num_samples = 10
 
         # Test with numpy array
@@ -428,13 +464,17 @@ class TestDatasets:
         assert len(dataset) == num_samples
 
         sample = dataset[0]
-        assert isinstance(sample, torch.Tensor)
-        assert sample.shape == (5, 5)
+        assert isinstance(sample, GraphData)
+        assert sample.to_adjacency().shape == (5, 5)
 
-        # Test without permutation
+        # Test without permutation — adjacency should round-trip exactly
         dataset_no_perm = GraphDataset(A, num_samples, apply_permutation=False)
         sample_no_perm = dataset_no_perm[0]
-        assert torch.allclose(sample_no_perm, torch.eye(5))  # pyright: ignore[reportArgumentType]
+        assert isinstance(sample_no_perm, GraphData)
+        assert torch.allclose(
+            sample_no_perm.to_adjacency(),
+            torch.tensor(A, dtype=torch.float32),
+        )
 
     def test_unified_graph_dataset_multiple_matrices(self):
         """Test GraphDataset with multiple matrices."""
@@ -449,9 +489,10 @@ class TestDatasets:
 
         # Test with original index return
         dataset_with_idx = GraphDataset(matrices, num_samples, return_original_idx=True)
-        result = dataset_with_idx[0]  # pyright: ignore[reportArgumentType]
-        sample, idx = result  # pyright: ignore[reportAssignmentType]
-        assert isinstance(sample, torch.Tensor)
+        result = dataset_with_idx[0]
+        assert isinstance(result, tuple)
+        sample, idx = result
+        assert isinstance(sample, GraphData)
         assert isinstance(idx, int)
         assert 0 <= idx < 3
 
@@ -466,12 +507,6 @@ class TestDatasets:
         for mat in dataset.adjacency_matrices:
             assert isinstance(mat, torch.Tensor)
             assert mat.dtype == torch.float32
-
-    def test_backward_compatibility(self):
-        """Test that old dataset classes still work."""
-        # These should be aliases for GraphDataset
-        assert AdjacencyMatrixDataset is GraphDataset
-        assert PermutedAdjacencyDataset is GraphDataset
 
 
 if __name__ == "__main__":

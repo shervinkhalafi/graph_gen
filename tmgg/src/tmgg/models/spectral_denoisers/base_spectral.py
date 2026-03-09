@@ -6,19 +6,22 @@ adjacency matrix, process them through an architecture-specific transformation,
 and reconstruct the denoised adjacency matrix.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any, Literal
 
 import torch
 
-from tmgg.models.base import DenoisingModel
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.base import GraphModel
 from tmgg.models.layers.pearl_embedding import PEARLEmbedding
-from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
+from tmgg.models.layers.topk_eigen import TopKEigenLayer
 
 EmbeddingSource = Literal["eigenvector", "pearl_random", "pearl_basis"]
 
 
-class SpectralDenoiser(DenoisingModel, ABC):
+class SpectralDenoiser(GraphModel, ABC):
     """Abstract base class for spectral graph denoising models.
 
     Spectral denoisers operate on node embeddings extracted from the adjacency
@@ -95,44 +98,45 @@ class SpectralDenoiser(DenoisingModel, ABC):
                 f"'pearl_basis', got {embedding_source!r}"
             )
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
-        """Denoise adjacency matrix via spectral transformation.
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        """Denoise graph via spectral transformation.
 
         Parameters
         ----------
-        A : torch.Tensor
-            Noisy adjacency matrix of shape (batch, n, n) or (n, n).
+        data
+            Graph features. The adjacency matrix is extracted via
+            ``data.to_adjacency()``.
+        t
+            Diffusion timestep tensor, or None for unconditional denoising.
+            Currently unused; reserved for future diffusion pipeline.
 
         Returns
         -------
-        torch.Tensor
-            Denoised adjacency matrix of same shape as input.
+        GraphData
+            Denoised graph with 2-class edge features.
         """
+        A = data.to_adjacency()
+
         if self.embedding_source == "eigenvector":
-            # Extract top-k eigenvectors
             assert isinstance(self.embedding_layer, TopKEigenLayer)
             V, Lambda = self.embedding_layer(A)
 
-            # Pad V and Lambda to k columns if graph is smaller than k
-            # This ensures models with k-dimensional weights work on any graph size
             actual_k = V.shape[-1]
             if actual_k < self.k:
                 pad_size = self.k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))
-                Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))
+                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
+                Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
         else:
-            # PEARL embeddings
             assert isinstance(self.embedding_layer, PEARLEmbedding)
-            V = self.embedding_layer(A)  # (batch, n, k) or (n, k)
-            # PEARL has no eigenvalues; pass zeros as placeholder
+            V = self.embedding_layer(A)
             unbatched = V.ndim == 2
             if unbatched:
                 Lambda = torch.zeros(self.k, device=V.device, dtype=V.dtype)
             else:
                 Lambda = torch.zeros(V.shape[0], self.k, device=V.device, dtype=V.dtype)
 
-        # Architecture-specific processing
-        return self._spectral_forward(V, Lambda, A)
+        result_adj = self._spectral_forward(V, Lambda, A)
+        return GraphData.from_adjacency(result_adj)
 
     @abstractmethod
     def _spectral_forward(
@@ -169,49 +173,46 @@ class SpectralDenoiser(DenoisingModel, ABC):
             Dictionary containing model hyperparameters.
         """
         return {
-            "model_class": self.__class__.__name__,
             "k": self.k,
             "embedding_source": self.embedding_source,
         }
 
-    def get_features(self, A: torch.Tensor) -> torch.Tensor:
+    @property
+    def feature_dim(self) -> int:
+        """Output dimension of ``get_features()``.
+
+        Base implementation returns ``self.k`` (eigenvector dimension).
+        Subclasses that project to a different space override this.
+        """
+        return self.k
+
+    def get_features(self, data: GraphData) -> torch.Tensor:
         """Extract learned features for each node.
 
-        This method provides access to internal representations learned by
-        the model, intended for use by wrapper architectures like
-        ShrinkageWrapper that need to aggregate features for graph-level
-        predictions.
-
-        The default implementation extracts eigenvectors (or PEARL embeddings),
-        which may be overridden by subclasses to return richer learned
-        representations (e.g., Q/K projections from attention).
+        Wrapper architectures like ShrinkageWrapper use this to aggregate
+        features for graph-level predictions.
 
         Parameters
         ----------
-        A : torch.Tensor
-            Adjacency matrix of shape (batch, n, n) or (n, n).
+        data
+            Graph features. The adjacency is extracted via
+            ``data.to_adjacency()``.
 
         Returns
         -------
         torch.Tensor
-            Node features of shape (batch, n, feature_dim) or (n, feature_dim).
-            The feature_dim depends on the model architecture.
-
-        Notes
-        -----
-        Subclasses with learnable projections (e.g., SelfAttentionDenoiser)
-        should override this to return the projected features, enabling
-        wrapper architectures to leverage learned representations.
+            Node features of shape ``(batch, n, feature_dim)``.
         """
+        A = data.to_adjacency()
+
         if self.embedding_source == "eigenvector":
             assert isinstance(self.embedding_layer, TopKEigenLayer)
             V, _Lambda = self.embedding_layer(A)
 
-            # Pad to k if needed
             actual_k = V.shape[-1]
             if actual_k < self.k:
                 pad_size = self.k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))
+                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
         else:
             assert isinstance(self.embedding_layer, PEARLEmbedding)
             V = self.embedding_layer(A)

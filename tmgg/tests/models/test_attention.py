@@ -3,7 +3,9 @@
 import pytest
 import torch
 
-from tmgg.models.attention import MultiHeadAttention, MultiLayerAttention
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.attention import MultiLayerAttention
+from tmgg.models.layers import MultiHeadAttention
 
 
 class TestMultiHeadAttention:
@@ -31,10 +33,9 @@ class TestMultiHeadAttention:
         attention = MultiHeadAttention(d_model, num_heads)
         x = torch.randn(batch_size, seq_len, d_model)
 
-        output, scores = attention(x)
+        output = attention(x)
 
         assert output.shape == (batch_size, seq_len, d_model)
-        assert scores.shape == (batch_size, seq_len, seq_len)
 
     def test_mask_functionality(self):
         """Test that masking works correctly."""
@@ -50,11 +51,9 @@ class TestMultiHeadAttention:
         mask = torch.ones(batch_size, seq_len, seq_len)
         mask[:, :, -1] = 0
 
-        output, scores = attention(x, mask=mask)
+        output = attention(x, mask=mask)
 
         assert output.shape == (batch_size, seq_len, d_model)
-        # With masking, attention to last position should be minimal
-        assert torch.all(scores[:, :, -1] < 0.1)
 
 
 class TestMultiLayerAttention:
@@ -80,9 +79,8 @@ class TestMultiLayerAttention:
     def test_forward_shape(self):
         """Test forward pass output shapes.
 
-        MultiLayerAttention takes adjacency matrices and returns reconstructed
-        adjacency matrices. Input/output have shape (batch, n, n) or (n, n).
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
+        MultiLayerAttention takes GraphData and returns GraphData.
+        The adjacency is extracted/reconstructed via to_adjacency()/from_adjacency().
         """
         batch_size = 2
         num_nodes = 10
@@ -90,17 +88,14 @@ class TestMultiLayerAttention:
 
         model = MultiLayerAttention(d_model, num_heads=2, num_layers=2)
 
-        # Input: batch of adjacency matrices
+        # Input: batch of adjacency matrices wrapped as GraphData
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         A = A + torch.randn_like(A) * 0.1  # Add some noise
+        data = GraphData.from_adjacency(A)
 
-        logits = model(A)
-        assert logits.shape == (batch_size, num_nodes, num_nodes)
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0)
-        assert torch.all(probs <= 1)
+        result = model(data)
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
     def test_get_config(self):
         """Test configuration retrieval."""

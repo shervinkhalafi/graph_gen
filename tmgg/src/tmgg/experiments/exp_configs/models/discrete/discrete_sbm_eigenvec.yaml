@@ -1,0 +1,57 @@
+# Discrete diffusion with eigenvector node embeddings
+#
+# Same diffusion mathematics as vanilla (categorical transitions on edges),
+# but the transformer also receives top-k eigenvectors extracted from the
+# noisy adjacency at each step, concatenated with the one-hot node features.
+# This tests whether spectral information improves generative quality.
+#
+# input_dims.X = 2 (one-hot); model auto-adjusts to 52 via EigenvectorAugmentation(k=50)
+
+_target_: tmgg.experiments._shared_utils.lightning_modules.diffusion_module.DiffusionModule
+
+model_type: graph_transformer
+model_config:
+  n_layers: 8
+  use_eigenvectors: true
+  k: 50
+  use_timestep: true
+  input_dims: { X: 2, E: 2, y: 0 }   # y=0 because use_timestep adds +1; X adjusted += 50 by EigenvectorAugmentation
+  hidden_mlp_dims: { X: 128, E: 64, y: 128 }
+  hidden_dims:
+    dx: 256
+    de: 64
+    dy: 64
+    n_head: 8
+    dim_ffX: 256
+    dim_ffE: 64
+    dim_ffy: 256
+  output_dims: { X: 2, E: 2, y: 0 }
+
+noise_process:
+  _target_: tmgg.diffusion.noise_process.CategoricalNoiseProcess
+  transition_type: marginal
+  noise_schedule: ${model.noise_schedule}  # Hydra interpolation: reuses config, but instantiate() creates a separate object
+  x_classes: 2
+  e_classes: 2
+
+sampler:
+  _target_: tmgg.diffusion.sampler.CategoricalSampler
+  noise_process: ${model.noise_process}  # same config as model.noise_process (separate instance)
+  noise_schedule: ${model.noise_schedule}  # same config as model.noise_schedule (separate instance)
+
+noise_schedule:
+  _target_: tmgg.diffusion.schedule.NoiseSchedule
+  schedule_type: cosine_iddpm
+  timesteps: 500
+
+evaluator:
+  _target_: tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator.GraphEvaluator
+  eval_num_samples: 128
+
+loss_type: cross_entropy
+lambda_E: 5.0
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+num_nodes: ${data.num_nodes}
+eval_every_n_epochs: 1

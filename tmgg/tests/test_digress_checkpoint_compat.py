@@ -14,10 +14,10 @@ Invariants:
 import pytest
 import torch
 
-from tmgg.experiment_utils.digress_checkpoint_compat import (
+from tmgg.experiments._shared_utils.lightning_modules.digress_checkpoint_compat import (
     CheckpointFormat,
     detect_checkpoint_format,
-    get_compatible_state_dict,
+    load_compatible_state_dict,
     load_digress_checkpoint,
     remap_state_dict,
 )
@@ -281,10 +281,10 @@ class TestCheckpointLoading:
 
 
 class TestConvenienceFunction:
-    """Verify get_compatible_state_dict convenience function."""
+    """Verify load_compatible_state_dict convenience function."""
 
-    def test_get_compatible_state_dict(self, tmp_path) -> None:
-        """get_compatible_state_dict should return ready-to-use state dict."""
+    def test_load_compatible_state_dict(self, tmp_path) -> None:
+        """load_compatible_state_dict should return ready-to-use state dict."""
         original_state = {
             "model.mlp_in_X.0.weight": torch.randn(64, 1),
             "model.tf_layers.0.self_attn.q.weight": torch.randn(128, 128),
@@ -292,66 +292,10 @@ class TestConvenienceFunction:
         ckpt_path = tmp_path / "test.ckpt"
         torch.save({"state_dict": original_state}, ckpt_path)
 
-        state_dict = get_compatible_state_dict(ckpt_path)
+        state_dict = load_compatible_state_dict(ckpt_path)
 
         assert "model.transformer.mlp_in_X.0.weight" in state_dict
         assert "model.transformer.tf_layers.0.self_attn.q.weight" in state_dict
-
-
-class TestDigressSampleMethod:
-    """Verify DigressDenoisingLightningModule.sample() method."""
-
-    def test_sample_produces_valid_graphs(self) -> None:
-        """sample() should produce binary, symmetric matrices with zero diagonal."""
-        from tmgg.experiments.digress_denoising.lightning_module import (
-            DigressDenoisingLightningModule,
-        )
-
-        module = DigressDenoisingLightningModule(
-            k=8,
-            n_layers=2,
-            noise_levels=[0.1, 0.3],
-        )
-
-        samples = module.sample(num_graphs=3, num_nodes=16, num_steps=5)
-
-        assert len(samples) == 3, "Wrong number of samples"
-        for s in samples:
-            assert s.shape == (16, 16), f"Wrong shape: {s.shape}"
-            # Binary check
-            assert torch.all((s == 0) | (s == 1)), "Non-binary values"
-            # Symmetry check
-            assert torch.allclose(s, s.T), "Not symmetric"
-            # Zero diagonal check
-            assert torch.all(s.diagonal() == 0), "Non-zero diagonal"
-
-    def test_sample_different_schedules(self) -> None:
-        """sample() should work with all supported noise schedules."""
-        from tmgg.experiments.digress_denoising.lightning_module import (
-            DigressDenoisingLightningModule,
-        )
-
-        module = DigressDenoisingLightningModule(k=8, n_layers=2, noise_levels=[0.1])
-
-        for schedule in ["linear", "cosine", "quadratic"]:
-            samples = module.sample(
-                num_graphs=2, num_nodes=10, num_steps=3, noise_schedule=schedule
-            )
-            assert len(samples) == 2
-            assert all(s.shape == (10, 10) for s in samples)
-
-    def test_sample_invalid_schedule_raises(self) -> None:
-        """sample() with invalid schedule should raise ValueError."""
-        from tmgg.experiments.digress_denoising.lightning_module import (
-            DigressDenoisingLightningModule,
-        )
-
-        module = DigressDenoisingLightningModule(k=8, n_layers=2, noise_levels=[0.1])
-
-        with pytest.raises(ValueError, match="Unknown noise_schedule"):
-            module.sample(
-                num_graphs=1, num_nodes=10, num_steps=3, noise_schedule="invalid"
-            )
 
 
 class TestGenerateReferenceGraphs:
@@ -363,7 +307,7 @@ class TestGenerateReferenceGraphs:
     )
     def test_generates_correct_count_and_shape(self, dataset_type: str) -> None:
         """Generated graphs should have correct count and node dimensions."""
-        from tmgg.experiments.generative.evaluate_checkpoint import (
+        from tmgg.experiments._shared_utils.evaluation_metrics.reference_graphs import (
             generate_reference_graphs,
         )
 
@@ -381,7 +325,7 @@ class TestGenerateReferenceGraphs:
     @pytest.mark.parametrize("dataset_type", ["sbm", "erdos_renyi", "regular"])
     def test_graphs_are_valid_adjacency(self, dataset_type: str) -> None:
         """Generated graphs should be binary, symmetric, zero-diagonal."""
-        from tmgg.experiments.generative.evaluate_checkpoint import (
+        from tmgg.experiments._shared_utils.evaluation_metrics.reference_graphs import (
             generate_reference_graphs,
         )
 
@@ -402,7 +346,7 @@ class TestGenerateReferenceGraphs:
 
     def test_sbm_parameters_used(self) -> None:
         """SBM-specific parameters should affect generation."""
-        from tmgg.experiments.generative.evaluate_checkpoint import (
+        from tmgg.experiments._shared_utils.evaluation_metrics.reference_graphs import (
             generate_reference_graphs,
         )
 
@@ -431,11 +375,11 @@ class TestGenerateReferenceGraphs:
 
     def test_invalid_dataset_type_raises(self) -> None:
         """Unknown dataset type should raise ValueError."""
-        from tmgg.experiments.generative.evaluate_checkpoint import (
+        from tmgg.experiments._shared_utils.evaluation_metrics.reference_graphs import (
             generate_reference_graphs,
         )
 
-        with pytest.raises(ValueError, match="Unknown dataset type"):
+        with pytest.raises(ValueError, match="graph_type must be one of"):
             generate_reference_graphs(
                 dataset_type="invalid_type",
                 num_graphs=5,

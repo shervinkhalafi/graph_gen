@@ -1,3 +1,3 @@
 # TensorBoard export
 
-::: tmgg.experiment_utils.tensorboard_export
+::: tmgg.experiments._shared_utils.tensorboard_export

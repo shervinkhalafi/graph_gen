@@ -24,24 +24,21 @@ uv sync --all-extras
 ## Run your first experiment
 
 ```bash
-# Attention-based denoising
-uv run tmgg-attention
+# Spectral denoising (main experiment type)
+uv run tmgg-spectral-arch
 ```
 
 Other entry points:
 
 ```bash
+# DiGress transformer
+uv run tmgg-digress
+
 # GNN-based denoising
 uv run tmgg-gnn
 
 # Hybrid GNN + Transformer
-uv run tmgg-hybrid
-
-# DiGress transformer
-uv run tmgg-digress
-
-# Spectral denoising
-uv run tmgg-spectral
+uv run tmgg-gnn-transformer
 ```
 
 ## Common overrides
@@ -50,13 +47,13 @@ TMGG uses Hydra overrides. A few examples:
 
 ```bash
 # Increase training steps
-uv run tmgg-attention trainer.max_steps=50000
+uv run tmgg-spectral-arch trainer.max_steps=50000
 
 # Change model depth
 uv run tmgg-gnn model.num_layers=8
 
 # Switch dataset configuration
-uv run tmgg-attention data=legacy_match
+uv run tmgg-spectral-arch data=sbm_default
 ```
 
 Note: training is configured in **steps**, not epochs.

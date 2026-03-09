@@ -1,5 +1,7 @@
 #!/usr/bin/env python
-"""Debug script for running experiments with constant noise level.
+"""Standalone diagnostic tool -- not part of the main experiment pipeline.
+
+Debug script for running experiments with constant noise level.
 
 This script helps diagnose why models might be stuck at 0.5 output by:
 1. Using a single constant noise level (eliminating variance)
@@ -35,8 +37,8 @@ from pytorch_lightning.loggers import TensorBoardLogger
 # Add src to path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tmgg.experiment_utils import DebugCallback
-from tmgg.experiment_utils.data import add_digress_noise
+from tmgg.data import add_digress_noise
+from tmgg.experiments._shared_utils import DebugCallback
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,

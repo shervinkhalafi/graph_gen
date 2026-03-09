@@ -10,6 +10,8 @@
 Reads multiple parquet exports, merges them into a unified dataframe with
 consistent schema, and adds parsed feature columns for analysis.
 
+Parsing functions live in the co-located ``wandb_parsing`` module.
+
 Usage:
     uv run wandb-tools/aggregate_runs.py wandb_export/*.parquet -o analysis/unified.parquet
     uv run wandb-tools/aggregate_runs.py wandb_export/ -o analysis/unified.parquet --state finished
@@ -17,138 +19,14 @@ Usage:
 """
 
 import argparse
-import re
 from pathlib import Path
 
 import pandas as pd
 from rich.console import Console
 from rich.table import Table
+from wandb_parsing import enrich_dataframe, parse_protocol
 
 console = Console()
-
-
-def parse_stage(name: str) -> str:
-    """Extract stage identifier from run name."""
-    if pd.isna(name):
-        return "unknown"
-    name = str(name)
-    # Check for specific stage patterns (more specific first)
-    stage_patterns = [
-        (r"stage2c", "stage2c"),
-        (r"stage2b", "stage2b"),
-        (r"stage2a", "stage2a"),
-        (r"stage1f", "stage1f"),
-        (r"stage1e", "stage1e"),
-        (r"stage1d", "stage1d"),
-        (r"stage1c", "stage1c"),
-        (r"stage1b", "stage1b"),
-        (r"stage1a", "stage1a"),
-        (r"stage2", "stage2"),
-        (r"stage1", "stage1"),
-        (r"stage3", "stage3"),
-    ]
-    for pattern, stage in stage_patterns:
-        if re.search(pattern, name.lower()):
-            return stage
-    return "other"
-
-
-def parse_architecture(name: str) -> str:
-    """Extract architecture type from run name."""
-    if pd.isna(name):
-        return "unknown"
-    name = str(name).lower()
-    arch_patterns = [
-        (r"gnn_all", "gnn_all"),
-        (r"gnn_qk", "gnn_qk"),
-        (r"gnn_v", "gnn_v"),
-        (r"self_attention", "self_attention"),
-        (r"digress_transformer", "digress_transformer"),
-        (r"digress_default", "digress_default"),
-        (r"asymmetric", "asymmetric"),
-        (r"spectral_linear", "spectral_linear"),
-        (r"spectral", "spectral"),
-        (r"digress", "digress"),
-    ]
-    for pattern, arch in arch_patterns:
-        if re.search(pattern, name):
-            return arch
-    return "other"
-
-
-def parse_model_type(name: str, config_target: str | None = None) -> str:
-    """Extract model type from run name or config target."""
-    # Try config target first
-    if config_target and not pd.isna(config_target):
-        target_str = str(config_target).lower()
-        if "spectral" in target_str:
-            return "spectral"
-        if "digress" in target_str:
-            return "digress"
-        if "gnn" in target_str:
-            return "gnn"
-        if "attention" in target_str:
-            return "attention"
-        if "hybrid" in target_str:
-            return "hybrid"
-
-    # Fall back to name parsing
-    if pd.isna(name):
-        return "unknown"
-    name = str(name).lower()
-    if "spectral" in name:
-        return "spectral"
-    if "digress" in name:
-        return "digress"
-    if "gnn" in name:
-        return "gnn"
-    return "unknown"
-
-
-def parse_run_name_fields(name: str) -> dict:
-    """Extract hyperparameters encoded in run name.
-
-    Common patterns:
-    - _k{value}: k value for spectral models
-    - _lr{value}: learning rate
-    - _wd{value}: weight decay
-    - _s{value}: seed
-    - _eps{value}: epsilon value
-    """
-    parsed = {}
-    if pd.isna(name):
-        return parsed
-    name = str(name)
-
-    # k value
-    k_match = re.search(r"_k(\d+)", name)
-    if k_match:
-        parsed["k"] = int(k_match.group(1))
-
-    # Learning rate
-    lr_match = re.search(r"_lr([\d.e-]+)", name)
-    if lr_match:
-        parsed["lr_parsed"] = lr_match.group(1)
-
-    # Weight decay
-    wd_match = re.search(r"_wd([\d.e-]+)", name)
-    if wd_match:
-        parsed["wd_parsed"] = wd_match.group(1)
-
-    # Seed
-    seed_match = re.search(r"_s(\d+)(?:_|$)", name)
-    if seed_match:
-        parsed["seed_parsed"] = int(seed_match.group(1))
-
-    # Epsilon
-    eps_match = re.search(r"_eps([\d.]+)", name)
-    if eps_match:
-        parsed["eps_parsed"] = float(eps_match.group(1))
-
-    # Asymmetric flag
-    parsed["asymmetric_flag"] = "asymmetric" in name.lower()
-
-    return parsed
 
 
 def load_parquet_files(paths: list[Path]) -> pd.DataFrame:
@@ -219,83 +97,6 @@ def load_parquet_files(paths: list[Path]) -> pd.DataFrame:
     # Concatenate with column alignment
     unified = pd.concat(dfs, ignore_index=True, sort=False)
     return unified
-
-
-def parse_protocol(row: pd.Series) -> str:
-    """Determine if run used single-graph or distribution protocol.
-
-    Single-graph: train/val/test use the SAME graph with varying noise.
-    Distribution: train/val/test use DIFFERENT graphs from a distribution.
-    """
-    # Check config_data_same_graph_all_splits
-    same_graph = row.get("config_data_same_graph_all_splits")
-    if same_graph is True or same_graph == "True":
-        return "single_graph"
-
-    # Check data module target
-    target = row.get("config_data__target_", "")
-    if pd.notna(target) and "SingleGraph" in str(target):
-        return "single_graph"
-
-    return "distribution"
-
-
-def enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Add parsed/derived columns for analysis.
-
-    Preserves raw JSON columns (`_config_json`, `_summary_json`) if present.
-    These columns contain lossless representations of the original W&B data.
-    """
-    df = df.copy()
-
-    # Log presence of JSON columns for lossless data access
-    json_cols = [c for c in df.columns if c in ["_config_json", "_summary_json"]]
-    if json_cols:
-        console.print(
-            f"[dim]Preserving lossless JSON columns: {', '.join(json_cols)}[/dim]"
-        )
-
-    # Parse protocol (single-graph vs distribution)
-    df["protocol"] = df.apply(parse_protocol, axis=1)
-
-    # Parse stage from name
-    df["stage"] = df["name"].apply(parse_stage)
-
-    # Parse architecture
-    df["arch"] = df["name"].apply(parse_architecture)
-
-    # Parse model type (using config if available)
-    config_target_col = None
-    for col in ["config_model__target_", "config_model_target"]:
-        if col in df.columns:
-            config_target_col = col
-            break
-
-    if config_target_col:
-        df["model_type"] = df.apply(
-            lambda row: parse_model_type(row["name"], row.get(config_target_col)),
-            axis=1,
-        )
-    else:
-        df["model_type"] = df["name"].apply(lambda n: parse_model_type(n, None))
-
-    # Parse name-encoded fields
-    parsed_fields = df["name"].apply(parse_run_name_fields).apply(pd.Series)
-    for col in parsed_fields.columns:
-        if col not in df.columns:
-            df[col] = parsed_fields[col]
-
-    # Extract numeric values from config columns where possible
-    numeric_candidates = [
-        "config_learning_rate",
-        "config_weight_decay",
-        "config_model_k",
-    ]
-    for col in numeric_candidates:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    return df
 
 
 def filter_dataframe(
@@ -438,6 +239,11 @@ def main() -> None:
     # Enrich with parsed columns
     if not args.no_enrich:
         console.print("\n[dim]Enriching with parsed columns...[/dim]")
+        json_cols = [c for c in df.columns if c in ["_config_json", "_summary_json"]]
+        if json_cols:
+            console.print(
+                f"[dim]Preserving lossless JSON columns: {', '.join(json_cols)}[/dim]"
+            )
         df = enrich_dataframe(df)
 
     # Print summary

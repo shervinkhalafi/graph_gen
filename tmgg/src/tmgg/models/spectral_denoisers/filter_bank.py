@@ -5,6 +5,8 @@ allowing the model to learn frequency-dependent transformations. Supports
 both symmetric (VWV^T) and asymmetric (XY^T) reconstruction modes.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 import torch
@@ -59,6 +61,10 @@ class GraphFilterBank(SpectralDenoiser):
 
     This can be seen as a bank of filters, each H^{(ℓ)} scaled by the ℓ-th
     power of eigenvalues, capturing different spectral characteristics.
+
+    Before polynomial computation, eigenvalues are normalized to [-1, 1]
+    by dividing by max(|λ|). This prevents Λ^ℓ from exploding for large
+    eigenvalues and ensures stable gradients across polynomial terms.
 
     Asymmetric mode doubles the parameter count but allows the model to
     learn different row and column spectral transformations.
@@ -145,27 +151,9 @@ class GraphFilterBank(SpectralDenoiser):
         torch.Tensor
             Polynomial result W of shape (batch, k, k).
         """
-        batch_size = Lambda_normalized.shape[0]
-        W = torch.zeros(
-            batch_size,
-            k,
-            k,
-            device=Lambda_normalized.device,
-            dtype=Lambda_normalized.dtype,
-        )
+        from tmgg.models.layers.graph_ops import spectral_polynomial
 
-        Lambda_power = torch.ones_like(
-            Lambda_normalized
-        )  # (batch, k), starts as Λ^0 = 1
-        for ell in range(self.polynomial_degree):
-            # Create scaling matrix from eigenvalue powers
-            Lambda_matrix = Lambda_power.unsqueeze(-1).expand(
-                -1, -1, k
-            )  # (batch, k, k)
-            W = W + Lambda_matrix * H_list[ell].unsqueeze(0)
-            Lambda_power = Lambda_power * Lambda_normalized
-
-        return W
+        return spectral_polynomial(Lambda_normalized, list(H_list))
 
     def _spectral_forward(
         self,
@@ -196,9 +184,11 @@ class GraphFilterBank(SpectralDenoiser):
 
         batch_size, n, k = V.shape
 
-        # Normalize eigenvalues to [-1, 1] before polynomial computation.
-        # Without normalization, Lambda^ell can explode (e.g., 10^5 for λ=10, ℓ=5)
-        # causing gradient imbalance across polynomial terms.
+        # Per-batch eigenvalue normalization to [-1, 1] (ChebNet convention).
+        # Defferrard et al. "Convolutional Neural Networks on Graphs with Fast
+        # Localized Spectral Filtering" (NIPS 2016, §2.2) rescale eigenvalues to
+        # [-1, 1] so that Chebyshev polynomials T_k remain numerically stable.
+        # Without this, Lambda^ell explodes (e.g., 10^5 for λ=10, ℓ=5).
         Lambda_max = Lambda.abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-6)
         Lambda_normalized = Lambda / Lambda_max
 

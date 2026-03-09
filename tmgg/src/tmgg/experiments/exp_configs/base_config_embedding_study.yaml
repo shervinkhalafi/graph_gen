@@ -1,0 +1,28 @@
+defaults:
+  - _base_structural_study
+  - _self_
+
+experiment_name: embedding_study
+wandb_project: embedding-study
+
+phase: run  # run | analyze
+
+datasets:
+  - sbm
+
+num_graphs: 10
+num_nodes: 50
+
+methods: all  # all | symmetric | comma-separated list
+fitter: both
+
+search:
+  tol_fnorm: 0.01
+  tol_accuracy: 0.99
+
+paths:
+  output_dir: outputs/embedding_study
+
+hydra:
+  run:
+    dir: outputs/embedding_study/${now:%Y-%m-%d_%H-%M-%S}

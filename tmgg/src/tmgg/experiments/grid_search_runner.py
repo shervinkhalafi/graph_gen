@@ -5,15 +5,14 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 
-from tmgg.experiment_utils.run_experiment import run_experiment
+from tmgg.experiments._shared_utils.orchestration.run_experiment import run_experiment
 
-# Navigate to the centralized config location
-TMGG_ROOT = Path(__file__).parent.parent  # Navigate to tmgg/src/tmgg
-CONFIG_PATH = str(TMGG_ROOT / "exp_configs")
+# Config directory is a sibling under experiments/
+CONFIG_PATH = str(Path(__file__).parent / "exp_configs")
 
 
 @hydra.main(  # pyright: ignore[reportAny]
-    version_base="1.3", config_path=CONFIG_PATH, config_name="grid_search_base"
+    version_base=None, config_path=CONFIG_PATH, config_name="grid_search_base"
 )
 def main(config: DictConfig):
     """

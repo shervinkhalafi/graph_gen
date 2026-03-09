@@ -1,0 +1,34 @@
+# Hybrid model with GNN only (no transformer denoising)
+
+_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+
+model_type: hybrid_sequential
+
+model_config:
+  # GNN configuration
+  gnn_num_layers: 2
+  gnn_num_terms: 2
+  gnn_feature_dim_in: 20
+  gnn_feature_dim_out: 5
+  # Transformer configuration (disabled)
+  use_transformer: false
+  transformer_num_layers: 4
+  transformer_num_heads: 4
+  transformer_d_k: 10
+  transformer_d_v: 10
+  transformer_dropout: 0.0
+  transformer_bias: true
+
+# Training parameters
+learning_rate: ${learning_rate}
+loss_type: ${loss_type}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+scheduler_config: ${scheduler_config}
+rotation_k: 20
+
+# Noise settings
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+seed: ${seed}

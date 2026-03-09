@@ -5,69 +5,80 @@ from typing import Any, override
 import torch
 import torch.nn as nn
 
+from tmgg.data.datasets.graph_types import GraphData
+
 from ..attention import MultiLayerAttention
-from ..base import DenoisingModel
+from ..base import BaseModel, EmbeddingProvider, GraphModel
 from ..gnn import GNN
 
 
-class SequentialDenoisingModel(DenoisingModel):
+class SequentialDenoisingModel(GraphModel):
     """Sequential model combining GNN embeddings with attention-based denoising.
 
     First generates embeddings using a GNN, then applies a transformer
     to denoise these embeddings, and finally reconstructs the adjacency matrix.
     """
 
-    embedding_model: nn.Module
-    denoising_model: DenoisingModel | None
+    embedding_model: EmbeddingProvider
+    denoising_model: nn.Module | None
 
     def __init__(
         self,
-        embedding_model: nn.Module,
-        denoising_model: DenoisingModel | None = None,
+        embedding_model: EmbeddingProvider,
+        denoising_model: nn.Module | None = None,
     ) -> None:
         """Initialize the sequential denoising model.
 
         Parameters
         ----------
         embedding_model
-            Model for generating embeddings (must have embeddings() method
-            returning (X, Y) tuple of tensors).
+            Model satisfying ``EmbeddingProvider``: must expose
+            ``embeddings(GraphData) -> (X, Y)`` and ``get_config()``.
         denoising_model
-            Optional transformer model for denoising embeddings.
+            Optional model for denoising concatenated embeddings. If it is a
+            ``MultiLayerAttention``, the raw ``apply_attention()`` path is
+            used; otherwise it is called directly on the feature tensor.
         """
         super().__init__()
-        self.embedding_model = embedding_model
+        if not isinstance(embedding_model, EmbeddingProvider):
+            raise TypeError(
+                f"embedding_model must satisfy EmbeddingProvider protocol "
+                f"(requires embeddings() and get_config() methods), "
+                f"got {type(embedding_model).__name__}"
+            )
+        self.embedding_model = embedding_model  # pyright: ignore[reportIncompatibleVariableOverride]
         self.denoising_model = denoising_model
 
     @override
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
         """Combine GNN embedding and transformer denoising.
 
         Parameters
         ----------
-        x
-            Input adjacency matrix of shape (batch, n, n).
+        data
+            Graph features. The adjacency is extracted via
+            ``data.to_adjacency()`` and passed to the embedding model.
+        t
+            Diffusion timestep tensor, or None. Currently unused.
 
         Returns
         -------
-        torch.Tensor
-            Adjacency logits (pre-sigmoid) of shape (batch, n, n).
+        GraphData
+            Denoised graph with 2-class edge features.
         """
-        # Generate embeddings using GNN's embeddings() method
-        if not hasattr(self.embedding_model, "embeddings"):
-            raise ValueError(
-                "Embedding model must have embeddings() method returning (X, Y) tuple"
-            )
-        # Duck-typed access to embeddings method - hasattr check above ensures safety
-        X, Y = self.embedding_model.embeddings(x)  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
+        # Generate embeddings via the EmbeddingProvider protocol
+        X, Y = self.embedding_model.embeddings(data)
 
         # Concatenate embeddings
         Z = torch.cat([X, Y], dim=2)  # Shape: (batch_size, num_nodes, 2*feature_dim)
 
         # Apply denoising if available
         if self.denoising_model is not None:
-            # Apply transformer denoising and add residual connection
-            Z_denoised = self.denoising_model(Z)
+            # Use raw tensor path for MultiLayerAttention; fall back to direct call
+            if isinstance(self.denoising_model, MultiLayerAttention):
+                Z_denoised = self.denoising_model.apply_attention(Z)
+            else:
+                Z_denoised = self.denoising_model(Z)
             # Validate shape match for residual connection
             assert Z_denoised.shape == Z.shape, (
                 f"Denoising model output shape {Z_denoised.shape} != input shape {Z.shape}. "
@@ -82,46 +93,22 @@ class SequentialDenoisingModel(DenoisingModel):
         X_pred = Z_pred[:, :, :feature_dim]
         Y_pred = Z_pred[:, :, feature_dim:]
 
-        # Reconstruct adjacency matrix - return raw logits per base class contract
-        A_recon = self._reconstruct_adjacency_from_embeddings(X_pred, Y_pred)
-        return A_recon
-
-    def _reconstruct_adjacency_from_embeddings(
-        self, X: torch.Tensor, Y: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Reconstruct adjacency matrix from X and Y embeddings.
-
-        Args:
-            X: First set of embeddings
-            Y: Second set of embeddings
-
-        Returns:
-            Reconstructed adjacency matrix
-        """
-        # Compute outer product and apply output transformation based on domain and training mode
-        A_recon = torch.bmm(X, Y.transpose(1, 2))
-        # Note: This method doesn't have access to domain/training info, so return raw logits
-        # The calling model should handle the transformation
-        return A_recon
+        # Reconstruct adjacency matrix
+        A_recon = torch.bmm(X_pred, Y_pred.transpose(1, 2))
+        return GraphData.from_adjacency(A_recon)
 
     @override
     def get_config(self) -> dict[str, object]:
         """Get configuration for both embedding and denoising components."""
-        embedding_config: object
-        if hasattr(self.embedding_model, "get_config"):
-            # Duck-typed access - hasattr check ensures safety
-            embedding_config = self.embedding_model.get_config()  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
-        else:
-            embedding_config = str(type(self.embedding_model))
+        embedding_config = self.embedding_model.get_config()
 
         config: dict[str, object] = {
             "model_type": "SequentialDenoisingModel",
             "embedding_model": embedding_config,
             "has_denoising": self.denoising_model is not None,
         }
-        if self.denoising_model is not None and hasattr(
-            self.denoising_model, "get_config"
+        if self.denoising_model is not None and isinstance(
+            self.denoising_model, BaseModel
         ):
             config["denoising_model"] = self.denoising_model.get_config()
         return config
@@ -130,15 +117,19 @@ class SequentialDenoisingModel(DenoisingModel):
 def create_sequential_model(
     gnn_config: dict[str, Any], transformer_config: dict[str, Any] | None = None
 ) -> SequentialDenoisingModel:
-    """
-    Factory function to create a sequential denoising model.
+    """Create a sequential denoising model from GNN + optional attention config.
 
-    Args:
-        gnn_config: Configuration for the GNN embedding model
-        transformer_config: Optional configuration for the transformer denoising model
+    Parameters
+    ----------
+    gnn_config
+        Configuration for the GNN embedding model.
+    transformer_config
+        Optional configuration for the attention denoising model.
 
-    Returns:
-        Configured SequentialDenoisingModel
+    Returns
+    -------
+    SequentialDenoisingModel
+        Configured model combining GNN embeddings with optional attention.
     """
     # Create GNN embedding model
     embedding_model = GNN(
@@ -165,5 +156,4 @@ def create_sequential_model(
             bias=transformer_config.get("bias", True),
         )
 
-    # GNN produces (X, Y) embeddings and implements both EmbeddingModel and DenoisingModel
     return SequentialDenoisingModel(embedding_model, denoising_model)

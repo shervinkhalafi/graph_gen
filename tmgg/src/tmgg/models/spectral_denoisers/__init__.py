@@ -13,22 +13,14 @@ LinearPE
 GraphFilterBank
     Spectral polynomial filter: W = Σ Λ^ℓ H^{(ℓ)}
 SelfAttentionDenoiser
-    Scaled dot-product attention: Â = Q K^T / √d_k
-SelfAttentionDenoiserWithMLP
-    Attention with MLP post-processing: Â = MLP(Q K^T / √d_k)
-MultiLayerSelfAttentionDenoiser
-    Stacked transformer blocks on eigenvectors with residual connections
-
-Shrinkage Wrappers (Experimental)
----------------------------------
-StrictShrinkageWrapper
-    SVD-based shrinkage with sigmoid gating: S_mod = sigmoid(α) * S
-RelaxedShrinkageWrapper
-    FiLM-style modulation: S_mod = scale * S + shift
-
-Note: Shrinkage wrappers are experimental and not yet used in standard
-experiment sweeps. They wrap an inner SpectralDenoiser to extract features
-for predicting shrinkage coefficients.
+    Vaswani et al. (2017) self-attention with softmax + value projection,
+    followed by bilinear readout: Â = (attn @ Val) readout
+BilinearDenoiser
+    Scaled bilinear form: Â = Q K^T / √d_k (no softmax, no values)
+BilinearDenoiserWithMLP
+    Bilinear with MLP post-processing: Â = MLP(Q K^T / √d_k)
+MultiLayerBilinearDenoiser
+    Stacked transformer blocks on eigenvectors with bilinear readout
 
 Layers
 ------
@@ -41,36 +33,31 @@ SpectralDenoiser
     Abstract base for all spectral denoising models
 """
 
+from tmgg.models.layers.topk_eigen import (
+    EigenDecompositionError,
+    TopKEigenLayer,
+)
 from tmgg.models.spectral_denoisers.base_spectral import SpectralDenoiser
+from tmgg.models.spectral_denoisers.bilinear import (
+    BilinearDenoiser,
+    BilinearDenoiserWithMLP,
+    MultiLayerBilinearDenoiser,
+)
 from tmgg.models.spectral_denoisers.filter_bank import GraphFilterBank
 from tmgg.models.spectral_denoisers.linear_pe import LinearPE
-from tmgg.models.spectral_denoisers.self_attention import (
-    MultiLayerSelfAttentionDenoiser,
-    SelfAttentionDenoiser,
-    SelfAttentionDenoiserWithMLP,
-)
-from tmgg.models.spectral_denoisers.shrinkage_wrapper import (
-    RelaxedShrinkageWrapper,
-    ShrinkageSVDLayer,
-    ShrinkageWrapper,
-    StrictShrinkageWrapper,
-)
-from tmgg.models.spectral_denoisers.topk_eigen import TopKEigenLayer
+from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
 
 __all__ = [
     # Base classes
     "SpectralDenoiser",
     # Layers
+    "EigenDecompositionError",
     "TopKEigenLayer",
     # Models
     "LinearPE",
     "GraphFilterBank",
+    "BilinearDenoiser",
+    "BilinearDenoiserWithMLP",
+    "MultiLayerBilinearDenoiser",
     "SelfAttentionDenoiser",
-    "SelfAttentionDenoiserWithMLP",
-    "MultiLayerSelfAttentionDenoiser",
-    # Shrinkage wrappers (experimental)
-    "ShrinkageWrapper",
-    "StrictShrinkageWrapper",
-    "RelaxedShrinkageWrapper",
-    "ShrinkageSVDLayer",
 ]

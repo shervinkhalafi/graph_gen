@@ -31,11 +31,11 @@ from hydra.core.global_hydra import GlobalHydra
 
 # Base configs to test with their default model/data compositions
 BASE_CONFIGS = [
-    "base_config_spectral",
-    "base_config_attention",
+    "base_config_spectral_arch",
     "base_config_gnn",
-    "base_config_hybrid",
+    "base_config_gnn_transformer",
     "base_config_digress",
+    "grid_search_base",
 ]
 
 
@@ -50,7 +50,7 @@ def clear_hydra():
 @pytest.fixture
 def exp_config_path() -> Path:
     """Path to experiment configs."""
-    return Path(__file__).parent.parent / "src" / "tmgg" / "exp_configs"
+    return Path(__file__).parent.parent / "src" / "tmgg" / "experiments" / "exp_configs"
 
 
 def get_minimal_overrides(tmp_path: Path) -> list[str]:
@@ -156,10 +156,10 @@ class TestConfigComposition:
 
 # Configs that use standard adjacency matrix input
 ADJACENCY_INPUT_CONFIGS = [
-    "base_config_spectral",
-    "base_config_attention",
+    "base_config_spectral_arch",
     "base_config_gnn",
-    "base_config_hybrid",
+    "base_config_gnn_transformer",
+    "grid_search_base",
 ]
 
 # DiGress uses eigenvector input by default, requiring special handling
@@ -253,7 +253,7 @@ class TestForwardPass:
         with torch.no_grad():
             output = model(adjacency_batch)
 
-        # Output should be (batch, n_nodes, n_nodes) for edge prediction
+        # LightningModule.forward() bridge returns (B, N, N) tensor
         assert output.shape == (batch_size, n_nodes, n_nodes), (
             f"Config {base_config}: output shape {output.shape} != "
             f"expected ({batch_size}, {n_nodes}, {n_nodes})"
@@ -322,7 +322,7 @@ class TestStageConfigComposition:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         # Verify stage was applied
         assert (

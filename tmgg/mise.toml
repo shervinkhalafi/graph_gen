@@ -33,12 +33,12 @@ LOGDIR="/tmp/tmgg-modal-logs"
 LOGFILE="$LOGDIR/modal-deploy-$(date +%Y%m%d-%H%M%S).log"
 mkdir -p "$LOGDIR"
 echo "Logging to $LOGFILE"
-MODAL_LOGLEVEL=DEBUG uv run modal deploy -m tmgg.modal.runner 2>&1 | tee "$LOGFILE"
+MODAL_LOGLEVEL=DEBUG uv run modal deploy -m tmgg.modal._functions 2>&1 | tee "$LOGFILE"
 """
 
 [tasks.modal-serve]
 description = "Run Modal app in development mode (hot-reload)"
-run = "uv run modal serve -m tmgg.modal.runner"
+run = "uv run modal serve -m tmgg.modal._functions"
 
 # Analysis tasks
 [tasks.analyze]
@@ -68,8 +68,8 @@ run = "echo 'All reports generated in eigenstructure_results_full/'"
 
 [tasks.aggregate-mmd]
 description = "Aggregate MMD evaluation results from Modal volume into Parquet"
-run = "uv run python -m tmgg.modal.cli.aggregate_mmd --output results/mmd_results.parquet --cache-dir results/mmd_cache"
+run = "uv run tmgg-modal aggregate --output results/mmd_results.parquet --cache-dir results/mmd_cache"
 
 [tasks.aggregate-mmd-dry]
 description = "Preview MMD evaluation files without downloading"
-run = "uv run python -m tmgg.modal.cli.aggregate_mmd --dry-run"
+run = "uv run tmgg-modal aggregate --dry-run"

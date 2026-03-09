@@ -5,13 +5,14 @@ from typing import Any, override
 import torch
 import torch.nn as nn
 
-from tmgg.models.layers.eigen_embedding import EigenEmbedding
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.layers.eigen_embedding import TruncatedEigenEmbedding
 from tmgg.models.layers.gcn import GraphConvolutionLayer
 
-from ..base import DenoisingModel
+from ..base import GraphModel
 
 
-class GNN(DenoisingModel):
+class GNN(GraphModel):
     """Graph Neural Network for adjacency matrix reconstruction.
 
     Returns adjacency logits (pre-sigmoid) directly. Uses asymmetric embeddings
@@ -49,7 +50,9 @@ class GNN(DenoisingModel):
         self.feature_dim_out = feature_dim_out
         self.eigenvalue_reg = eigenvalue_reg
 
-        self.embedding_layer = EigenEmbedding(eigenvalue_reg=eigenvalue_reg)
+        self.embedding_layer = TruncatedEigenEmbedding(
+            target_dim=feature_dim_in, eigenvalue_reg=eigenvalue_reg
+        )
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
@@ -58,80 +61,59 @@ class GNN(DenoisingModel):
         self.out_x = nn.Linear(feature_dim_in, feature_dim_out)
         self.out_y = nn.Linear(feature_dim_in, feature_dim_out)
 
+    def _embed(self, A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute (X, Y) node embeddings from adjacency.
+
+        Shared between ``forward()`` (which reconstructs the adjacency)
+        and ``embeddings()`` (used by hybrid models).
+        """
+        z = self.embedding_layer(A)
+
+        for layer in self.layers:
+            z = layer(A, z)
+
+        return self.out_x(z), self.out_y(z)
+
     @override
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Compute adjacency logits from input adjacency matrix.
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        """Compute denoised graph from input graph data.
 
         Parameters
         ----------
-        x
-            Input adjacency matrix of shape (batch, n, n).
+        data
+            Graph features. The adjacency is extracted via
+            ``data.to_adjacency()``.
+        t
+            Diffusion timestep tensor, or None. Currently unused.
 
         Returns
         -------
-        torch.Tensor
-            Adjacency logits (pre-sigmoid) of shape (batch, n, n).
+        GraphData
+            Denoised graph with 2-class edge features.
         """
-        z = self.embedding_layer(x)
-        # Take only the first feature_dim_in columns from eigenvectors
-        actual_feature_dim = min(z.shape[2], self.feature_dim_in)
-        z = z[:, :, :actual_feature_dim]
+        A = data.to_adjacency()
+        emb_x, emb_y = self._embed(A)
+        result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
+        return GraphData.from_adjacency(result_adj)
 
-        # Pad with zeros if we have fewer features than expected
-        if actual_feature_dim < self.feature_dim_in:
-            padding = torch.zeros(
-                z.shape[0],
-                z.shape[1],
-                self.feature_dim_in - actual_feature_dim,
-                device=z.device,
-                dtype=z.dtype,
-            )
-            z = torch.cat([z, padding], dim=2)
-
-        for layer in self.layers:
-            z = layer(x, z)
-
-        emb_x = self.out_x(z)
-        emb_y = self.out_y(z)
-
-        # Reconstruct adjacency logits via asymmetric outer product
-        return torch.bmm(emb_x, emb_y.transpose(1, 2))
-
-    def embeddings(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute node embeddings without adjacency reconstruction.
 
         Used by hybrid models that need embeddings for further processing.
 
         Parameters
         ----------
-        x
-            Input adjacency matrix of shape (batch, n, n).
+        data
+            Graph features. The adjacency is extracted internally.
 
         Returns
         -------
         tuple[torch.Tensor, torch.Tensor]
-            Tuple of (X, Y) embeddings, each of shape (batch, n, feature_dim_out).
+            Tuple of (X, Y) embeddings, each of shape
+            ``(batch, n, feature_dim_out)``.
         """
-        z = self.embedding_layer(x)
-        actual_feature_dim = min(z.shape[2], self.feature_dim_in)
-        z = z[:, :, :actual_feature_dim]
-
-        if actual_feature_dim < self.feature_dim_in:
-            padding = torch.zeros(
-                z.shape[0],
-                z.shape[1],
-                self.feature_dim_in - actual_feature_dim,
-                device=z.device,
-                dtype=z.dtype,
-            )
-            z = torch.cat([z, padding], dim=2)
-
-        for layer in self.layers:
-            z = layer(x, z)
-
-        emb_x = self.out_x(z)
-        emb_y = self.out_y(z)
-        return emb_x, emb_y
+        A = data.to_adjacency()
+        return self._embed(A)
 
     @override
     def get_config(self) -> dict[str, Any]:

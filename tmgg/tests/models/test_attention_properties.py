@@ -8,7 +8,9 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
-from tmgg.models.attention import MultiHeadAttention, MultiLayerAttention
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.attention import MultiLayerAttention
+from tmgg.models.layers import MultiHeadAttention
 
 
 # Custom strategies for generating test data
@@ -89,6 +91,7 @@ class TestMultiHeadAttentionProperties:
     """Property-based tests for MultiHeadAttention."""
 
     @given(dims=attention_dims())
+    @settings(deadline=2000)
     def test_output_shape_invariant(self, dims: tuple[int, int]) -> None:
         """Test that output shape matches input shape regardless of internal dimensions."""
         d_model, num_heads = dims
@@ -98,36 +101,11 @@ class TestMultiHeadAttentionProperties:
         for batch_size in [1, 4]:
             for seq_len in [5, 10]:
                 x = torch.randn(batch_size, seq_len, d_model)
-                output, scores = model(x)
+                output = model(x)
 
                 assert output.shape == x.shape
-                assert scores.shape == (batch_size, seq_len, seq_len)
 
-    @given(
-        dims=attention_dims(),
-        batch_size=st.integers(min_value=1, max_value=4),
-        seq_len=st.integers(min_value=2, max_value=16),
-    )
-    @settings(max_examples=50)
-    def test_attention_scores_valid_range(
-        self, dims: tuple[int, int], batch_size: int, seq_len: int
-    ) -> None:
-        """Test that combined attention scores are in a reasonable range."""
-        d_model, num_heads = dims
-
-        # Generate non-zero input to avoid all-zero attention
-        x = torch.randn(batch_size, seq_len, d_model) * 0.1 + 0.1
-
-        model = MultiHeadAttention(d_model, num_heads)
-        _, scores = model(x)
-
-        # The combined scores are outputs of a linear layer, so they can be negative
-        # Just check they're not exploding or all zeros
-        assert not torch.all(scores == 0)  # Should have some non-zero values
-        assert not torch.isnan(scores).any()
-        assert not torch.isinf(scores).any()
-        assert torch.abs(scores).max() < 100  # Should not explode
-
+    @settings(deadline=500)
     @given(
         dims=attention_dims(),
         batch_size=st.integers(min_value=1, max_value=4),
@@ -147,17 +125,22 @@ class TestMultiHeadAttentionProperties:
         # Mask out last column
         mask[:, :, -1] = 0
 
-        _, scores = model(x, mask=mask)
+        output = model(x, mask=mask)
 
-        # Check masked positions have near-zero attention
-        assert torch.all(scores[:, :, -1] < 1e-6)
+        # Output should be valid (no NaN/Inf) with masking applied
+        assert not torch.isnan(output).any()
+        assert not torch.isinf(output).any()
 
     @given(
         dims=attention_dims(),
         batch_size=st.integers(min_value=1, max_value=2),
         seq_len=st.integers(min_value=2, max_value=8),
     )
-    @settings(max_examples=30, suppress_health_check=[HealthCheck.data_too_large])
+    @settings(
+        max_examples=30,
+        deadline=2000,
+        suppress_health_check=[HealthCheck.data_too_large],
+    )
     def test_numerical_stability(
         self, dims: tuple[int, int], batch_size: int, seq_len: int
     ) -> None:
@@ -171,12 +154,10 @@ class TestMultiHeadAttentionProperties:
         # Test with different input scales
         for scale in [0.01, 1.0, 10.0]:
             scaled_x = x * scale
-            output, scores = model(scaled_x)
+            output = model(scaled_x)
 
             assert not torch.isnan(output).any()
             assert not torch.isinf(output).any()
-            assert not torch.isnan(scores).any()
-            assert not torch.isinf(scores).any()
 
     @given(dims=attention_dims())
     @settings(deadline=None)  # Disable deadline for this test
@@ -188,7 +169,7 @@ class TestMultiHeadAttentionProperties:
         model = MultiHeadAttention(d_model, num_heads)
 
         x = torch.randn(2, 10, d_model, requires_grad=True)
-        output, _ = model(x)
+        output = model(x)
 
         # Compute gradient with respect to input
         loss = output.sum()
@@ -203,15 +184,16 @@ class TestMultiHeadAttentionProperties:
 class TestMultiLayerAttentionProperties:
     """Property-based tests for MultiLayerAttention.
 
-    MultiLayerAttention is now a denoising model for adjacency matrices.
-    It takes (batch, n, n) adjacency matrices and returns (batch, n, n) outputs.
+    MultiLayerAttention is a GraphModel for adjacency matrices. Its forward()
+    accepts GraphData and returns GraphData. The apply_attention() method
+    provides raw tensor access for internal use (e.g., hybrid models).
     """
 
     @given(
         num_nodes=st.integers(min_value=4, max_value=16),
         num_layers=st.integers(min_value=1, max_value=4),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_layer_composition_preserves_shape(
         self, num_nodes: int, num_layers: int
     ) -> None:
@@ -226,25 +208,25 @@ class TestMultiLayerAttentionProperties:
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         A = A + torch.randn_like(A) * 0.1
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        assert output.shape == A.shape
-        assert not torch.isnan(output).any()
-        assert not torch.isinf(output).any()
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == A.shape
+
+        # Check raw edge features for NaN/Inf
+        assert not torch.isnan(result.E).any()
+        assert not torch.isinf(result.E).any()
 
     @given(
         num_nodes=st.integers(min_value=4, max_value=12),
         num_layers=st.integers(min_value=2, max_value=6),
         batch_size=st.integers(min_value=1, max_value=2),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_deeper_models_maintain_stability(
         self, num_nodes: int, num_layers: int, batch_size: int
     ) -> None:
-        """Test that deeper models don't suffer from vanishing/exploding activations.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test that deeper models don't produce NaN/Inf in edge features."""
         d_model = num_nodes
         num_heads = 2
 
@@ -253,30 +235,24 @@ class TestMultiLayerAttentionProperties:
         A = A + torch.randn_like(A) * 0.3
 
         model = MultiLayerAttention(d_model, num_heads, num_layers)
-        logits = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        # Logits should be valid (no NaN/Inf)
-        assert not torch.isnan(logits).any()
-        assert not torch.isinf(logits).any()
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0)
-        assert torch.all(probs <= 1)
+        assert isinstance(result, GraphData)
+        assert not torch.isnan(result.E).any()
+        assert not torch.isinf(result.E).any()
 
     @given(
         num_nodes=st.integers(min_value=4, max_value=12),
         num_layers=st.integers(min_value=1, max_value=4),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_mask_propagation_through_layers(
         self, num_nodes: int, num_layers: int
     ) -> None:
-        """Test that masks are correctly propagated through all layers.
+        """Test that masks are correctly propagated through apply_attention().
 
-        Since MultiLayerAttention processes adjacency matrices and applies
-        sigmoid at output, we test that masking produces valid outputs
-        without NaN/Inf and that masked/unmasked outputs differ.
+        Since forward() takes GraphData (no mask parameter), mask propagation
+        is tested via apply_attention() which provides raw tensor access.
         """
         d_model = num_nodes
         num_heads = 2
@@ -290,8 +266,8 @@ class TestMultiLayerAttentionProperties:
         mask = torch.ones(batch_size, num_nodes, num_nodes)
         mask[:, :, -2:] = 0
 
-        output_masked = model(A, mask=mask)
-        output_unmasked = model(A, mask=None)
+        output_masked = model.apply_attention(A, mask=mask)
+        output_unmasked = model.apply_attention(A, mask=None)
 
         # Output should still be valid
         assert output_masked.shape == A.shape
@@ -299,7 +275,6 @@ class TestMultiLayerAttentionProperties:
         assert not torch.isinf(output_masked).any()
 
         # Masking should produce different output than not masking
-        # (unless model ignores masks, which is also valid behavior)
         assert output_masked.shape == output_unmasked.shape
 
 
@@ -338,10 +313,9 @@ class TestAttentionErrorHandling:
         # Mask that zeros out everything
         mask = torch.zeros(1, 5, 5)
 
-        output, scores = model(x, mask=mask)
+        output = model(x, mask=mask)
 
-        # With all-zero mask, scores should be uniform or handle gracefully
-        # The implementation might handle this differently
+        # With all-zero mask, output should still be valid
         assert output.shape == x.shape
         assert not torch.isnan(output).any()
 

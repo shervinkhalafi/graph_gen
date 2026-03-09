@@ -1,5 +1,3 @@
-from typing import Any
-
 import torch
 import torch.nn as nn
 
@@ -42,16 +40,3 @@ class Etoy(nn.Module):
         z = torch.hstack((m, mi, ma, std))
         out = self.lin(z)
         return out
-
-
-def masked_softmax(
-    x: torch.Tensor, mask: torch.Tensor | None, **kwargs: Any
-) -> torch.Tensor:
-    if mask is None:
-        return torch.softmax(x, **kwargs)
-
-    if mask.sum() == 0:
-        return torch.zeros_like(x)
-    x_masked = x.clone()
-    x_masked[mask == 0] = -float("inf")
-    return torch.softmax(x_masked, **kwargs)

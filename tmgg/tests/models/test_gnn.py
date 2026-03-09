@@ -3,13 +3,10 @@
 import pytest
 import torch
 
-from tmgg.models import GNN, GNNSymmetric
-from tmgg.models.gnn import NodeVarGNN
-from tmgg.models.layers import (
-    EigenEmbedding,
-    GaussianEmbedding,
-    GraphConvolutionLayer,
-)
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
+from tmgg.models.layers import GraphConvolutionLayer
+from tmgg.models.layers.eigen_embedding import _EigenEmbedding as EigenEmbedding
 
 
 class TestEmbeddings:
@@ -27,26 +24,12 @@ class TestEmbeddings:
 
         assert embeddings.shape == (batch_size, num_nodes, num_nodes)
 
-    def test_gaussian_embedding(self):
-        """Test GaussianEmbedding."""
-        batch_size = 2
-        num_nodes = 5
-        num_terms = 3
-        num_channels = 10
-
-        embedding = GaussianEmbedding(num_terms, num_channels)
-        A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-
-        embeddings = embedding(A)
-
-        assert embeddings.shape == (batch_size, num_nodes, num_channels)
-
 
 class TestGNNModels:
     """Test GNN model classes."""
 
     def test_gnn_forward(self):
-        """Test standard GNN forward pass returns adjacency logits."""
+        """Test standard GNN forward pass returns GraphData."""
         batch_size = 2
         num_nodes = 5
         num_layers = 2
@@ -62,14 +45,11 @@ class TestGNNModels:
         )
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        logits = model(A)
+        data = GraphData.from_adjacency(A)
+        result = model(data)
 
-        # forward() returns adjacency logits (single tensor)
-        assert logits.shape == (batch_size, num_nodes, num_nodes)
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
     def test_gnn_embeddings(self):
         """Test GNN embeddings() method for hybrid model use."""
@@ -80,16 +60,14 @@ class TestGNNModels:
         model = GNN(num_layers=2, feature_dim_out=feature_dim_out)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        X, Y = model.embeddings(A)
+        data = GraphData.from_adjacency(A)
+        X, Y = model.embeddings(data)
 
         assert X.shape == (batch_size, num_nodes, feature_dim_out)
         assert Y.shape == (batch_size, num_nodes, feature_dim_out)
 
     def test_gnn_symmetric_forward(self):
-        """Test symmetric GNN forward pass returns adjacency logits.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test symmetric GNN forward pass returns GraphData."""
         batch_size = 2
         num_nodes = 5
         num_layers = 2
@@ -98,20 +76,14 @@ class TestGNNModels:
         model = GNNSymmetric(num_layers=num_layers, feature_dim_out=feature_dim_out)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        logits = model(A)
+        data = GraphData.from_adjacency(A)
+        result = model(data)
 
-        # forward() returns adjacency logits (single tensor)
-        assert logits.shape == (batch_size, num_nodes, num_nodes)
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
     def test_nodevar_gnn_forward(self):
-        """Test NodeVarGNN forward pass.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test NodeVarGNN forward pass returns GraphData."""
         batch_size = 2
         num_nodes = 5
         num_layers = 1
@@ -120,13 +92,11 @@ class TestGNNModels:
         model = NodeVarGNN(num_layers=num_layers, feature_dim=feature_dim)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        logits = model(A)
+        data = GraphData.from_adjacency(A)
+        result = model(data)
 
-        assert logits.shape == (batch_size, num_nodes, num_nodes)
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
     def test_gnn_get_config(self):
         """Test GNN configuration retrieval."""

@@ -63,27 +63,27 @@ class MultiHeadAttention(nn.Module):
         # so dividing by sqrt(d_k) normalizes variance to ~1
         self.scale = 1.0 / math.sqrt(self.d_k)
 
-        # Linear layer to combine attention scores from different heads
-        self.score_combination = nn.Linear(num_heads, 1, bias=False)
-
     def forward(
         self,
         x: torch.Tensor,
         mask: torch.Tensor | None = None,
         residual: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Forward pass of the Multi-Head Attention module.
+    ) -> torch.Tensor:
+        """Forward pass of the Multi-Head Attention module.
 
-        Args:
-            x: Input tensor of shape (batch_size, seq_len, d_model)
-            mask: Optional mask tensor of shape (batch_size, seq_len_q, seq_len_k)
-            residual: Optional residual connection
+        Parameters
+        ----------
+        x
+            Input tensor of shape (batch_size, seq_len, d_model).
+        mask
+            Optional mask tensor of shape (batch_size, seq_len_q, seq_len_k).
+        residual
+            Optional residual tensor. If None, *x* is used.
 
-        Returns:
-            Tuple of (output, combined_attention_scores)
-            - output: Output tensor of shape (batch_size, seq_len, d_model)
-            - combined_attention_scores: Attention weights of shape (batch_size, seq_len, seq_len)
+        Returns
+        -------
+        torch.Tensor
+            Output tensor of shape (batch_size, seq_len, d_model).
         """
         batch_size = x.size(0)
 
@@ -134,13 +134,4 @@ class MultiHeadAttention(nn.Module):
         else:
             output = self.layer_norm(output)
 
-        # Combine attention scores from different heads using learned weights
-        # Use attention weights (after softmax) instead of raw scores for output
-        attn_weights_permuted = attn_weights.permute(
-            0, 2, 3, 1
-        )  # (batch_size, seq_len, seq_len, num_heads)
-        combined_scores = self.score_combination(attn_weights_permuted).squeeze(
-            -1
-        )  # (batch_size, seq_len, seq_len)
-
-        return output, combined_scores
+        return output

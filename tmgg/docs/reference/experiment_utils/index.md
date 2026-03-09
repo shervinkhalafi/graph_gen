@@ -1,3 +1,3 @@
 # Experiment utils
 
-::: tmgg.experiment_utils
+::: tmgg.experiments._shared_utils

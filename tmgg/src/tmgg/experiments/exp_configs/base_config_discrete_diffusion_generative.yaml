@@ -1,0 +1,90 @@
+# Base configuration for discrete diffusion graph generation experiments
+#
+# Inherits shared training infrastructure from _base_infra.yaml directly,
+# skipping the denoising task config (task/denoising.yaml).
+#
+# The model architecture comes from a model config in models/discrete/.
+# Override the default with: tmgg-discrete-gen model=models/discrete/discrete_sbm_official
+#
+# Run with: tmgg-discrete-gen
+# Override: tmgg-discrete-gen model.noise_schedule.timesteps=50 data.num_nodes=20
+
+defaults:
+  - _base_infra
+  - models/discrete/discrete_default@model
+  - _self_
+
+experiment_name: "discrete_diffusion"
+wandb_project: discrete-diffusion
+_cli_cmd: tmgg-discrete-gen
+
+# Extra features: uncomment to enable structural augmentation.
+# When enabled, adjust model.model_config.input_dims to account for extra
+# feature widths (use extra_features_dims() to compute offsets):
+#   cycles:      input_dims.X += 3, input_dims.y += 5
+#   eigenvalues: input_dims.X += 3, input_dims.y += 11
+#   all:         input_dims.X += 6, input_dims.y += 11
+
+# --- Evaluation metrics ---
+# Core three are always computed (degree, clustering, spectre).
+# Add orbit, sbm, planarity, uniqueness, novelty for full benchmarking.
+eval_metrics: [degree, clustering, spectre]
+
+# --- Data ---
+
+data:
+  _target_: tmgg.experiments.discrete_diffusion_generative.datamodule.SyntheticCategoricalDataModule
+  graph_type: sbm
+  num_nodes: 20
+  num_graphs: 2000
+  train_ratio: 0.8
+  val_ratio: 0.1
+  batch_size: 32
+  num_workers: ${num_workers}
+  seed: ${seed}
+  graph_config:
+    num_blocks: 2
+    p_intra: 0.7
+    p_inter: 0.1
+
+# --- Override callbacks: monitor val/epoch_NLL instead of val/loss ---
+
+callbacks:
+  early_stopping:
+    monitor: val/epoch_NLL
+    mode: min
+    patience: 10
+    min_delta: 1e-4
+  checkpoint:
+    monitor: val/epoch_NLL
+    mode: min
+    save_top_k: 3
+    save_last: true
+    filename: "model-step={step:06d}-val_nll={val/epoch_NLL:.4f}"
+    auto_insert_metric_name: false
+    every_n_train_steps: null
+
+# --- Override logger: wandb name without model_type ---
+
+logger:
+  - tensorboard:
+      save_dir: s3://${oc.env:TMGG_S3_BUCKET}/${oc.env:TMGG_S3_PREFIX,""}/tensorboard/${experiment_name}/${now:%Y-%m-%d_%H-%M-%S}
+      name: ${experiment_name}
+      version: null
+      log_graph: false
+      default_hp_metric: false
+  - wandb:
+      project: ${wandb_project}
+      name: ${experiment_name}_T${model.noise_schedule.timesteps}_n${data.num_nodes}_${data.graph_type}
+      tags: []
+      save_dir: ${paths.output_dir}
+      entity: ${wandb_entity}
+      log_model: false
+
+# --- Output directories ---
+
+hydra:
+  run:
+    dir: outputs/discrete_diffusion/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/discrete_diffusion/sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}

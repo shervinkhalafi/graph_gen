@@ -9,10 +9,11 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from tmgg.models.base import DenoisingModel
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.base import GraphModel
 
 
-class LinearBaseline(DenoisingModel):
+class LinearBaseline(GraphModel):
     """Linear transformation baseline: A_pred = W @ A @ W.T + b.
 
     This model applies a learnable linear transformation to the input adjacency
@@ -51,32 +52,33 @@ class LinearBaseline(DenoisingModel):
         self.W = nn.Parameter(torch.eye(max_nodes))
         self.b = nn.Parameter(torch.zeros(max_nodes, max_nodes))
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
-        """Apply linear transformation to input adjacency matrix.
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        """Apply linear transformation to input graph.
 
         Parameters
         ----------
-        A
-            Input adjacency matrix of shape (batch, N, N) where N <= max_nodes.
+        data
+            Graph features. The adjacency is extracted via
+            ``data.to_adjacency()``.
+        t
+            Diffusion timestep tensor, or None. Currently unused.
 
         Returns
         -------
-        torch.Tensor
-            Raw logits of shape (batch, N, N). Use predict() for probabilities.
+        GraphData
+            Denoised graph with 2-class edge features.
         """
+        A = data.to_adjacency()
         B, N, _ = A.shape
 
-        # Handle variable-size graphs by slicing parameters
         W = self.W[:N, :N]
         b = self.b[:N, :N]
 
-        # A_pred = W @ A @ W.T + b
-        # Expand W for batch matmul: (1, N, N) -> broadcast with (B, N, N)
         W_expanded = W.unsqueeze(0).expand(B, -1, -1)
         out = torch.bmm(torch.bmm(W_expanded, A), W_expanded.transpose(-2, -1))
         out = out + b.unsqueeze(0)
 
-        return out
+        return GraphData.from_adjacency(out)
 
     def get_config(self) -> dict[str, Any]:
         """Return model configuration."""

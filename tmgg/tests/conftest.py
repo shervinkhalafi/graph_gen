@@ -26,11 +26,11 @@ def quick_training_overrides(tmp_path: Path) -> list[str]:
         "~logger",
         "data.batch_size=2",
         "data.num_workers=0",
-        "++data.num_samples_per_graph=4",
+        "++data.samples_per_graph=4",
         "++data.num_train_samples=8",
         "++data.num_val_samples=4",
         "++data.num_test_samples=4",
-        "++data.dataset_config.num_graphs=4",
+        "++data.graph_config.num_graphs=4",
         f"hydra.run.dir={tmp_path}",
     ]
 
@@ -60,4 +60,39 @@ def sample_adjacency_batch() -> torch.Tensor:
 @pytest.fixture
 def config_path() -> Path:
     """Path to the experiment configs directory."""
-    return Path(__file__).parent.parent / "src" / "tmgg" / "exp_configs"
+    return Path(__file__).parent.parent / "src" / "tmgg" / "experiments" / "exp_configs"
+
+
+@pytest.fixture
+def require_modal_profile():
+    """Skip unless the igor-26028 Modal profile is active and tmgg-spectral is deployed.
+
+    Verifies three conditions:
+    1. ``modal`` CLI is installed
+    2. The ``igor-26028`` profile is current (prevents accidental runs against
+       wrong account)
+    3. The ``tmgg-spectral`` app is deployed (``modal_run_cli`` hydrates
+       successfully)
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("modal"):
+        pytest.skip("modal CLI not installed")
+
+    result = subprocess.run(
+        ["modal", "profile", "current"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0 or "igor-26028" not in result.stdout:
+        pytest.skip(f"Wrong Modal profile: {result.stdout.strip()!r}")
+
+    try:
+        import modal
+
+        fn = modal.Function.from_name("tmgg-spectral", "modal_run_cli")
+        fn.hydrate()
+    except Exception as exc:
+        pytest.skip(f"tmgg-spectral not deployed: {exc}")

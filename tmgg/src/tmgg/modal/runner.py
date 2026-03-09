@@ -1,196 +1,111 @@
-"""Modal-specific CloudRunner implementation.
+"""Modal experiment runner.
 
-Provides ModalRunner that executes TMGG experiments on Modal GPUs
-with Tigris storage for checkpoints and metrics.
+Provides ModalRunner that executes TMGG experiments on Modal GPUs.
+No ``import modal`` at module level — all Modal SDK calls happen
+lazily inside method bodies. Decorated ``@app.function`` wrappers
+live in ``_functions.py``; this module is pure runtime logic.
 
-Architecture:
-    The ModalRunner uses the unified TaskInput/TaskOutput abstraction from
-    tmgg.experiment_utils.task. Modal functions are thin wrappers around
-    execute_task(), which handles config reconstruction, experiment execution,
-    and storage uploads.
+Architecture
+------------
+ModalRunner serializes the Hydra config to YAML and passes it to one of the
+``modal_run_cli*`` functions, which write the YAML to a temp dir and run the
+CLI entry point as a subprocess inside the container. The runner does not
+handle storage or checkpoint uploads; those concerns live in the CLI or
+in post-run analysis scripts.
 
-    Execution modes:
-    - Blocking: run_experiment(), run_sweep() - wait for results
-    - Detached: spawn_experiment(), spawn_sweep() - fire-and-forget
+Execution modes:
+- Blocking: ``run_experiment()``, ``run_sweep()`` — wait for results
+- Detached: ``spawn_experiment()``, ``spawn_sweep()`` — fire-and-forget
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any
+import uuid
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
 
-import modal
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
-from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult, SpawnedTask
-from tmgg.experiment_utils.task import (
-    TaskInput,
-    execute_task,
-    prepare_config_for_remote,
-)
-from tmgg.modal.app import DEFAULT_SCALEDOWN_WINDOW, DEFAULT_TIMEOUTS, GPU_CONFIGS, app
-from tmgg.modal.image import create_tmgg_image
-from tmgg.modal.storage import TigrisStorage, get_storage_from_env
-from tmgg.modal.volumes import get_volume_mounts
+from tmgg.modal.app import MODAL_APP_NAME, resolve_modal_function_name
 
 if TYPE_CHECKING:
     from modal.functions import FunctionCall
 
 logger = logging.getLogger(__name__)
 
-# App name must match the one defined in app.py
-MODAL_APP_NAME = "tmgg-spectral"
+
+@dataclass
+class ExperimentResult:
+    """Result from a single experiment run.
+
+    Attributes
+    ----------
+    run_id
+        Unique identifier for this run.
+    config
+        The configuration used for this run.
+    metrics
+        Final metrics from training (val_loss, test_loss, etc.).
+    checkpoint_path
+        Path to the best model checkpoint (local or remote).
+    status
+        Completion status: 'completed', 'failed', or 'timeout'.
+    error_message
+        Error details if status is 'failed'.
+    duration_seconds
+        Wall-clock time for the experiment.
+    """
+
+    run_id: str
+    config: dict[str, Any]
+    metrics: dict[str, float] = field(default_factory=dict)
+    checkpoint_path: str | None = None
+    status: str = "completed"
+    error_message: str | None = None
+    duration_seconds: float = 0.0
 
 
 class ModalNotDeployedError(Exception):
     """Raised when the Modal app is not deployed."""
 
-    pass
-
 
 def check_modal_deployment() -> None:
     """Verify that the tmgg-spectral Modal app is deployed.
 
-    This function checks if the Modal functions are accessible, which requires
-    the app to have been deployed via `modal deploy`. If the app is not deployed,
-    it raises ModalNotDeployedError with instructions.
+    Checks whether the Modal functions are accessible, which requires
+    the app to have been deployed via ``modal deploy``. Raises
+    ``ModalNotDeployedError`` with instructions if not.
 
     Raises
     ------
     ModalNotDeployedError
         If the Modal app is not deployed or functions are not accessible.
     """
+    import modal
+
     try:
-        # Try to get a reference to the deployed function
-        # from_name() returns a handle to the deployed function
-        fn = modal.Function.from_name(MODAL_APP_NAME, "modal_execute_task")
-        # hydrate() forces resolution - this will fail if not deployed
+        fn = modal.Function.from_name(MODAL_APP_NAME, "modal_run_cli")
         fn.hydrate()
     except modal.exception.NotFoundError as e:
         raise ModalNotDeployedError(
             f"Modal app '{MODAL_APP_NAME}' is not deployed. "
-            + "Run 'mise run modal-deploy' or 'uv run modal deploy src/tmgg/modal/runner.py' first.\n"
+            + "Run 'mise run modal-deploy' or "
+            + "'uv run modal deploy -m tmgg.modal._functions' first.\n"
             + f"Original error: {e}"
         ) from e
     except Exception as e:
-        # Re-raise unexpected errors with context
         raise ModalNotDeployedError(
             f"Failed to verify Modal deployment for app '{MODAL_APP_NAME}': {e}"
         ) from e
-
-
-# Create experiment image, with fallback for testing
-try:
-    from tmgg.modal.paths import discover_tmgg_path
-
-    _tmgg_path = discover_tmgg_path()
-    experiment_image = create_tmgg_image(_tmgg_path)
-except Exception:
-    # During testing with mocked modal, image creation may fail
-    # This is fine as the decorated functions won't actually run
-    experiment_image = None
-
-
-# Modal secrets for Tigris storage and W&B
-tigris_secret = modal.Secret.from_name(
-    "tigris-credentials",
-    required_keys=[
-        "TMGG_TIGRIS_BUCKET",
-        "TMGG_TIGRIS_ACCESS_KEY",
-        "TMGG_TIGRIS_SECRET_KEY",
-    ],
-)
-
-wandb_secret = modal.Secret.from_name(
-    "wandb-credentials",
-    required_keys=[
-        "WANDB_API_KEY",
-    ],
-)
-
-
-def _get_timeout_for_gpu(gpu_type: str) -> int:
-    """Get the timeout in seconds for a given GPU tier."""
-    return DEFAULT_TIMEOUTS.get(gpu_type, DEFAULT_TIMEOUTS["standard"])
-
-
-@app.function(
-    name="modal_execute_task",
-    image=experiment_image,
-    gpu=GPU_CONFIGS["standard"],
-    timeout=DEFAULT_TIMEOUTS["standard"],
-    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
-    secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
-)
-def modal_execute_task(task_dict: dict[str, Any]) -> dict[str, Any]:
-    """Execute a single task on Modal using the unified task abstraction.
-
-    This is the primary Modal function for experiment execution. It wraps
-    the backend-agnostic execute_task() function, providing Modal-specific
-    storage integration via get_storage_from_env().
-
-    Parameters
-    ----------
-    task_dict
-        Serialized TaskInput as a dictionary (via asdict()).
-
-    Returns
-    -------
-    dict
-        TaskOutput as a dictionary (via asdict()).
-    """
-    # Reconstruct TaskInput from dict
-    task = TaskInput(**task_dict)
-
-    # Execute using the unified task abstraction
-    # Storage is obtained from Modal secrets via get_storage_from_env
-    output = execute_task(task, get_storage=get_storage_from_env)
-
-    return asdict(output)
-
-
-@app.function(
-    name="modal_execute_task_fast",
-    image=experiment_image,
-    gpu=GPU_CONFIGS["fast"],
-    timeout=DEFAULT_TIMEOUTS["fast"],
-    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
-    secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
-)
-def modal_execute_task_fast(task_dict: dict[str, Any]) -> dict[str, Any]:
-    """Execute task on fast (A100) GPU - delegates to modal_execute_task."""
-    return modal_execute_task.local(task_dict)
-
-
-@app.function(
-    name="modal_execute_task_debug",
-    image=experiment_image,
-    gpu=GPU_CONFIGS["debug"],
-    timeout=DEFAULT_TIMEOUTS["debug"],
-    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
-    secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
-)
-def modal_execute_task_debug(task_dict: dict[str, Any]) -> dict[str, Any]:
-    """Execute task on debug (T4) GPU - delegates to modal_execute_task."""
-    return modal_execute_task.local(task_dict)
-
-
-# Legacy function names for backward compatibility during transition
-# These will be removed once all callers migrate to modal_execute_task
-run_single_experiment = modal_execute_task
-run_single_experiment_fast = modal_execute_task_fast
 
 
 @dataclass
 class ModalSpawnedTask:
     """Handle for a spawned Modal task.
 
-    Provides the run_id for tracking and methods to wait for completion
-    or check status via storage. Implements the SpawnedTask protocol.
+    Provides the run_id for tracking and the FunctionCall handle for
+    polling.
 
     Attributes
     ----------
@@ -208,32 +123,27 @@ class ModalSpawnedTask:
     function_call: FunctionCall[dict[str, Any]] | None = None
 
 
-class ModalRunner(CloudRunner):
+class ModalRunner:
     """Modal-specific experiment runner.
 
-    Executes experiments on Modal GPUs with automatic scaling
-    and parallel execution support.
+    Serializes the Hydra config to YAML and dispatches it to one of the
+    ``modal_run_cli*`` functions. The remote function writes the YAML to
+    a temp dir and runs the CLI entry point as a subprocess.
 
     Requires the Modal app to be pre-deployed. If not deployed,
     instantiation will fail with ModalNotDeployedError.
 
     Execution Modes
     ---------------
-    - **Blocking**: `run_experiment()` / `run_sweep()` wait for results
-    - **Detached**: `spawn_experiment()` / `spawn_sweep()` return immediately
-
-    The detached mode is preferred for long-running sweeps where you want
-    to fire-and-forget. Results are stored in Tigris and can be retrieved
-    later via run_id.
+    - **Blocking**: ``run_experiment()`` / ``run_sweep()`` wait for results
+    - **Detached**: ``spawn_experiment()`` / ``spawn_sweep()`` return immediately
     """
 
     gpu_type: str
-    storage: TigrisStorage | None
 
     def __init__(
         self,
         gpu_type: str = "debug",
-        storage: TigrisStorage | None = None,
         skip_deployment_check: bool = False,
     ):
         """Initialize Modal runner.
@@ -242,8 +152,6 @@ class ModalRunner(CloudRunner):
         ----------
         gpu_type
             Default GPU tier for experiments.
-        storage
-            Tigris storage for results. If None, creates from env.
         skip_deployment_check
             If True, skip the deployment verification. Only use for testing
             or when you're certain the app is deployed.
@@ -257,64 +165,23 @@ class ModalRunner(CloudRunner):
             check_modal_deployment()
 
         self.gpu_type = gpu_type
-        self.storage = storage or get_storage_from_env()
         self._active_runs: dict[str, ModalSpawnedTask] = {}
 
-    def _create_task_input(
-        self,
-        config: DictConfig,
-        gpu_tier: str,
-        timeout_seconds: int | None = None,
-        additional_tags: list[str] | None = None,
-    ) -> TaskInput:
-        """Create a TaskInput from a Hydra config.
-
-        Parameters
-        ----------
-        config
-            Hydra configuration.
-        gpu_tier
-            GPU tier for execution.
-        timeout_seconds
-            Optional timeout override.
-        additional_tags
-            Extra W&B tags to add to this experiment.
-
-        Returns
-        -------
-        TaskInput
-            Serializable task input ready for remote execution.
-        """
-        # Use the unified prepare_config_for_remote to strip env vars
-        config_dict = prepare_config_for_remote(config)
-        run_id = config_dict.get("run_id", config_dict["run_id"])
-        timeout = timeout_seconds or _get_timeout_for_gpu(gpu_tier)
-
-        return TaskInput(
-            config=config_dict,
-            run_id=run_id,
-            gpu_tier=gpu_tier,
-            timeout_seconds=timeout,
-            additional_tags=additional_tags or [],
-        )
-
-    def _select_modal_function(self, gpu_tier: str) -> modal.Function:
+    def _select_modal_function(self, gpu_tier: str) -> Any:
         """Select the appropriate Modal function for the GPU tier.
 
-        Uses modal.Function.from_name() to get references to deployed functions,
-        which is required when calling from outside Modal (i.e., from local machine).
+        Uses ``modal.Function.from_name()`` to get references to deployed
+        functions, which is required when calling from outside Modal
+        (i.e., from local machine).
 
         Tier mapping:
-        - debug → T4 (modal_execute_task_debug)
-        - standard → A10G (modal_execute_task)
-        - fast, multi, h100 → A100 (modal_execute_task_fast)
+        - debug -> T4 (modal_run_cli_debug)
+        - standard -> A10G (modal_run_cli)
+        - fast, multi, h100 -> A100 (modal_run_cli_fast)
         """
-        if gpu_tier == "debug":
-            func_name = "modal_execute_task_debug"
-        elif gpu_tier in ("fast", "multi", "h100"):
-            func_name = "modal_execute_task_fast"
-        else:
-            func_name = "modal_execute_task"
+        import modal
+
+        func_name = resolve_modal_function_name("modal_run_cli", gpu_tier)
         return modal.Function.from_name(MODAL_APP_NAME, func_name)
 
     # =========================================================================
@@ -327,11 +194,11 @@ class ModalRunner(CloudRunner):
         gpu_type: str | None = None,
         timeout_seconds: int | None = None,
         additional_tags: list[str] | None = None,
-    ) -> SpawnedTask:
+    ) -> ModalSpawnedTask:
         """Spawn a single experiment without waiting for results.
 
-        Uses Modal's `.spawn()` for fire-and-forget execution. Results are
-        uploaded to Tigris storage and can be retrieved via run_id.
+        Uses Modal's ``.spawn()`` for fire-and-forget execution. Results
+        are tracked via the confirmation log on the Modal volume.
 
         Parameters
         ----------
@@ -340,33 +207,32 @@ class ModalRunner(CloudRunner):
         gpu_type
             GPU tier override.
         timeout_seconds
-            Timeout override.
+            Timeout override (unused, retained for interface compatibility).
         additional_tags
-            Extra W&B tags to add to this experiment.
+            Extra W&B tags (unused, retained for interface compatibility).
 
         Returns
         -------
-        SpawnedTask
+        ModalSpawnedTask
             Handle with run_id for tracking.
         """
+        _ = timeout_seconds, additional_tags  # reserved for future use
         gpu = gpu_type or self.gpu_type
-        task_input = self._create_task_input(
-            config, gpu, timeout_seconds, additional_tags
-        )
-        task_dict = asdict(task_input)
+        run_id = str(config.get("run_id", str(uuid.uuid4())[:8]))
+        resolved_cmd = str(config.get("_cli_cmd", "tmgg-discrete-gen"))
+        config_yaml = OmegaConf.to_yaml(config, resolve=True)
 
-        # Use spawn() for detached execution
         modal_fn = self._select_modal_function(gpu)
-        function_call = modal_fn.spawn(task_dict)
+        function_call = modal_fn.spawn(resolved_cmd, config_yaml, run_id)
 
         spawned = ModalSpawnedTask(
-            run_id=task_input.run_id,
+            run_id=run_id,
             gpu_tier=gpu,
             function_call=function_call,
         )
-        self._active_runs[task_input.run_id] = spawned
+        self._active_runs[run_id] = spawned
 
-        logger.info(f"Spawned experiment {task_input.run_id} on {gpu} GPU (detached)")
+        logger.info(f"Spawned experiment {run_id} on {gpu} GPU (detached)")
         return spawned
 
     def spawn_sweep(
@@ -375,11 +241,10 @@ class ModalRunner(CloudRunner):
         gpu_type: str | None = None,
         timeout_seconds: int | None = None,
         additional_tags: list[str] | None = None,
-    ) -> list[SpawnedTask]:
+    ) -> list[ModalSpawnedTask]:
         """Spawn multiple experiments without waiting for results.
 
-        Each experiment is spawned independently using `.spawn()`.
-        Results are uploaded to Tigris and can be retrieved via run_ids.
+        Each experiment is spawned independently using ``.spawn()``.
 
         Parameters
         ----------
@@ -388,17 +253,17 @@ class ModalRunner(CloudRunner):
         gpu_type
             GPU tier for all experiments.
         timeout_seconds
-            Timeout per experiment.
+            Timeout per experiment (unused, retained for interface compatibility).
         additional_tags
-            Extra W&B tags to add to all experiments.
+            Extra W&B tags (unused, retained for interface compatibility).
 
         Returns
         -------
-        list[SpawnedTask]
+        list[ModalSpawnedTask]
             Handles with run_ids for tracking.
         """
         gpu = gpu_type or self.gpu_type
-        spawned_tasks: list[SpawnedTask] = []
+        spawned_tasks: list[ModalSpawnedTask] = []
 
         for config in configs:
             task = self.spawn_experiment(config, gpu, timeout_seconds, additional_tags)
@@ -427,27 +292,38 @@ class ModalRunner(CloudRunner):
         gpu_type
             GPU tier override.
         timeout_seconds
-            Timeout override.
+            Timeout override (unused, retained for interface compatibility).
         additional_tags
-            Extra W&B tags to add to this experiment.
+            Extra W&B tags (unused, retained for interface compatibility).
 
         Returns
         -------
         ExperimentResult
             Result of the experiment.
         """
+        _ = timeout_seconds, additional_tags  # reserved for future use
         gpu = gpu_type or self.gpu_type
-        task_input = self._create_task_input(
-            config, gpu, timeout_seconds, additional_tags
-        )
-        task_dict = asdict(task_input)
+        run_id = str(config.get("run_id", str(uuid.uuid4())[:8]))
+        resolved_cmd = str(config.get("_cli_cmd", "tmgg-discrete-gen"))
+        config_yaml = OmegaConf.to_yaml(config, resolve=True)
 
-        # Use remote() for blocking execution
         modal_fn = self._select_modal_function(gpu)
-        result_dict: dict[str, Any] = modal_fn.remote(task_dict)
+        result_dict: dict[str, Any] = modal_fn.remote(resolved_cmd, config_yaml, run_id)
 
-        # Convert TaskOutput dict to ExperimentResult
-        return self._task_output_to_result(result_dict, task_input.config)
+        config_container = OmegaConf.to_container(config, resolve=True)
+        if not isinstance(config_container, dict):
+            raise TypeError(
+                f"Expected dict from OmegaConf.to_container, got {type(config_container)}"
+            )
+
+        return ExperimentResult(
+            run_id=run_id,
+            config=cast(dict[str, Any], config_container),
+            metrics=result_dict.get("metrics", {}),
+            status=result_dict.get("status", "unknown"),
+            error_message=result_dict.get("error"),
+            duration_seconds=0.0,
+        )
 
     def run_sweep(
         self,
@@ -458,6 +334,9 @@ class ModalRunner(CloudRunner):
     ) -> list[ExperimentResult]:
         """Run multiple experiments in parallel and wait for all results.
 
+        Uses ``modal_fn.map()`` for parallel remote execution. Each config
+        is serialized to YAML independently.
+
         Parameters
         ----------
         configs
@@ -465,54 +344,60 @@ class ModalRunner(CloudRunner):
         gpu_type
             GPU tier for all experiments.
         timeout_seconds
-            Timeout per experiment.
+            Timeout per experiment (unused, retained for interface compatibility).
         additional_tags
-            Extra W&B tags to add to all experiments.
+            Extra W&B tags (unused, retained for interface compatibility).
 
         Returns
         -------
         list[ExperimentResult]
             Results from all experiments.
         """
+        _ = timeout_seconds, additional_tags  # reserved for future use
         gpu = gpu_type or self.gpu_type
-        task_inputs = [
-            self._create_task_input(c, gpu, timeout_seconds, additional_tags)
-            for c in configs
-        ]
-        task_dicts = [asdict(t) for t in task_inputs]
-
-        # Use Modal's map() for parallel blocking execution
         modal_fn = self._select_modal_function(gpu)
-        result_dicts = list(modal_fn.map(task_dicts))
 
-        return [
-            self._task_output_to_result(rd, ti.config)
-            for rd, ti in zip(result_dicts, task_inputs, strict=True)
-        ]
+        # Prepare args for each config
+        call_args: list[tuple[str, str, str]] = []
+        config_containers: list[dict[str, Any]] = []
+        for config in configs:
+            run_id = str(config.get("run_id", str(uuid.uuid4())[:8]))
+            resolved_cmd = str(config.get("_cli_cmd", "tmgg-discrete-gen"))
+            config_yaml = OmegaConf.to_yaml(config, resolve=True)
+            call_args.append((resolved_cmd, config_yaml, run_id))
 
-    def _task_output_to_result(
-        self, output_dict: dict[str, Any], config: dict[str, Any]
-    ) -> ExperimentResult:
-        """Convert TaskOutput dict to ExperimentResult."""
-        return ExperimentResult(
-            run_id=output_dict["run_id"],
-            config=config,
-            metrics=output_dict.get("metrics", {}),
-            checkpoint_path=output_dict.get("checkpoint_uri"),
-            status=output_dict.get("status", "unknown"),
-            error_message=output_dict.get("error_message"),
-            duration_seconds=output_dict.get("duration_seconds", 0.0),
-        )
+            container = OmegaConf.to_container(config, resolve=True)
+            if not isinstance(container, dict):
+                raise TypeError(
+                    f"Expected dict from OmegaConf.to_container, got {type(container)}"
+                )
+            config_containers.append(cast(dict[str, Any], container))
+
+        # modal_fn.starmap expects an iterable of arg tuples
+        result_dicts = list(modal_fn.starmap(call_args))
+
+        results: list[ExperimentResult] = []
+        for rd, (_cmd, _, run_id), container in zip(
+            result_dicts, call_args, config_containers, strict=True
+        ):
+            results.append(
+                ExperimentResult(
+                    run_id=run_id,
+                    config=container,
+                    metrics=rd.get("metrics", {}),
+                    status=rd.get("status", "unknown"),
+                    error_message=rd.get("error"),
+                    duration_seconds=0.0,
+                )
+            )
+        return results
 
     # =========================================================================
     # Status and Control
     # =========================================================================
 
     def get_status(self, run_id: str) -> str:
-        """Get status of an experiment by checking Tigris storage.
-
-        This is the source of truth for experiment completion, as it works
-        across process restarts (unlike Modal FunctionCall handles).
+        """Get status of an experiment from local tracking.
 
         Parameters
         ----------
@@ -522,28 +407,10 @@ class ModalRunner(CloudRunner):
         Returns
         -------
         str
-            One of 'pending', 'running', 'completed', 'failed', 'unknown'.
+            ``"running"`` if tracked locally, ``"unknown"`` otherwise.
         """
-        if not self.storage:
-            return (
-                self._active_runs.get(run_id, ModalSpawnedTask(run_id, "")).gpu_tier
-                and "running"
-                or "unknown"
-            )
-
-        # Check storage for completion
-        try:
-            # Storage.exists() checks for metrics file
-            if self.storage.exists(f"metrics/{run_id}.json"):
-                metrics = self.storage.download_metrics(run_id)
-                return metrics.get("status", "completed")
-        except Exception:
-            pass
-
-        # Check if we have an active spawn handle
         if run_id in self._active_runs:
             return "running"
-
         return "unknown"
 
     def cancel(self, run_id: str) -> bool:
@@ -566,11 +433,6 @@ class ModalRunner(CloudRunner):
             del self._active_runs[run_id]
         return False
 
-    @property
-    def supports_spawn(self) -> bool:
-        """ModalRunner supports detached (spawn) execution."""
-        return True
-
 
 def create_runner(gpu_type: str = "debug") -> ModalRunner:
     """Factory function to create a ModalRunner.
@@ -585,16 +447,4 @@ def create_runner(gpu_type: str = "debug") -> ModalRunner:
     ModalRunner
         Configured runner instance.
     """
-    storage = get_storage_from_env()
-    return ModalRunner(gpu_type=gpu_type, storage=storage)
-
-
-# Import evaluation functions so they're registered with the Modal app when deploying
-# This makes modal_evaluate_mmd* and modal_list_checkpoints available via
-# `modal deploy -m tmgg.modal.runner`
-from tmgg.modal.evaluate import (  # noqa: E402, F401
-    modal_evaluate_mmd,
-    modal_evaluate_mmd_debug,
-    modal_evaluate_mmd_fast,
-    modal_list_checkpoints,
-)
+    return ModalRunner(gpu_type=gpu_type)

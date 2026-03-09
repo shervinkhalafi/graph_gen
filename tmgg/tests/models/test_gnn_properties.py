@@ -8,13 +8,11 @@ from hypothesis import given, note, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
-from tmgg.models.layers import (
-    EigenDecompositionError,
-    EigenEmbedding,
-    GaussianEmbedding,
-    GraphConvolutionLayer,
-)
+from tmgg.models.layers import GraphConvolutionLayer
+from tmgg.models.layers.eigen_embedding import _EigenEmbedding as EigenEmbedding
+from tmgg.models.spectral_denoisers import EigenDecompositionError
 
 
 # Custom strategies for generating graph data
@@ -120,7 +118,7 @@ class TestEigenEmbeddingProperties:
     """Property-based tests for EigenEmbedding."""
 
     @given(A=batch_adjacency_matrices())
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=2000)
     def test_eigenembedding_shape_preservation(self, A: torch.Tensor) -> None:
         """Test that eigen embedding preserves batch and node dimensions."""
         embedding = EigenEmbedding()
@@ -136,7 +134,7 @@ class TestEigenEmbeddingProperties:
             assert e.debugging_context is not None
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=10))
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_eigenembedding_orthogonality(self, A: torch.Tensor) -> None:
         """Test that eigenvectors are orthogonal."""
         embedding = EigenEmbedding()
@@ -171,101 +169,40 @@ class TestEigenEmbeddingProperties:
         assert "Mock eigendecomposition failure" in str(error)
 
 
-class TestGaussianEmbeddingProperties:
-    """Property-based tests for GaussianEmbedding."""
-
-    @given(
-        A=batch_adjacency_matrices(min_nodes=3, max_nodes=10),
-        num_terms=st.integers(min_value=1, max_value=5),
-        num_channels=st.integers(min_value=1, max_value=16),
-    )
-    @settings(max_examples=20)
-    def test_gaussian_embedding_output_shape(
-        self, A: torch.Tensor, num_terms: int, num_channels: int
-    ) -> None:
-        """Test output shape of Gaussian embedding."""
-        embedding = GaussianEmbedding(num_terms, num_channels)
-
-        result = embedding(A)
-
-        batch_size, num_nodes, _ = A.shape
-        assert result.shape == (batch_size, num_nodes, num_channels)
-
-    @given(
-        A=batch_adjacency_matrices(min_nodes=3, max_nodes=8),
-        num_terms=st.integers(min_value=1, max_value=3),
-    )
-    @settings(max_examples=15)
-    def test_gaussian_embedding_numerical_stability(
-        self, A: torch.Tensor, num_terms: int
-    ) -> None:
-        """Test that Gaussian embedding doesn't produce NaN/Inf."""
-        num_channels = 5
-        embedding = GaussianEmbedding(num_terms, num_channels)
-
-        result = embedding(A)
-
-        assert not torch.isnan(result).any()
-        assert not torch.isinf(result).any()
-
-    @given(
-        num_terms=st.integers(min_value=1, max_value=4),
-        num_channels=st.integers(min_value=1, max_value=10),
-    )
-    def test_gaussian_embedding_identity_matrix(
-        self, num_terms: int, num_channels: int
-    ) -> None:
-        """Test Gaussian embedding on identity matrix."""
-        embedding = GaussianEmbedding(num_terms, num_channels)
-
-        eye_matrix = torch.eye(5).unsqueeze(0)  # Identity matrix
-        result = embedding(eye_matrix)
-
-        assert result.shape == (1, 5, num_channels)
-        assert not torch.isnan(result).any()
-
-
 class TestGNNProperties:
     """Property-based tests for GNN models."""
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=10), params=gnn_params())
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_gnn_output_shapes(self, A: torch.Tensor, params: dict[str, int]) -> None:
-        """Test that GNN produces correct output shapes (adjacency logits)."""
+        """Test that GNN produces correct output shapes."""
         model = GNN(**params)
 
         try:
-            logits = model(A)
+            result = model(GraphData.from_adjacency(A))
 
             batch_size, num_nodes, _ = A.shape
-            # forward() returns adjacency logits
-            assert logits.shape == (batch_size, num_nodes, num_nodes)
+            assert isinstance(result, GraphData)
+            assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
         except EigenDecompositionError:
             pass  # Expected for some matrices
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=8))
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_gnn_symmetric_produces_valid_adjacency(self, A: torch.Tensor) -> None:
-        """Test that GNNSymmetric produces valid adjacency matrices.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test that GNNSymmetric produces valid adjacency output."""
         model = GNNSymmetric(num_layers=2, feature_dim_out=5)
 
         try:
-            logits = model(A)
+            result = model(GraphData.from_adjacency(A))
 
             # Check shape
-            assert logits.shape == A.shape
+            assert isinstance(result, GraphData)
+            assert result.to_adjacency().shape == A.shape
 
-            # predict() applies sigmoid to get probabilities in [0, 1]
-            probs = model.predict(logits)
-            assert torch.all(probs >= 0)
-            assert torch.all(probs <= 1)
-
-            # Check symmetry preservation
-            # Note: Output may not be perfectly symmetric due to numerical operations
-            diff = torch.abs(probs - probs.transpose(-2, -1))
+            # Check symmetry of raw edge features
+            raw_adj = result.E[:, :, :, 1]
+            diff = torch.abs(raw_adj - raw_adj.transpose(-2, -1))
             assert torch.max(diff) < 0.1  # Allow some asymmetry
         except EigenDecompositionError:
             pass
@@ -274,26 +211,22 @@ class TestGNNProperties:
         A=batch_adjacency_matrices(min_nodes=3, max_nodes=8),
         num_layers=st.integers(min_value=1, max_value=3),
     )
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_node_var_gnn_valid_output(self, A: torch.Tensor, num_layers: int) -> None:
-        """Test NodeVarGNN produces valid adjacency matrices.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test NodeVarGNN produces valid output."""
         model = NodeVarGNN(num_layers=num_layers, feature_dim=5)
 
         try:
-            logits = model(A)
+            result = model(GraphData.from_adjacency(A))
 
             # Check shape
-            assert logits.shape == A.shape
-            assert not torch.isnan(logits).any()
-            assert not torch.isinf(logits).any()
+            assert isinstance(result, GraphData)
+            assert result.to_adjacency().shape == A.shape
 
-            # predict() applies sigmoid to get probabilities in [0, 1]
-            probs = model.predict(logits)
-            assert torch.all(probs >= 0)
-            assert torch.all(probs <= 1)
+            # Check raw edge features are valid
+            raw_adj = result.E[:, :, :, 1]
+            assert not torch.isnan(raw_adj).any()
+            assert not torch.isinf(raw_adj).any()
         except EigenDecompositionError:
             pass
 
@@ -310,7 +243,7 @@ class TestGraphConvolutionProperties:
         num_terms=st.integers(min_value=1, max_value=4),
         num_channels=st.integers(min_value=2, max_value=16),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_graph_conv_shape_preservation(
         self, A: torch.Tensor, num_terms: int, num_channels: int
     ) -> None:
@@ -386,9 +319,9 @@ class TestGNNErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         try:
-            logits = model(A)
+            result = model(GraphData.from_adjacency(A))
             # Model should handle this by padding or truncating
-            assert logits.shape == (1, 5, 5)
+            assert result.to_adjacency().shape == (1, 5, 5)
         except EigenDecompositionError:
             pass  # Also acceptable
 

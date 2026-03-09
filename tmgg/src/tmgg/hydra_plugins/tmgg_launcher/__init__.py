@@ -1,7 +1,6 @@
 """TMGG Hydra Launcher Plugin.
 
-Custom launcher that dispatches experiments to CloudRunner backends
-(LocalRunner, ModalRunner, RayRunner) based on configuration.
+Custom launcher that dispatches experiments to the ModalRunner backend.
 
 Usage
 -----

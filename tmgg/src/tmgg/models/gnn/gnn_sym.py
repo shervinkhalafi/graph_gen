@@ -1,21 +1,22 @@
-"""Graph Neural Network models for graph denoising."""
+"""Symmetric GNN variant — reconstruction via X @ X.T instead of X @ Y.T."""
 
 from typing import Any, override
 
 import torch
-import torch.nn as nn
 
-from tmgg.models.layers.eigen_embedding import EigenEmbedding
-from tmgg.models.layers.gcn import GraphConvolutionLayer
+from tmgg.data.datasets.graph_types import GraphData
 
-from ..base import DenoisingModel
+from .gnn import GNN
 
 
-class GNNSymmetric(DenoisingModel):
+class GNNSymmetric(GNN):
     """Symmetric GNN for adjacency matrix reconstruction.
 
-    Returns adjacency logits (pre-sigmoid) directly. Uses symmetric embedding
-    (single X) with reconstruction via X @ X.T.
+    Inherits all GNN infrastructure (embedding, convolution layers, output
+    projections) but uses a single projection ``out_x`` for symmetric
+    reconstruction via ``X @ X.T`` instead of asymmetric ``X @ Y.T``.
+
+    The ``out_y`` projection inherited from ``GNN`` is removed in ``__init__``.
     """
 
     def __init__(
@@ -26,74 +27,42 @@ class GNNSymmetric(DenoisingModel):
         feature_dim_out: int = 10,
         eigenvalue_reg: float = 0.0,
     ):
-        """Initialize GNNSymmetric.
-
-        Parameters
-        ----------
-        num_layers
-            Number of graph convolution layers.
-        num_terms
-            Number of terms in polynomial filters.
-        feature_dim_in
-            Input feature dimension (truncated eigenvector dimension).
-        feature_dim_out
-            Output embedding dimension for adjacency reconstruction.
-        eigenvalue_reg
-            Diagonal regularization for eigendecomposition stability.
-        """
-        super().__init__()
-
-        self.num_layers = num_layers
-        self.num_terms = num_terms
-        self.feature_dim_in = feature_dim_in
-        self.feature_dim_out = feature_dim_out
-        self.eigenvalue_reg = eigenvalue_reg
-
-        self.embedding_layer = EigenEmbedding(eigenvalue_reg=eigenvalue_reg)
-
-        self.layers = nn.ModuleList()
-        for _ in range(num_layers):
-            self.layers.append(GraphConvolutionLayer(num_terms, feature_dim_in))
-
-        self.out_x = nn.Linear(feature_dim_in, feature_dim_out)
+        super().__init__(
+            num_layers=num_layers,
+            num_terms=num_terms,
+            feature_dim_in=feature_dim_in,
+            feature_dim_out=feature_dim_out,
+            eigenvalue_reg=eigenvalue_reg,
+        )
+        # Symmetric: only one output projection needed
+        del self.out_y
 
     @override
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Compute adjacency logits from input adjacency matrix.
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        """Compute denoised graph via symmetric reconstruction X @ X.T.
 
         Parameters
         ----------
-        x
-            Input adjacency matrix of shape (batch, n, n).
+        data
+            Graph features. The adjacency is extracted via
+            ``data.to_adjacency()``.
+        t
+            Diffusion timestep tensor, or None. Currently unused.
 
         Returns
         -------
-        torch.Tensor
-            Adjacency logits (pre-sigmoid) of shape (batch, n, n).
+        GraphData
+            Denoised graph with 2-class edge features.
         """
-        z = self.embedding_layer(x)
-        # Take only the first feature_dim_in columns from eigenvectors
-        actual_feature_dim = min(z.shape[2], self.feature_dim_in)
-        z = z[:, :, :actual_feature_dim]
-
-        # Pad with zeros if we have fewer features than expected
-        if actual_feature_dim < self.feature_dim_in:
-            padding = torch.zeros(
-                z.shape[0],
-                z.shape[1],
-                self.feature_dim_in - actual_feature_dim,
-                device=z.device,
-                dtype=z.dtype,
-            )
-            z = torch.cat([z, padding], dim=2)
+        A = data.to_adjacency()
+        z = self.embedding_layer(A)
 
         for layer in self.layers:
-            z = layer(x, z)
+            z = layer(A, z)
 
         emb = self.out_x(z)
-
-        # Reconstruct adjacency logits via symmetric outer product
-        return torch.bmm(emb, emb.transpose(1, 2))
+        result_adj = torch.bmm(emb, emb.transpose(1, 2))
+        return GraphData.from_adjacency(result_adj)
 
     @override
     def get_config(self) -> dict[str, Any]:

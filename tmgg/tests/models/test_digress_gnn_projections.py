@@ -17,12 +17,21 @@ Key invariants:
 import pytest
 import torch
 
+from tmgg.data.datasets.graph_types import GraphData, GraphStructure
 from tmgg.models.digress.transformer_model import (
     GraphTransformer,
     NodeEdgeBlock,
     XEyTransformerLayer,
 )
 from tmgg.models.layers import BareGraphConvolutionLayer
+
+
+def _random_symmetric_adjacency(bs: int, n: int) -> torch.Tensor:
+    """Generate a random binary symmetric adjacency with zero diagonal."""
+    A = torch.randint(0, 2, (bs, n, n)).float()
+    A = (A + A.transpose(1, 2)).clamp(max=1.0)
+    A.diagonal(dim1=1, dim2=2).zero_()
+    return A
 
 
 class TestBareGraphConvolutionLayer:
@@ -130,8 +139,9 @@ class TestNodeEdgeBlockGNN:
         E = torch.rand(bs, n, n, 32)
         y = torch.rand(bs, 64)
         node_mask = torch.ones(bs, n)
+        structure = GraphStructure(adjacency=_random_symmetric_adjacency(bs, n))
 
-        newX, newE, new_y = block(X, E, y, node_mask)
+        newX, newE, new_y = block(X, E, y, node_mask, structure)
 
         assert newX.shape == X.shape
         assert newE.shape == E.shape
@@ -154,8 +164,9 @@ class TestNodeEdgeBlockGNN:
         E = torch.rand(bs, n, n, 16)
         y = torch.rand(bs, 32)
         node_mask = torch.ones(bs, n)
+        structure = GraphStructure(adjacency=_random_symmetric_adjacency(bs, n))
 
-        newX, newE, new_y = block(X, E, y, node_mask)
+        newX, newE, new_y = block(X, E, y, node_mask, structure)
 
         assert newX.shape == X.shape
         assert newE.shape == E.shape
@@ -178,8 +189,9 @@ class TestNodeEdgeBlockGNN:
         E = torch.rand(bs, n, n, 16)
         y = torch.rand(bs, 32)
         node_mask = torch.ones(bs, n)
+        structure = GraphStructure(adjacency=_random_symmetric_adjacency(bs, n))
 
-        newX, newE, new_y = block(X, E, y, node_mask)
+        newX, newE, new_y = block(X, E, y, node_mask, structure)
         loss = newX.sum() + newE.sum() + new_y.sum()
         loss.backward()
 
@@ -208,6 +220,28 @@ class TestNodeEdgeBlockGNN:
         assert block.q.H.shape == (4, 64, 64)  # pyright: ignore[reportAttributeAccessIssue]
         assert block.k.H.shape == (4, 64, 64)  # pyright: ignore[reportAttributeAccessIssue]
         assert block.v.H.shape == (4, 64, 64)  # pyright: ignore[reportAttributeAccessIssue]
+
+    def test_missing_adjacency_raises(self):
+        """GNN projections without adjacency in GraphStructure raises ValueError."""
+        block = NodeEdgeBlock(
+            dx=64,
+            de=16,
+            dy=32,
+            n_head=4,
+            use_gnn_q=True,
+            use_gnn_k=False,
+            use_gnn_v=False,
+        )
+
+        bs, n = 2, 8
+        X = torch.rand(bs, n, 64)
+        E = torch.rand(bs, n, n, 16)
+        y = torch.rand(bs, 32)
+        node_mask = torch.ones(bs, n)
+        structure = GraphStructure()  # No adjacency
+
+        with pytest.raises(ValueError, match="adjacency must be populated"):
+            block(X, E, y, node_mask, structure)
 
 
 class TestXEyTransformerLayerGNN:
@@ -290,7 +324,11 @@ class TestGraphTransformerGNN:
         assert isinstance(layer.self_attn.v, torch.nn.Linear)
 
     def test_forward_pass_with_gnn(self):
-        """Full forward pass works with GNN projections."""
+        """Full forward pass works with GNN projections.
+
+        from_adjacency() produces 2-class X and E features, so input_dims
+        must use {"X": 2, "E": 2}.
+        """
         hidden_dims = {
             "dx": 64,
             "de": 16,
@@ -303,19 +341,26 @@ class TestGraphTransformerGNN:
 
         model = GraphTransformer(
             n_layers=2,
-            input_dims={"X": 1, "E": 1, "y": 0},
+            input_dims={"X": 2, "E": 2, "y": 0},
             hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
             hidden_dims=hidden_dims,
-            output_dims={"X": 0, "E": 1, "y": 0},
+            output_dims={"X": 0, "E": 2, "y": 0},
         )
 
         x = torch.rand(2, 12, 12)  # Adjacency matrix
-        out = model(x)
+        result = model(GraphData.from_adjacency(x))
 
-        assert out.shape == (2, 12, 12)
+        assert isinstance(result, GraphData)
+        assert result.E.shape == (2, 12, 12, 2)
 
     def test_forward_pass_with_eigenvectors_and_gnn(self):
-        """Forward pass works with both eigenvectors and GNN projections."""
+        """Forward pass works with both eigenvectors and GNN projections.
+
+        from_adjacency() produces X with 2 features; EigenvectorAugmentation
+        adds k=16, so the model auto-adjusts input_dims["X"] = 2 + 16 = 18.
+        """
+        from tmgg.models.digress.extra_features import EigenvectorAugmentation
+
         hidden_dims = {
             "dx": 64,
             "de": 16,
@@ -328,19 +373,23 @@ class TestGraphTransformerGNN:
 
         model = GraphTransformer(
             n_layers=2,
-            input_dims={"X": 16, "E": 1, "y": 0},  # X dim matches k
+            input_dims={
+                "X": 2,
+                "E": 2,
+                "y": 0,
+            },
             hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
             hidden_dims=hidden_dims,
-            output_dims={"X": 0, "E": 1, "y": 0},
-            use_eigenvectors=True,
-            k=16,
+            output_dims={"X": 0, "E": 2, "y": 0},
+            extra_features=EigenvectorAugmentation(k=16),
         )
 
         x = torch.rand(2, 20, 20)  # Adjacency matrix
         x = (x + x.transpose(-1, -2)) / 2  # Symmetrize for eigenvector extraction
-        out = model(x)
+        result = model(GraphData.from_adjacency(x))
 
-        assert out.shape == (2, 20, 20)
+        assert isinstance(result, GraphData)
+        assert result.E.shape == (2, 20, 20, 2)
 
 
 class TestAdjacencyExtraction:
@@ -367,10 +416,10 @@ class TestAdjacencyExtraction:
 
         model = GraphTransformer(
             n_layers=1,
-            input_dims={"X": 1, "E": 1, "y": 0},
+            input_dims={"X": 2, "E": 2, "y": 0},
             hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
             hidden_dims=hidden_dims,
-            output_dims={"X": 0, "E": 1, "y": 0},
+            output_dims={"X": 0, "E": 2, "y": 0},
         )
 
         # Create distinct input adjacency
@@ -391,11 +440,16 @@ class TestAdjacencyExtraction:
             return original_q_forward(A, X)
 
         with patch.object(gnn_q, "forward", capturing_forward):
-            _ = model(input_adj)
+            _ = model(GraphData.from_adjacency(input_adj))
 
-        # Verify the captured adjacency matches input (not transformed)
+        # After from_adjacency, adjacency is extracted via argmax on 2-class E.
+        # from_adjacency zeroes diagonal (sets E[diag, 0]=1), so extracted
+        # adjacency has 0 on diagonal and binary values off-diagonal.
+        expected_adj = (input_adj > 0.5).float()
+        diag_idx = torch.arange(n)
+        expected_adj[:, diag_idx, diag_idx] = 0.0  # diagonal zeroed by from_adjacency
         assert len(captured_A) == 1
-        assert torch.allclose(captured_A[0], input_adj, atol=1e-5)
+        assert torch.allclose(captured_A[0], expected_adj, atol=1e-5)
 
     def test_adjacency_not_from_transformed_E(self):
         """Verify adjacency differs from what would be extracted from transformed E.
@@ -415,10 +469,10 @@ class TestAdjacencyExtraction:
 
         model = GraphTransformer(
             n_layers=1,
-            input_dims={"X": 1, "E": 1, "y": 0},
+            input_dims={"X": 2, "E": 2, "y": 0},
             hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
             hidden_dims=hidden_dims,
-            output_dims={"X": 0, "E": 1, "y": 0},
+            output_dims={"X": 0, "E": 2, "y": 0},
         )
 
         # Create input
@@ -430,5 +484,6 @@ class TestAdjacencyExtraction:
         assert model.transformer._use_gnn_projections is True
 
         # Run forward pass (this should work without error)
-        out = model(input_adj)
-        assert out.shape == (bs, n, n)
+        result = model(GraphData.from_adjacency(input_adj))
+        assert isinstance(result, GraphData)
+        assert result.E.shape == (bs, n, n, 2)

@@ -63,7 +63,9 @@ def run_comparison(
     list[dict]
         Results for each checkpoint-dataset combination.
     """
-    from tmgg.experiments.generative.evaluate_checkpoint import evaluate_checkpoint
+    from tmgg.experiments.gaussian_diffusion_generative.evaluate_checkpoint import (
+        evaluate_checkpoint,
+    )
 
     results: list[dict[str, Any]] = []
     total_evals = len(checkpoint_paths) * len(datasets)

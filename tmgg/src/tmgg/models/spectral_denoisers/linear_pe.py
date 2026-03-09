@@ -5,6 +5,8 @@ eigenspace with optional node-specific bias correction. Supports both
 symmetric (VWV^T) and asymmetric (XY^T) reconstruction modes.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 import torch
@@ -58,6 +60,11 @@ class LinearPE(SpectralDenoiser):
     Asymmetric mode doubles the parameter count but allows the model to learn
     different row and column embeddings, which can capture asymmetric
     structure in directed graphs or improve expressiveness.
+
+    The ``max_nodes`` parameter sets a hard ceiling on graph size. Graphs
+    with more than ``max_nodes`` nodes will have truncated bias vectors.
+    The default of 200 covers SBM and Erdos-Renyi benchmarks; override
+    for larger graphs.
 
     Examples
     --------
@@ -153,9 +160,10 @@ class LinearPE(SpectralDenoiser):
             Y = torch.matmul(V, self.W_Y)  # (batch, n, k)
             A_reconstructed = torch.matmul(X, Y.transpose(-1, -2))  # (batch, n, n)
         else:
-            # Symmetric reconstruction: V W V^T
+            # Symmetric reconstruction: V W_sym V^T
             assert self.W is not None
-            VW = torch.matmul(V, self.W)  # (batch, n, k)
+            W_sym = (self.W + self.W.T) / 2  # Enforce symmetry of W
+            VW = torch.matmul(V, W_sym)  # (batch, n, k)
             A_reconstructed = torch.matmul(VW, V.transpose(-1, -2))  # (batch, n, n)
 
         # Add bias term if enabled

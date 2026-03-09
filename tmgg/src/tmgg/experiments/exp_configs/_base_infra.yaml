@@ -1,0 +1,83 @@
+# Shared training infrastructure for all experiment types
+#
+# Contains settings that every experiment needs: optimizer, scheduler, seed,
+# paths, hydra output, visualization, and spectral logging.
+#
+# Denoising-specific settings (data config group, noise keys, loss_type) live
+# in task/denoising.yaml, composed via base_config_denoising.yaml.
+# Generative experiments inherit this file directly, skipping the denoising
+# task config entirely.
+
+defaults:
+  - base/trainer/default@trainer
+  - base/logger/default
+  - base/callbacks/default
+  - base/progress_bar/default
+  - _self_
+
+# Experiment identification (overridden by each experiment type)
+experiment_name: "tmgg_training"
+wandb_project: ???
+wandb_entity: graph_denoise_team
+sanity_check: false
+
+# Optimizer settings (per experimental design)
+learning_rate: 1e-3
+weight_decay: 1e-4
+optimizer_type: adamw
+amsgrad: false  # PyTorch default; SBM DiGress configs override to true
+
+# Learning rate scheduler with warmup
+# Uses fractions of total training - automatically adjusts to batch_size and epochs.
+# warmup_fraction: linear warmup from 0 to LR over this fraction of training
+# decay_fraction: LR reaches 0 at this fraction, stays at 0 after (clamped)
+scheduler_config:
+  type: cosine_warmup
+  warmup_fraction: 0.02    # 2% of training (~1-2 epochs typical)
+  decay_fraction: 0.8      # LR reaches 0 at 80% of training
+
+# Visualization settings (step-based)
+visualization_interval: 5000  # steps between logging visualizations
+
+# Spectral delta logging (eigenstructure tracking during training)
+# Always logs eigengap delta, algebraic connectivity delta,
+# eigenvalue drift, and subspace distance for noisy→clean and denoised→clean.
+spectral_k: 4  # Number of top eigenvectors for subspace comparison
+
+# DataLoader worker processes (0 = main process only, 4 = good default for
+# both local and cloud; Modal containers can override higher via CLI)
+num_workers: 4
+
+# Random seed for reproducibility
+seed: 42
+
+# Training resumption: set true to ignore existing checkpoints and start fresh
+force_fresh: false
+
+# W&B is required by default — training crashes if WANDB_API_KEY is unset.
+# Set true to degrade to a warning and continue with TensorBoard only.
+allow_no_wandb: false
+
+# Stage identifier for multi-stage experiments (stage1_poc, stage2_validation, etc.)
+# Set automatically by stage runners; null when running experiments directly
+stage: null
+
+# Evaluation settings (step-based)
+evaluation:
+  visualization_interval: ${visualization_interval}
+
+# Paths configuration
+# - Local execution: Hydra resolves ${hydra:runtime.output_dir} automatically
+# - Remote execution (Modal): config is serialized to YAML and the CLI runner
+#   resolves paths via Hydra inside the container
+paths:
+  output_dir: ${hydra:runtime.output_dir}
+  results_dir: ${paths.output_dir}/results
+
+# Hydra output directory (version-based for checkpoint resumption)
+hydra:
+  run:
+    dir: outputs/v${tmgg_version:}/${experiment_name}
+  sweep:
+    dir: outputs/sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

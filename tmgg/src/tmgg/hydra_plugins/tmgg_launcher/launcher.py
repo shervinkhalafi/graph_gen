@@ -1,7 +1,7 @@
-"""Custom Hydra launcher that dispatches to CloudRunner backends.
+"""Custom Hydra launcher that dispatches experiments to Modal.
 
 Replaces the hacky sys.argv injection pattern with proper Hydra integration.
-Supports local, Modal, and Ray execution backends.
+For local sweeps use Hydra's built-in launcher.
 """
 
 from collections.abc import Sequence
@@ -10,22 +10,21 @@ from typing import Any, cast, override
 from hydra.core.utils import JobReturn, JobStatus
 from hydra.plugins.launcher import Launcher
 from hydra.types import HydraContext, TaskFunction
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
-from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult, LocalRunner
+from tmgg.modal.runner import ExperimentResult, ModalRunner
 
 
 class TmggLauncher(Launcher):
     """Custom Hydra launcher for TMGG experiments.
 
-    Dispatches jobs to CloudRunner backends (LocalRunner, ModalRunner, RayRunner)
-    based on configuration. Converts between Hydra's job paradigm and CloudRunner's
-    experiment interface.
+    Dispatches jobs to ModalRunner. For local sweeps, use Hydra's built-in
+    launcher (``hydra/launcher=basic``).
     """
 
     def __init__(self) -> None:
         """Initialize launcher state."""
-        self._runner: CloudRunner | None = None
+        self._runner: ModalRunner | None = None
         self._config: DictConfig | None = None
         self._hydra_context: HydraContext | None = None
 
@@ -44,7 +43,7 @@ class TmggLauncher(Launcher):
         hydra_context
             Hydra's context containing config loader and other state.
         task_function
-            The decorated main function (unused, we call CloudRunner directly).
+            The decorated main function (unused, we call ModalRunner directly).
         config
             The resolved Hydra configuration.
         """
@@ -58,13 +57,15 @@ class TmggLauncher(Launcher):
         job_overrides: Sequence[Sequence[str]],
         initial_job_idx: int,
     ) -> Sequence[JobReturn]:
-        """Execute jobs via CloudRunner.
+        """Execute jobs via ModalRunner.
+
+        Collects all resolved configs and dispatches them as a single batch
+        via ``run_sweep()``, which parallelizes via Modal's ``starmap``.
 
         Parameters
         ----------
         job_overrides
-            List of override sequences, one per job. Each override is a list
-            of strings like ["model=test", "lr=0.01"].
+            List of override sequences, one per job.
         initial_job_idx
             Starting index for job numbering.
 
@@ -76,34 +77,38 @@ class TmggLauncher(Launcher):
         if self._runner is None or self._config is None:
             raise RuntimeError("Launcher.setup() must be called before launch()")
 
+        launcher_cfg = self._get_launcher_config(self._config)
+        gpu_type = launcher_cfg.get("gpu_type", "debug")
+
+        # Collect all resolved configs upfront
+        configs: list[DictConfig] = []
+        for overrides in job_overrides:
+            configs.append(self._apply_overrides(self._config, list(overrides)))
+
+        # Patch output paths to write to the Modal volume (consistent with
+        # tmgg-modal run's resolve_config() logic)
+        self._patch_modal_paths(configs)
+
+        # Dispatch as single batch — ModalRunner parallelizes via starmap
+        experiment_results = self._runner.run_sweep(
+            configs,
+            gpu_type=gpu_type,
+        )
+
+        # Convert to Hydra JobReturn objects
         results: list[JobReturn] = []
-        for idx, overrides in enumerate(job_overrides):
-            job_idx = initial_job_idx + idx
-            cfg = self._apply_overrides(self._config, list(overrides))
-
-            # Get launcher-specific settings
-            launcher_cfg = self._get_launcher_config(cfg)
-            gpu_type = launcher_cfg.get("gpu_type", "debug")
-            timeout = launcher_cfg.get("timeout_seconds", 3600)
-
-            # Execute via CloudRunner
-            experiment_result = self._runner.run_experiment(
-                cfg,
-                gpu_type=gpu_type,
-                timeout_seconds=timeout,
+        for idx, (er, overrides) in enumerate(
+            zip(experiment_results, job_overrides, strict=True)
+        ):
+            results.append(
+                self._result_to_job_return(
+                    er, overrides=list(overrides), idx=initial_job_idx + idx
+                )
             )
-
-            job_return = self._result_to_job_return(
-                experiment_result,
-                overrides=list(overrides),
-                idx=job_idx,
-            )
-            results.append(job_return)
-
         return results
 
-    def _select_runner(self, config: DictConfig) -> CloudRunner:
-        """Select appropriate CloudRunner based on configuration.
+    def _select_runner(self, config: DictConfig) -> ModalRunner:
+        """Create ModalRunner from launcher configuration.
 
         Parameters
         ----------
@@ -112,20 +117,25 @@ class TmggLauncher(Launcher):
 
         Returns
         -------
-        CloudRunner
+        ModalRunner
             Configured runner instance.
+
+        Raises
+        ------
+        RuntimeError
+            If ``use_modal`` is not enabled. For local sweeps use Hydra's
+            built-in launcher.
         """
         launcher_cfg = self._get_launcher_config(config)
 
-        if launcher_cfg.get("use_modal", False):
-            gpu_type = launcher_cfg.get("gpu_type", "debug")
-            return self._create_modal_runner(gpu_type=gpu_type)
-        elif launcher_cfg.get("use_ray", False):
-            return self._create_ray_runner()
-        elif launcher_cfg.get("use_slurm", False):
-            return self._create_slurm_runner(launcher_cfg)
-        else:
-            return self._create_local_runner()
+        if not launcher_cfg.get("use_modal", False):
+            raise RuntimeError(
+                "TmggLauncher requires use_modal=True. "
+                "For local sweeps, use Hydra's built-in launcher: "
+                "--multirun hydra/launcher=basic"
+            )
+        gpu_type = launcher_cfg.get("gpu_type", "debug")
+        return ModalRunner(gpu_type=gpu_type)
 
     def _get_launcher_config(self, config: DictConfig) -> dict[str, Any]:
         """Extract launcher configuration from Hydra config.
@@ -175,6 +185,28 @@ class TmggLauncher(Launcher):
         return cfg
 
     @staticmethod
+    def _patch_modal_paths(configs: list[DictConfig]) -> None:
+        """Rewrite ``paths.output_dir`` and ``paths.results_dir`` to Modal volume.
+
+        Mirrors the path-patching logic in ``config_resolution.resolve_config()``
+        so that multirun-on-Modal writes to the persistent volume rather than
+        ephemeral container storage.
+        """
+        from tmgg.experiments._shared_utils.orchestration.run_experiment import (
+            generate_run_id,
+        )
+        from tmgg.modal._lib.volumes import OUTPUTS_MOUNT
+
+        for cfg in configs:
+            run_id = generate_run_id(cfg)
+            experiment_name = cfg.get("experiment_name", "tmgg_training")
+            output_dir = f"{OUTPUTS_MOUNT}/{experiment_name}/{run_id}"
+            with open_dict(cfg):
+                cfg.run_id = run_id
+                cfg.paths.output_dir = output_dir
+                cfg.paths.results_dir = f"{output_dir}/results"
+
+    @staticmethod
     def _result_to_job_return(
         result: ExperimentResult,
         overrides: list[str],
@@ -185,7 +217,7 @@ class TmggLauncher(Launcher):
         Parameters
         ----------
         result
-            CloudRunner experiment result.
+            Experiment result from ModalRunner.
         overrides
             The overrides used for this job.
         idx
@@ -213,62 +245,3 @@ class TmggLauncher(Launcher):
             task_name=None,
             status=status,
         )
-
-    def _create_local_runner(self) -> CloudRunner:
-        """Create LocalRunner instance."""
-        return LocalRunner()
-
-    def _create_modal_runner(self, gpu_type: str = "debug") -> CloudRunner:
-        """Create ModalRunner instance.
-
-        Parameters
-        ----------
-        gpu_type
-            GPU tier to request on Modal.
-
-        Returns
-        -------
-        CloudRunner
-            Configured ModalRunner.
-        """
-        from tmgg.modal.runner import ModalRunner
-
-        return ModalRunner(gpu_type=gpu_type)
-
-    def _create_ray_runner(self) -> CloudRunner:
-        """Create RayRunner instance.
-
-        Returns
-        -------
-        CloudRunner
-            Configured RayRunner.
-        """
-        from tmgg.experiment_utils.cloud.ray_runner import RayRunner
-
-        return RayRunner()
-
-    def _create_slurm_runner(self, launcher_cfg: dict[str, Any]) -> CloudRunner:
-        """Create SlurmRunner instance.
-
-        Parameters
-        ----------
-        launcher_cfg
-            Launcher configuration with SLURM-specific settings.
-
-        Returns
-        -------
-        CloudRunner
-            Configured SlurmRunner.
-        """
-        from tmgg.experiment_utils.cloud.slurm_runner import SlurmConfig, SlurmRunner
-
-        slurm_config = SlurmConfig(
-            partition=launcher_cfg.get("slurm_partition", "gpu"),
-            nodes=launcher_cfg.get("slurm_nodes", 1),
-            cpus_per_task=launcher_cfg.get("slurm_cpus_per_task", 4),
-            gpus_per_task=launcher_cfg.get("slurm_gpus_per_task", 1),
-            time_limit=launcher_cfg.get("slurm_time_limit", "04:00:00"),
-            mem_per_cpu=launcher_cfg.get("slurm_mem_per_cpu", "4GB"),
-            setup_commands=launcher_cfg.get("slurm_setup_commands", []),
-        )
-        return SlurmRunner(slurm_config=slurm_config)

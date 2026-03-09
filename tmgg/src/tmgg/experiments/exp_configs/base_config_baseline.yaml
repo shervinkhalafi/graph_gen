@@ -1,0 +1,13 @@
+# Baseline denoising experiments (linear, MLP)
+#
+# Run with: uv run tmgg-baseline
+# Override: uv run tmgg-baseline model=baselines/mlp model.hidden_dim=512
+
+defaults:
+  - base_config_denoising
+  - models/baselines/linear@model
+  - _self_
+
+experiment_name: "baseline_denoising"
+wandb_project: architecture-study
+_cli_cmd: tmgg-baseline

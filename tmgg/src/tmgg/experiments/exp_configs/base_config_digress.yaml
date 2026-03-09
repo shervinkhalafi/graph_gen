@@ -1,0 +1,10 @@
+# DiGress denoising experiments
+
+defaults:
+  - base_config_denoising
+  - models/digress/digress_transformer@model
+  - _self_
+
+experiment_name: "digress_${model.model_type}"
+wandb_project: architecture-study
+_cli_cmd: tmgg-digress

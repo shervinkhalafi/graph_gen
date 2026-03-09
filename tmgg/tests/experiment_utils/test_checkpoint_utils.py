@@ -29,7 +29,9 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 
-from tmgg.experiment_utils.checkpoint_utils import load_checkpoint_with_fallback
+from tmgg.experiments._shared_utils.lightning_modules.checkpoint_utils import (
+    load_checkpoint_with_fallback,
+)
 
 
 class SimpleModule(pl.LightningModule):

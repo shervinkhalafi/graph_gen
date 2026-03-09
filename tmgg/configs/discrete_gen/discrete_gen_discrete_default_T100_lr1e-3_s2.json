@@ -1,0 +1,176 @@
+{
+  "trainer": {
+    "_target_": "pytorch_lightning.Trainer",
+    "max_steps": 10000,
+    "max_epochs": -1,
+    "accelerator": "auto",
+    "devices": "auto",
+    "precision": 32,
+    "enable_checkpointing": true,
+    "default_root_dir": null,
+    "enable_progress_bar": true,
+    "log_every_n_steps": 1,
+    "val_check_interval": 1000,
+    "check_val_every_n_epoch": null,
+    "gradient_clip_val": 1.0,
+    "gradient_clip_algorithm": "norm",
+    "deterministic": false,
+    "benchmark": true,
+    "fast_dev_run": false,
+    "overfit_batches": 0,
+    "limit_train_batches": 1.0,
+    "limit_val_batches": 1.0,
+    "limit_test_batches": 1.0
+  },
+  "callbacks": {
+    "early_stopping": {
+      "monitor": "val/epoch_NLL",
+      "mode": "min",
+      "patience": 10,
+      "min_delta": 0.0001
+    },
+    "checkpoint": {
+      "monitor": "val/epoch_NLL",
+      "mode": "min",
+      "save_top_k": 3,
+      "save_last": true,
+      "filename": "model-step={step:06d}-val_nll={val/epoch_NLL:.4f}",
+      "auto_insert_metric_name": false,
+      "every_n_train_steps": null
+    }
+  },
+  "base": {
+    "progress_bar": {
+      "progress_bar": {
+        "metrics_to_show": [
+          "train_loss",
+          "val/loss"
+        ],
+        "show_epoch": true,
+        "metrics_format": ".4f"
+      }
+    }
+  },
+  "experiment_name": "discrete_diffusion",
+  "wandb_project": "discrete-diffusion",
+  "wandb_entity": "graph_denoise_team",
+  "sanity_check": false,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "optimizer_type": "adamw",
+  "scheduler_config": {
+    "type": "cosine_warmup",
+    "warmup_fraction": 0.02,
+    "decay_fraction": 0.8
+  },
+  "visualization_interval": 5000,
+  "log_spectral_deltas": false,
+  "spectral_k": 4,
+  "num_workers": 4,
+  "seed": 2,
+  "force_fresh": false,
+  "stage": null,
+  "sweep": false,
+  "parallelism": 4,
+  "resume": true,
+  "run_on_modal": false,
+  "detach": false,
+  "evaluation": {
+    "visualization_interval": 5000
+  },
+  "paths": {
+    "output_dir": null,
+    "results_dir": null
+  },
+  "model": {
+    "_target_": "tmgg.experiments._shared_utils.diffusion_module.DiffusionModule",
+    "model_type": "graph_transformer",
+    "model_config": {
+      "n_layers": 5,
+      "input_dims": {
+        "X": 2,
+        "E": 2,
+        "y": 0
+      },
+      "hidden_mlp_dims": {
+        "X": 256,
+        "E": 128,
+        "y": 128
+      },
+      "hidden_dims": {
+        "dx": 256,
+        "de": 64,
+        "dy": 64,
+        "n_head": 8,
+        "dim_ffX": 256,
+        "dim_ffE": 64,
+        "dim_ffy": 256
+      },
+      "output_dims": {
+        "X": 2,
+        "E": 2,
+        "y": 0
+      },
+      "use_timestep": true
+    },
+    "noise_process": {
+      "_target_": "tmgg.diffusion.noise_process.CategoricalNoiseProcess",
+      "transition_type": "marginal",
+      "noise_schedule": {
+        "_target_": "tmgg.models.digress.noise_schedule.PredefinedNoiseScheduleDiscrete",
+        "noise_schedule": "cosine",
+        "timesteps": 100
+      },
+      "x_classes": 2,
+      "e_classes": 2
+    },
+    "sampler": {
+      "_target_": "tmgg.diffusion.sampler.CategoricalSampler",
+      "noise_process": null,
+      "schedule": null
+    },
+    "noise_schedule": {
+      "_target_": "tmgg.diffusion.schedule.NoiseSchedule",
+      "schedule_type": "cosine",
+      "timesteps": 100
+    },
+    "evaluator": {
+      "_target_": "tmgg.experiments._shared_utils.graph_evaluator.GraphEvaluator",
+      "eval_num_samples": 128
+    },
+    "loss_type": "cross_entropy",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "optimizer_type": "adamw",
+    "num_nodes": 20,
+    "eval_every_n_epochs": 1
+  },
+  "eval_metrics": [
+    "degree",
+    "clustering",
+    "spectre"
+  ],
+  "data": {
+    "_target_": "tmgg.experiments.discrete_diffusion_generative.datamodule.SyntheticCategoricalDataModule",
+    "graph_type": "sbm",
+    "num_nodes": 20,
+    "num_graphs": 2000,
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "batch_size": 32,
+    "num_workers": 4,
+    "seed": 2,
+    "graph_config": {
+      "num_blocks": 2,
+      "p_in": 0.7,
+      "p_out": 0.1
+    }
+  },
+  "_wandb_config": {
+    "entity": "graph_denoise_team",
+    "project": "discrete-diffusion",
+    "log_model": false,
+    "tags": []
+  },
+  "run_id": "discrete_gen_discrete_default_T100_lr1e-3_s2"
+}

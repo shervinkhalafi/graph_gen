@@ -1,0 +1,11 @@
+# Shared defaults for structural study experiments (embedding, eigenstructure).
+#
+# These experiments analyze graph structure without training a model, so they
+# do not inherit _base_infra (which pulls optimizer, trainer, data group).
+# Only keys that must stay consistent across studies belong here.
+
+wandb_entity: graph_denoise_team
+seed: 42
+
+paths:
+  results_dir: ${paths.output_dir}/results

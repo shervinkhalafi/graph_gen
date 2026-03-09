@@ -1,6 +1,6 @@
 {
   "data": {
-    "_target_": "tmgg.experiment_utils.data.data_module.GraphDataModule",
+    "_target_": "tmgg.data.data_modules.data_module.GraphDataModule",
     "dataset_name": "tree",
     "dataset_config": {
       "num_nodes": 50,

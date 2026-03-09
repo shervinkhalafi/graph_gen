@@ -1,3 +1,3 @@
 # W&B export
 
-::: tmgg.experiment_utils.wandb_export
+::: tmgg.experiments._shared_utils.wandb_export

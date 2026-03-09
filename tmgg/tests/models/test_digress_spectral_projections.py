@@ -18,6 +18,7 @@ Key invariants:
 import pytest
 import torch
 
+from tmgg.data.datasets.graph_types import GraphData, GraphStructure
 from tmgg.models.digress.transformer_model import (
     GraphTransformer,
     NodeEdgeBlock,
@@ -124,11 +125,12 @@ class TestNodeEdgeBlockSpectral:
         y = torch.rand(bs, 64)
         node_mask = torch.ones(bs, n)
 
-        # Create eigenvector inputs for spectral projections
-        V = torch.rand(bs, n, 16)
-        Lambda = torch.rand(bs, 16)
+        structure = GraphStructure(
+            eigenvectors=torch.rand(bs, n, 16),
+            eigenvalues=torch.rand(bs, 16),
+        )
 
-        newX, newE, new_y = block(X, E, y, node_mask, V=V, Lambda=Lambda)
+        newX, newE, new_y = block(X, E, y, node_mask, structure)
 
         assert newX.shape == X.shape
         assert newE.shape == E.shape
@@ -153,10 +155,12 @@ class TestNodeEdgeBlockSpectral:
         y = torch.rand(bs, 32)
         node_mask = torch.ones(bs, n)
 
-        V = torch.rand(bs, n, 16)
-        Lambda = torch.rand(bs, 16)
+        structure = GraphStructure(
+            eigenvectors=torch.rand(bs, n, 16),
+            eigenvalues=torch.rand(bs, 16),
+        )
 
-        newX, newE, new_y = block(X, E, y, node_mask, V=V, Lambda=Lambda)
+        newX, newE, new_y = block(X, E, y, node_mask, structure)
 
         assert newX.shape == X.shape
         assert newE.shape == E.shape
@@ -184,7 +188,8 @@ class TestNodeEdgeBlockSpectral:
         V = torch.rand(bs, n, 8, requires_grad=True)
         Lambda = torch.rand(bs, 8, requires_grad=True)
 
-        newX, newE, new_y = block(X, E, y, node_mask, V=V, Lambda=Lambda)
+        structure = GraphStructure(eigenvectors=V, eigenvalues=Lambda)
+        newX, newE, new_y = block(X, E, y, node_mask, structure)
         loss = newX.sum() + newE.sum() + new_y.sum()
         loss.backward()
 
@@ -316,18 +321,19 @@ class TestGraphTransformerSpectral:
 
         model = GraphTransformer(
             n_layers=2,
-            input_dims={"X": 1, "E": 1, "y": 0},
+            input_dims={"X": 2, "E": 2, "y": 0},
             hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
             hidden_dims=hidden_dims,
-            output_dims={"X": 0, "E": 1, "y": 0},
+            output_dims={"X": 0, "E": 2, "y": 0},
         )
 
         # Forward pass with adjacency matrix
         x = torch.rand(2, 20, 20)
         x = (x + x.transpose(-1, -2)) / 2  # Symmetrize for eigendecomposition
-        out = model(x)
+        result = model(GraphData.from_adjacency(x))
 
-        assert out.shape == (2, 20, 20)
+        assert isinstance(result, GraphData)
+        assert result.E.shape == (2, 20, 20, 2)
 
     def test_eigenvector_extraction_for_spectral(self):
         """Eigenvectors are computed when spectral projections are used."""
@@ -344,10 +350,10 @@ class TestGraphTransformerSpectral:
 
         model = GraphTransformer(
             n_layers=1,
-            input_dims={"X": 1, "E": 1, "y": 0},
+            input_dims={"X": 2, "E": 2, "y": 0},
             hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
             hidden_dims=hidden_dims,
-            output_dims={"X": 0, "E": 1, "y": 0},
+            output_dims={"X": 0, "E": 2, "y": 0},
         )
 
         # Verify model has spectral projection flag set
@@ -356,9 +362,10 @@ class TestGraphTransformerSpectral:
         # Forward pass should work
         x = torch.rand(2, 20, 20)
         x = (x + x.transpose(-1, -2)) / 2
-        out = model(x)
+        result = model(GraphData.from_adjacency(x))
 
-        assert out.shape == (2, 20, 20)
+        assert isinstance(result, GraphData)
+        assert result.E.shape == (2, 20, 20, 2)
 
     def test_gradient_flow_full_model(self):
         """Gradients flow through spectral projections in full model."""
@@ -375,17 +382,19 @@ class TestGraphTransformerSpectral:
 
         model = GraphTransformer(
             n_layers=1,
-            input_dims={"X": 1, "E": 1, "y": 0},
+            input_dims={"X": 2, "E": 2, "y": 0},
             hidden_mlp_dims={"X": 16, "E": 8, "y": 16},
             hidden_dims=hidden_dims,
-            output_dims={"X": 0, "E": 1, "y": 0},
+            output_dims={"X": 0, "E": 2, "y": 0},
         )
 
-        x = torch.rand(2, 12, 12, requires_grad=True)
+        x = torch.rand(2, 12, 12)
         x = (x + x.transpose(-1, -2)) / 2
 
-        out = model(x)
-        loss = out.sum()
+        result = model(GraphData.from_adjacency(x))
+        # Use only edge-probability channel: both channels of 2-class encoding
+        # sum to 1.0 per position, so E.sum() is constant with zero gradient.
+        loss = result.E[..., 1].sum()
         loss.backward()
 
         # Verify gradients flow to spectral projection parameters
@@ -396,3 +405,65 @@ class TestGraphTransformerSpectral:
             p.grad is not None and p.grad.abs().sum() > 0
             for p in layer.self_attn.q.parameters()
         )
+
+    def test_spectral_uses_correct_adjacency_channel(self):
+        """Spectral eigendecomposition uses actual edges, not the no-edge channel.
+
+        Regression test for a bug where E[..., 0] (no-edge probability) was
+        passed to the eigen layer instead of the binary adjacency derived from
+        argmax. With two-class encoding, E[..., 0] = 1 - adj and E[..., 1] = adj,
+        so using channel 0 computes eigenvectors of the complement graph.
+        """
+        hidden_dims = {
+            "dx": 32,
+            "de": 8,
+            "dy": 16,
+            "n_head": 2,
+            "use_spectral_q": True,
+            "use_spectral_k": False,
+            "use_spectral_v": False,
+            "spectral_k": 4,
+        }
+
+        model = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 16, "E": 8, "y": 16},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+        )
+
+        # Build a sparse path graph: 0-1-2-3 (4 edges out of 12 possible)
+        n = 4
+        adj = torch.zeros(1, n, n)
+        for i in range(n - 1):
+            adj[0, i, i + 1] = 1.0
+            adj[0, i + 1, i] = 1.0
+
+        gd = GraphData.from_adjacency(adj)
+
+        # Verify encoding: channel 0 is no-edge, channel 1 is edge
+        assert gd.E[0, 0, 1, 1] == 1.0, "Edge (0,1) should have class 1"
+        assert gd.E[0, 0, 1, 0] == 0.0, "Edge (0,1) should NOT have class 0"
+        assert gd.E[0, 0, 2, 0] == 1.0, "Non-edge (0,2) should have class 0"
+
+        # Hook into the eigen_layer to capture the adjacency it receives
+        captured = {}
+        assert model.transformer.eigen_layer is not None
+        original_forward = model.transformer.eigen_layer.forward
+
+        def capture_forward(adj_input):
+            captured["adj"] = adj_input.detach().clone()
+            return original_forward(adj_input)
+
+        model.transformer.eigen_layer.forward = capture_forward  # type: ignore[assignment]
+
+        with torch.no_grad():
+            model(gd)
+
+        assert "adj" in captured, "Eigen layer should have been called"
+        received_adj = captured["adj"][0]
+
+        # The received adjacency should match the actual graph, not its complement
+        assert received_adj[0, 1] == 1.0, "Edge (0,1) should be 1 in eigen input"
+        assert received_adj[0, 2] == 0.0, "Non-edge (0,2) should be 0 in eigen input"

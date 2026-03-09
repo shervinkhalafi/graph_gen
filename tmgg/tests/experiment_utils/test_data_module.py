@@ -10,7 +10,6 @@ Testing Strategy:
 - Use real small datasets where practical; mock expensive operations
 
 Key Invariants:
-- prepare_data must be called before setup
 - setup must be called before accessing dataloaders
 - Train/val/test splits should be disjoint
 - Dataloader batch sizes should match configuration
@@ -21,9 +20,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tmgg.experiment_utils.data.data_module import (
+from tmgg.data.data_modules.data_module import (
     GraphDataModule,
 )
+from tmgg.data.datasets.graph_types import GraphData
 
 
 class TestGraphDataModuleInit:
@@ -36,16 +36,16 @@ class TestGraphDataModuleInit:
         without requiring explicit configuration.
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 10, "block_sizes": [5, 5]},
+            graph_type="sbm",
+            graph_config={"num_nodes": 10, "block_sizes": [5, 5]},
         )
 
-        assert dm.num_samples_per_graph == 1000
+        assert dm.samples_per_graph == 1000
         assert dm.batch_size == 100
         assert dm.num_workers == 4
         assert dm.pin_memory is True
-        assert dm.val_split == 0.2
-        assert dm.test_split == 0.2
+        assert dm.train_ratio == 0.6
+        assert dm.val_ratio == 0.2
 
     def test_custom_parameters(self) -> None:
         """Should accept custom parameters.
@@ -53,48 +53,22 @@ class TestGraphDataModuleInit:
         Rationale: Users should be able to override all configurable parameters.
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 10, "block_sizes": [5, 5]},
-            num_samples_per_graph=500,
+            graph_type="sbm",
+            graph_config={"num_nodes": 10, "block_sizes": [5, 5]},
+            samples_per_graph=500,
             batch_size=50,
             num_workers=2,
             pin_memory=False,
-            val_split=0.1,
-            test_split=0.1,
+            train_ratio=0.8,
+            val_ratio=0.1,
         )
 
-        assert dm.num_samples_per_graph == 500
+        assert dm.samples_per_graph == 500
         assert dm.batch_size == 50
         assert dm.num_workers == 2
         assert dm.pin_memory is False
-        assert dm.val_split == 0.1
-        assert dm.test_split == 0.1
-
-    def test_default_noise_levels(self) -> None:
-        """Should have default noise levels when not specified.
-
-        Rationale: Noise levels are needed for evaluation; reasonable defaults
-        should be provided.
-        """
-        dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 10, "block_sizes": [5, 5]},
-        )
-
-        assert dm.noise_levels is not None
-        assert len(dm.noise_levels) > 0
-        assert all(0 < n <= 1 for n in dm.noise_levels)
-
-    def test_custom_noise_levels(self) -> None:
-        """Should accept custom noise levels."""
-        custom_levels = [0.1, 0.2, 0.3]
-        dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 10, "block_sizes": [5, 5]},
-            noise_levels=custom_levels,
-        )
-
-        assert dm.noise_levels == custom_levels
+        assert dm.train_ratio == 0.8
+        assert dm.val_ratio == 0.1
 
 
 class TestGraphDataModuleSBM:
@@ -107,12 +81,12 @@ class TestGraphDataModuleSBM:
         with adjacency matrices.
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={
+            graph_type="sbm",
+            graph_config={
                 "num_nodes": 10,
                 "block_sizes": [5, 5],
                 "p_intra": 0.8,
-                "q_inter": 0.1,
+                "p_inter": 0.1,
             },
         )
         dm.prepare_data()
@@ -133,12 +107,12 @@ class TestGraphDataModuleSBM:
         """
         block_sizes = [3, 4, 3]
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={
+            graph_type="sbm",
+            graph_config={
                 "num_nodes": 10,
                 "block_sizes": block_sizes,
                 "p_intra": 1.0,
-                "q_inter": 0.0,
+                "p_inter": 0.0,
             },
         )
         dm.prepare_data()
@@ -156,9 +130,10 @@ class TestGraphDataModuleSBM:
         generate random partitions based on min/max constraints.
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={
+            graph_type="sbm",
+            graph_config={
                 "num_nodes": 20,
+                "partition_mode": "enumerated",
                 "num_train_partitions": 5,
                 "num_test_partitions": 3,
                 "min_blocks": 2,
@@ -166,7 +141,7 @@ class TestGraphDataModuleSBM:
                 "min_block_size": 3,
                 "max_block_size": 8,
                 "p_intra": 0.8,
-                "q_inter": 0.1,
+                "p_inter": 0.1,
             },
         )
         dm.prepare_data()
@@ -177,20 +152,6 @@ class TestGraphDataModuleSBM:
         assert dm.test_adjacency_matrices is not None
         assert len(dm.train_adjacency_matrices) == 5
         assert len(dm.test_adjacency_matrices) == 3
-
-    def test_sbm_prepare_before_setup_required(self) -> None:
-        """setup() should fail if prepare_data() wasn't called.
-
-        Rationale: The two-stage initialization requires prepare_data
-        to run first to generate partitions.
-        """
-        dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 10, "block_sizes": [5, 5]},
-        )
-
-        with pytest.raises(RuntimeError, match="prepare_data.*must be called"):
-            dm.setup()
 
 
 class TestGraphDataModuleSynthetic:
@@ -203,15 +164,15 @@ class TestGraphDataModuleSynthetic:
         probability parameter and split correctly.
         """
         dm = GraphDataModule(
-            dataset_name="er",
-            dataset_config={
+            graph_type="er",
+            graph_config={
                 "num_nodes": 15,
                 "num_graphs": 30,
                 "p": 0.2,
                 "seed": 42,
             },
-            val_split=0.2,
-            test_split=0.2,
+            train_ratio=0.6,
+            val_ratio=0.2,
         )
         dm.prepare_data()
         dm.setup()
@@ -239,8 +200,8 @@ class TestGraphDataModuleSynthetic:
         Rationale: Regular graphs should have consistent degree structure.
         """
         dm = GraphDataModule(
-            dataset_name="regular",
-            dataset_config={
+            graph_type="regular",
+            graph_config={
                 "num_nodes": 12,
                 "num_graphs": 20,
                 "d": 3,
@@ -268,10 +229,10 @@ class TestGraphDataModuleDataLoaders:
         proper training throughput.
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 8, "block_sizes": [4, 4]},
+            graph_type="sbm",
+            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
             batch_size=16,
-            num_samples_per_graph=32,
+            samples_per_graph=32,
             num_workers=0,  # Avoid multiprocessing in tests
         )
         dm.prepare_data()
@@ -280,21 +241,22 @@ class TestGraphDataModuleDataLoaders:
         loader = dm.train_dataloader()
         batch = next(iter(loader))
 
-        # Batch is a tensor of shape (batch_size, n, n)
-        assert isinstance(batch, torch.Tensor)
-        assert batch.shape[0] == 16
-        assert batch.shape[1] == batch.shape[2] == 8
+        # Batch is a GraphData with adjacency shape (batch_size, n, n)
+        assert isinstance(batch, GraphData)
+        adj = batch.to_adjacency()
+        assert adj.shape[0] == 16
+        assert adj.shape[1] == adj.shape[2] == 8
 
     def test_val_dataloader_default_samples(self) -> None:
-        """Val/test dataloaders default to half of num_samples_per_graph.
+        """Val/test dataloaders default to half of samples_per_graph.
 
         Rationale: When val_samples_per_graph is not specified, it defaults
-        to num_samples_per_graph // 2.
+        to samples_per_graph // 2.
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 8, "block_sizes": [4, 4]},
-            num_samples_per_graph=100,
+            graph_type="sbm",
+            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
+            samples_per_graph=100,
             batch_size=10,
             num_workers=0,
         )
@@ -320,9 +282,9 @@ class TestGraphDataModuleDataLoaders:
         behavior for validation/test dataloaders.
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 8, "block_sizes": [4, 4]},
-            num_samples_per_graph=100,
+            graph_type="sbm",
+            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
+            samples_per_graph=100,
             val_samples_per_graph=75,  # Explicit value
             batch_size=10,
             num_workers=0,
@@ -342,8 +304,8 @@ class TestGraphDataModuleDataLoaders:
         which happens in setup().
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 8, "block_sizes": [4, 4]},
+            graph_type="sbm",
+            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
         )
 
         with pytest.raises(RuntimeError, match="Call setup.*before"):
@@ -362,10 +324,10 @@ class TestGraphDataModuleDataLoaders:
         worker processes alive between epochs.
         """
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 8, "block_sizes": [4, 4]},
+            graph_type="sbm",
+            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
             num_workers=2,
-            num_samples_per_graph=20,
+            samples_per_graph=20,
         )
         dm.prepare_data()
         dm.setup()
@@ -381,15 +343,16 @@ class TestGraphDataModuleUnknownDataset:
         """Unknown dataset name should raise ValueError.
 
         Rationale: Clear error message helps users identify typos
-        or unsupported datasets.
+        or unsupported datasets. The error propagates from
+        SyntheticGraphDataset via _generate_adjacencies().
         """
         dm = GraphDataModule(
-            dataset_name="nonexistent_dataset",
-            dataset_config={},
+            graph_type="nonexistent_dataset",
+            graph_config={},
         )
-        dm.prepare_data()  # This might not fail yet
+        dm.prepare_data()  # No-op for non-wrapper types
 
-        with pytest.raises(ValueError, match="Unknown dataset name"):
+        with pytest.raises(ValueError, match="graph_type must be one of"):
             dm.setup()
 
 
@@ -399,8 +362,8 @@ class TestGraphDataModuleSampleAdjacency:
     def test_get_sample_train(self) -> None:
         """Should return a sample from train split."""
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 8, "block_sizes": [4, 4]},
+            graph_type="sbm",
+            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
         )
         dm.prepare_data()
         dm.setup()
@@ -413,8 +376,8 @@ class TestGraphDataModuleSampleAdjacency:
     def test_get_sample_without_setup_raises(self) -> None:
         """Should raise RuntimeError if setup not called."""
         dm = GraphDataModule(
-            dataset_name="sbm",
-            dataset_config={"num_nodes": 8, "block_sizes": [4, 4]},
+            graph_type="sbm",
+            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
         )
 
         with pytest.raises(RuntimeError):

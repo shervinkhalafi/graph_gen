@@ -18,45 +18,67 @@ source_roots = ["src"]
 # ============================================================
 
 [[modules]]
-path = "tmgg.experiment_utils.cloud"
-depends_on = [
-    "tmgg.experiment_utils",  # LocalRunner uses run_experiment
-]
-# Cloud execution layer - uses run_experiment from parent
-
-[[modules]]
-path = "tmgg.experiment_utils.data"
+path = "tmgg.data"
 depends_on = []
 # Data loading - no dependencies on other tmgg modules
 
 [[modules]]
 path = "tmgg.modal"
 depends_on = [
-    "tmgg.experiment_utils.cloud",  # Uses CloudRunner interface
-    "tmgg.experiment_utils",        # Uses run_experiment
+    "tmgg.experiments._shared_utils.orchestration",  # Uses run_experiment, generate_run_id
     "tmgg.experiments",             # Evaluation function uses datamodule and checkpoint utils
 ]
 # Modal platform integration - depends on cloud abstraction and run_experiment
-# Note: modal.evaluate imports from experiments.generative at runtime for evaluation
 
 # ============================================================
 # SHARED UTILITIES (semi-protected)
 # ============================================================
 
 [[modules]]
-path = "tmgg.experiment_utils"
+path = "tmgg.experiments._shared_utils"
 depends_on = [
-    "tmgg.experiment_utils.cloud",
-    "tmgg.experiment_utils.data",
+    "tmgg.experiments._shared_utils.spectral_utils",
+    "tmgg.experiments._shared_utils.evaluation_metrics",
+    "tmgg.experiments._shared_utils.lightning_modules",
+    "tmgg.experiments._shared_utils.orchestration",
+    "tmgg.data",
 ]
-# Base utilities can use cloud and data submodules
+# Top-level: re-exports + cross-cutting files (logging.py, plotting.py, exceptions.py)
 
 [[modules]]
-path = "tmgg.experiment_utils.embedding_study"
+path = "tmgg.experiments._shared_utils.spectral_utils"
+depends_on = []
+# Pure linear algebra — no framework deps
+
+[[modules]]
+path = "tmgg.experiments._shared_utils.evaluation_metrics"
 depends_on = [
-    "tmgg.models",  # Uses embedding models for dimension search
+    "tmgg.data",
 ]
-# Embedding study is research tooling, allowed to use models
+# reference_graphs.py uses tmgg.data
+
+[[modules]]
+path = "tmgg.experiments._shared_utils.lightning_modules"
+depends_on = [
+    "tmgg.experiments._shared_utils",
+    "tmgg.experiments._shared_utils.spectral_utils",
+    "tmgg.experiments._shared_utils.evaluation_metrics",
+    "tmgg.data", "tmgg.models", "tmgg.diffusion",
+]
+# PL modules use top-level logging.py/exceptions.py + spectral + evaluation + framework
+
+[[modules]]
+path = "tmgg.experiments._shared_utils.orchestration"
+depends_on = [
+    "tmgg.experiments._shared_utils",
+    "tmgg.data",
+]
+# Uses top-level logging.py; hydra instantiation uses tmgg.data
+
+[[modules]]
+path = "tmgg.diffusion"
+depends_on = ["tmgg.data", "tmgg.models"]
+# Diffusion components (noise processes, samplers, schedules)
 
 # ============================================================
 # RESEARCH MODULES (unchecked for rapid iteration)
@@ -64,9 +86,9 @@ depends_on = [
 
 [[modules]]
 path = "tmgg.models"
-depends_on = []
+depends_on = ["tmgg.data"]
 unchecked = true
-# Model architectures - change frequently, no boundary enforcement
+# Model architectures - imports GraphData from tmgg.data
 
 [[modules]]
 path = "tmgg.experiments"

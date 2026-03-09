@@ -32,7 +32,7 @@ def test_config_loading():
             print(f"  ✓ Num workers: {cfg.data.num_workers}")
 
             # Verify the inheritance worked
-            assert cfg.data._target_ == "tmgg.experiment_utils.data.GraphDataModule"
+            assert cfg.data._target_ == "tmgg.data.GraphDataModule"
             assert cfg.data.num_workers == 4  # Should come from base_dataloader
             assert cfg.data.pin_memory is True  # Should come from base_dataloader
 

@@ -1,3 +1,3 @@
 # Baselines
 
-::: tmgg.experiments.baselines
+::: tmgg.experiments.lin_mlp_baseline_denoising

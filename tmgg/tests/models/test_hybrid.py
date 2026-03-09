@@ -3,6 +3,7 @@
 import pytest
 import torch
 
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.gnn import GNN
 from tmgg.models.hybrid import SequentialDenoisingModel, create_sequential_model
@@ -13,46 +14,39 @@ class TestSequentialDenoisingModel:
 
     def test_init_with_denoising(self):
         """Test initialization with both embedding and denoising models."""
-        # Create embedding model
-        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
+        embedding_model = GNN(
             num_layers=2, num_terms=3, feature_dim_in=20, feature_dim_out=5
         )
 
-        # Create denoising model
         denoising_model = MultiLayerAttention(
             d_model=10,  # 2 * feature_dim_out
             num_heads=2,
             num_layers=2,
         )
 
-        # Create sequential model
-        model = SequentialDenoisingModel(embedding_model, denoising_model)  # pyright: ignore[reportArgumentType]
+        model = SequentialDenoisingModel(embedding_model, denoising_model)
 
         assert model.embedding_model is embedding_model
         assert model.denoising_model is denoising_model
 
     def test_init_without_denoising(self):
         """Test initialization with only embedding model."""
-        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
+        embedding_model = GNN(
             num_layers=2, num_terms=3, feature_dim_in=20, feature_dim_out=5
         )
 
-        model = SequentialDenoisingModel(embedding_model, None)  # pyright: ignore[reportArgumentType]
+        model = SequentialDenoisingModel(embedding_model, None)
 
         assert model.embedding_model is embedding_model
         assert model.denoising_model is None
 
     def test_forward_with_denoising(self):
-        """Test forward pass with denoising model.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test forward pass with denoising model returns GraphData."""
         batch_size = 2
         num_nodes = 10
         feature_dim_out = 5
 
-        # Create models
-        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
+        embedding_model = GNN(
             num_layers=1,
             num_terms=2,
             feature_dim_in=num_nodes,
@@ -63,58 +57,46 @@ class TestSequentialDenoisingModel:
             d_model=2 * feature_dim_out, num_heads=2, num_layers=1
         )
 
-        model = SequentialDenoisingModel(embedding_model, denoising_model)  # pyright: ignore[reportArgumentType]
+        model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        # Create input
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
+        data = GraphData.from_adjacency(A)
 
-        # Forward pass returns logits
-        logits = model(A)
-        assert logits.shape == (batch_size, num_nodes, num_nodes)
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+        result = model(data)
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
     def test_forward_without_denoising(self):
-        """Test forward pass without denoising model.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test forward pass without denoising model returns GraphData."""
         batch_size = 2
         num_nodes = 10
         feature_dim_out = 5
 
-        # Create embedding model only
-        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
+        embedding_model = GNN(
             num_layers=1,
             num_terms=2,
             feature_dim_in=num_nodes,
             feature_dim_out=feature_dim_out,
         )
 
-        model = SequentialDenoisingModel(embedding_model, None)  # pyright: ignore[reportArgumentType]
+        model = SequentialDenoisingModel(embedding_model, None)
 
-        # Create input
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
+        data = GraphData.from_adjacency(A)
 
-        # Forward pass returns logits
-        logits = model(A)
-        assert logits.shape == (batch_size, num_nodes, num_nodes)
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+        result = model(data)
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
     def test_get_config(self):
         """Test configuration retrieval."""
-        embedding_model = GNN(  # pyright: ignore[reportArgumentType]
+        embedding_model = GNN(
             num_layers=2, num_terms=3, feature_dim_in=20, feature_dim_out=5
         )
 
         denoising_model = MultiLayerAttention(d_model=10, num_heads=2, num_layers=2)
 
-        model = SequentialDenoisingModel(embedding_model, denoising_model)  # pyright: ignore[reportArgumentType]
+        model = SequentialDenoisingModel(embedding_model, denoising_model)
 
         config = model.get_config()
 
@@ -191,10 +173,7 @@ class TestCreateSequentialModel:
         assert model.denoising_model.num_layers == 4
 
     def test_forward_pass_integration(self):
-        """Test full forward pass through created model.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test full forward pass through created model returns GraphData."""
         batch_size = 2
         num_nodes = 10
 
@@ -208,16 +187,12 @@ class TestCreateSequentialModel:
 
         model = create_sequential_model(gnn_config, transformer_config)
 
-        # Create input
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
+        data = GraphData.from_adjacency(A)
 
-        # Forward pass returns logits
-        logits = model(A)
-        assert logits.shape == (batch_size, num_nodes, num_nodes)
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+        result = model(data)
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
 
 if __name__ == "__main__":

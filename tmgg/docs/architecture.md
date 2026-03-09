@@ -7,111 +7,92 @@ This document describes the system design, module organization, and how componen
 ```
 src/tmgg/
 ├── models/                    # Neural network architectures
-│   ├── base.py                # BaseModel, DenoisingModel base classes
-│   ├── attention/             # Transformer attention models
+│   ├── base.py                # BaseModel, GraphModel base classes
+│   ├── digress/               # DiGress GraphTransformer
 │   ├── gnn/                   # Graph neural networks
-│   ├── hybrid/                # GNN + Transformer combinations
 │   ├── layers/                # Shared layers (GCN, MHA, EigenEmbedding)
-│   ├── embeddings/            # Graph embedding dimension analysis
-│   │   ├── base.py            # GraphEmbedding base class
-│   │   ├── lpca.py            # Logistic PCA embeddings
-│   │   ├── dot_product.py     # Dot product embeddings
-│   │   ├── dot_threshold.py   # Threshold-based dot product
-│   │   ├── distance_threshold.py
-│   │   ├── orthogonal.py      # Orthogonal representations
-│   │   ├── dimension_search.py  # Binary search for min dimension
-│   │   └── fitters/           # Gradient and spectral fitting
-│   └── spectral_denoisers/    # Spectral positional encoding models
-├── experiments/               # Experiment runners
-│   ├── attention_denoising/   # Each has lightning_module.py + runner.py
+│   ├── spectral_denoisers/    # Spectral positional encoding models
+│   └── factory.py             # Registry-based model factory
+├── diffusion/                 # Diffusion framework
+│   ├── noise_process.py       # NoiseProcess ABC + implementations
+│   ├── sampler.py             # Sampler ABC + implementations
+│   └── schedule.py            # NoiseSchedule
+├── experiments/               # Experiment runners (each has runner.py)
+│   ├── discrete_diffusion_generative/
+│   ├── gaussian_diffusion_generative/
 │   ├── gnn_denoising/
-│   ├── hybrid_denoising/
-│   ├── digress_denoising/
-│   ├── spectral_denoising/
-│   └── stages/                # Stage runners
-├── experiment_utils/          # Shared infrastructure
-│   ├── data/                  # Data loading, generation, noise
-│   ├── cloud/                 # Cloud execution backends
-│   ├── eigenstructure_study/  # Eigenstructure analysis tools
-│   ├── embedding_study/       # Embedding dimension study
-│   ├── base_lightningmodule.py
-│   ├── run_experiment.py
-│   ├── metrics.py
-│   └── plotting.py
+│   ├── gnn_transformer_denoising/
+│   ├── lin_mlp_baseline_denoising/
+│   └── _shared_utils/         # Shared infrastructure
+│       ├── base_graph_module.py    # BaseGraphModule (shared LightningModule base)
+│       ├── diffusion_module.py     # DiffusionModule (multi-step diffusion)
+│       ├── denoising_module.py     # SingleStepDenoisingModule
+│       ├── graph_evaluator.py      # GraphEvaluator
+│       ├── run_experiment.py
+│       └── metrics.py
 └── exp_configs/               # Hydra configuration files
     ├── base_config_*.yaml     # Top-level experiment configs
     ├── models/                # Model configurations
-    ├── data/                  # Data configurations
-    ├── base/                  # Trainer, logger configs
-    └── stage/                 # Stage definitions
+    └── base/                  # Trainer, logger configs
 ```
 
 ## Core Abstractions
 
-### DenoisingModel
+### GraphModel
 
-The base class for all denoising models, defined in `src/tmgg/models/base.py`. It provides:
+The base class for all graph models, defined in `src/tmgg/models/base.py`. It provides:
 
-- Domain transformations (`standard` or `inv-sigmoid`) for numerical stability
+- A unified forward signature: `forward(data: GraphData, t: Tensor | None) -> GraphData`
 - Parameter counting via `parameter_count()`
 - Configuration export via `get_config()`
 
 ```python
-from tmgg.models.base import DenoisingModel
+from tmgg.models.base import GraphModel
 
-class MyModel(DenoisingModel):
-    def __init__(self, ..., domain: str = "standard"):
-        super().__init__(domain=domain)
-        # Model setup
+class MyModel(GraphModel):
+    def __init__(self, ...):
+        super().__init__()
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
-        A_transformed = self._apply_domain_transform(A)
-        # Process
-        return self._apply_output_transform(output)
+    def forward(self, data: GraphData, t: Tensor | None = None) -> GraphData:
+        # Process graph data, return predicted clean graph
+        return output
 ```
 
-### DenoisingLightningModule
+### BaseGraphModule / DiffusionModule
 
-The PyTorch Lightning base class for experiments, defined in `src/tmgg/experiment_utils/base_lightningmodule.py`. It handles:
+`BaseGraphModule` (in `_shared_utils/base_graph_module.py`) provides shared
+Lightning infrastructure: model creation via `ModelRegistry`, optimizer/scheduler
+setup, and batch device transfer. It carries no training logic.
 
-- Optimizer and scheduler configuration
-- Noise generation (Gaussian, Rotation, Digress)
-- Training, validation, and test steps
-- Visualization logging
+`DiffusionModule` (in `_shared_utils/diffusion_module.py`) implements the
+multi-step diffusion training loop, composing four injected components:
+`NoiseProcess`, `Sampler`, `NoiseSchedule`, and `GraphEvaluator`.
 
-Experiment-specific modules inherit from this and implement `_make_model()`:
-
-```python
-class AttentionDenoisingLightningModule(DenoisingLightningModule):
-    def _make_model(self, d_model, num_heads, num_layers, ...):
-        return MultiLayerAttention(d_model, num_heads, num_layers, ...)
-```
+`SingleStepDenoisingModule` (in `_shared_utils/denoising_module.py`) subclasses
+`DiffusionModule` for single-step denoising experiments (T=1, no sampler).
 
 ### GraphDataModule
 
-The data loading abstraction in `src/tmgg/experiment_utils/data/data_module.py`. Supports:
+The data loading abstraction in `src/tmgg/data/data_module.py`. Supports:
 
 - Multiple dataset types (SBM, NetworkX, PyG, synthetic)
 - Train/val/test splitting
 - Batch loading with noise injection
 
-### CloudRunner and CloudRunnerFactory
+### Cloud Execution (Modal)
 
-The cloud execution abstraction in `src/tmgg/experiment_utils/cloud/`. The factory pattern allows registering multiple backends:
+The Modal integration in `src/tmgg/modal/` provides cloud GPU execution. CLI tools in `tmgg.modal.cli` spawn and manage experiments:
 
-```python
-from tmgg.experiment_utils.cloud import CloudRunnerFactory
-
-runner = CloudRunnerFactory.create("local")  # or "modal"
-result = runner.run_experiment(config)
-```
+- `tmgg.modal.cli.spawn_single` — run one experiment configuration on a Modal GPU
+- `tmgg.modal.cli.launch_sweep` — run a sweep of configurations in parallel
+- `tmgg.modal._functions` — Modal function definitions deployed to the cloud
 
 ## Execution Flow
 
 When you run an experiment:
 
 ```
-CLI Entry Point (e.g., tmgg-attention)
+CLI Entry Point (e.g., tmgg-spectral-arch)
     │
     ▼
 @hydra.main decorator loads configuration
@@ -136,11 +117,12 @@ Each step is driven by the Hydra configuration. The `_target_` fields in YAML co
 
 ### Factory Pattern
 
-`CloudRunnerFactory` registers and creates execution backends:
+`MODEL_REGISTRY` in `models/factory.py` maps string identifiers to model constructors:
 
 ```python
-CloudRunnerFactory.register("modal", ModalRunner)
-runner = CloudRunnerFactory.create("modal", **kwargs)
+from tmgg.models.factory import create_model
+
+model = create_model("self_attention", {"k": 8, "d_k": 64})
 ```
 
 ### Strategy Pattern
@@ -149,7 +131,7 @@ Noise generators, loggers, and optimizers are interchangeable via configuration.
 
 ### Template Method
 
-`DenoisingLightningModule` defines the training algorithm structure. Subclasses override `_make_model()` to specify the model architecture.
+`DiffusionModule` defines the training algorithm structure. Subclasses can override `training_step` and `_compute_loss` to customize behavior.
 
 ### Composition
 
@@ -165,17 +147,27 @@ model = SequentialDenoisingModel(
 ## Key Files by Purpose
 
 **To understand training flow:**
-- `experiment_utils/run_experiment.py` - Main orchestration
-- `experiment_utils/base_lightningmodule.py` - Training loop
+- `experiments/_shared_utils/run_experiment.py` - Main orchestration
+- `experiments/_shared_utils/base_graph_module.py` - Shared LightningModule base
+- `experiments/_shared_utils/diffusion_module.py` - Multi-step diffusion training loop
+- `experiments/_shared_utils/denoising_module.py` - Single-step denoising (subclass of DiffusionModule)
+- `experiments/_shared_utils/optimizer_config.py` - Optimizer and LR scheduler configuration
+- `experiments/_shared_utils/graph_evaluator.py` - Graph generation quality metrics
 
 **To understand models:**
 - `models/base.py` - Base classes
 - `models/gnn/gnn.py` - GNN implementation
-- `models/attention/attention.py` - Attention implementation
+- `models/spectral_denoisers/` - Spectral denoiser implementations
+- `models/factory.py` - Registry-based model factory
 
 **To understand data:**
-- `experiment_utils/data/data_module.py` - Data loading
-- `experiment_utils/data/noise_generators.py` - Noise models
+- `data/data_module.py` - Data loading
+- `data/noise.py` - Low-level noise functions (Gaussian, rotation, DiGress, edge flip, logit)
+- `data/noise_generators.py` - OOP noise generator wrappers
+
+**To understand metrics:**
+- `experiments/_shared_utils/metrics.py` - Reconstruction quality metrics
+- `experiments/_shared_utils/mmd_metrics.py` - Graph distribution distance (MMD)
 
 **To understand configuration:**
 - `exp_configs/base_config_*.yaml` - Top-level configs

@@ -3,13 +3,14 @@ from typing import Any, override
 import torch
 import torch.nn as nn
 
-from tmgg.models.layers.eigen_embedding import EigenEmbedding
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.layers.eigen_embedding import TruncatedEigenEmbedding
 from tmgg.models.layers.nvgcn_layer import NodeVarGraphConvolutionLayer
 
-from ..base import DenoisingModel
+from ..base import GraphModel
 
 
-class NodeVarGNN(DenoisingModel):
+class NodeVarGNN(GraphModel):
     """Node-variant Graph Neural Network."""
 
     def __init__(
@@ -35,7 +36,9 @@ class NodeVarGNN(DenoisingModel):
         self.feature_dim = feature_dim
         self.eigenvalue_reg = eigenvalue_reg
 
-        self.embedding_layer = EigenEmbedding(eigenvalue_reg=eigenvalue_reg)
+        self.embedding_layer = TruncatedEigenEmbedding(
+            target_dim=feature_dim, eigenvalue_reg=eigenvalue_reg
+        )
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
@@ -47,44 +50,31 @@ class NodeVarGNN(DenoisingModel):
         self.out_y = nn.Linear(feature_dim, feature_dim)
 
     @override
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass returning reconstructed adjacency matrix.
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        """Compute denoised graph from input graph data.
 
-        Args:
-            x: Input adjacency matrix
+        Parameters
+        ----------
+        data
+            Graph features. The adjacency is extracted via
+            ``data.to_adjacency()``.
+        t
+            Diffusion timestep tensor, or None. Currently unused.
 
-        Returns:
-            Reconstructed adjacency matrix
+        Returns
+        -------
+        GraphData
+            Denoised graph with 2-class edge features.
         """
+        x = data.to_adjacency()
         z = self.embedding_layer(x)
-        # Take only the first feature_dim columns from eigenvectors
-        # But ensure we don't exceed the available columns
-        actual_feature_dim = min(z.shape[2], self.feature_dim)
-        z = z[:, :, :actual_feature_dim]
-
-        # If we have fewer features than expected, pad with zeros
-        if actual_feature_dim < self.feature_dim:
-            padding = torch.zeros(
-                z.shape[0],
-                z.shape[1],
-                self.feature_dim - actual_feature_dim,
-                device=z.device,
-                dtype=z.dtype,
-            )
-            z = torch.cat([z, padding], dim=2)
-
-        # NOTE: Dynamic layer recreation removed. The redesigned
-        # NodeVarGraphConvolutionLayer uses node-agnostic parameters,
-        # supporting any graph size without re-creating layers.
 
         for layer in self.layers:
             z = layer(x, z)
         emb_x = self.out_x(z)
         emb_y = self.out_y(z)
-        outer = torch.bmm(emb_x, emb_y.transpose(1, 2))
-        # Return raw logits per base class contract; use predict() for probabilities
-        return outer
+        result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
+        return GraphData.from_adjacency(result_adj)
 
     @override
     def get_config(self) -> dict[str, Any]:

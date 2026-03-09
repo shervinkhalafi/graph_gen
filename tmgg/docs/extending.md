@@ -1,93 +1,75 @@
 # Extending the Framework
 
-This document covers how to add new models, datasets, noise types, and execution backends.
+This document covers how to add new models, datasets, noise types, execution backends, and entirely new experiment types.
 
 ## Adding a New Model
 
 ### Step 1: Create the Model Class
 
-Create a new file in `src/tmgg/models/` inheriting from `DenoisingModel`:
+Create a new file in `src/tmgg/models/` inheriting from `GraphModel`:
 
 ```python
 # src/tmgg/models/mymodels/my_model.py
+from typing import Any
+
 import torch
 import torch.nn as nn
-from tmgg.models.base import DenoisingModel
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.base import GraphModel
 
-class MyModel(DenoisingModel):
-    """My custom denoising model."""
+class MyModel(GraphModel):
+    """My custom graph model."""
 
     def __init__(
         self,
         hidden_dim: int,
         num_layers: int,
-        domain: str = "standard",
     ):
-        super().__init__(domain=domain)
+        super().__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
+        # Define layers...
 
-        # Define layers
-        self.layers = nn.ModuleList([
-            nn.Linear(hidden_dim, hidden_dim)
-            for _ in range(num_layers)
-        ])
-        self.output = nn.Linear(hidden_dim, hidden_dim)
+    def forward(
+        self, data: GraphData, t: torch.Tensor | None = None
+    ) -> GraphData:
+        """Forward pass.
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
+        Parameters
+        ----------
+        data
+            Graph data with node features X, edge features E, and node_mask.
+        t
+            Normalised diffusion timestep (bs,), or None.
+
+        Returns
+        -------
+        GraphData
+            Predicted clean graph (logits, not probabilities).
         """
-        Forward pass.
+        # Your model logic here
+        ...
 
-        Args:
-            A: Adjacency matrix (batch, n, n)
-
-        Returns:
-            Reconstructed adjacency (batch, n, n)
-        """
-        # Apply input domain transformation
-        x = self._apply_domain_transform(A)
-
-        # Process
-        for layer in self.layers:
-            x = torch.relu(layer(x))
-        x = self.output(x)
-
-        # Apply output domain transformation
-        return self._apply_output_transform(x)
-
-    def get_config(self) -> dict:
+    def get_config(self) -> dict[str, Any]:
         """Return model configuration."""
         return {
             "hidden_dim": self.hidden_dim,
             "num_layers": self.num_layers,
-            "domain": self.domain,
         }
 ```
 
-### Step 2: Create the Lightning Module
+### Step 2: Choose a Training Module
 
-Create a Lightning module in `src/tmgg/experiments/`:
+For denoising experiments, use ``SingleStepDenoisingModule``. For generative
+diffusion experiments, use ``DiffusionModule`` with injected noise process,
+sampler, and evaluator components. Both create models through ``ModelRegistry``.
 
 ```python
-# src/tmgg/experiments/my_experiment/lightning_module.py
-from tmgg.experiment_utils.base_lightningmodule import DenoisingLightningModule
-from tmgg.models.mymodels.my_model import MyModel
+# For single-step denoising:
+from tmgg.experiments._shared_utils.denoising_module import SingleStepDenoisingModule
 
-class MyLightningModule(DenoisingLightningModule):
-    """Lightning module for MyModel."""
-
-    def _make_model(
-        self,
-        hidden_dim: int,
-        num_layers: int,
-        domain: str = "standard",
-        **kwargs,
-    ) -> MyModel:
-        return MyModel(
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            domain=domain,
-        )
+# For multi-step diffusion:
+from tmgg.experiments._shared_utils.diffusion_module import DiffusionModule
 ```
 
 ### Step 3: Create the Runner
@@ -96,7 +78,7 @@ class MyLightningModule(DenoisingLightningModule):
 # src/tmgg/experiments/my_experiment/runner.py
 import hydra
 from omegaconf import DictConfig
-from tmgg.experiment_utils.run_experiment import run_experiment
+from tmgg.experiments._shared_utils.run_experiment import run_experiment
 
 CONFIG_PATH = "../../exp_configs"
 
@@ -131,7 +113,6 @@ _target_: tmgg.experiments.my_experiment.lightning_module.MyLightningModule
 
 hidden_dim: 64
 num_layers: 4
-domain: "standard"
 
 learning_rate: 0.001
 loss_type: "MSE"
@@ -157,14 +138,64 @@ In `src/tmgg/models/__init__.py`:
 from tmgg.models.mymodels.my_model import MyModel
 ```
 
+### Step 7: Register in Model Factory
+
+The framework dispatches model construction through a central registry in
+`src/tmgg/models/factory.py`. Without registration, `create_model()` (and by
+extension every Lightning module's `_make_model()`) cannot instantiate your
+architecture.
+
+`MODEL_REGISTRY` is a plain `dict[str, Callable[[dict, Any], nn.Module]]`.
+The `@register_model(*names)` decorator adds one or more string keys that
+map to a factory function. Duplicate names raise `ValueError` immediately,
+so silent overwrites are impossible.
+
+Register your model by adding a decorated factory at the bottom of
+`src/tmgg/models/factory.py`:
+
+```python
+@register_model("my_model")
+def _make_my_model(config: dict[str, Any]) -> nn.Module:
+    from tmgg.models.mymodels.my_model import MyModel
+
+    return MyModel(
+        hidden_dim=config.get("hidden_dim", 64),
+        num_layers=config.get("num_layers", 4),
+    )
+```
+
+If your model should be reachable under multiple names (e.g. a short alias),
+pass them all to the decorator:
+
+```python
+@register_model("my_model", "mm")
+def _make_my_model(config: dict[str, Any]) -> nn.Module:
+    ...
+```
+
+After registration, any caller can construct the model via:
+
+```python
+from tmgg.models.factory import create_model
+
+model = create_model("my_model", {"hidden_dim": 128, "num_layers": 6})
+```
+
+`create_model` raises `ValueError` with a list of all registered types if the
+key is unknown, which makes typos easy to diagnose.
+
+> **Note:** Use lazy imports inside the factory function (as shown above) to
+> avoid circular imports and keep module load time fast. Every existing
+> registration in `factory.py` follows this pattern.
+
 ## Adding a New Dataset
 
 ### Step 1: Create a Wrapper
 
-If using external data, create a wrapper in `src/tmgg/experiment_utils/data/`:
+If using external data, create a wrapper in `src/tmgg/data/`:
 
 ```python
-# src/tmgg/experiment_utils/data/my_dataset.py
+# src/tmgg/data/my_dataset.py
 import torch
 from torch.utils.data import Dataset
 
@@ -190,7 +221,7 @@ class MyDatasetWrapper(Dataset):
 
 ### Step 2: Register in GraphDataModule
 
-In `src/tmgg/experiment_utils/data/data_module.py`, add handling:
+In `src/tmgg/data/data_module.py`, add handling:
 
 ```python
 def _create_dataset(self):
@@ -219,7 +250,7 @@ noise_levels: [0.1, 0.2, 0.3]
 
 ### Step 1: Implement the Generator
 
-In `src/tmgg/experiment_utils/data/synthetic_graphs.py`:
+In `src/tmgg/data/synthetic_graphs.py`:
 
 ```python
 def generate_my_graphs(
@@ -278,7 +309,7 @@ def _generate(self):
 
 ### Step 1: Implement the Noise Function
 
-In `src/tmgg/experiment_utils/data/noise_generators.py`:
+In `src/tmgg/data/noise_generators.py`:
 
 ```python
 def add_my_noise(
@@ -305,20 +336,14 @@ def add_my_noise(
     return A + noise
 ```
 
-### Step 2: Register in Lightning Module
+### Step 2: Register as a NoiseProcess
 
-In `src/tmgg/experiment_utils/base_lightningmodule.py`, add to noise dispatch:
-
-```python
-def _apply_noise(self, batch, noise_level):
-    if self.noise_type == "my_noise":
-        return add_my_noise(batch, noise_level, **self.noise_kwargs)
-    # ... existing code
-```
+Implement a ``NoiseProcess`` subclass in ``src/tmgg/diffusion/noise_process.py``
+that wraps your noise function, or use it directly within a custom training module.
 
 ### Step 3: Export
 
-In `src/tmgg/experiment_utils/data/__init__.py`:
+In `src/tmgg/data/__init__.py`:
 
 ```python
 from .noise_generators import add_my_noise
@@ -329,8 +354,8 @@ from .noise_generators import add_my_noise
 ### Step 1: Implement CloudRunner
 
 ```python
-# src/tmgg/experiment_utils/cloud/my_runner.py
-from tmgg.experiment_utils.cloud.base import CloudRunner, ExperimentResult
+# src/tmgg/runners/my_runner.py
+from tmgg.runners.base import CloudRunner, ExperimentResult
 
 class MyCloudRunner(CloudRunner):
     """My custom cloud runner."""
@@ -384,28 +409,168 @@ class MyCloudRunner(CloudRunner):
 
 ### Step 2: Register the Runner
 
-In `src/tmgg/experiment_utils/cloud/factory.py`:
+Export your runner from `src/tmgg/runners/__init__.py` so it can be imported directly:
 
 ```python
-def _try_register_my_cloud() -> None:
-    try:
-        from .my_runner import MyCloudRunner
-        CloudRunnerFactory.register("mycloud", MyCloudRunner)
-    except ImportError:
-        pass
+# In src/tmgg/runners/__init__.py
+from tmgg.runners.my_runner import MyCloudRunner
 
-# Call during module initialization
-_try_register_my_cloud()
+__all__ = [
+    # ... existing exports ...
+    "MyCloudRunner",
+]
 ```
 
-Or register at runtime:
+Then use it:
 
 ```python
-from tmgg.experiment_utils.cloud import CloudRunnerFactory
-from my_package import MyCloudRunner
+from tmgg.runners import MyCloudRunner
 
-CloudRunnerFactory.register("mycloud", MyCloudRunner)
+runner = MyCloudRunner(api_key="...")
+result = runner.run_experiment(config)
 ```
+
+## Adding a New Experiment Type
+
+The sections above cover adding models, datasets, and noise within an existing experiment family. This section covers creating an entirely new experiment family from scratch — for instance, a graph VAE alongside the existing denoising and discrete diffusion families.
+
+The end-to-end process requires six artifacts. We walk through each using a hypothetical `vae_graph` experiment.
+
+### Step 1: Lightning Module
+
+Subclass ``DiffusionModule`` or ``SingleStepDenoisingModule``. Both create
+models through ``ModelRegistry`` and handle optimizer/scheduler configuration
+automatically. ``DiffusionModule`` accepts injected noise process, sampler,
+and evaluator components for multi-step diffusion. ``SingleStepDenoisingModule``
+handles single-step denoising with a fixed T=1 schedule.
+
+```python
+# For custom training logic, subclass DiffusionModule or SingleStepDenoisingModule
+from tmgg.experiments._shared_utils.diffusion_module import DiffusionModule
+
+# Register your model type, then reference by name in config
+```
+
+If your experiment needs custom training/validation logic (e.g., ELBO loss with KL term), subclass ``DiffusionModule`` or ``SingleStepDenoisingModule`` and override ``training_step`` and ``validation_step``.
+
+### Step 2: Base Config YAML
+
+Create `src/tmgg/exp_configs/base_config_vae_graph.yaml`. The `defaults:` list composes config groups; `_self_` goes last so that explicit keys in this file take priority over defaults.
+
+```yaml
+# Base configuration for graph VAE experiments
+#
+# Run with: uv run tmgg-vae-graph
+# Override: uv run tmgg-vae-graph model.latent_dim=64
+
+defaults:
+  - base_config_training
+  - models/vae/vae_default@model
+  - _self_
+
+experiment_name: "vae_graph"
+wandb_project: vae-graph
+
+model:
+  noise_type: ${data.noise_type}
+  noise_levels: ${data.noise_levels}
+  seed: ${seed}
+```
+
+### Step 3: Model Config
+
+Create YAML files under `src/tmgg/exp_configs/models/vae/`. The `_target_` points to the Lightning module class. Use `${}` interpolations for values that come from the base config or CLI overrides — the batch config builder strips these during generation.
+
+```yaml
+# src/tmgg/exp_configs/models/vae/vae_default.yaml
+
+_target_: tmgg.experiments.vae_graph.lightning_module.GraphVAELightningModule
+
+latent_dim: 32
+encoder_layers: 3
+
+learning_rate: ${learning_rate}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}
+loss_type: ${loss_type}
+```
+
+### Step 4: Runner Script
+
+Create the Hydra entry point. The `config_path` is relative to the runner file's location.
+
+```python
+# src/tmgg/experiments/vae_graph/runner.py
+import hydra
+from omegaconf import DictConfig
+from tmgg.experiments._shared_utils.run_experiment import run_experiment
+
+CONFIG_PATH = "../../exp_configs"
+
+@hydra.main(version_base="1.3", config_path=CONFIG_PATH, config_name="base_config_vae_graph")
+def main(config: DictConfig):
+    return run_experiment(config)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Step 5: CLI Entry Point
+
+Register the runner in `pyproject.toml` under `[project.scripts]`:
+
+```toml
+[project.scripts]
+# ... existing entries ...
+# VAE experiment CLI
+tmgg-vae-graph = "tmgg.experiments.vae_graph.runner:main"
+```
+
+After adding this, reinstall with `uv pip install -e .` so the console script is available.
+
+### Step 6: Stage Definition (Batch Runs)
+
+To run sweeps on Modal, create a stage definition at `src/tmgg/modal/stage_definitions/stage_vae_graph.yaml`. This defines the architecture/hyperparameter grid and seed list for batch config generation.
+
+```yaml
+# Graph VAE: initial validation sweep
+
+name: stage_vae_graph
+base_config: base_config_vae_graph
+
+architectures:
+  - models/vae/vae_default
+
+hyperparameters:
+  learning_rate: [1e-4, 1e-3]
+  "model.latent_dim": [16, 32, 64]
+
+seeds: [1, 2, 3]
+
+run_id_template: "vae_{arch}_{latent_dim}_{lr}_s{seed}"
+```
+
+Verify the generated configs with a dry run:
+
+```bash
+uv run python -m tmgg.modal.cli.generate_configs \
+    --stage stage_vae_graph --output-dir /tmp/test --dry-run
+```
+
+### Checklist Summary
+
+Before marking a new experiment type complete, confirm:
+
+1. Lightning module calls `save_hyperparameters()` before `super().__init__()`.
+2. Base config YAML exists in `src/tmgg/exp_configs/` with `- _self_` last in defaults.
+3. At least one model config exists under `src/tmgg/exp_configs/models/<family>/`.
+4. Runner script uses `@hydra.main(version_base="1.3", ...)` with correct `config_path`.
+5. `pyproject.toml` has the `tmgg-<name>` entry point.
+6. Stage YAML generates valid configs via `--dry-run`.
+7. `uv run tmgg-<name> --help` prints the Hydra help without errors.
 
 ## Testing Your Extensions
 
@@ -424,13 +589,14 @@ class TestMyModel:
         output = model(x)
         assert output.shape == (4, 20, 20)
 
-    def test_output_range(self):
+    def test_predict_binary(self):
         model = MyModel(hidden_dim=20, num_layers=2)
         model.eval()
         x = torch.randn(4, 20, 20)
-        output = model(x)
-        # In eval mode with standard domain, output is sigmoid
-        assert torch.all(output >= 0) and torch.all(output <= 1)
+        logits = model(x)
+        # predict() converts raw logits to binary {0, 1} predictions
+        preds = model.predict(logits)
+        assert torch.all((preds == 0) | (preds == 1))
 ```
 
 Run tests:

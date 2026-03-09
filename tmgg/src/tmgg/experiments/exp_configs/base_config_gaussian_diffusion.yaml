@@ -1,0 +1,77 @@
+# Base configuration for generative graph modeling experiments
+#
+# Inherits shared training infrastructure from _base_infra.yaml directly,
+# skipping the denoising task config (task/denoising.yaml).
+#
+# Run with: python -m tmgg.experiments.gaussian_diffusion_generative.runner
+# Override: python -m tmgg.experiments.gaussian_diffusion_generative.runner model.model_type=gnn
+
+defaults:
+  - _base_infra
+  - _self_
+
+experiment_name: "generative_graph"
+wandb_project: gaussian-diffusion
+_cli_cmd: tmgg-gaussian-gen
+
+# --- Generative-specific sections (not present in base) ---
+
+model:
+  _target_: tmgg.experiments._shared_utils.lightning_modules.diffusion_module.DiffusionModule
+  model_type: self_attention
+  model_config:
+    k: 8
+    d_k: 64
+  noise_process:
+    _target_: tmgg.diffusion.noise_process.ContinuousNoiseProcess
+    generator:
+      _target_: tmgg.data.DigressNoiseGenerator
+  sampler:
+    _target_: tmgg.diffusion.sampler.ContinuousSampler
+    noise_process:
+      _target_: tmgg.diffusion.noise_process.ContinuousNoiseProcess
+      generator:
+        _target_: tmgg.data.DigressNoiseGenerator
+    noise_schedule:
+      _target_: tmgg.diffusion.schedule.NoiseSchedule
+      schedule_type: cosine_iddpm
+      timesteps: 100
+  noise_schedule:
+    _target_: tmgg.diffusion.schedule.NoiseSchedule
+    schedule_type: cosine_iddpm
+    timesteps: 100
+  evaluator:
+    _target_: tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator.GraphEvaluator
+    eval_num_samples: 100
+    kernel: gaussian
+    sigma: 1.0
+  loss_type: mse
+  num_nodes: ${data.num_nodes}
+  eval_every_n_epochs: 1
+  learning_rate: ${learning_rate}
+  weight_decay: ${weight_decay}
+  optimizer_type: ${optimizer_type}
+
+# Replaces the denoising GraphDataModule with a generative-specific one
+data:
+  _target_: tmgg.data.data_modules.multigraph_data_module.MultiGraphDataModule
+  graph_type: sbm
+  num_nodes: 50
+  num_graphs: 1000
+  train_ratio: 0.8
+  val_ratio: 0.1
+  batch_size: 32
+  num_workers: ${num_workers}
+  seed: ${seed}
+  graph_config:
+    num_blocks: 2
+    p_intra: 0.7
+    p_inter: 0.1
+
+# Override: date-based layout instead of base's version-based layout
+hydra:
+  run:
+    dir: outputs/generative/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/generative/sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    # subdir inherited from _base_infra (${hydra.job.num})

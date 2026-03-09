@@ -5,12 +5,13 @@ from typing import Any, override
 import torch
 import torch.nn as nn
 
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.layers.mha_layer import MultiHeadAttention
 
-from ..base import DenoisingModel
+from ..base import GraphModel
 
 
-class MultiLayerAttention(DenoisingModel):
+class MultiLayerAttention(GraphModel):
     """Multi-layer attention model for graph denoising."""
 
     def __init__(
@@ -64,26 +65,50 @@ class MultiLayerAttention(DenoisingModel):
             ]
         )
 
-    def forward(
-        self, A: torch.Tensor, mask: torch.Tensor | None = None
+    def apply_attention(
+        self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
-        """
-        Forward pass through all attention layers.
+        """Apply attention layers to a raw tensor.
 
-        Args:
-            A: Input adjacency matrix
-            mask: Optional attention mask
+        Exposed for hybrid models that need raw feature-tensor processing
+        without the GraphData wrapping/unwrapping of ``forward()``.
 
-        Returns:
-            Reconstructed adjacency matrix
+        Parameters
+        ----------
+        x
+            Input tensor of shape ``(batch, seq, d_model)``.
+        mask
+            Optional attention mask.
+
+        Returns
+        -------
+        torch.Tensor
+            Processed tensor, same shape as input.
         """
-        x = A
-        # Pass through each attention layer sequentially
         for layer in self.layers:
-            x, _ = layer(x, mask=mask)
-
-        # Return raw logits per base class contract; use predict() for probabilities
+            x = layer(x, mask=mask)
         return x
+
+    @override
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        """Forward pass through all attention layers.
+
+        Parameters
+        ----------
+        data
+            Graph features. The adjacency is extracted via
+            ``data.to_adjacency()``.
+        t
+            Diffusion timestep tensor, or None. Currently unused.
+
+        Returns
+        -------
+        GraphData
+            Denoised graph with 2-class edge features.
+        """
+        A = data.to_adjacency()
+        out = self.apply_attention(A)
+        return GraphData.from_adjacency(out)
 
     @override
     def get_config(self) -> dict[str, Any]:

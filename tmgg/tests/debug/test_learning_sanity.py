@@ -34,8 +34,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from tmgg.experiment_utils import generate_sbm_adjacency
-from tmgg.experiment_utils.data import add_digress_noise
+from tmgg.data import add_edge_flip_noise, generate_sbm_adjacency
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
@@ -85,7 +85,7 @@ def create_sbm_target(
     if block_sizes is None:
         block_sizes = [4, 4, 4, 4]
     rng = np.random.default_rng(seed)
-    A_np = generate_sbm_adjacency(block_sizes, p=p, q=q, rng=rng)
+    A_np = generate_sbm_adjacency(block_sizes, p_intra=p, p_inter=q, rng=rng)
     A = torch.tensor(A_np, dtype=torch.float32).unsqueeze(0)
     return A
 
@@ -95,6 +95,7 @@ def create_sbm_target(
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestLevel1ConstantNoiseMemorization:
     """LEVEL 1 SANITY CHECK: Constant noise memorization.
 
@@ -144,7 +145,7 @@ class TestLevel1ConstantNoiseMemorization:
         # CRITICAL: Fixed seed for noise - same noise every call
         torch.manual_seed(123)
         np.random.seed(123)
-        A_noisy = add_digress_noise(A_clean, p=0.1)
+        A_noisy = add_edge_flip_noise(A_clean, p=0.1)
 
         return A_noisy, A_clean, str(request.param)
 
@@ -169,24 +170,27 @@ class TestLevel1ConstantNoiseMemorization:
         model = model_class(**kwargs)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
-        # Train on the SAME A_noisy every step (5000 steps for convergence)
+        data_noisy = GraphData.from_adjacency(A_noisy)
+
+        # Train on the SAME A_noisy every step (5000 steps for convergence).
+        # BCE on edge-channel logit preserves the gradient scale these tests
+        # were calibrated for.
         for _ in range(5000):
-            logits = model(A_noisy)
-            loss = F.binary_cross_entropy_with_logits(logits, A_clean)
+            result = model(data_noisy)
+            loss = F.binary_cross_entropy_with_logits(result.E[..., 1], A_clean)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
         # Evaluate on the same A_noisy
         with torch.no_grad():
-            logits = model(A_noisy)
-            probs = torch.sigmoid(logits)
-            predictions = (probs > 0.5).float()
+            result = model(data_noisy)
+            predictions = result.to_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
-            # Diagnostic info
-            logit_mean = logits.mean().item()
-            logit_std = logits.std().item()
+            edge_logits = result.E[..., 1]
+            logit_mean = edge_logits.mean().item()
+            logit_std = edge_logits.std().item()
 
         assert accuracy > 0.99, (
             f"LEVEL 1 FAIL [{model_class.__name__}, {target_type}]: "
@@ -201,6 +205,7 @@ class TestLevel1ConstantNoiseMemorization:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestLevel2FreshNoiseGeneralization:
     """LEVEL 2 SANITY CHECK: Fresh noise generalization.
 
@@ -273,25 +278,25 @@ class TestLevel2FreshNoiseGeneralization:
 
         # Train with FRESH noise each step
         for _ in range(2000):
-            A_noisy = add_digress_noise(A_clean, p=0.1)
-            logits = model(A_noisy)
-            loss = F.binary_cross_entropy_with_logits(logits, A_clean)
+            A_noisy = add_edge_flip_noise(A_clean, p=0.1)
+            result = model(GraphData.from_adjacency(A_noisy))
+            loss = F.binary_cross_entropy_with_logits(result.E[..., 1], A_clean)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
         # Evaluate on FRESH noise (different from any training noise)
         torch.manual_seed(999)  # Different seed for evaluation
-        A_noisy_eval = add_digress_noise(A_clean, p=0.1)
+        A_noisy_eval = add_edge_flip_noise(A_clean, p=0.1)
 
         with torch.no_grad():
-            logits = model(A_noisy_eval)
-            probs = torch.sigmoid(logits)
-            predictions = (probs > 0.5).float()
+            result = model(GraphData.from_adjacency(A_noisy_eval))
+            predictions = result.to_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
-            logit_mean = logits.mean().item()
-            logit_std = logits.std().item()
+            edge_logits = result.E[..., 1]
+            logit_mean = edge_logits.mean().item()
+            logit_std = edge_logits.std().item()
 
         assert accuracy > 0.70, (
             f"LEVEL 2 FAIL [{model_class.__name__}, {target_type}]: "
@@ -318,7 +323,7 @@ class TestSingleStepLearning:
         A_clean = create_block_diagonal_target(n=32, num_blocks=4)
         # Expand to batch
         A_clean = A_clean.expand(4, -1, -1).clone()
-        A_noisy = add_digress_noise(A_clean, p=0.1)
+        A_noisy = add_edge_flip_noise(A_clean, p=0.1)
         return A_noisy, A_clean
 
     @pytest.mark.parametrize(
@@ -337,9 +342,11 @@ class TestSingleStepLearning:
         model = model_class(**kwargs)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
+        data_noisy = GraphData.from_adjacency(A_noisy)
+
         # Initial forward pass
-        logits_1 = model(A_noisy)
-        loss_1 = F.binary_cross_entropy_with_logits(logits_1, A_clean)
+        result_1 = model(data_noisy)
+        loss_1 = F.binary_cross_entropy_with_logits(result_1.E[..., 1], A_clean)
 
         # Optimization step
         loss_1.backward()
@@ -347,8 +354,8 @@ class TestSingleStepLearning:
         optimizer.zero_grad()
 
         # Second forward pass
-        logits_2 = model(A_noisy)
-        loss_2 = F.binary_cross_entropy_with_logits(logits_2, A_clean)
+        result_2 = model(data_noisy)
+        loss_2 = F.binary_cross_entropy_with_logits(result_2.E[..., 1], A_clean)
 
         # Loss should decrease (or at least not increase significantly)
         assert loss_2 <= loss_1 + 0.01, (
@@ -366,7 +373,7 @@ class TestLossDecreasesCurve:
         torch.manual_seed(123)
         A_clean = create_block_diagonal_target(n=16, num_blocks=4)
         A_clean = A_clean.expand(8, -1, -1).clone()
-        A_noisy = add_digress_noise(A_clean, p=0.1)
+        A_noisy = add_edge_flip_noise(A_clean, p=0.1)
         return A_noisy, A_clean
 
     @pytest.mark.parametrize(
@@ -383,10 +390,12 @@ class TestLossDecreasesCurve:
         model = model_class(**kwargs)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
+        data_noisy = GraphData.from_adjacency(A_noisy)
+
         losses = []
         for _ in range(100):
-            logits = model(A_noisy)
-            loss = F.binary_cross_entropy_with_logits(logits, A_clean)
+            result = model(data_noisy)
+            loss = F.binary_cross_entropy_with_logits(result.E[..., 1], A_clean)
             losses.append(loss.item())
 
             loss.backward()

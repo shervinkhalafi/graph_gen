@@ -1,9 +1,0 @@
-# @package data
-# Single-graph protocol for Erdős-Rényi graphs
-
-defaults:
-  - single_graph_base
-
-graph_type: erdos_renyi
-n: 50
-p: 0.1  # Edge probability

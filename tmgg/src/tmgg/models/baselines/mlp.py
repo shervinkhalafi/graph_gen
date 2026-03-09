@@ -10,10 +10,11 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from tmgg.models.base import DenoisingModel
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.models.base import GraphModel
 
 
-class MLPBaseline(DenoisingModel):
+class MLPBaseline(GraphModel):
     """MLP baseline: flatten -> MLP -> reshape.
 
     This model treats the adjacency matrix as a flat vector, processes it
@@ -73,38 +74,39 @@ class MLPBaseline(DenoisingModel):
         layers.append(nn.Linear(hidden_dim, self.flatten_dim))
         self.mlp = nn.Sequential(*layers)
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
         """Apply MLP to flattened adjacency matrix.
 
         Parameters
         ----------
-        A
-            Input adjacency matrix of shape (batch, N, N) where N <= max_nodes.
+        data
+            Graph features. The adjacency is extracted via
+            ``data.to_adjacency()``.
+        t
+            Diffusion timestep tensor, or None. Currently unused.
 
         Returns
         -------
-        torch.Tensor
-            Raw logits of shape (batch, N, N). Use predict() for probabilities.
+        GraphData
+            Denoised graph with 2-class edge features.
         """
+        A = data.to_adjacency()
         B, N, _ = A.shape
 
-        # Pad to max_nodes if needed
         if self.max_nodes > N:
             A_padded = torch.zeros(B, self.max_nodes, self.max_nodes, device=A.device)
             A_padded[:, :N, :N] = A
         else:
             A_padded = A
 
-        # Flatten -> MLP -> reshape
         flat = A_padded.view(B, -1)
         out = self.mlp(flat)
         out = out.view(B, self.max_nodes, self.max_nodes)
 
-        # Slice back to original size
         if self.max_nodes > N:
             out = out[:, :N, :N]
 
-        return out
+        return GraphData.from_adjacency(out)
 
     def get_config(self) -> dict[str, Any]:
         """Return model configuration."""

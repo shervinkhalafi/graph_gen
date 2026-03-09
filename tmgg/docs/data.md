@@ -10,7 +10,7 @@ Two data module classes are available, depending on the experimental protocol.
 
 For single-graph training protocols (Stages 1, 1.5). All splits use the same graph structure; only noise varies across samples.
 
-**Location:** `src/tmgg/experiment_utils/data/single_graph_data_module.py`
+**Location:** `src/tmgg/data/single_graph_data_module.py`
 
 **Parameters:**
 
@@ -33,7 +33,7 @@ For single-graph training protocols (Stages 1, 1.5). All splits use the same gra
 **Usage:**
 
 ```python
-from tmgg.experiment_utils.data import SingleGraphDataModule
+from tmgg.data import SingleGraphDataModule
 
 dm = SingleGraphDataModule(
     graph_type="sbm",
@@ -55,7 +55,7 @@ for batch in dm.train_dataloader():
 
 For multi-graph training protocols (Stages 2+). Multiple graphs with train/val/test splits.
 
-**Location:** `src/tmgg/experiment_utils/data/data_module.py`
+**Location:** `src/tmgg/data/data_module.py`
 
 **Parameters:**
 
@@ -67,17 +67,17 @@ For multi-graph training protocols (Stages 2+). Multiple graphs with train/val/t
 | `batch_size` | int | 100 | Batch size |
 | `val_split` | float | 0.2 | Validation set fraction |
 | `test_split` | float | 0.2 | Test set fraction |
-| `noise_type` | str | "digress" | Noise model (gaussian, rotation, digress) |
+| `noise_type` | str | "digress" | Noise model (gaussian, rotation, digress, edge_flip, logit) |
 | `noise_levels` | list | [0.1] | Noise levels to sample from |
 
 **Usage:**
 
 ```python
-from tmgg.experiment_utils.data import GraphDataModule
+from tmgg.data import GraphDataModule
 
 data_module = GraphDataModule(
     dataset_name="sbm",
-    dataset_config={"num_nodes": 20, "p_intra": 1.0, "q_inter": 0.0},
+    dataset_config={"num_nodes": 20, "p_intra": 1.0, "p_inter": 0.0},
     noise_type="digress",
     noise_levels=[0.05, 0.1, 0.2],
 )
@@ -100,7 +100,7 @@ dataset_name: sbm
 dataset_config:
   num_nodes: 20
   p_intra: 1.0       # Edge probability within blocks
-  q_inter: 0.0       # Edge probability between blocks
+  p_inter: 0.0       # Edge probability between blocks
   min_blocks: 2
   max_blocks: 4
   min_block_size: 2
@@ -176,14 +176,14 @@ dataset_config:
 
 ## Synthetic Graph Generators
 
-Available in `src/tmgg/experiment_utils/data/synthetic_graphs.py`:
+Available in `src/tmgg/data/synthetic_graphs.py`:
 
 ### Regular Graphs
 
 D-regular graphs where every node has exactly d neighbors.
 
 ```python
-from tmgg.experiment_utils.data import generate_regular_graphs
+from tmgg.data import generate_regular_graphs
 
 graphs = generate_regular_graphs(n=20, d=3, num_graphs=100)
 ```
@@ -193,7 +193,7 @@ graphs = generate_regular_graphs(n=20, d=3, num_graphs=100)
 Random graphs with independent edge probability p.
 
 ```python
-from tmgg.experiment_utils.data import generate_erdos_renyi_graphs
+from tmgg.data import generate_erdos_renyi_graphs
 
 graphs = generate_erdos_renyi_graphs(n=20, p=0.3, num_graphs=100)
 ```
@@ -203,7 +203,7 @@ graphs = generate_erdos_renyi_graphs(n=20, p=0.3, num_graphs=100)
 Random trees with n-1 edges.
 
 ```python
-from tmgg.experiment_utils.data import generate_tree_graphs
+from tmgg.data import generate_tree_graphs
 
 graphs = generate_tree_graphs(n=20, num_graphs=100)
 ```
@@ -213,7 +213,7 @@ graphs = generate_tree_graphs(n=20, num_graphs=100)
 Small-world graphs with tunable clustering and path length.
 
 ```python
-from tmgg.experiment_utils.data import generate_watts_strogatz_graphs
+from tmgg.data import generate_watts_strogatz_graphs
 
 graphs = generate_watts_strogatz_graphs(
     n=20,
@@ -228,7 +228,7 @@ graphs = generate_watts_strogatz_graphs(
 Nodes placed uniformly in a unit square, edges between nearby nodes.
 
 ```python
-from tmgg.experiment_utils.data import generate_random_geometric_graphs
+from tmgg.data import generate_random_geometric_graphs
 
 graphs = generate_random_geometric_graphs(
     n=20,
@@ -242,7 +242,7 @@ graphs = generate_random_geometric_graphs(
 Random graphs with a specified degree sequence.
 
 ```python
-from tmgg.experiment_utils.data import generate_configuration_model_graphs
+from tmgg.data import generate_configuration_model_graphs
 
 graphs = generate_configuration_model_graphs(
     n=20,
@@ -256,24 +256,24 @@ graphs = generate_configuration_model_graphs(
 Unified interface for all synthetic graphs:
 
 ```python
-from tmgg.experiment_utils.data import SyntheticGraphDataset
+from tmgg.data import SyntheticGraphDataset
 
 # Aliases available: er, ws, rg, cm
-dataset = SyntheticGraphDataset("ws", n=20, num_graphs=100, k=4, p=0.2)
+dataset = SyntheticGraphDataset("ws", num_nodes=20, num_graphs=100, k=4, p=0.2)
 train, val, test = dataset.train_val_test_split()
 tensor = dataset.to_torch()  # Returns torch.Tensor
 ```
 
 ## Noise Types
 
-Three noise models are available for training and evaluation.
+Five noise models are available for training and evaluation.
 
 ### Gaussian Noise
 
 Additive Gaussian noise to the adjacency matrix.
 
 ```python
-from tmgg.experiment_utils.data import add_gaussian_noise
+from tmgg.data import add_gaussian_noise
 
 noisy = add_gaussian_noise(adjacency, eps=0.1)
 ```
@@ -285,20 +285,40 @@ The noise level `eps` controls the standard deviation.
 Rotates the adjacency matrix in eigenspace using a skew-symmetric matrix. Preserves spectral properties while perturbing structure.
 
 ```python
-from tmgg.experiment_utils.data import add_rotation_noise, random_skew_symmetric_matrix
+from tmgg.data import add_rotation_noise, random_skew_symmetric_matrix
 
 skew = random_skew_symmetric_matrix(k=20)  # k = num eigenvectors
 noisy = add_rotation_noise(adjacency, eps=0.1, skew=skew)
 ```
 
-### Digress Noise
+### DiGress Noise (Categorical Transition)
 
-Flips edges with probability proportional to the noise level. Discrete noise model suited for binary adjacency matrices.
+Implements the forward diffusion process from Vignac et al. (2023). For binary adjacency matrices, this applies a categorical transition matrix that interpolates between the identity (no change) and a uniform distribution over edge states. At noise level `eps`, the transition probability is `Q_t = (1 - eps) * I + eps * uniform`, so each edge independently stays the same with probability `(1 - eps/2)` or flips with probability `eps/2`. This produces half the flip rate of simple edge flipping at the same noise level.
 
 ```python
-from tmgg.experiment_utils.data import add_digress_noise
+from tmgg.data import add_digress_noise
 
-noisy = add_digress_noise(adjacency, p=0.1)  # 10% flip probability
+noisy = add_digress_noise(adjacency, eps=0.1)
+```
+
+### Edge Flip Noise
+
+Simple Bernoulli edge flipping: each edge is independently flipped (0 to 1 or 1 to 0) with probability `eps`. This is the straightforward binary noise model, distinct from the DiGress categorical transition above.
+
+```python
+from tmgg.data import add_edge_flip_noise
+
+noisy = add_edge_flip_noise(adjacency, eps=0.1)  # 10% flip probability
+```
+
+### Logit Noise
+
+Applies Gaussian noise in logit (log-odds) space, producing soft adjacency values in (0, 1). The input is clamped to avoid numerical issues, transformed via `logit(A) = log(A / (1 - A))`, perturbed with symmetric Gaussian noise of standard deviation `sigma`, then mapped back through sigmoid. Unlike flip-based noise types, the output is continuous rather than binary. The `sigma` parameter controls perturbation severity in log-odds space: values around 0.5 cause mild perturbation where most edges retain their original polarity, while values around 5.0 cause aggressive flipping.
+
+```python
+from tmgg.data import add_logit_noise
+
+noisy = add_logit_noise(adjacency, sigma=1.0)
 ```
 
 ## Configuring Noise
@@ -306,7 +326,7 @@ noisy = add_digress_noise(adjacency, p=0.1)  # 10% flip probability
 In YAML configs:
 
 ```yaml
-noise_type: "digress"  # gaussian, rotation, or digress
+noise_type: "digress"  # gaussian, rotation, digress, edge_flip, or logit
 noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
 ```
 

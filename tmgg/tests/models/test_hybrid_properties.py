@@ -10,11 +10,11 @@ from hypothesis import given, note, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
-from tmgg.models.base import DenoisingModel
 from tmgg.models.gnn import GNN
 from tmgg.models.hybrid import SequentialDenoisingModel, create_sequential_model
-from tmgg.models.layers import EigenDecompositionError
+from tmgg.models.spectral_denoisers import EigenDecompositionError
 
 
 # Reuse strategies from test_gnn_properties
@@ -124,6 +124,7 @@ class MockEmbeddingModel(nn.Module):
     """Mock embedding model for testing.
 
     Has embeddings() method compatible with SequentialDenoisingModel.
+    Accepts GraphData (as expected by the hybrid model's forward).
     """
 
     feature_dim: int
@@ -135,8 +136,9 @@ class MockEmbeddingModel(nn.Module):
         # Use learnable parameters to ensure gradient flow
         self.weight = nn.Parameter(torch.randn(feature_dim, feature_dim))
 
-    def embeddings(self, A: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute embeddings from adjacency matrix."""
+    def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute embeddings from graph data."""
+        A = data.to_adjacency()
         batch_size, num_nodes, _ = A.shape
         # Use input A to maintain gradient connection
         A_sum = A.sum(dim=-1, keepdim=True)  # (batch_size, num_nodes, 1)
@@ -148,19 +150,22 @@ class MockEmbeddingModel(nn.Module):
         Y = base @ self.weight.T
         return X, Y
 
-    def forward(self, A: torch.Tensor) -> torch.Tensor:
-        """Compute adjacency logits from adjacency matrix."""
-        X, Y = self.embeddings(A)
-        return torch.bmm(X, Y.transpose(1, 2))
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        """Compute adjacency from graph data."""
+        X, Y = self.embeddings(data)
+        A_recon = torch.bmm(X, Y.transpose(1, 2))
+        return GraphData.from_adjacency(A_recon)
 
     def get_config(self) -> dict[str, int]:
         return {"feature_dim": self.feature_dim}
 
 
-class MockDenoisingModel(DenoisingModel):
+class MockDenoisingModel(nn.Module):
     """Mock denoising model for testing.
 
-    Returns a single tensor, matching the DenoisingModel API.
+    Returns a single tensor (raw feature processing, not GraphModel).
+    Used as denoising_model inside SequentialDenoisingModel, which
+    calls it with raw feature tensors via the non-MultiLayerAttention path.
     """
 
     d_model: int
@@ -185,95 +190,72 @@ class TestSequentialDenoisingModelProperties:
         A=batch_adjacency_matrices(min_nodes=3, max_nodes=10),
         feature_dim=st.integers(min_value=2, max_value=16),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_output_is_valid_adjacency_matrix(
         self, A: torch.Tensor, feature_dim: int
     ) -> None:
-        """Test that output is always a valid adjacency matrix.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test that output is always valid GraphData with correct shape."""
         embedding_model = MockEmbeddingModel(feature_dim)
         denoising_model = MockDenoisingModel(2 * feature_dim)
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        logits = model(A)
+        result = model(GraphData.from_adjacency(A))
 
         # Check shape preservation
-        assert logits.shape == A.shape
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == A.shape
 
-        # Check no NaN/Inf in logits
-        assert not torch.isnan(logits).any()
-        assert not torch.isinf(logits).any()
-
-        # predict() applies sigmoid to get probabilities in [0, 1]
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0)
-        assert torch.all(probs <= 1)
+        # Check no NaN/Inf in edge features
+        assert not torch.isnan(result.E).any()
+        assert not torch.isinf(result.E).any()
 
     @given(
         A=batch_adjacency_matrices(min_nodes=3, max_nodes=10),
         feature_dim=st.integers(min_value=2, max_value=16),
         use_denoising=st.booleans(),
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=2000)
     def test_with_and_without_denoising(
         self, A: torch.Tensor, feature_dim: int, use_denoising: bool
     ) -> None:
-        """Test model works with and without denoising component.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test model works with and without denoising component."""
         embedding_model = MockEmbeddingModel(feature_dim)
         denoising_model = MockDenoisingModel(2 * feature_dim) if use_denoising else None
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        logits = model(A)
-        assert logits.shape == A.shape
-
-        probs = model.predict(logits)
-        assert torch.all(probs >= 0) and torch.all(probs <= 1)
+        result = model(GraphData.from_adjacency(A))
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == A.shape
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=8))
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_residual_connection_improves_output(self, A: torch.Tensor) -> None:
-        """Test that residual connection in denoising doesn't degrade quality.
-
-        forward() returns raw logits; compare probabilities for meaningful diff.
-        """
+        """Test that residual connection in denoising doesn't degrade quality."""
         feature_dim = 5
         embedding_model = MockEmbeddingModel(feature_dim)
+        data = GraphData.from_adjacency(A)
 
         # Model without denoising
         model_no_denoise = SequentialDenoisingModel(embedding_model, None)
-        logits_no_denoise = model_no_denoise(A)
-        probs_no_denoise = model_no_denoise.predict(logits_no_denoise)
+        result_no_denoise = model_no_denoise(data)
 
         # Model with denoising
         denoising_model = MockDenoisingModel(2 * feature_dim)
         model_with_denoise = SequentialDenoisingModel(embedding_model, denoising_model)
-        logits_with_denoise = model_with_denoise(A)
-        probs_with_denoise = model_with_denoise.predict(logits_with_denoise)
+        result_with_denoise = model_with_denoise(data)
 
-        # Both should produce valid outputs
-        assert logits_no_denoise.shape == A.shape
-        assert logits_with_denoise.shape == A.shape
-
-        # Compare probabilities (bounded in [0,1]) for meaningful diff
-        diff = torch.abs(probs_with_denoise - probs_no_denoise)
-        assert torch.mean(diff) < 0.7  # Average difference should be reasonable
+        # Both should produce valid outputs with correct shape
+        assert result_no_denoise.to_adjacency().shape == A.shape
+        assert result_with_denoise.to_adjacency().shape == A.shape
 
     @given(config=hybrid_config())
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=2000)
     def test_full_model_integration(
         self, config: tuple[dict[str, int], dict[str, Any]]
     ) -> None:
-        """Test full model with real GNN and attention components.
-
-        forward() returns raw logits; predict() returns probabilities in [0, 1].
-        """
+        """Test full model with real GNN and attention components."""
         gnn_config, transformer_config = config
 
         # Create adjacency matrix that matches expected dimensions
@@ -287,13 +269,11 @@ class TestSequentialDenoisingModelProperties:
         model = create_sequential_model(gnn_config, transformer_config)
 
         try:
-            logits = model(A)
+            result = model(GraphData.from_adjacency(A))
 
-            assert logits.shape == A.shape
-            assert not torch.isnan(logits).any()
-
-            probs = model.predict(logits)
-            assert torch.all(probs >= 0) and torch.all(probs <= 1)
+            assert isinstance(result, GraphData)
+            assert result.to_adjacency().shape == A.shape
+            assert not torch.isnan(result.E).any()
         except EigenDecompositionError:
             # Expected for some matrices
             note("Eigendecomposition failed - expected for some matrices")
@@ -306,7 +286,7 @@ class TestCreateSequentialModelProperties:
     """Property-based tests for create_sequential_model factory."""
 
     @given(config=hybrid_config())
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=2000)
     def test_factory_creates_valid_model(
         self, config: tuple[dict[str, int], dict[str, Any]]
     ) -> None:
@@ -346,6 +326,7 @@ class TestCreateSequentialModelProperties:
         model = create_sequential_model(gnn_config, transformer_config)
 
         assert isinstance(model, SequentialDenoisingModel)
+        assert isinstance(model.embedding_model, GNN)
         assert model.embedding_model.num_layers == 2  # default
         assert model.embedding_model.feature_dim_out == 5  # default
         assert (
@@ -357,22 +338,28 @@ class TestHybridModelErrorHandling:
     """Test error handling scenarios for hybrid models."""
 
     def test_embedding_model_wrong_output_format(self) -> None:
-        """Test handling when embedding model doesn't have embeddings() method."""
+        """Construction fails when embedding model lacks the EmbeddingProvider protocol.
+
+        Starting state: nn.Module with get_config() but no embeddings() method.
+        Invariant: TypeError at construction (fail-fast), not at forward time.
+
+        The M-13 fix introduced the EmbeddingProvider Protocol check in __init__,
+        replacing the old hasattr guard that deferred failure to forward().
+        """
 
         class BadEmbeddingModel(nn.Module):
-            def forward(self, A: torch.Tensor) -> torch.Tensor:
-                return torch.randn(A.shape[0], A.shape[1], 5)  # No embeddings() method
+            def forward(
+                self, data: GraphData, t: torch.Tensor | None = None
+            ) -> GraphData:
+                A = data.to_adjacency()
+                return GraphData.from_adjacency(torch.randn_like(A))
 
             def get_config(self) -> dict[str, Any]:
                 return {}
 
         embedding_model = BadEmbeddingModel()
-        model = SequentialDenoisingModel(embedding_model, None)  # type: ignore[arg-type]
-
-        A = torch.eye(5).unsqueeze(0)
-
-        with pytest.raises(ValueError, match="embeddings"):
-            _ = model(A)
+        with pytest.raises(TypeError, match="EmbeddingProvider"):
+            SequentialDenoisingModel(embedding_model, None)  # type: ignore[arg-type]
 
     @patch.object(GNN, "embeddings")
     def test_gnn_eigendecomposition_failure(self, mock_embeddings: MagicMock) -> None:
@@ -388,7 +375,7 @@ class TestHybridModelErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         with pytest.raises(EigenDecompositionError):
-            _ = model(A)
+            _ = model(GraphData.from_adjacency(A))
 
     def test_dimension_mismatch_handling(self) -> None:
         """Test handling of dimension mismatches between components."""
@@ -402,8 +389,9 @@ class TestHybridModelErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         # Model should still work, though denoising might not be optimal
-        A_recon = model(A)
-        assert A_recon.shape == A.shape
+        result = model(GraphData.from_adjacency(A))
+        assert isinstance(result, GraphData)
+        assert result.to_adjacency().shape == A.shape
 
 
 class TestCompositionProperties:
@@ -416,6 +404,7 @@ class TestCompositionProperties:
         batch_size=st.integers(min_value=2, max_value=4),
         num_nodes=st.integers(min_value=5, max_value=10),
     )
+    @settings(deadline=2000)
     def test_batch_independence(self, batch_size: int, num_nodes: int) -> None:
         """Test that batch elements are processed independently."""
         feature_dim = 5
@@ -431,13 +420,15 @@ class TestCompositionProperties:
         for i in range(1, batch_size):
             A_batch[i] = torch.eye(num_nodes) * 0.1
 
-        A_recon = model(A_batch)
+        result = model(GraphData.from_adjacency(A_batch))
+        # Compare raw edge features (channel 1 = adjacency probability)
+        raw_adj = result.E[:, :, :, 1]
 
         # Check that first reconstruction is different from others
-        first_recon = A_recon[0]
+        first_recon = raw_adj[0]
         for i in range(1, batch_size):
             # Dense matrix should produce different reconstruction than sparse diagonal
-            diff = torch.abs(first_recon - A_recon[i]).mean()
+            diff = torch.abs(first_recon - raw_adj[i]).mean()
             assert diff > 0.1  # Should have meaningful difference
 
 

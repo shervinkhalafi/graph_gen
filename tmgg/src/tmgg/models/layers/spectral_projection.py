@@ -81,23 +81,14 @@ class SpectralProjectionLayer(nn.Module):
         torch.Tensor
             Projected features of shape (batch, n, out_dim).
         """
-        batch_size, n, k = V.shape
-
         # Normalize eigenvalues to [-1, 1] for numerical stability
         Lambda_max = Lambda.abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-6)
         Lambda_normalized = Lambda / Lambda_max
 
         # Compute W = Σ Λ^ℓ ⊙ H^{(ℓ)}
-        W = torch.zeros(batch_size, k, k, device=V.device, dtype=V.dtype)
+        from tmgg.models.layers.graph_ops import spectral_polynomial
 
-        Lambda_power = torch.ones_like(Lambda_normalized)  # (batch, k)
-        for ell in range(self.num_terms):
-            # Create scaling matrix from eigenvalue powers
-            Lambda_matrix = Lambda_power.unsqueeze(-1).expand(
-                -1, -1, k
-            )  # (batch, k, k)
-            W = W + Lambda_matrix * self.H[ell].unsqueeze(0)
-            Lambda_power = Lambda_power * Lambda_normalized
+        W = spectral_polynomial(Lambda_normalized, list(self.H))
 
         # Apply spectral filter: Y = V @ W
         Y = torch.matmul(V, W)  # (batch, n, k)

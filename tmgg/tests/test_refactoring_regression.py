@@ -11,7 +11,7 @@ Test rationale:
     - Ensure config composition works throughout refactoring
 
 Invariants:
-    - All stage configs compose with base_config_spectral
+    - All stage configs compose with base_config_spectral_arch
     - All models produce finite outputs
     - Optimizer settings are explicitly documented
 """
@@ -24,6 +24,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 
 import tmgg  # noqa: F401 - registers OmegaConf resolvers
+from tmgg.data.datasets.graph_types import GraphData
 
 
 @pytest.fixture(autouse=True)
@@ -37,7 +38,7 @@ def clear_hydra():
 @pytest.fixture
 def exp_config_path() -> Path:
     """Path to experiment configs."""
-    return Path(__file__).parent.parent / "src" / "tmgg" / "exp_configs"
+    return Path(__file__).parent.parent / "src" / "tmgg" / "experiments" / "exp_configs"
 
 
 def get_minimal_overrides(tmp_path: Path) -> list[str]:
@@ -93,7 +94,7 @@ class TestOptimizerConsistency:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         assert cfg.optimizer_type == expected_optimizer, (
             f"Stage {stage_name}: expected optimizer_type={expected_optimizer}, "
@@ -129,7 +130,7 @@ class TestStage2CrossGraphParameter:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         # After refactoring, cross_graph=false should be the default
         # This means same_graph_all_splits should be true
@@ -150,7 +151,7 @@ class TestStage2CrossGraphParameter:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         # With cross_graph=true, same_graph_all_splits should be false
         assert (
@@ -166,9 +167,9 @@ class TestModelOutputFormat:
     (adjacency logits, pre-sigmoid) instead of tuples.
     """
 
-    def test_gnn_returns_single_tensor(self) -> None:
-        """Verify GNN returns single tensor (adjacency logits)."""
-        from tmgg.models import GNN
+    def test_gnn_returns_graph_data(self) -> None:
+        """Verify GNN returns GraphData."""
+        from tmgg.models.gnn import GNN
 
         model = GNN(
             num_layers=1,
@@ -181,19 +182,16 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        # After refactoring, should return single tensor
         assert isinstance(
-            output, torch.Tensor
-        ), f"GNN should return tensor, got {type(output)}"
-        assert (
-            output.shape == (batch_size, num_nodes, num_nodes)
-        ), f"GNN output shape {output.shape} != expected ({batch_size}, {num_nodes}, {num_nodes})"
+            result, GraphData
+        ), f"GNN should return GraphData, got {type(result)}"
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
-    def test_gnn_symmetric_returns_single_tensor(self) -> None:
-        """Verify GNNSymmetric returns single tensor (adjacency logits)."""
-        from tmgg.models import GNNSymmetric
+    def test_gnn_symmetric_returns_graph_data(self) -> None:
+        """Verify GNNSymmetric returns GraphData."""
+        from tmgg.models.gnn import GNNSymmetric
 
         model = GNNSymmetric(num_layers=1, feature_dim_out=5)
 
@@ -201,20 +199,15 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        # After refactoring, should return single tensor
         assert isinstance(
-            output, torch.Tensor
-        ), f"GNNSymmetric should return tensor, got {type(output)}"
-        assert output.shape == (
-            batch_size,
-            num_nodes,
-            num_nodes,
-        ), f"GNNSymmetric output shape {output.shape} != expected"
+            result, GraphData
+        ), f"GNNSymmetric should return GraphData, got {type(result)}"
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
-    def test_nodevar_gnn_returns_single_tensor(self) -> None:
-        """Verify NodeVarGNN returns single tensor (adjacency logits)."""
+    def test_nodevar_gnn_returns_graph_data(self) -> None:
+        """Verify NodeVarGNN returns GraphData."""
         from tmgg.models.gnn import NodeVarGNN
 
         model = NodeVarGNN(num_layers=1, feature_dim=5)
@@ -223,17 +216,12 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        output = model(A)
+        result = model(GraphData.from_adjacency(A))
 
-        # NodeVarGNN already returns single tensor
         assert isinstance(
-            output, torch.Tensor
-        ), f"NodeVarGNN should return tensor, got {type(output)}"
-        assert output.shape == (
-            batch_size,
-            num_nodes,
-            num_nodes,
-        ), f"NodeVarGNN output shape {output.shape} != expected"
+            result, GraphData
+        ), f"NodeVarGNN should return GraphData, got {type(result)}"
+        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
 
 
 @pytest.mark.integration
@@ -265,7 +253,7 @@ class TestSingleGraphBaseConfig:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         # Required fields from single_graph_base
         required_fields = [
@@ -331,7 +319,7 @@ class TestConfigPrecedence:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            compose(config_name="base_config_spectral", overrides=overrides)
+            compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         GlobalHydra.instance().clear()
 
@@ -344,7 +332,7 @@ class TestConfigPrecedence:
             config_dir=str(exp_config_path),
         ):
             stage_cfg = compose(
-                config_name="base_config_spectral", overrides=overrides_with_stage
+                config_name="base_config_spectral_arch", overrides=overrides_with_stage
             )
             stage_lr = stage_cfg.learning_rate
 
@@ -360,7 +348,7 @@ class TestConfigPrecedence:
             version_base=None,
             config_dir=str(exp_config_path),
         ):
-            cfg = compose(config_name="base_config_spectral", overrides=overrides)
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
         assert (
             cfg.learning_rate == 5e-3

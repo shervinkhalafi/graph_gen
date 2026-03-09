@@ -1,7 +1,7 @@
 {
   "config": {
     "data": {
-      "_target_": "tmgg.experiment_utils.data.GraphDataModule",
+      "_target_": "tmgg.data.GraphDataModule",
       "num_workers": 4,
       "pin_memory": true,
       "batch_size": 12,

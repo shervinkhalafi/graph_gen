@@ -1,0 +1,31 @@
+# Shared defaults for all DiGress GraphTransformer model configs.
+#
+# Children override model_config (architecture) and optionally optimizer
+# settings. SBM configs hardcode the DiGress paper optimizer; transformer
+# configs interpolate from parent.
+
+_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+
+model_type: graph_transformer
+
+model_config:
+  use_eigenvectors: true
+  k: 50
+  output_dims:
+    X: 0
+    E: 2
+    y: 0
+
+# Training parameters (interpolated from parent by default)
+learning_rate: ${learning_rate}
+loss_type: ${loss_type}
+weight_decay: ${weight_decay}
+optimizer_type: ${optimizer_type}
+amsgrad: ${amsgrad}
+scheduler_config: ${scheduler_config}
+
+# Noise and eval
+noise_type: ${data.noise_type}
+noise_levels: ${data.noise_levels}
+eval_noise_levels: ${eval_noise_levels}
+seed: ${seed}

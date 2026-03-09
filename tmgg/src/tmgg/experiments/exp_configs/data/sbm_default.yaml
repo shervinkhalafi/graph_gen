@@ -1,0 +1,30 @@
+# @package data
+# Stochastic Block Model data configuration
+
+defaults:
+  - base_dataloader
+  - _self_
+
+graph_type: sbm
+graph_config:
+  # Graph parameters
+  num_nodes: 20
+  p_intra: 1.0  # Probability of intra-block edges
+  p_inter: 0.0  # Probability of inter-block edges
+
+  # Block size generation
+  min_blocks: 2
+  max_blocks: 4
+  min_block_size: 2
+  max_block_size: 15
+
+  # Dataset splits — auto-detected as enumerated mode when
+  # num_train_partitions is present (each partition → one graph).
+  num_train_partitions: 10
+  num_test_partitions: 10
+
+samples_per_graph: 1000
+
+# Noise configuration (interpolated from top-level for single-source-of-truth)
+noise_type: ${noise_type}
+noise_levels: ${noise_levels}

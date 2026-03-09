@@ -16,7 +16,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from tmgg.experiment_utils.eigenstructure_study import (
+from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+    compute_eigenvalue_drift,
+    compute_subspace_distance_from_eigenvectors,
+)
+from tmgg.experiments.eigenstructure_study import (
     EigenstructureCollector,
     NoisedAnalysisComparator,
     NoisedEigenstructureCollector,
@@ -24,14 +28,11 @@ from tmgg.experiment_utils.eigenstructure_study import (
     compute_algebraic_connectivity,
     compute_algebraic_connectivity_delta,
     compute_eigengap_delta,
-    compute_eigenvalue_drift,
     compute_eigenvalue_entropy,
     compute_eigenvector_coherence,
     compute_laplacian,
-    compute_normalized_laplacian,
     compute_principal_angles,
     compute_spectral_gap,
-    compute_subspace_distance,
     iter_batches,
     load_decomposition_batch,
     load_manifest,
@@ -93,7 +94,7 @@ class TestLaplacian:
         # Complete graph on 5 nodes
         n = 5
         A = torch.ones(n, n) - torch.eye(n)
-        L_norm = compute_normalized_laplacian(A)
+        L_norm = compute_laplacian(A, normalized=True)
 
         eigenvalues, _ = torch.linalg.eigh(L_norm)
 
@@ -160,7 +161,7 @@ class TestNormalizedLaplacian:
         A[1, 2] = A[2, 1] = 1.0
 
         # Should not raise due to eps parameter
-        L_norm = compute_normalized_laplacian(A, eps=1e-8)
+        L_norm = compute_laplacian(A, normalized=True, eps=1e-8)
 
         # Result should be finite (no inf/nan)
         assert torch.all(torch.isfinite(L_norm))
@@ -180,7 +181,7 @@ class TestNormalizedLaplacian:
         A = (A > 0.5).float()
         A = A - torch.diag_embed(A.diagonal(dim1=-2, dim2=-1))
 
-        L_norm = compute_normalized_laplacian(A)
+        L_norm = compute_laplacian(A, normalized=True)
 
         for i in range(batch_size):
             eigenvalues, _ = torch.linalg.eigh(L_norm[i])
@@ -199,7 +200,7 @@ class TestNormalizedLaplacian:
         A = (A > 0.5).float()
         A.fill_diagonal_(0)
 
-        L_norm = compute_normalized_laplacian(A)
+        L_norm = compute_laplacian(A, normalized=True)
 
         assert torch.allclose(L_norm, L_norm.T, atol=1e-6)
 
@@ -512,17 +513,19 @@ class TestNoisedCollector:
                 input_dir=original_dir,
                 output_dir=noised_dir,
                 noise_type="digress",
-                noise_levels=[0.05],
+                noise_levels=[0.3],
                 seed=42,
             )
             noised_collector.collect()
 
-            # Verify noised adjacencies are different from original
+            # Verify noised adjacencies are different from original.
+            # Uses eps=0.3 (not 0.05) to make zero-flip probability negligible:
+            # P(no flips) = (0.7)^(3 graphs * 15 edges) ≈ 4e-7.
             orig_tensors, _ = load_decomposition_batch(
                 list(iter_batches(original_dir))[0]
             )
             noised_tensors, _ = load_decomposition_batch(
-                list(iter_batches(noised_dir / "eps_0.0500"))[0]
+                list(iter_batches(noised_dir / "eps_0.3000"))[0]
             )
 
             # Noised adjacency should differ from original
@@ -758,7 +761,7 @@ class TestCLI:
         """CLI should show help without errors."""
         from click.testing import CliRunner
 
-        from tmgg.experiment_utils.eigenstructure_study.cli import main
+        from tmgg.experiments.eigenstructure_study.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["--help"])
@@ -771,7 +774,7 @@ class TestCLI:
         """Collect subcommand should show help."""
         from click.testing import CliRunner
 
-        from tmgg.experiment_utils.eigenstructure_study.cli import main
+        from tmgg.experiments.eigenstructure_study.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["collect", "--help"])
@@ -868,7 +871,7 @@ class TestDeltaFunctions:
         V = torch.randn(batch_size, n, n)
         V, _ = torch.linalg.qr(V)  # Orthonormalize
 
-        distance = compute_subspace_distance(V, V, k)
+        distance = compute_subspace_distance_from_eigenvectors(V, V, k)
 
         assert torch.allclose(distance, torch.zeros(batch_size), atol=1e-5)
 
@@ -884,7 +887,7 @@ class TestDeltaFunctions:
         V2 = torch.randn(batch_size, n, n)
         V2, _ = torch.linalg.qr(V2)
 
-        distance = compute_subspace_distance(V1, V2, k)
+        distance = compute_subspace_distance_from_eigenvectors(V1, V2, k)
 
         # Max distance is 2*sqrt(k) when subspaces are orthogonal
         # (since ||P||_F = sqrt(trace(P)) = sqrt(k) for rank-k projection)
@@ -903,7 +906,9 @@ class TestSpectralDeltasModule:
 
     def test_compute_spectral_deltas_all_metrics(self) -> None:
         """compute_spectral_deltas should return all four metrics."""
-        from tmgg.experiment_utils.spectral_deltas import compute_spectral_deltas
+        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+            compute_spectral_deltas,
+        )
 
         batch_size = 4
         n = 10
@@ -934,7 +939,9 @@ class TestSpectralDeltasModule:
 
     def test_compute_spectral_deltas_identical_graphs(self) -> None:
         """Identical graphs should yield near-zero deltas."""
-        from tmgg.experiment_utils.spectral_deltas import compute_spectral_deltas
+        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+            compute_spectral_deltas,
+        )
 
         batch_size = 3
         n = 8
@@ -963,7 +970,9 @@ class TestSpectralDeltasModule:
 
     def test_compute_spectral_deltas_2d_input(self) -> None:
         """Should handle 2D input (single graph) correctly."""
-        from tmgg.experiment_utils.spectral_deltas import compute_spectral_deltas
+        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+            compute_spectral_deltas,
+        )
 
         n = 8
         k = 2
@@ -986,10 +995,10 @@ class TestSpectralDeltasModule:
                 1,
             ), f"{key} should have shape (1,) for 2D input, got {value.shape}"
 
-    def test_compute_spectral_deltas_summary(self) -> None:
-        """Summary function should return float means."""
-        from tmgg.experiment_utils.spectral_deltas import (
-            compute_spectral_deltas_summary,
+    def test_compute_spectral_deltas_reduce_mean(self) -> None:
+        """reduce='mean' should return float means."""
+        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+            compute_spectral_deltas,
         )
 
         batch_size = 4
@@ -1006,7 +1015,7 @@ class TestSpectralDeltasModule:
         A2 = (A2 > 0.5).float()
         A2 = A2 - torch.diag_embed(A2.diagonal(dim1=-2, dim2=-1))
 
-        summary = compute_spectral_deltas_summary(A1, A2, k=k)
+        summary = compute_spectral_deltas(A1, A2, k=k, reduce="mean")
 
         # Should return dict of floats
         assert isinstance(summary, dict)
@@ -1135,7 +1144,7 @@ class TestCovarianceComputation:
 
     def test_covariance_shape(self) -> None:
         """Covariance matrix should be k×k for k eigenvalues."""
-        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+        from tmgg.experiments.eigenstructure_study.analyzer import (
             compute_eigenvalue_covariance,
         )
 
@@ -1149,7 +1158,7 @@ class TestCovarianceComputation:
 
     def test_covariance_symmetry(self) -> None:
         """Covariance matrix should be symmetric."""
-        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+        from tmgg.experiments.eigenstructure_study.analyzer import (
             compute_eigenvalue_covariance,
         )
 
@@ -1167,7 +1176,7 @@ class TestCovarianceComputation:
         When eigenvalue positions are independent, cross-correlation should be
         near zero. The covariance matrix should be approximately diagonal.
         """
-        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+        from tmgg.experiments.eigenstructure_study.analyzer import (
             compute_eigenvalue_covariance,
         )
 
@@ -1195,7 +1204,7 @@ class TestCovarianceComputation:
         have larger eigenvalues at all positions), off-diagonal terms should
         be non-zero.
         """
-        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+        from tmgg.experiments.eigenstructure_study.analyzer import (
             compute_eigenvalue_covariance,
         )
 
@@ -1219,7 +1228,7 @@ class TestCovarianceComputation:
 
     def test_covariance_summary_metrics(self) -> None:
         """Covariance summary should include all expected metrics."""
-        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+        from tmgg.experiments.eigenstructure_study.analyzer import (
             compute_covariance_summary,
             compute_eigenvalue_covariance,
         )
@@ -1248,7 +1257,7 @@ class TestCovarianceComputation:
         """Covariance computation should require at least 2 graphs."""
         import pytest
 
-        from tmgg.experiment_utils.eigenstructure_study.analyzer import (
+        from tmgg.experiments.eigenstructure_study.analyzer import (
             compute_eigenvalue_covariance,
         )
 
@@ -1327,7 +1336,7 @@ class TestCovarianceCLI:
         """Covariance subcommand should show help."""
         from click.testing import CliRunner
 
-        from tmgg.experiment_utils.eigenstructure_study.cli import main
+        from tmgg.experiments.eigenstructure_study.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["covariance", "--help"])
@@ -1339,7 +1348,7 @@ class TestCovarianceCLI:
         """Covariance command should work with original data only."""
         from click.testing import CliRunner
 
-        from tmgg.experiment_utils.eigenstructure_study.cli import main
+        from tmgg.experiments.eigenstructure_study.cli import main
 
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1375,7 +1384,7 @@ class TestCovarianceCLI:
         """Covariance command should compute evolution with noised data."""
         from click.testing import CliRunner
 
-        from tmgg.experiment_utils.eigenstructure_study.cli import main
+        from tmgg.experiments.eigenstructure_study.cli import main
 
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmpdir:
