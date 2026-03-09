@@ -1,0 +1,25 @@
+tmgg/tests/models/test_gnn.py
+  58c72150032c4124 7
+tmgg/tests/test_refactoring_regression.py
+  58c72150032c4124 172,194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "81331db948c921044630aa9d850269846afc7b6a",
+  "prompts": {
+    "58c72150032c4124": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5569c02d-dac9-4f24-abcf-eab3fc3f28ba",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 43,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
