@@ -1,0 +1,23 @@
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/evaluate_checkpoint.py
+  cc1e779a0652bf00 49-50,54-55,57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "65c2a14ae947597dbbf24458479a10d29d431839",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 22,
+      "accepted_lines": 2183,
+      "overriden_lines": 0
+    }
+  }
+}
