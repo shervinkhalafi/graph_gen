@@ -1,0 +1,27 @@
+tmgg/src/tmgg/modal/_lib/paths.py
+  bd90562f4cfd5fae 44-46
+tmgg/wandb-tools/pyproject.toml
+  bd90562f4cfd5fae 1-10
+tmgg/tensorboard-tools/pyproject.toml
+  bd90562f4cfd5fae 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.9",
+  "base_commit_sha": "e953804cc2d7518f2275e463d271e98c1893f1cd",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 22,
+      "total_deletions": 3,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    }
+  }
+}
