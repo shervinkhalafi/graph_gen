@@ -1,0 +1,27 @@
+tmgg/src/tmgg/experiments/exp_configs/models/hybrid/hybrid_gnn_only.yaml
+  cc1e779a0652bf00 22,27-28,30-32,34
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/nodevar_gnn.yaml
+  cc1e779a0652bf00 10,13-23,25
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/symmetric_gnn.yaml
+  cc1e779a0652bf00 13-23,25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "7149fdf033af70b752bb0338f87924d31172fed2",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2210,
+      "overriden_lines": 0
+    }
+  }
+}
