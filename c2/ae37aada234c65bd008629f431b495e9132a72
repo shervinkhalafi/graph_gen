@@ -1,0 +1,36 @@
+tmgg/src/tmgg/experiments/_shared_utils/metrics.py
+  bd90562f4cfd5fae 54,66-67,76,78,81,84,88,93,106-107,116,118,121,125,130,138-139,150,154,158,167-168,177,180-184,196,203-204,213,225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "c2ae37aada234c65bd008629f431b495e9132a72",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 45,
+      "accepted_lines": 328,
+      "overriden_lines": 0
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2178,
+      "overriden_lines": 0
+    }
+  }
+}
