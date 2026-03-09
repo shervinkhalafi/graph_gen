@@ -1,0 +1,36 @@
+tmgg/src/tmgg/experiments/_shared_utils/logging.py
+  bd90562f4cfd5fae 25-33,247-250,257,259-261,265-267,271-273,278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "c3656ccb83bb8b6a3a5499b9d96e39b3176f99b5",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 293,
+      "overriden_lines": 1
+    },
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2178,
+      "overriden_lines": 0
+    }
+  }
+}
