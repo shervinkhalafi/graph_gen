@@ -1,0 +1,27 @@
+tmgg/src/tmgg/experiments/eigenstructure_study/__init__.py
+  cc1e779a0652bf00 70
+tmgg/tests/experiment_utils/test_eigenstructure_study.py
+  cc1e779a0652bf00 19-22,848,859,875,891
+tmgg/src/tmgg/experiments/eigenstructure_study/noised_collector.py
+  cc1e779a0652bf00 345,363
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "112c796f98be2c160084478777bd5e53b3808e29",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 27,
+      "accepted_lines": 2190,
+      "overriden_lines": 0
+    }
+  }
+}
