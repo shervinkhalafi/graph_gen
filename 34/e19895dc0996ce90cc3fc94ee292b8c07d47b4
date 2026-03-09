@@ -1,0 +1,35 @@
+tmgg/src/tmgg/experiments/exp_configs/data/regular_spectral.yaml
+  cc1e779a0652bf00 29-30
+tmgg/src/tmgg/experiments/exp_configs/data/pyg_proteins.yaml
+  cc1e779a0652bf00 29-30
+tmgg/src/tmgg/experiments/exp_configs/data/lfr_spectral.yaml
+  cc1e779a0652bf00 32-33
+tmgg/src/tmgg/experiments/exp_configs/data/ring_of_cliques.yaml
+  cc1e779a0652bf00 28-29
+tmgg/src/tmgg/experiments/exp_configs/data/er_spectral.yaml
+  cc1e779a0652bf00 29-30
+tmgg/src/tmgg/experiments/exp_configs/data/tree_spectral.yaml
+  cc1e779a0652bf00 26-27
+tmgg/src/tmgg/experiments/exp_configs/data/pyg_enzymes.yaml
+  cc1e779a0652bf00 29-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "34e19895dc0996ce90cc3fc94ee292b8c07d47b4",
+  "prompts": {
+    "cc1e779a0652bf00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e736d6e-7609-4629-8984-d4d068ed0d5b",
+        "model": "unknown"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 14,
+      "total_deletions": 7,
+      "accepted_lines": 2192,
+      "overriden_lines": 0
+    }
+  }
+}
