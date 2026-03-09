@@ -1,0 +1,23 @@
+tmgg/src/tmgg/experiments/exp_configs/task/denoising.yaml
+  bd90562f4cfd5fae 33-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "fc25b2060b8efa2c488955941f8aea885c3899eb",
+  "prompts": {
+    "bd90562f4cfd5fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "044c28e2-d59e-435d-b1ec-7a8716ea37a7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 0,
+      "accepted_lines": 126,
+      "overriden_lines": 0
+    }
+  }
+}
