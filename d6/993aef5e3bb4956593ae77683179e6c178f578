@@ -1,0 +1,33 @@
+tmgg/src/tmgg/models/layers/eigen_embedding.py
+  58c72150032c4124 3,14,64,73,79
+tmgg/tests/models/test_gnn_properties.py
+  58c72150032c4124 13-14
+tmgg/tests/test_audit_fixes.py
+  58c72150032c4124 29
+tmgg/docs/plans/2026-03-09-models-cleanup.md
+  58c72150032c4124 1-494
+tmgg/src/tmgg/models/layers/__init__.py
+  58c72150032c4124 1
+tmgg/tests/models/test_gnn.py
+  58c72150032c4124 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "d6993aef5e3bb4956593ae77683179e6c178f578",
+  "prompts": {
+    "58c72150032c4124": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5569c02d-dac9-4f24-abcf-eab3fc3f28ba",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 15,
+      "accepted_lines": 505,
+      "overriden_lines": 0
+    }
+  }
+}
