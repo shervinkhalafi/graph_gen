@@ -1,0 +1,25 @@
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 163-164,166-169,171,173-176,178-179,200-208,210-211,213,215,217-218,223-224,571-576,593,600-601
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/train_loss_discrete.py
+  481719edbe738835 64-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "15204d718edf444bebd9f581852b18eefe36bee6",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1809,
+      "overriden_lines": 1
+    }
+  }
+}
