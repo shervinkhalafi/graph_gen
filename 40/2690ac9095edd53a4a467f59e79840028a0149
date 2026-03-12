@@ -1,0 +1,27 @@
+tmgg/src/tmgg/experiments/_shared_utils/evaluation_metrics/mmd_metrics.py
+  481719edbe738835 85-110,112-113,117,124,130,132,136,139-143,159,162,164,166-170,174,186,188-189,191-197
+tmgg/tests/experiment_utils/test_graph_evaluator.py
+  481719edbe738835 437-442,444,447
+tmgg/docs/reports/2026-03-12-tmgg-review/SUMMARY.md
+  481719edbe738835 1-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "402690ac9095edd53a4a467f59e79840028a0149",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1764,
+      "overriden_lines": 0
+    }
+  }
+}
