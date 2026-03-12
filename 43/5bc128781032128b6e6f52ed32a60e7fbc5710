@@ -1,0 +1,29 @@
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/datamodule.py
+  481719edbe738835 11-15,172
+tmgg/src/tmgg/modal/_functions.py
+  481719edbe738835 18-21,204,223,242,269,283,297,309
+tmgg/src/tmgg/experiments/eigenstructure_study/collector.py
+  481719edbe738835 7-9,316
+tmgg/src/tmgg/experiments/_shared_utils/logging.py
+  481719edbe738835 1,3,7-10,20,53,55,57-61,63-71,73,88,138,168,219,221-222,224-227,229-231,234-235,237,249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "435bc128781032128b6e6f52ed32a60e7fbc5710",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 34,
+      "total_deletions": 18,
+      "accepted_lines": 1804,
+      "overriden_lines": 0
+    }
+  }
+}
