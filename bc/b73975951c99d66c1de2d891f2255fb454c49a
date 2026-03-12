@@ -1,0 +1,33 @@
+tmgg/src/tmgg/diffusion/diffusion_math.py
+  481719edbe738835 122-134
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 301
+tmgg/src/tmgg/models/gnn/nvgnn.py
+  481719edbe738835 22,24,26-27,29,31,33,35-38,46,86-87,98
+tmgg/src/tmgg/models/gnn/gnn.py
+  481719edbe738835 18-21,31,47-49,58,104-105,136
+tmgg/tests/models/test_gnn_properties.py
+  481719edbe738835 3,103,178
+tmgg/src/tmgg/data/datasets/sbm.py
+  481719edbe738835 168-184,188-196,204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "bcb73975951c99d66c1de2d891f2255fb454c49a",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 87,
+      "total_deletions": 73,
+      "accepted_lines": 1787,
+      "overriden_lines": 0
+    }
+  }
+}
