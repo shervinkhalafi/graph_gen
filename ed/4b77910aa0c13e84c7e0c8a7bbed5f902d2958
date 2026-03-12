@@ -1,0 +1,49 @@
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/diffusion_module.py
+  481719edbe738835 90-93,115,143,466
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_eigenvec.yaml
+  481719edbe738835 57
+tmgg/tests/experiments/test_discrete_diffusion_runner.py
+  481719edbe738835 261
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_official.yaml
+  481719edbe738835 57
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  481719edbe738835 114,442
+tmgg/scripts/validate_discrete_diffusion.py
+  481719edbe738835 286
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  481719edbe738835 50
+tmgg/src/tmgg/experiments/exp_configs/grid_search_base.yaml
+  481719edbe738835 35
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 86
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  481719edbe738835 11
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_default.yaml
+  481719edbe738835 42
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_small.yaml
+  481719edbe738835 42
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  481719edbe738835 101,309,313,316,323,325,343-344,346,349,355,368,375,430
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  481719edbe738835 220,293
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "ed4b77910aa0c13e84c7e0c8a7bbed5f902d2958",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 2105,
+      "total_deletions": 854,
+      "accepted_lines": 1946,
+      "overriden_lines": 1
+    }
+  }
+}
