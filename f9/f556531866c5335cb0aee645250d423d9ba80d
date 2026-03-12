@@ -1,0 +1,23 @@
+tmgg/src/tmgg/experiments/eigenstructure_study/cli.py
+  481719edbe738835 199,207,318,507,523,544
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "f9f556531866c5335cb0aee645250d423d9ba80d",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1725,
+      "overriden_lines": 0
+    }
+  }
+}
