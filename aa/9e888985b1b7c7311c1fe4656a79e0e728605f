@@ -1,0 +1,51 @@
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_gnn.yaml
+  481719edbe738835 36
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/diffusion_module.py
+  481719edbe738835 158,294-295,300
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_vanilla_gnn.yaml
+  481719edbe738835 36
+tmgg/tests/test_training_integration.py
+  481719edbe738835 48,223
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  481719edbe738835 85,116,147
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small.yaml
+  481719edbe738835 30
+tmgg/tests/experiments/test_digress_denoising_module.py
+  481719edbe738835 89
+tmgg/tests/experiment_utils/test_denoising_module.py
+  481719edbe738835 61,90,111,115-116,171,178,181
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_vanilla.yaml
+  481719edbe738835 30
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_highlr.yaml
+  481719edbe738835 30
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  481719edbe738835 153
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_vanilla.yaml
+  481719edbe738835 30
+tmgg/docs/reports/2026-03-12-tmgg-review/SUMMARY.md
+  481719edbe738835 208,212,215,220,239,242,246,248
+tmgg/src/tmgg/experiments/exp_configs/task/denoising.yaml
+  481719edbe738835 10-11
+tmgg/src/tmgg/experiments/_shared_utils/orchestration/run_experiment.py
+  481719edbe738835 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "aa9e888985b1b7c7311c1fe4656a79e0e728605f",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 56,
+      "accepted_lines": 1648,
+      "overriden_lines": 0
+    }
+  }
+}
