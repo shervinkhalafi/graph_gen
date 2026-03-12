@@ -1,0 +1,23 @@
+tmgg/src/tmgg/experiments/_shared_utils/orchestration/sanity_check.py
+  481719edbe738835 16,19-33,259,263,390-394,398
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "b60f424fc32b1c8ac818c89b616e016fdeb17dc3",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 1,
+      "accepted_lines": 1743,
+      "overriden_lines": 0
+    }
+  }
+}
