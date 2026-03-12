@@ -1,0 +1,27 @@
+tmgg/src/tmgg/data/data_modules/multigraph_data_module.py
+  481719edbe738835 13-16,355
+tmgg/src/tmgg/data/data_modules/base_data_module.py
+  481719edbe738835 10-13,136
+tmgg/src/tmgg/data/data_modules/data_module.py
+  481719edbe738835 9-12,251,253
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "e493daeb921b6c7ef4dc3196c16755db292df09e",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1828,
+      "overriden_lines": 0
+    }
+  }
+}
