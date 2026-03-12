@@ -1,0 +1,37 @@
+tmgg/src/tmgg/experiments/gnn_transformer_denoising/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/runner.py
+  481719edbe738835 10-11,23,31
+tmgg/src/tmgg/experiments/digress_denoising/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/experiments/spectral_arch_denoising/runner.py
+  481719edbe738835 10-11,23,31
+tmgg/pyproject.toml
+  481719edbe738835 34,58,71
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/experiments/lin_mlp_baseline_denoising/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/experiments/gnn_denoising/runner.py
+  481719edbe738835 9-10,22,30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "813a79225fb71858e2f144ad9966d95b41460fab",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 29,
+      "total_deletions": 16,
+      "accepted_lines": 1749,
+      "overriden_lines": 0
+    }
+  }
+}
