@@ -1,0 +1,47 @@
+tmgg/src/tmgg/models/spectral_denoisers/filter_bank.py
+  481719edbe738835 109-113
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 316-317
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/digress_checkpoint_compat.py
+  481719edbe738835 20,138
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  481719edbe738835 411
+tmgg/src/tmgg/hydra_plugins/tmgg_launcher/launcher.py
+  481719edbe738835 156
+tmgg/src/tmgg/experiments/embedding_study/execute.py
+  481719edbe738835 9,91
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/base_graph_module.py
+  481719edbe738835 16,19-20,129
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/diffusion_module.py
+  481719edbe738835 17,20-21,442
+tmgg/src/tmgg/models/spectral_denoisers/bilinear.py
+  481719edbe738835 152,292,542
+tmgg/src/tmgg/models/spectral_denoisers/base_spectral.py
+  481719edbe738835 85,98
+tmgg/src/tmgg/experiments/_shared_utils/evaluation_metrics/mmd_metrics.py
+  481719edbe738835 389
+tmgg/src/tmgg/data/datasets/pyg_datasets.py
+  481719edbe738835 108-109,113,116
+tmgg/src/tmgg/data/datasets/graph_dataset.py
+  481719edbe738835 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "a3562ee7b0271fde225008f83a63846255de3d04",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 48,
+      "total_deletions": 39,
+      "accepted_lines": 1752,
+      "overriden_lines": 0
+    }
+  }
+}
