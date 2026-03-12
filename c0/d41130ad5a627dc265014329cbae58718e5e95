@@ -1,0 +1,31 @@
+tmgg/src/tmgg/diffusion/schedule.py
+  481719edbe738835 11-14,62-64
+tmgg/src/tmgg/diffusion/transitions.py
+  481719edbe738835 9-12,173-177
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 17-19,368-369
+tmgg/src/tmgg/diffusion/diffusion_sampling.py
+  481719edbe738835 9-11,298-299
+tmgg/src/tmgg/diffusion/sampler.py
+  481719edbe738835 16-18,267-268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "c0d41130ad5a627dc265014329cbae58718e5e95",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 99,
+      "total_deletions": 47,
+      "accepted_lines": 1859,
+      "overriden_lines": 0
+    }
+  }
+}
