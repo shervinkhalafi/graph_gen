@@ -1,0 +1,29 @@
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 355-357,361,365-366,371-374,384,387-389,393-394,397-399
+tmgg/src/tmgg/data/noising/noise.py
+  481719edbe738835 17,22,36-37,42-43,47,49,51-52,54-62,65-67,70,72-74,76-77,79-82,89,101,103-104,116-117,135,150-151,153-154,167,169,180-182,206,221-222,224-225,244,256,258-259,271-274,294,318,325-328,359,371,394,414,423-424,427-428,430,432-436,477,486
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 151-152
+tmgg/tests/test_math_fixes.py
+  481719edbe738835 55,81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "56cd1a7ffbfeff09205112c5ee9b84b0099687d7",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 123,
+      "total_deletions": 132,
+      "accepted_lines": 1831,
+      "overriden_lines": 4
+    }
+  }
+}
