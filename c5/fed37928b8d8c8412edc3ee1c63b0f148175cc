@@ -1,0 +1,31 @@
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  481719edbe738835 74,138,214
+tmgg/tests/experiments/test_digress_denoising_module.py
+  481719edbe738835 39
+tmgg/src/tmgg/models/factory.py
+  481719edbe738835 170,181-182,191-192,201-202,211-214,227-230,242-244,263-266,275-278,287-289,305-308,322-325,330-331,395-397,399,418-420
+tmgg/tests/test_training_integration.py
+  481719edbe738835 47,83-84,102-103,110,140-141,165-166,189-190,232-233
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 63,176,178-181,186-187,215,218,221,234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "c5fed37928b8d8c8412edc3ee1c63b0f148175cc",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 198,
+      "total_deletions": 194,
+      "accepted_lines": 1807,
+      "overriden_lines": 1
+    }
+  }
+}
