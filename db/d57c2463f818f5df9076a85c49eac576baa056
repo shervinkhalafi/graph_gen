@@ -1,0 +1,55 @@
+tmgg/tests/test_audit_fixes.py
+  481719edbe738835 32
+tmgg/src/tmgg/utils/__init__.py
+  481719edbe738835 1
+tmgg/src/tmgg/utils/spectral/subspace.py
+  481719edbe738835 1-88
+tmgg/tests/experiment_utils/test_eigenstructure_study.py
+  481719edbe738835 38,909,942,973,1000
+tmgg/tests/experiment_utils/test_eigenstructure.py
+  481719edbe738835 23
+tmgg/src/tmgg/experiments/eigenstructure_study/noised_collector.py
+  481719edbe738835 17,340,425,487,490
+tmgg/tests/experiment_utils/test_spectral_deltas.py
+  481719edbe738835 26,230
+tmgg/src/tmgg/utils/spectral/spectral_deltas.py
+  481719edbe738835 1-222
+tmgg/src/tmgg/utils/spectral/__init__.py
+  481719edbe738835 1-29
+tmgg/docs/reports/2026-03-12-tmgg-review/SUMMARY.md
+  481719edbe738835 196,211,217,222,230,261
+tmgg/src/tmgg/experiments/eigenstructure_study/collector.py
+  481719edbe738835 18
+tmgg/src/tmgg/models/digress/extra_features.py
+  481719edbe738835 26-27,507
+tmgg/src/tmgg/experiments/eigenstructure_study/__init__.py
+  481719edbe738835 19-20,68
+tmgg/tach.toml
+  481719edbe738835 38-41,63,88,90
+tmgg/src/tmgg/utils/spectral/laplacian.py
+  481719edbe738835 1-67
+tmgg/src/tmgg/experiments/eigenstructure_study/analyzer.py
+  481719edbe738835 17,20
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  481719edbe738835 464
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.10",
+  "base_commit_sha": "dbd57c2463f818f5df9076a85c49eac576baa056",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 441,
+      "total_deletions": 70,
+      "accepted_lines": 2161,
+      "overriden_lines": 0
+    }
+  }
+}
