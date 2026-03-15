@@ -1,0 +1,27 @@
+tmgg/docs/reports/2026-03-12-tmgg-review/SUMMARY.md
+  481719edbe738835 216
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/diffusion_module.py
+  481719edbe738835 395-400,499-510,513-515,523-524,551
+tmgg/src/tmgg/diffusion/sampler.py
+  481719edbe738835 320-336,341-343,511-516
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "aa131a0b045731261b9dc314d383e15ffc37a62e",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 55,
+      "total_deletions": 5,
+      "accepted_lines": 1663,
+      "overriden_lines": 0
+    }
+  }
+}
