@@ -1,0 +1,29 @@
+tmgg/src/tmgg/data/noising/noise.py
+  481719edbe738835 416-420
+tmgg/src/tmgg/diffusion/diffusion_sampling.py
+  481719edbe738835 247-249
+tmgg/src/tmgg/data/datasets/sbm.py
+  481719edbe738835 136-166
+tmgg/src/tmgg/data/noising/size_distribution.py
+  481719edbe738835 113-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "2e425fb8cb9ed7ffa6f3a034855f78261c8870cb",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 78,
+      "total_deletions": 76,
+      "accepted_lines": 1689,
+      "overriden_lines": 0
+    }
+  }
+}
