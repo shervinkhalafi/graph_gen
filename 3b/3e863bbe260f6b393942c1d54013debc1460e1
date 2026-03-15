@@ -1,0 +1,23 @@
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  481719edbe738835 95-97,469-471,477-482,484-492,494,496-517,537
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "3b3e863bbe260f6b393942c1d54013debc1460e1",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 57,
+      "total_deletions": 84,
+      "accepted_lines": 1657,
+      "overriden_lines": 0
+    }
+  }
+}
