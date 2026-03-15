@@ -1,0 +1,41 @@
+tmgg/src/tmgg/models/attention/attention.py
+  481719edbe738835 9,55
+tmgg/tests/models/test_attention_properties.py
+  481719edbe738835 13,90-91,98,119,152,169,286,301,310
+tmgg/tests/test_audit_fixes.py
+  481719edbe738835 28,50,62
+tmgg/README.md
+  481719edbe738835 259
+tmgg/src/tmgg/experiments/grid_search_runner.py
+  481719edbe738835 10
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  481719edbe738835 182-183
+tmgg/src/tmgg/models/spectral_denoisers/bilinear.py
+  481719edbe738835 23,316,333
+tmgg/tests/models/test_attention.py
+  481719edbe738835 8,11-12,19,33,47
+tmgg/src/tmgg/models/layers/mha_layer.py
+  481719edbe738835 8,10
+tmgg/src/tmgg/models/layers/__init__.py
+  481719edbe738835 5,17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "6d0201de320a333b189799459b37567acfd59868",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1644,
+      "overriden_lines": 0
+    }
+  }
+}
