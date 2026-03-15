@@ -1,0 +1,23 @@
+tmgg/src/tmgg/experiments/_shared_utils/evaluation_metrics/graph_evaluator.py
+  481719edbe738835 16,18,49-62,532
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "04a9db77d4ae21508d7ebfecf061822168cf01b7",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 17,
+      "accepted_lines": 1629,
+      "overriden_lines": 0
+    }
+  }
+}
