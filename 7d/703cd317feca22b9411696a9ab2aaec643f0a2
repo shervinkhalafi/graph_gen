@@ -1,0 +1,27 @@
+tmgg/src/tmgg/diffusion/collectors.py
+  481719edbe738835 1-89
+tmgg/src/tmgg/diffusion/__init__.py
+  481719edbe738835 16,37,44
+tmgg/tests/diffusion/test_collectors.py
+  481719edbe738835 1-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "7d703cd317feca22b9411696a9ab2aaec643f0a2",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 175,
+      "total_deletions": 1,
+      "accepted_lines": 1786,
+      "overriden_lines": 0
+    }
+  }
+}
