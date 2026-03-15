@@ -1,0 +1,23 @@
+tmgg/docs/superpowers/specs/2026-03-15-evaluator-sampling-unification-design.md
+  481719edbe738835 22,46,93,105-138,148,155,157,179-180,184,187,212-219,221-231,239,244,246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "3faa4940d79846b107e06b8068c4157c74f1b2fc",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 67,
+      "total_deletions": 29,
+      "accepted_lines": 1679,
+      "overriden_lines": 0
+    }
+  }
+}
