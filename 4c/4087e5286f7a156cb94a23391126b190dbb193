@@ -1,0 +1,33 @@
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 324,329
+tmgg/src/tmgg/experiments/_shared_utils/evaluation_metrics/graph_evaluator.py
+  481719edbe738835 14,93,423-425,431-432,445-447,451-452,464,472-473,475-476,480-481,484-486,490-491,493,498,500-503,511,517,538
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  481719edbe738835 287,290-291,299,301,314,317-320,328,339,367,386,393,401
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/denoising_module.py
+  481719edbe738835 533
+tmgg/tests/experiment_utils/test_graph_evaluator.py
+  481719edbe738835 5-9,99-100,108-109,120-121,131-132,142-143,153-155,163-164,171,173,182,193,212-213,223-224,236-237,251-252,320,322-323,325,328,330-336,338-345,347,350-351,353
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/diffusion_module.py
+  481719edbe738835 176-179,375,437,444-445,457-458,486,490,493,495,501,508
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "4c4087e5286f7a156cb94a23391126b190dbb193",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 132,
+      "total_deletions": 236,
+      "accepted_lines": 1740,
+      "overriden_lines": 0
+    }
+  }
+}
