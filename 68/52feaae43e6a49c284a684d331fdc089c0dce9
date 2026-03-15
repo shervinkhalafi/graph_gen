@@ -1,0 +1,27 @@
+tmgg/src/tmgg/data/datasets/graph_types.py
+  481719edbe738835 132-135
+tmgg/src/tmgg/utils/spectral/spectral_deltas.py
+  481719edbe738835 97-103
+tmgg/src/tmgg/models/layers/topk_eigen.py
+  481719edbe738835 50-52,105-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "6852feaae43e6a49c284a684d331fdc089c0dce9",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 19,
+      "total_deletions": 1,
+      "accepted_lines": 1631,
+      "overriden_lines": 0
+    }
+  }
+}
