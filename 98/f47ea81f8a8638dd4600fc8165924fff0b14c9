@@ -1,0 +1,35 @@
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  481719edbe738835 1-3
+tmgg/src/tmgg/experiments/exp_configs/base_config_gnn.yaml
+  481719edbe738835 1-4
+tmgg/src/tmgg/experiments/exp_configs/base_config_baseline.yaml
+  481719edbe738835 1-3
+tmgg/src/tmgg/experiments/exp_configs/base_config_eigenstructure.yaml
+  481719edbe738835 1-4
+tmgg/src/tmgg/experiments/exp_configs/base_config_embedding_study.yaml
+  481719edbe738835 1-4
+tmgg/src/tmgg/experiments/exp_configs/base_config_gnn_transformer.yaml
+  481719edbe738835 1-3
+tmgg/src/tmgg/experiments/exp_configs/base_config_digress.yaml
+  481719edbe738835 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "98f47ea81f8a8638dd4600fc8165924fff0b14c9",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 14,
+      "accepted_lines": 1636,
+      "overriden_lines": 0
+    }
+  }
+}
