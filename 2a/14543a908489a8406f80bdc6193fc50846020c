@@ -1,0 +1,27 @@
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 309,311-313,322,325,329-330
+tmgg/src/tmgg/experiments/_shared_utils/lightning_modules/diffusion_module.py
+  481719edbe738835 371,373-374,438-440,443,445-448,479-482,485,487
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  481719edbe738835 287,289,298-300,306-307,311,324,333,335-358,362,368-369,373,376-377,379,385-387,393
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "2a14543a908489a8406f80bdc6193fc50846020c",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 80,
+      "total_deletions": 100,
+      "accepted_lines": 1684,
+      "overriden_lines": 0
+    }
+  }
+}
