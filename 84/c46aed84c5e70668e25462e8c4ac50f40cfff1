@@ -1,0 +1,23 @@
+tmgg/src/tmgg/diffusion/sampler.py
+  481719edbe738835 58-61,76-85,140-143,158-166,177-189,191-193,195,197-201,203-205,207-211,216,219,319-321,382-385,399-407,418-429,431-433,435,437-441,443,445-447,450,485-487
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "84c46aed84c5e70668e25462e8c4ac50f40cfff1",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 105,
+      "total_deletions": 23,
+      "accepted_lines": 1718,
+      "overriden_lines": 0
+    }
+  }
+}
