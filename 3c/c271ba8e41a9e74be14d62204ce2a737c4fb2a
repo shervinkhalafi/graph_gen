@@ -1,0 +1,31 @@
+tmgg/src/tmgg/data/data_modules/data_module.py
+  481719edbe738835 3-6,19-20,25,38-42,71,114,122-124,126,132-140,159-161,164,166-169,171-176,178,180,182,184,190-194
+tmgg/tests/test_data_split_reproducibility.py
+  481719edbe738835 15,17,48,60-62,64,66,68-69,72-74,76,78-81,84-86,88,90-93,116,127-128,130,132,134-135
+tmgg/integration_test.py
+  481719edbe738835 81
+tmgg/tests/experiment_utils/test_data_module.py
+  481719edbe738835 78,81,95-100,108-109,124-127,135-136,152,157-161,173-174,185,190-193,195-197,201-204,214-215,224,229,232-234,271-272,278-279,282,289-292,294,297-298,310-311,313-314,321,334,337,340
+tmgg/tests/test_datamodule_contracts.py
+  481719edbe738835 104-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "3cc271ba8e41a9e74be14d62204ce2a737c4fb2a",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 162,
+      "total_deletions": 187,
+      "accepted_lines": 156,
+      "overriden_lines": 1
+    }
+  }
+}
