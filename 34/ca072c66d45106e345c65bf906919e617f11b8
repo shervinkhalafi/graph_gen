@@ -1,0 +1,59 @@
+tmgg/src/tmgg/training/__init__.py
+  481719edbe738835 1,3-5
+tmgg/src/tmgg/diffusion/diffusion_sampling.py
+  481719edbe738835 17
+tmgg/src/tmgg/experiments/exp_configs/_base_infra.yaml
+  481719edbe738835 22-23
+tmgg/tests/experiments/test_categorical_datamodule.py
+  481719edbe738835 17
+tmgg/src/tmgg/experiments/eigenstructure_study/analyzer.py
+  481719edbe738835 191,207-209,220,236-238
+tmgg/src/tmgg/diffusion/transitions.py
+  481719edbe738835 19
+tmgg/src/tmgg/diffusion/__init__.py
+  481719edbe738835 17
+tmgg/src/tmgg/data/__init__.py
+  481719edbe738835 10,47
+tmgg/src/tmgg/data/noising/noise.py
+  481719edbe738835 315-323
+tmgg/tests/test_datamodule_contracts.py
+  481719edbe738835 27
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 109-113
+tmgg/src/tmgg/training/orchestration/sanity_check.py
+  481719edbe738835 1-12
+tmgg/src/tmgg/data/data_modules/__init__.py
+  481719edbe738835 9,16
+tmgg/tests/models/test_graph_types.py
+  481719edbe738835 16
+tmgg/tach.toml
+  481719edbe738835 43,47,50,52-53,56,63
+tmgg/src/tmgg/training/orchestration/run_experiment.py
+  481719edbe738835 2,11-12,16-20,28-110
+tmgg/src/tmgg/experiments/exp_configs/base_config_discrete_diffusion_generative.yaml
+  481719edbe738835 36
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/__init__.py
+  481719edbe738835 10
+tmgg/src/tmgg/diffusion/protocols.py
+  481719edbe738835 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "34ca072c66d45106e345c65bf906919e617f11b8",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 151,
+      "overriden_lines": 0
+    }
+  }
+}
