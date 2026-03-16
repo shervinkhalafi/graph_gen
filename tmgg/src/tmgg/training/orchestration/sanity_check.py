@@ -25,7 +25,7 @@ from omegaconf import DictConfig
 from pytorch_lightning import LightningDataModule
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.noise import NoiseGenerator
+from tmgg.utils.noising.noise import NoiseGenerator
 
 
 def _batch_to_tensor(batch: Any) -> torch.Tensor:
@@ -119,7 +119,7 @@ def _check_noise_generator(
     result: SanityCheckResult = SanityCheckResult()
 
     # For rotation noise generator, use its configured k value
-    from tmgg.data.noising.noise import RotationNoiseGenerator
+    from tmgg.utils.noising.noise import RotationNoiseGenerator
 
     if isinstance(noise_generator, RotationNoiseGenerator):
         sample_size = noise_generator.k

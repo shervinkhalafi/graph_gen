@@ -198,7 +198,6 @@ class TestDiffusionModuleGaussianFullFlow:
 
     def test_train_val_test(self) -> None:
         from tmgg.data.data_modules.multigraph_data_module import MultiGraphDataModule
-        from tmgg.data.noising.noise import DigressNoiseGenerator
         from tmgg.diffusion.noise_process import ContinuousNoiseProcess
         from tmgg.diffusion.sampler import ContinuousSampler
         from tmgg.diffusion.schedule import NoiseSchedule
@@ -209,6 +208,7 @@ class TestDiffusionModuleGaussianFullFlow:
         from tmgg.training.lightning_modules.diffusion_module import (
             DiffusionModule,
         )
+        from tmgg.utils.noising.noise import DigressNoiseGenerator
 
         schedule = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=5)
         noise_process = ContinuousNoiseProcess(

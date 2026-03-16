@@ -34,7 +34,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from tmgg.data import add_edge_flip_noise, generate_sbm_adjacency
+from tmgg.data import generate_sbm_adjacency
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
 from tmgg.models.spectral_denoisers import (
@@ -42,6 +42,7 @@ from tmgg.models.spectral_denoisers import (
     LinearPE,
     SelfAttentionDenoiser,
 )
+from tmgg.utils.noising import add_edge_flip_noise
 
 # =============================================================================
 # TARGET GENERATION UTILITIES

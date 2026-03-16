@@ -30,7 +30,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.size_distribution import SizeDistribution
 from tmgg.diffusion.collectors import DiffusionLikelihoodCollector, StepMetricCollector
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
@@ -48,6 +47,7 @@ from tmgg.training.lightning_modules.base_graph_module import (
 from tmgg.training.lightning_modules.train_loss_discrete import (
     TrainLossDiscrete,
 )
+from tmgg.utils.noising.size_distribution import SizeDistribution
 
 _VALID_LOSS_TYPES = frozenset({"cross_entropy", "mse", "bce_logits"})
 

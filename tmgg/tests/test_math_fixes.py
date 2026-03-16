@@ -46,7 +46,7 @@ def test_rotation_noise_dimension_mismatch():
     (the graph size). If k != n, the matrix multiply V @ R silently produces
     wrong results. An explicit assertion catches this early.
     """
-    from tmgg.data.noising.noise import (
+    from tmgg.utils.noising.noise import (
         RotationNoiseGenerator,
     )
 
@@ -58,7 +58,7 @@ def test_rotation_noise_dimension_mismatch():
 
 def test_rotation_noise_matching_dimension():
     """RotationNoiseGenerator works when dimensions match."""
-    from tmgg.data.noising.noise import (
+    from tmgg.utils.noising.noise import (
         RotationNoiseGenerator,
     )
 
@@ -72,7 +72,7 @@ def test_rotation_noise_matching_dimension():
 
 def test_rotation_noise_batch_dimension_mismatch():
     """Batch variant of the dimension check."""
-    from tmgg.data.noising.noise import (
+    from tmgg.utils.noising.noise import (
         RotationNoiseGenerator,
     )
 

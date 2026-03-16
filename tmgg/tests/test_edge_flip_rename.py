@@ -2,13 +2,13 @@
 
 
 def test_edge_flip_function_exists():
-    from tmgg.data.noising.noise import add_edge_flip_noise
+    from tmgg.utils.noising.noise import add_edge_flip_noise
 
     assert callable(add_edge_flip_noise)
 
 
 def test_edge_flip_generator_exists():
-    from tmgg.data.noising.noise import (
+    from tmgg.utils.noising.noise import (
         EdgeFlipNoiseGenerator,
     )
 
@@ -16,7 +16,7 @@ def test_edge_flip_generator_exists():
 
 
 def test_factory_creates_edge_flip():
-    from tmgg.data.noising.noise import (
+    from tmgg.utils.noising.noise import (
         create_noise_generator,
     )
 
@@ -30,7 +30,7 @@ def test_factory_digress_still_works():
     After Task 3b this will return the correct DigressNoiseGenerator,
     but for now it returns EdgeFlipNoiseGenerator.
     """
-    from tmgg.data.noising.noise import (
+    from tmgg.utils.noising.noise import (
         create_noise_generator,
     )
 

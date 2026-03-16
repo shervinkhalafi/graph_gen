@@ -21,12 +21,6 @@ import torch
 from torch import Tensor
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.noise import (
-    DigressNoiseGenerator,
-    EdgeFlipNoiseGenerator,
-    GaussianNoiseGenerator,
-    LogitNoiseGenerator,
-)
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
@@ -34,6 +28,12 @@ from tmgg.diffusion.noise_process import (
 )
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.diffusion.transitions import DiscreteUniformTransition
+from tmgg.utils.noising.noise import (
+    DigressNoiseGenerator,
+    EdgeFlipNoiseGenerator,
+    GaussianNoiseGenerator,
+    LogitNoiseGenerator,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -32,11 +32,7 @@ import networkx as nx
 import numpy as np
 import torch
 
-from tmgg.data import (
-    create_noise_generator,  # pyright: ignore[reportUnknownVariableType]
-)
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.noise import NoiseGenerator
 from tmgg.diffusion.noise_process import ContinuousNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.evaluation.graph_evaluator import (
@@ -46,6 +42,7 @@ from tmgg.models.base import GraphModel
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
+from tmgg.utils.noising.noise import NoiseGenerator, create_noise_generator
 
 
 class SingleStepDenoisingModule(DiffusionModule):

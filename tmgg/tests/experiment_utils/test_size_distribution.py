@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tmgg.data.noising.size_distribution import SizeDistribution
+from tmgg.utils.noising.size_distribution import SizeDistribution
 
 
 class TestFixed:

@@ -18,7 +18,7 @@ from tmgg.data.data_modules.synthetic_categorical import (
     SyntheticCategoricalDataModule,
 )
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.size_distribution import SizeDistribution
+from tmgg.utils.noising.size_distribution import SizeDistribution
 
 # -- Shared fixtures -------------------------------------------------------
 

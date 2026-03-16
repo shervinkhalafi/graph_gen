@@ -19,8 +19,8 @@ source_roots = ["src"]
 
 [[modules]]
 path = "tmgg.data"
-depends_on = []
-# Data loading - no dependencies on other tmgg modules
+depends_on = ["tmgg.utils.noising"]
+# Data loading - data_modules use SizeDistribution from utils.noising
 
 [[modules]]
 path = "tmgg.modal"
@@ -38,6 +38,11 @@ depends_on = [
 path = "tmgg.utils.spectral"
 depends_on = []
 # Pure linear algebra — no framework deps
+
+[[modules]]
+path = "tmgg.utils.noising"
+depends_on = []
+# Noise generators and size distribution — pure torch/numpy, no tmgg dependencies
 
 [[modules]]
 path = "tmgg.evaluation"
@@ -60,6 +65,7 @@ path = "tmgg.training.lightning_modules"
 depends_on = [
     "tmgg.training",
     "tmgg.utils.spectral",
+    "tmgg.utils.noising",
     "tmgg.evaluation",
     "tmgg.data", "tmgg.models", "tmgg.diffusion",
 ]
@@ -70,12 +76,13 @@ path = "tmgg.training.orchestration"
 depends_on = [
     "tmgg.training",
     "tmgg.data",
+    "tmgg.utils.noising",
 ]
-# Uses top-level logging.py; hydra instantiation uses tmgg.data
+# Uses top-level logging.py; hydra instantiation uses tmgg.data and noising sanity checks
 
 [[modules]]
 path = "tmgg.diffusion"
-depends_on = ["tmgg.data", "tmgg.models"]
+depends_on = ["tmgg.data", "tmgg.models", "tmgg.utils.noising"]
 # Diffusion components (noise processes, samplers, schedules)
 
 # ============================================================

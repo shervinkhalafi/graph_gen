@@ -21,7 +21,6 @@ import pytest
 import torch
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.noise import GaussianNoiseGenerator
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
@@ -40,6 +39,7 @@ from tmgg.models.gnn import GNN as _GNN
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
+from tmgg.utils.noising.noise import GaussianNoiseGenerator
 
 _MODEL_CONFIG: dict[str, Any] = {
     "num_layers": 2,

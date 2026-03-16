@@ -9,7 +9,7 @@ matched eps values. The fix generates upper-triangular noise and mirrors it.
 
 import torch
 
-from tmgg.data.noising.noise import add_gaussian_noise
+from tmgg.utils.noising.noise import add_gaussian_noise
 
 
 def test_gaussian_noise_is_symmetric():

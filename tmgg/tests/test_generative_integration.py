@@ -25,7 +25,6 @@ from tmgg.data.data_modules.multigraph_data_module import (
     MultiGraphDataModule,
 )
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.noise import DigressNoiseGenerator
 from tmgg.diffusion.noise_process import ContinuousNoiseProcess
 from tmgg.diffusion.sampler import ContinuousSampler
 from tmgg.diffusion.schedule import NoiseSchedule
@@ -37,6 +36,7 @@ from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
+from tmgg.utils.noising.noise import DigressNoiseGenerator
 
 # Dataset configurations for parametrized tests (excludes LFR due to generation complexity)
 DATASET_CONFIGS: dict[str, dict] = {

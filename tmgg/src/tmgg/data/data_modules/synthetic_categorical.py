@@ -27,7 +27,7 @@ from tmgg.data.data_modules.multigraph_data_module import (
     MultiGraphDataModule,
 )
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.size_distribution import SizeDistribution
+from tmgg.utils.noising.size_distribution import SizeDistribution
 
 
 class SyntheticCategoricalDataModule(MultiGraphDataModule):

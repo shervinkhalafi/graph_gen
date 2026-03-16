@@ -31,7 +31,7 @@ from tmgg.data.datasets.sbm import (
     generate_sbm_batch,  # pyright: ignore[reportAttributeAccessIssue]  # runtime-verified
 )
 from tmgg.data.datasets.synthetic_graphs import SyntheticGraphDataset
-from tmgg.data.noising.size_distribution import SizeDistribution
+from tmgg.utils.noising.size_distribution import SizeDistribution
 
 from .base_data_module import BaseGraphDataModule
 

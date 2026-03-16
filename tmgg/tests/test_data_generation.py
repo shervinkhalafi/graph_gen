@@ -5,14 +5,16 @@ import pytest
 import torch
 
 from tmgg.data import (
+    generate_block_sizes,
+    generate_sbm_adjacency,
+)
+from tmgg.utils.noising import (
     LogitNoiseGenerator,
     add_edge_flip_noise,
     add_gaussian_noise,
     add_logit_noise,
     add_rotation_noise,
     create_noise_generator,
-    generate_block_sizes,
-    generate_sbm_adjacency,
     random_skew_symmetric_matrix,
 )
 

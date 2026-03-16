@@ -17,13 +17,13 @@ import torch
 
 class TestDigressNoise:
     def test_importable(self):
-        from tmgg.data.noising.noise import add_digress_noise
+        from tmgg.utils.noising.noise import add_digress_noise
 
         assert callable(add_digress_noise)
 
     def test_alpha_bar_1_returns_clean(self):
         """alpha_bar=1.0 means no noise: output must equal input."""
-        from tmgg.data.noising.noise import add_digress_noise
+        from tmgg.utils.noising.noise import add_digress_noise
 
         A = torch.tensor([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=torch.float32)
         A_noisy = add_digress_noise(A, alpha_bar=1.0)
@@ -31,7 +31,7 @@ class TestDigressNoise:
 
     def test_alpha_bar_0_approaches_uniform(self):
         """alpha_bar=0.0 means fully noisy: each edge has ~50% probability."""
-        from tmgg.data.noising.noise import add_digress_noise
+        from tmgg.utils.noising.noise import add_digress_noise
 
         torch.manual_seed(42)
         A = torch.zeros(500, 20, 20)
@@ -43,7 +43,7 @@ class TestDigressNoise:
 
     def test_output_is_binary(self):
         """DiGress noise on binary input produces binary output."""
-        from tmgg.data.noising.noise import add_digress_noise
+        from tmgg.utils.noising.noise import add_digress_noise
 
         torch.manual_seed(0)
         A = (torch.rand(4, 15, 15) > 0.5).float()
@@ -54,7 +54,7 @@ class TestDigressNoise:
 
     def test_preserves_symmetry(self):
         """Noisy adjacency must remain symmetric."""
-        from tmgg.data.noising.noise import add_digress_noise
+        from tmgg.utils.noising.noise import add_digress_noise
 
         torch.manual_seed(123)
         A = torch.zeros(10, 10)
@@ -69,7 +69,7 @@ class TestDigressNoise:
         With alpha_bar=0.6, flip_prob = 0.2. Over many samples, the fraction
         of flipped edges should be close to 0.2.
         """
-        from tmgg.data.noising.noise import add_digress_noise
+        from tmgg.utils.noising.noise import add_digress_noise
 
         torch.manual_seed(42)
         alpha_bar = 0.6
@@ -89,7 +89,7 @@ class TestDigressNoise:
         """DiGress noise must be parameterised by alpha_bar, not flip probability."""
         import inspect
 
-        from tmgg.data.noising.noise import add_digress_noise
+        from tmgg.utils.noising.noise import add_digress_noise
 
         sig = inspect.signature(add_digress_noise)
         params = list(sig.parameters.keys())
@@ -104,7 +104,7 @@ class TestDigressNoise:
         """
         import torch
 
-        from tmgg.data.noising.noise import (
+        from tmgg.utils.noising.noise import (
             create_noise_generator,
         )
 
@@ -118,7 +118,7 @@ class TestDigressNoise:
         torch.testing.assert_close(A_noisy, A)
 
     def test_factory_creates_digress(self):
-        from tmgg.data.noising.noise import (
+        from tmgg.utils.noising.noise import (
             create_noise_generator,
         )
 
@@ -126,7 +126,7 @@ class TestDigressNoise:
         assert type(gen).__name__ == "DigressNoiseGenerator"
 
     def test_factory_edge_flip_still_works(self):
-        from tmgg.data.noising.noise import (
+        from tmgg.utils.noising.noise import (
             create_noise_generator,
         )
 

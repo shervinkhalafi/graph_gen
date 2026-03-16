@@ -8,13 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from tmgg.data import (
-    add_edge_flip_noise,
-    add_gaussian_noise,
-    add_rotation_noise,
-    generate_sbm_adjacency,
-    random_skew_symmetric_matrix,
-)
+from tmgg.data import generate_sbm_adjacency
 from tmgg.data.data_modules.multigraph_data_module import (
     _adjacencies_to_pyg,
     _collate_pyg_to_graphdata,
@@ -24,6 +18,12 @@ from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
 from tmgg.models.hybrid import create_sequential_model
+from tmgg.utils.noising import (
+    add_edge_flip_noise,
+    add_gaussian_noise,
+    add_rotation_noise,
+    random_skew_symmetric_matrix,
+)
 
 
 class TestEndToEndTraining:

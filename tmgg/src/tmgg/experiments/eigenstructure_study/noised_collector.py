@@ -13,7 +13,7 @@ from typing import Any
 import torch
 from loguru import logger
 
-from tmgg.data.noising.noise import create_noise_generator
+from tmgg.utils.noising.noise import create_noise_generator
 from tmgg.utils.spectral.laplacian import compute_laplacian
 
 from .storage import (

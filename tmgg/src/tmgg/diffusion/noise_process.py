@@ -28,9 +28,9 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.noise import NoiseGenerator
 from tmgg.diffusion.protocols import TransitionModel
 from tmgg.diffusion.schedule import NoiseSchedule
+from tmgg.utils.noising.noise import NoiseGenerator
 
 from .diffusion_math import sum_except_batch
 from .diffusion_sampling import (
@@ -106,7 +106,7 @@ class NoiseProcess(ABC, nn.Module):
 class ContinuousNoiseProcess(NoiseProcess):
     """Wraps a ``NoiseGenerator`` to produce the ``NoiseProcess`` interface.
 
-    Wraps a NoiseGenerator (from tmgg.data.noising) with a NoiseSchedule to
+    Wraps a NoiseGenerator (from tmgg.utils.noising) with a NoiseSchedule to
     bridge stateless noise functions into the diffusion training loop. The
     generator only sees the final noise level; this class handles timestep
     conversion and posterior computation.
