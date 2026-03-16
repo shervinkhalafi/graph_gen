@@ -1,0 +1,23 @@
+tmgg/src/tmgg/data/data_modules/single_graph_data_module.py
+  481719edbe738835 14,21-23,25,107-109,146-148,234-262,264-271,283-285,290-296,298-303,307-309,311-313,318,321,323,329,332,334,340,343,345,358,363,365,367,370,375,377,379,382,387,389,391,404,406,408,410,412,416,419
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "7c1fb46992dadf9faaf5803f690f415ce2f652d5",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 102,
+      "total_deletions": 73,
+      "accepted_lines": 99,
+      "overriden_lines": 0
+    }
+  }
+}
