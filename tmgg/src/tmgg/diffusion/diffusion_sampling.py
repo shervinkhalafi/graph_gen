@@ -14,7 +14,7 @@ from torch.nn import functional as F
 
 from tmgg.data.datasets.graph_types import GraphData
 
-from .graph_types import LimitDistribution, TransitionMatrices
+from .diffusion_graph_types import LimitDistribution, TransitionMatrices
 
 
 def assert_correctly_masked(variable: torch.Tensor, node_mask: torch.Tensor) -> None:

@@ -31,14 +31,14 @@ from typing import Any, Literal
 import networkx as nx
 import numpy as np
 
-from tmgg.training.evaluation_metrics.mmd_metrics import (
+from tmgg.evaluation.mmd_metrics import (
     compute_mmd,
     compute_mmd_metrics,
 )
-from tmgg.training.evaluation_metrics.orca import (
+from tmgg.evaluation.orca import (
     is_available as _orca_is_available,
 )
-from tmgg.training.evaluation_metrics.orca import run_orca
+from tmgg.evaluation.orca import run_orca
 
 logger = logging.getLogger(__name__)
 

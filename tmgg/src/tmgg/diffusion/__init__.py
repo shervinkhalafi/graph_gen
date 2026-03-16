@@ -14,7 +14,7 @@ The pipeline composes four kinds of object:
 """
 
 from .collectors import DiffusionLikelihoodCollector, StepMetricCollector
-from .graph_types import LimitDistribution, TransitionMatrices
+from .diffusion_graph_types import LimitDistribution, TransitionMatrices
 from .noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,

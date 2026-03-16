@@ -29,11 +29,11 @@ from tmgg.data.noising.noise import DigressNoiseGenerator
 from tmgg.diffusion.noise_process import ContinuousNoiseProcess
 from tmgg.diffusion.sampler import ContinuousSampler
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.models.base import GraphModel
-from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
-from tmgg.training.evaluation_metrics.graph_evaluator import (
+from tmgg.evaluation.graph_evaluator import (
     GraphEvaluator,
 )
+from tmgg.models.base import GraphModel
+from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )

@@ -33,7 +33,7 @@ eval_metrics: [degree, clustering, spectre]
 # --- Data ---
 
 data:
-  _target_: tmgg.experiments.discrete_diffusion_generative.datamodule.SyntheticCategoricalDataModule
+  _target_: tmgg.data.data_modules.synthetic_categorical.SyntheticCategoricalDataModule
   graph_type: sbm
   num_nodes: 20
   num_graphs: 2000

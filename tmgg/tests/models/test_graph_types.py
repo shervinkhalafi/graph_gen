@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from tmgg.data.datasets.graph_types import GraphData, collapse_to_indices
-from tmgg.diffusion.graph_types import (
+from tmgg.diffusion.diffusion_graph_types import (
     LimitDistribution,
     TransitionMatrices,
 )

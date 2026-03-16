@@ -202,10 +202,10 @@ class TestDiffusionModuleGaussianFullFlow:
         from tmgg.diffusion.noise_process import ContinuousNoiseProcess
         from tmgg.diffusion.sampler import ContinuousSampler
         from tmgg.diffusion.schedule import NoiseSchedule
-        from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
-        from tmgg.training.evaluation_metrics.graph_evaluator import (
+        from tmgg.evaluation.graph_evaluator import (
             GraphEvaluator,
         )
+        from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
         from tmgg.training.lightning_modules.diffusion_module import (
             DiffusionModule,
         )
@@ -255,16 +255,16 @@ class TestDiscreteGenerativeFullFlow:
     """
 
     def test_train_val_test(self) -> None:
+        from tmgg.data.data_modules.synthetic_categorical import (
+            SyntheticCategoricalDataModule,
+        )
         from tmgg.diffusion.noise_process import CategoricalNoiseProcess
         from tmgg.diffusion.sampler import CategoricalSampler
         from tmgg.diffusion.schedule import NoiseSchedule
-        from tmgg.experiments.discrete_diffusion_generative.datamodule import (
-            SyntheticCategoricalDataModule,
-        )
-        from tmgg.models.digress.transformer_model import GraphTransformer
-        from tmgg.training.evaluation_metrics.graph_evaluator import (
+        from tmgg.evaluation.graph_evaluator import (
             GraphEvaluator,
         )
+        from tmgg.models.digress.transformer_model import GraphTransformer
         from tmgg.training.lightning_modules.diffusion_module import (
             DiffusionModule,
         )

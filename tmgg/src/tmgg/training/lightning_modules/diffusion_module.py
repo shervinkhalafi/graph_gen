@@ -38,10 +38,10 @@ from tmgg.diffusion.noise_process import (
 )
 from tmgg.diffusion.sampler import Sampler
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.models.base import GraphModel
-from tmgg.training.evaluation_metrics.graph_evaluator import (
+from tmgg.evaluation.graph_evaluator import (
     GraphEvaluator,
 )
+from tmgg.models.base import GraphModel
 from tmgg.training.lightning_modules.base_graph_module import (
     BaseGraphModule,
 )

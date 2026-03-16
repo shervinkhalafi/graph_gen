@@ -40,9 +40,15 @@ depends_on = []
 # Pure linear algebra — no framework deps
 
 [[modules]]
+path = "tmgg.evaluation"
+depends_on = [
+    "tmgg.data",
+]
+# Graph evaluation metrics (MMD, ORCA, structural checks)
+
+[[modules]]
 path = "tmgg.training"
 depends_on = [
-    "tmgg.training.evaluation_metrics",
     "tmgg.training.lightning_modules",
     "tmgg.training.orchestration",
     "tmgg.data",
@@ -50,18 +56,11 @@ depends_on = [
 # Top-level: re-exports + cross-cutting files (logging.py, exceptions.py)
 
 [[modules]]
-path = "tmgg.training.evaluation_metrics"
-depends_on = [
-    "tmgg.data",
-]
-# reference_graphs.py uses tmgg.data
-
-[[modules]]
 path = "tmgg.training.lightning_modules"
 depends_on = [
     "tmgg.training",
     "tmgg.utils.spectral",
-    "tmgg.training.evaluation_metrics",
+    "tmgg.evaluation",
     "tmgg.data", "tmgg.models", "tmgg.diffusion",
 ]
 # PL modules use top-level logging.py/exceptions.py + spectral + evaluation + framework

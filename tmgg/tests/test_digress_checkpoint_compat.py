@@ -307,7 +307,7 @@ class TestGenerateReferenceGraphs:
     )
     def test_generates_correct_count_and_shape(self, dataset_type: str) -> None:
         """Generated graphs should have correct count and node dimensions."""
-        from tmgg.training.evaluation_metrics.reference_graphs import (
+        from tmgg.evaluation.reference_graphs import (
             generate_reference_graphs,
         )
 
@@ -325,7 +325,7 @@ class TestGenerateReferenceGraphs:
     @pytest.mark.parametrize("dataset_type", ["sbm", "erdos_renyi", "regular"])
     def test_graphs_are_valid_adjacency(self, dataset_type: str) -> None:
         """Generated graphs should be binary, symmetric, zero-diagonal."""
-        from tmgg.training.evaluation_metrics.reference_graphs import (
+        from tmgg.evaluation.reference_graphs import (
             generate_reference_graphs,
         )
 
@@ -346,7 +346,7 @@ class TestGenerateReferenceGraphs:
 
     def test_sbm_parameters_used(self) -> None:
         """SBM-specific parameters should affect generation."""
-        from tmgg.training.evaluation_metrics.reference_graphs import (
+        from tmgg.evaluation.reference_graphs import (
             generate_reference_graphs,
         )
 
@@ -375,7 +375,7 @@ class TestGenerateReferenceGraphs:
 
     def test_invalid_dataset_type_raises(self) -> None:
         """Unknown dataset type should raise ValueError."""
-        from tmgg.training.evaluation_metrics.reference_graphs import (
+        from tmgg.evaluation.reference_graphs import (
             generate_reference_graphs,
         )
 

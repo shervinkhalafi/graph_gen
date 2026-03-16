@@ -312,7 +312,15 @@ def add_edge_flip_noise(
 
 
 class NoiseGenerator(ABC):
-    """Abstract base class for noise generators."""
+    """Abstract base class for noise generators.
+
+    NoiseGenerator operates on raw adjacency matrices and is used directly by
+    SingleStepDenoisingModule for single-step denoising. For multi-step
+    diffusion, ContinuousNoiseProcess (in tmgg.diffusion.noise_process) wraps a
+    NoiseGenerator with a NoiseSchedule to handle timestep-to-noise-level
+    conversion and posterior computation. CategoricalNoiseProcess uses a
+    separate TransitionModel hierarchy instead.
+    """
 
     @abstractmethod
     def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:

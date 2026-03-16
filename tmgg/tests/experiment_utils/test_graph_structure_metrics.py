@@ -20,7 +20,7 @@ import networkx as nx
 import numpy as np
 import pytest
 
-from tmgg.training.evaluation_metrics.graph_evaluator import (
+from tmgg.evaluation.graph_evaluator import (
     compute_novelty,
     compute_orbit_mmd,
     compute_planarity_accuracy,
@@ -170,7 +170,7 @@ class TestOrbitMMD:
     )
     def test_orbit_count_shape(self) -> None:
         """Verify ORCA produces correct shape for individual graphs."""
-        from tmgg.training.evaluation_metrics.orca import run_orca
+        from tmgg.evaluation.orca import run_orca
 
         G = nx.petersen_graph()  # 10 nodes
         counts = run_orca(G)
@@ -198,7 +198,7 @@ class TestSBMAccuracy:
     @pytest.mark.skipif(not _has_graph_tool(), reason="graph-tool not installed")
     def test_sbm_accuracy_on_sbm_graphs(self) -> None:
         """Graphs generated from an SBM should pass the SBM test."""
-        from tmgg.training.evaluation_metrics.graph_evaluator import (
+        from tmgg.evaluation.graph_evaluator import (
             compute_sbm_accuracy,
         )
 
@@ -216,7 +216,7 @@ class TestSBMAccuracy:
     @pytest.mark.skipif(not _has_graph_tool(), reason="graph-tool not installed")
     def test_sbm_accuracy_on_random_graphs(self) -> None:
         """Random ER graphs should mostly fail the SBM test."""
-        from tmgg.training.evaluation_metrics.graph_evaluator import (
+        from tmgg.evaluation.graph_evaluator import (
             compute_sbm_accuracy,
         )
 

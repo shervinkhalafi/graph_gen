@@ -54,7 +54,7 @@ class TestNoExperimentsImport:
         spec = importlib.util.find_spec("tmgg.modal._lib.evaluate")
         assert spec is not None and spec.origin is not None
         source = Path(spec.origin).read_text()
-        assert "from tmgg.training.evaluation_metrics.mmd_metrics" not in source, (
+        assert "from tmgg.evaluation.mmd_metrics" not in source, (
             "modal/evaluate.py should not import mmd_metrics directly; "
             "the CLI subprocess handles that"
         )

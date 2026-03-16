@@ -47,7 +47,7 @@ noise_schedule:
   timesteps: 500
 
 evaluator:
-  _target_: tmgg.training.evaluation_metrics.graph_evaluator.GraphEvaluator
+  _target_: tmgg.evaluation.graph_evaluator.GraphEvaluator
   eval_num_samples: 128
 
 loss_type: cross_entropy

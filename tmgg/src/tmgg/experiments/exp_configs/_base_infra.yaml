@@ -19,6 +19,8 @@ defaults:
 experiment_name: "tmgg_training"
 wandb_project: ???
 wandb_entity: graph_denoise_team
+# Set true to run pre-training sanity checks (noise, data, model, loss).
+# Usage: uv run tmgg-spectral-arch sanity_check=true trainer.max_steps=0
 sanity_check: false
 
 # Optimizer settings (per experimental design)

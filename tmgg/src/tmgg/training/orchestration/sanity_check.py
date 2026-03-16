@@ -1,4 +1,15 @@
-"""Sanity check utilities for verifying experimental setup."""
+"""Sanity check utilities for verifying experimental setup.
+
+Disabled by default. To enable, set ``sanity_check: true`` in your
+experiment config (or pass ``sanity_check=true`` on the CLI). The
+checks run before training starts and verify that the noise generator,
+data loader, model forward pass, and loss computation all work
+correctly. Diagnostic plots are saved to the output directory.
+
+Example::
+
+    uv run tmgg-spectral-arch sanity_check=true trainer.max_steps=0
+"""
 
 import logging
 from dataclasses import dataclass, field

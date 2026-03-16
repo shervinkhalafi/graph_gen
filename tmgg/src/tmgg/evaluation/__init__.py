@@ -6,11 +6,11 @@ distributions, ORCA orbit counting) and structural checks (SBM accuracy,
 planarity, uniqueness, novelty).
 """
 
-from tmgg.training.evaluation_metrics.graph_evaluator import (
+from tmgg.evaluation.graph_evaluator import (
     EvaluationResults,
     GraphEvaluator,
 )
-from tmgg.training.evaluation_metrics.reference_graphs import (
+from tmgg.evaluation.reference_graphs import (
     generate_reference_graphs,
 )
 

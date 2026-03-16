@@ -29,14 +29,14 @@ from tmgg.diffusion.noise_process import (
 from tmgg.diffusion.sampler import CategoricalSampler, ContinuousSampler
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.diffusion.transitions import DiscreteUniformTransition
+from tmgg.evaluation.graph_evaluator import (
+    GraphEvaluator,
+)
 
 # -----------------------------------------------------------------------
 # Shared fixtures and helpers
 # -----------------------------------------------------------------------
 from tmgg.models.gnn import GNN as _GNN
-from tmgg.training.evaluation_metrics.graph_evaluator import (
-    GraphEvaluator,
-)
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )

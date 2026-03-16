@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from .graph_types import LimitDistribution, TransitionMatrices
+from .diffusion_graph_types import LimitDistribution, TransitionMatrices
 
 
 class DiscreteUniformTransition(nn.Module):

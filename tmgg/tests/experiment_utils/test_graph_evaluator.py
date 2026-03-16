@@ -24,7 +24,7 @@ from typing import Any
 import networkx as nx
 import pytest
 
-from tmgg.training.evaluation_metrics.graph_evaluator import (
+from tmgg.evaluation.graph_evaluator import (
     EvaluationResults,
     GraphEvaluator,
 )
@@ -36,7 +36,7 @@ _graph_tool_available = importlib.util.find_spec("graph_tool") is not None
 
 _orca_available: bool
 try:
-    from tmgg.training.evaluation_metrics.orca import (
+    from tmgg.evaluation.orca import (
         is_available as _orca_is_available,
     )
 

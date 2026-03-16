@@ -106,6 +106,11 @@ class NoiseProcess(ABC, nn.Module):
 class ContinuousNoiseProcess(NoiseProcess):
     """Wraps a ``NoiseGenerator`` to produce the ``NoiseProcess`` interface.
 
+    Wraps a NoiseGenerator (from tmgg.data.noising) with a NoiseSchedule to
+    bridge stateless noise functions into the diffusion training loop. The
+    generator only sees the final noise level; this class handles timestep
+    conversion and posterior computation.
+
     The forward process extracts the adjacency from ``GraphData``, delegates
     to the wrapped generator's ``add_noise``, and converts back. The timestep
     ``t`` is an integer index into the noise schedule; the noise process

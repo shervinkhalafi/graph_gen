@@ -38,7 +38,7 @@ model:
     schedule_type: cosine_iddpm
     timesteps: 100
   evaluator:
-    _target_: tmgg.training.evaluation_metrics.graph_evaluator.GraphEvaluator
+    _target_: tmgg.evaluation.graph_evaluator.GraphEvaluator
     eval_num_samples: 100
     kernel: gaussian
     sigma: 1.0

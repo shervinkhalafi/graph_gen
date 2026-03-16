@@ -6,7 +6,7 @@ from typing import Protocol, runtime_checkable
 
 from torch import Tensor
 
-from .graph_types import LimitDistribution, TransitionMatrices
+from .diffusion_graph_types import LimitDistribution, TransitionMatrices
 
 
 @runtime_checkable

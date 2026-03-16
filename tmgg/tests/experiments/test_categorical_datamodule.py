@@ -14,11 +14,11 @@ import pytest
 import torch
 from torch_geometric.data import Data
 
-from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.noising.size_distribution import SizeDistribution
-from tmgg.experiments.discrete_diffusion_generative.datamodule import (
+from tmgg.data.data_modules.synthetic_categorical import (
     SyntheticCategoricalDataModule,
 )
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.noising.size_distribution import SizeDistribution
 
 # -- Shared fixtures -------------------------------------------------------
 

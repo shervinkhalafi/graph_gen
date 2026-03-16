@@ -188,8 +188,8 @@ def compute_eigengap_delta(
 ) -> dict[str, torch.Tensor]:
     """Compute change in spectral gap between clean and other (noisy/denoised).
 
-    Thin wrapper around :func:`compute_eigengap_delta` that also returns the absolute
-    difference for callers that need it.
+    Thin wrapper around :func:`tmgg.utils.spectral.spectral_deltas.compute_eigengap_delta`
+    that also returns the absolute difference for callers that need it.
 
     Parameters
     ----------
@@ -204,9 +204,9 @@ def compute_eigengap_delta(
         Dictionary with ``absolute`` and ``relative`` delta tensors,
         shape ``(batch,)``. Positive relative delta means the gap increased.
     """
-    gap_clean = eigenvalues_clean[:, -1] - eigenvalues_clean[:, -2]
-    gap_other = eigenvalues_other[:, -1] - eigenvalues_other[:, -2]
-    delta_absolute = gap_other - gap_clean
+    delta_absolute = compute_spectral_gap(eigenvalues_other) - compute_spectral_gap(
+        eigenvalues_clean
+    )
     delta_relative = _eigengap_delta_primitive(eigenvalues_clean, eigenvalues_other)
     return {"absolute": delta_absolute, "relative": delta_relative}
 
@@ -217,8 +217,8 @@ def compute_algebraic_connectivity_delta(
 ) -> dict[str, torch.Tensor]:
     """Compute change in Fiedler value (lambda_2 of Laplacian).
 
-    Thin wrapper around :func:`compute_alg_connectivity_delta` that also returns the
-    absolute difference for callers that need it.
+    Thin wrapper around :func:`tmgg.utils.spectral.spectral_deltas.compute_alg_connectivity_delta`
+    that also returns the absolute difference for callers that need it.
 
     Parameters
     ----------
@@ -233,9 +233,9 @@ def compute_algebraic_connectivity_delta(
         Dictionary with ``absolute`` and ``relative`` delta tensors,
         shape ``(batch,)``. Positive relative delta means connectivity increased.
     """
-    alg_conn_clean = lap_eigenvalues_clean[:, 1]
-    alg_conn_other = lap_eigenvalues_other[:, 1]
-    delta_absolute = alg_conn_other - alg_conn_clean
+    delta_absolute = compute_algebraic_connectivity(
+        lap_eigenvalues_other
+    ) - compute_algebraic_connectivity(lap_eigenvalues_clean)
     delta_relative = compute_alg_connectivity_delta(
         lap_eigenvalues_clean, lap_eigenvalues_other
     )

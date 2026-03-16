@@ -31,5 +31,5 @@ model:
   seed: ${seed}
   spectral_k: ${spectral_k}
   evaluator:
-    _target_: tmgg.training.evaluation_metrics.graph_evaluator.GraphEvaluator
+    _target_: tmgg.evaluation.graph_evaluator.GraphEvaluator
     eval_num_samples: 128

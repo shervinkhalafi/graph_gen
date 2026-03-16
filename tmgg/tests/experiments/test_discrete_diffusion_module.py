@@ -20,14 +20,14 @@ import pytorch_lightning as pl
 import torch
 from torch import Tensor
 
+from tmgg.data.data_modules.synthetic_categorical import (
+    SyntheticCategoricalDataModule,
+)
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.sampler import CategoricalSampler
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.experiments.discrete_diffusion_generative.datamodule import (
-    SyntheticCategoricalDataModule,
-)
-from tmgg.training.evaluation_metrics.graph_evaluator import (
+from tmgg.evaluation.graph_evaluator import (
     GraphEvaluator,
 )
 from tmgg.training.lightning_modules.diffusion_module import (

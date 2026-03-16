@@ -7,6 +7,7 @@ from .data_modules import (
     GraphDataModule,
     MultiGraphDataModule,
     SingleGraphDataModule,
+    SyntheticCategoricalDataModule,
 )
 from .datasets import (
     GraphData,
@@ -43,6 +44,7 @@ __all__ = [
     "MultiGraphDataModule",
     "GraphDataModule",
     "SingleGraphDataModule",
+    "SyntheticCategoricalDataModule",
     # Datasets
     "SyntheticGraphDataset",
     "PyGDatasetWrapper",
