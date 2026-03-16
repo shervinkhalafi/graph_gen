@@ -1,0 +1,25 @@
+tmgg/src/tmgg/training/orchestration/sanity_check.py
+  481719edbe738835 1-12
+tmgg/src/tmgg/experiments/exp_configs/_base_infra.yaml
+  481719edbe738835 22-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "1268d10ac5fbfa99ac59a4866673f4f1d691c0ad",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 14,
+      "total_deletions": 1,
+      "accepted_lines": 14,
+      "overriden_lines": 0
+    }
+  }
+}
