@@ -1,0 +1,65 @@
+tmgg/src/tmgg/training/lightning_modules/denoising_module.py
+  481719edbe738835 45,120-121,270-271,274,322-323,493-494,497-498
+tmgg/src/tmgg/utils/__init__.py
+  481719edbe738835 4-9,16,21-28,35
+tmgg/src/tmgg/diffusion/categorical_noise.py
+  481719edbe738835 1-163
+tmgg/src/tmgg/utils/noising/__init__.py
+  481719edbe738835 1,6-11,17,23-30,37
+tmgg/scripts/debug_constant_noise.py
+  481719edbe738835 92,121,196,198,201-202,226
+tmgg/tests/test_data_generation.py
+  481719edbe738835 12,17,383-384,395-397,399,407,409,411
+tmgg/src/tmgg/training/orchestration/sanity_check.py
+  481719edbe738835 28,54-55,59,102,123,125,365,377,480-489,514
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 39,63,68,72,250,255,370
+tmgg/tests/diffusion/test_noise_process.py
+  481719edbe738835 7,32-35,104,124,129-132,160,175,205,237
+tmgg/tests/test_edge_flip_rename.py
+  481719edbe738835 10,12,15,20,23,28,30,33
+tmgg/src/tmgg/diffusion/__init__.py
+  481719edbe738835 16,34
+tmgg/src/tmgg/training/lightning_modules/diffusion_module.py
+  481719edbe738835 258,338,389
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 6,8-9,22,32,35,52-56,68-70,72-74,80-86,92-141,173,175,177,181,184,189-191,199,202,205-207,209-210,212-225,227,238-239,274,303,305-308,310,312,334,348-352,358-381,383-385,399,401,403-404,406-410,412-413,415,417-419
+tmgg/tests/test_digress_noise.py
+  481719edbe738835 99-100,108,112,122,125-126,130,133-134
+tmgg/tests/test_math_fixes.py
+  481719edbe738835 5,41,50,53,60,62,65,76,79
+tmgg/tests/test_training_integration.py
+  481719edbe738835 94
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  481719edbe738835 211,215,219
+tmgg/src/tmgg/utils/noising/noise.py
+  481719edbe738835 1,4-11,18-19,21,80,84,152-153,279,318,322-323,325-326,328-330,332-335,337,357,359-361,373-398,402,406-407,409-424,428,435-436,438-448,452,459-460,463,468,473-482,487,494-495,504-505,509,525-534,540,543,550,557-558,560-561,582-592,611,618-620,623,628-629,631-649,651-654,657,659,661,665,668
+tmgg/src/tmgg/experiments/eigenstructure_study/noised_collector.py
+  481719edbe738835 16,73,75-76,80
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  481719edbe738835 25,31
+tmgg/tests/diffusion/test_sampler.py
+  481719edbe738835 41,124
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  481719edbe738835 10,42,67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "9767a70a1d26932d503033df617c884dda3796d0",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 655,
+      "overriden_lines": 0
+    }
+  }
+}
