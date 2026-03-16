@@ -1,0 +1,55 @@
+tmgg/tests/test_math_fixes.py
+  481719edbe738835 5,41,50,53,60,62,65,76,79
+tmgg/src/tmgg/utils/__init__.py
+  481719edbe738835 5,7,9,11,13,15,23,29-37,44-45,52
+tmgg/src/tmgg/training/orchestration/sanity_check.py
+  481719edbe738835 28,58,101,122,124,364,376,505
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  481719edbe738835 10,42,67
+tmgg/tests/test_data_generation.py
+  481719edbe738835 12,17,383-384,395-397,399,407,409,411
+tmgg/src/tmgg/utils/noising/noise.py
+  481719edbe738835 1,4-14,21-23,25,84,88,156-157,283,322,326-327,329-330,332-334,336-339,341,361,363-365,377-402,406,410-411,413-428,432,439-440,442-452,456,463-464,467,472,477-486,491,498-499,508-509,513,529-538,544,547,554,561-562,564-565,586-596,615,622-624,627,632-633,635-658,661,663,665,669,672,675-680,682-718
+tmgg/tests/diffusion/test_noise_process.py
+  481719edbe738835 7,32-35,104,124,129-132,160,175,205,237
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  481719edbe738835 211,215,219
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 39,63,68,72,250,255,370
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 6,33,107,109,111,115,118,123-124,133
+tmgg/src/tmgg/training/lightning_modules/denoising_module.py
+  481719edbe738835 45,120-121,149
+tmgg/src/tmgg/experiments/eigenstructure_study/noised_collector.py
+  481719edbe738835 16,80
+tmgg/tests/test_edge_flip_rename.py
+  481719edbe738835 10,12-18,28,31,36,38,41
+tmgg/src/tmgg/utils/noising/__init__.py
+  481719edbe738835 1,7,9,11,13,15,17,24,31-39,46-47,54
+tmgg/tests/diffusion/test_sampler.py
+  481719edbe738835 41,124
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  481719edbe738835 25,31
+tmgg/tests/test_digress_noise.py
+  481719edbe738835 99-100,108,112,122,125-126,130,133-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "3573fbedd15dcbd3fe5fa52d6993019bda19d3f0",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 411,
+      "total_deletions": 200,
+      "accepted_lines": 375,
+      "overriden_lines": 2
+    }
+  }
+}
