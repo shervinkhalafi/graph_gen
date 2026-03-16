@@ -91,7 +91,7 @@ class TestTrainingPipeline:
 
         assert module is not None
         assert hasattr(module, "model")
-        assert hasattr(module, "noise_generator")
+        assert hasattr(module, "noise_process")
 
     @pytest.mark.parametrize(
         "model",

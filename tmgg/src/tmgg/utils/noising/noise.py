@@ -1,16 +1,24 @@
-"""Noise functions and generator classes for graph denoising experiments.
+"""Noise definitions for graph denoising and diffusion experiments.
 
 Stateless noise functions (``add_gaussian_noise``, ``add_edge_flip_noise``, etc.)
-operate directly on adjacency matrices. Generator classes (``NoiseGenerator`` and
-subclasses) wrap these functions with optional state management and a uniform
-``add_noise(A, eps)`` interface for experimental configuration.
+operate directly on adjacency matrices. Definition classes (``NoiseDefinition``
+and subclasses) wrap these functions with optional state management and two
+interfaces:
+
+- ``add_noise(A, eps)`` operates on raw adjacency tensors (legacy, still
+  supported).
+- ``apply_noise(data, noise_level)`` operates on ``GraphData`` and is the
+  canonical interface going forward.
 """
 
 # pyright: reportConstantRedefinition=false
 # Uppercase single-letter variables (A, V, R) follow standard math notation
 # and are intentionally reassigned within functions.
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from typing import Any
 
 import numpy as np
 import torch
@@ -69,11 +77,11 @@ def add_rotation_noise(
     A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
     skew = skew.to(device=A.device, dtype=A.dtype)
 
-    # Reshape eps for broadcasting: scalar → unchanged, (bs,) → (bs, 1, 1)
+    # Reshape eps for broadcasting: scalar -> unchanged, (bs,) -> (bs, 1, 1)
     if isinstance(eps, Tensor):
         eps = eps.to(device=A.device, dtype=A.dtype).reshape(-1, 1, 1)
 
-    # Batched matrix exponential: eps * skew → (bs, n, n) or (n, n)
+    # Batched matrix exponential: eps * skew -> (bs, n, n) or (n, n)
     R = torch.linalg.matrix_exp(eps * skew)
 
     eigenvalues, V = torch.linalg.eigh(A)
@@ -141,8 +149,8 @@ def add_logit_noise(
     natural bounds for the resulting noisy adjacency values. The transformation
     pipeline is:
 
-        A ∈ {0,1}  →  clamp to [ε, 1-ε]  →  logit: L = log(A/(1-A))
-            →  L_noisy = L + N(0, σ²)  →  sigmoid: P = 1/(1+e^{-L_noisy})
+        A in {0,1}  ->  clamp to [eps, 1-eps]  ->  logit: L = log(A/(1-A))
+            ->  L_noisy = L + N(0, sigma^2)  ->  sigmoid: P = 1/(1+e^{-L_noisy})
 
     Parameters
     ----------
@@ -268,7 +276,7 @@ def add_edge_flip_noise(
     """
     A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
 
-    # Reshape p for broadcasting: (bs,) → (bs, 1, 1)
+    # Reshape p for broadcasting: (bs,) -> (bs, 1, 1)
     if isinstance(p, Tensor):
         p = p.to(device=A.device, dtype=A.dtype).reshape(-1, 1, 1)
 
@@ -307,19 +315,27 @@ def add_edge_flip_noise(
 
 
 # ---------------------------------------------------------------------------
-# Noise generator classes
+# Noise definition classes
 # ---------------------------------------------------------------------------
 
 
-class NoiseGenerator(ABC):
-    """Abstract base class for noise generators.
+class NoiseDefinition(ABC):
+    """Abstract base class for noise definitions.
 
-    NoiseGenerator operates on raw adjacency matrices and is used directly by
-    SingleStepDenoisingModule for single-step denoising. For multi-step
-    diffusion, ContinuousNoiseProcess (in tmgg.diffusion.noise_process) wraps a
-    NoiseGenerator with a NoiseSchedule to handle timestep-to-noise-level
-    conversion and posterior computation. CategoricalNoiseProcess uses a
-    separate TransitionModel hierarchy instead.
+    A ``NoiseDefinition`` describes the mathematical noise transformation
+    applied to graphs. Subclasses implement two interfaces:
+
+    - ``add_noise(A, eps)`` operates on raw adjacency tensors.
+    - ``apply_noise(data, noise_level)`` operates on ``GraphData`` and is the
+      canonical interface for new code.
+
+    For single-step denoising, ``SingleStepDenoisingModule`` uses the noise
+    definition directly. For multi-step diffusion,
+    ``ContinuousNoiseProcess`` (in ``tmgg.diffusion.noise_process``) wraps a
+    ``NoiseDefinition`` with a ``NoiseSchedule`` to handle
+    timestep-to-noise-level conversion and posterior computation.
+    ``CategoricalNoiseProcess`` uses a separate ``TransitionModel`` hierarchy
+    instead.
     """
 
     @abstractmethod
@@ -338,11 +354,11 @@ class NoiseGenerator(ABC):
             ============== ========================= ================
             Subclass       Interpretation            Typical range
             ============== ========================= ================
-            Gaussian       Additive std dev          (0, ∞), e.g. 0.1–1.0
+            Gaussian       Additive std dev          (0, inf), e.g. 0.1-1.0
             EdgeFlip       Per-edge flip probability [0, 1]
-            Digress        ``1 − ᾱ`` schedule param  [0, 1]
-            Logit          Logit-space std dev       (0, ∞), e.g. 0.5–5.0
-            Rotation       Rotation angle scaling    (0, ∞), e.g. 0.1–1.0
+            Digress        ``1 - alpha_bar``         [0, 1]
+            Logit          Logit-space std dev       (0, inf), e.g. 0.5-5.0
+            Rotation       Rotation angle scaling    (0, inf), e.g. 0.1-1.0
             ============== ========================= ================
 
             All subclasses treat ``eps = 0`` as no noise (identity).
@@ -354,63 +370,129 @@ class NoiseGenerator(ABC):
         """
         pass
 
+    def apply_noise(self, data: Any, noise_level: float | Tensor) -> Any:
+        """Apply noise to a ``GraphData`` instance.
+
+        Extracts the adjacency from *data*, applies noise via ``add_noise``,
+        and wraps the result back into ``GraphData``. This is the canonical
+        interface for new code; ``add_noise`` remains for callers that work
+        with raw tensors.
+
+        Parameters
+        ----------
+        data : GraphData
+            Input graph data. Typed as ``Any`` to avoid a circular tach
+            dependency (``tmgg.utils.noising`` cannot depend on ``tmgg.data``),
+            but must be a ``GraphData`` instance at runtime.
+        noise_level
+            Noise intensity (same semantics as *eps* in ``add_noise``).
+
+        Returns
+        -------
+        GraphData
+            Noised graph data.
+        """
+        adj = data.to_adjacency()
+        noisy = self.add_noise(adj, noise_level)
+        return type(data).from_adjacency(noisy)
+
     @property
     @abstractmethod
     def requires_state(self) -> bool:
-        """Whether this noise generator maintains internal state."""
+        """Whether this noise definition maintains internal state."""
         pass
 
 
-class GaussianNoiseGenerator(NoiseGenerator):
-    """Gaussian noise generator (stateless)."""
+class GaussianNoise(NoiseDefinition):
+    """Gaussian noise definition (stateless).
+
+    Adds symmetric Gaussian noise to adjacency matrices. Each
+    upper-triangular entry receives independent N(0, eps^2) noise,
+    mirrored to the lower triangle.
+    """
+
+    @staticmethod
+    def add_gaussian_noise(
+        A: torch.Tensor | np.ndarray,
+        eps: float | Tensor,
+        generator: torch.Generator | None = None,
+    ) -> torch.Tensor:
+        """Add symmetric Gaussian noise to adjacency matrix.
+
+        See module-level ``add_gaussian_noise`` for full documentation.
+        """
+        return add_gaussian_noise(A, eps, generator=generator)
 
     def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Add symmetric Gaussian noise with std dev ``eps``."""
-        return add_gaussian_noise(A, eps)
+        return self.add_gaussian_noise(A, eps)
 
     @property
     def requires_state(self) -> bool:
         return False
 
 
-class EdgeFlipNoiseGenerator(NoiseGenerator):
-    """Symmetric Bernoulli edge-flip noise generator (stateless)."""
+class EdgeFlipNoise(NoiseDefinition):
+    """Symmetric Bernoulli edge-flip noise definition (stateless)."""
+
+    @staticmethod
+    def add_edge_flip_noise(
+        A: torch.Tensor | np.ndarray,
+        p: float | Tensor,
+        generator: torch.Generator | None = None,
+    ) -> torch.Tensor:
+        """Flip edges with probability p (symmetric Bernoulli noise).
+
+        See module-level ``add_edge_flip_noise`` for full documentation.
+        """
+        return add_edge_flip_noise(A, p, generator=generator)
 
     def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Flip edges with probability eps."""
-        return add_edge_flip_noise(A, eps)
+        return self.add_edge_flip_noise(A, eps)
 
     @property
     def requires_state(self) -> bool:
         return False
 
 
-class DigressNoiseGenerator(NoiseGenerator):
-    """DiGress categorical noise generator (Vignac et al. 2023).
+class DigressNoise(NoiseDefinition):
+    """DiGress categorical noise definition (Vignac et al. 2023).
 
     Implements the forward diffusion process from DiGress for binary
-    adjacency matrices. The eps parameter from the NoiseGenerator interface
+    adjacency matrices. The eps parameter from the NoiseDefinition interface
     is converted to alpha_bar = 1 - eps before applying noise:
     - eps=0 -> alpha_bar=1 -> no noise (clean)
     - eps=1 -> alpha_bar=0 -> fully random (uniform)
 
-    At a given eps, this produces half the flip rate of EdgeFlipNoiseGenerator,
+    At a given eps, this produces half the flip rate of EdgeFlipNoise,
     because DiGress models noise as a categorical transition where the maximum
     flip probability (at alpha_bar=0) is 0.5, not 1.0.
     """
 
+    @staticmethod
+    def add_digress_noise(
+        A: torch.Tensor | np.ndarray,
+        alpha_bar: float | Tensor,
+    ) -> torch.Tensor:
+        """Apply DiGress-style categorical noise to a binary adjacency matrix.
+
+        See module-level ``add_digress_noise`` for full documentation.
+        """
+        return add_digress_noise(A, alpha_bar=alpha_bar)
+
     def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Apply DiGress categorical noise with ``alpha_bar = 1 - eps``."""
         alpha_bar = 1.0 - eps
-        return add_digress_noise(A, alpha_bar=alpha_bar)
+        return self.add_digress_noise(A, alpha_bar=alpha_bar)
 
     @property
     def requires_state(self) -> bool:
         return False
 
 
-class RotationNoiseGenerator(NoiseGenerator):
-    """Rotation noise generator with skew matrix management.
+class RotationNoise(NoiseDefinition):
+    """Rotation noise definition with skew matrix management.
 
     Maintains a skew-symmetric matrix used to rotate eigenvectors,
     providing a consistent rotation throughout the experiment.
@@ -419,12 +501,12 @@ class RotationNoiseGenerator(NoiseGenerator):
     -----
     The skew matrix dimension is fixed at construction and must match
     the input graph size exactly. Variable-size graphs or padded batches
-    will raise a dimension error. Create separate generators for each
-    graph size, or use ``GaussianNoiseGenerator`` for variable-size inputs.
+    will raise a dimension error. Create separate definitions for each
+    graph size, or use ``GaussianNoise`` for variable-size inputs.
 
     Unlike other noise types (Gaussian, edge_flip, DiGress) which produce
     valid binary adjacency matrices, rotation noise produces
-    continuous-valued matrices via ``V_rot @ diag(λ) @ V_rot^T``.
+    continuous-valued matrices via ``V_rot @ diag(lambda) @ V_rot^T``.
     Downstream thresholding or rounding is the caller's responsibility.
     """
 
@@ -440,38 +522,48 @@ class RotationNoiseGenerator(NoiseGenerator):
         skew = (A - A.T) / 2
         return torch.tensor(skew, dtype=torch.float32)
 
+    @staticmethod
+    def add_rotation_noise(
+        A: torch.Tensor | np.ndarray, eps: float | Tensor, skew: Tensor
+    ) -> torch.Tensor:
+        """Add rotation noise to an adjacency matrix by rotating eigenvectors.
+
+        See module-level ``add_rotation_noise`` for full documentation.
+        """
+        return add_rotation_noise(A, eps, skew)
+
     def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Rotate eigenvectors by ``expm(eps * skew)``; ``eps`` scales the angle."""
         if A.shape[-1] != self.skew.shape[0]:
             raise ValueError(
                 f"Graph dimension {A.shape[-1]} != skew matrix dimension "
-                f"{self.skew.shape[0]}. RotationNoiseGenerator was created "
+                f"{self.skew.shape[0]}. RotationNoise was created "
                 f"with k={self.skew.shape[0]}."
             )
-        return add_rotation_noise(A, eps, self.skew)
+        return self.add_rotation_noise(A, eps, self.skew)
 
     @property
     def requires_state(self) -> bool:
         return True
 
     def get_config(self) -> dict[str, int | None]:
-        """Get configuration for this generator."""
+        """Get configuration for this noise definition."""
         return {
             "k": self.k,
             "seed": self.seed,
         }
 
 
-class LogitNoiseGenerator(NoiseGenerator):
-    """Logit-space noise generator.
+class LogitNoise(NoiseDefinition):
+    """Logit-space noise definition.
 
-    This generator operates in the log-odds space, providing naturally bounded
-    outputs. The noise is added in logit space and transformed back via sigmoid,
+    Operates in the log-odds space, providing naturally bounded outputs.
+    Noise is added in logit space and transformed back via sigmoid,
     ensuring outputs remain in (0, 1).
 
     Note: This noise type is experimental and not yet used in standard sweeps.
-    The eps parameter for this generator represents the standard deviation in
-    logit space, not a flip probability. Typical values range from 0.5 to 5.0.
+    The eps parameter represents the standard deviation in logit space, not a
+    flip probability. Typical values range from 0.5 to 5.0.
 
     Parameters
     ----------
@@ -486,6 +578,18 @@ class LogitNoiseGenerator(NoiseGenerator):
 
     def __init__(self, clamp_eps: float = 1e-6):
         self.clamp_eps = clamp_eps
+
+    @staticmethod
+    def add_logit_noise(
+        A: torch.Tensor | np.ndarray,
+        sigma: float | Tensor,
+        clamp_eps: float = 1e-6,
+    ) -> torch.Tensor:
+        """Add Gaussian noise in logit space, returning soft adjacency in (0, 1).
+
+        See module-level ``add_logit_noise`` for full documentation.
+        """
+        return add_logit_noise(A, sigma=sigma, clamp_eps=clamp_eps)
 
     def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Add noise in logit space.
@@ -504,44 +608,63 @@ class LogitNoiseGenerator(NoiseGenerator):
         torch.Tensor
             Noisy adjacency with values in (0, 1).
         """
-        return add_logit_noise(A, sigma=eps, clamp_eps=self.clamp_eps)
+        return self.add_logit_noise(A, sigma=eps, clamp_eps=self.clamp_eps)
 
     @property
     def requires_state(self) -> bool:
         return False
 
 
-def create_noise_generator(
-    noise_type: str, rotation_k: int | None = None, seed: int | None = None, **kwargs
-) -> NoiseGenerator:
-    """
-    Factory function to create noise generators.
+# ---------------------------------------------------------------------------
+# Factory function
+# ---------------------------------------------------------------------------
 
-    Args:
-        noise_type: Type of noise ("gaussian", "edge_flip", "digress", "rotation", or "logit")
-        rotation_k: Dimension for rotation noise skew matrix
-        seed: Random seed for reproducible noise generation
-        **kwargs: Additional arguments (for future extensibility)
-            - clamp_eps: For logit noise, epsilon for numerical stability (default 1e-6)
 
-    Returns:
-        NoiseGenerator instance
+def create_noise_definition(
+    noise_type: str,
+    rotation_k: int | None = None,
+    seed: int | None = None,
+    **kwargs: float,
+) -> NoiseDefinition:
+    """Factory function to create noise definitions.
 
-    Raises:
-        ValueError: If noise_type is unknown or required parameters are missing
+    Parameters
+    ----------
+    noise_type
+        Type of noise: ``"gaussian"``, ``"edge_flip"``, ``"digress"``,
+        ``"rotation"``, or ``"logit"``.
+    rotation_k
+        Dimension for rotation noise skew matrix (required when
+        ``noise_type="rotation"``).
+    seed
+        Random seed for reproducible noise generation.
+    **kwargs
+        Additional keyword arguments.
+
+        - ``clamp_eps``: For logit noise, epsilon for numerical stability
+          (default 1e-6).
+
+    Returns
+    -------
+    NoiseDefinition
+
+    Raises
+    ------
+    ValueError
+        If *noise_type* is unknown or required parameters are missing.
     """
     if noise_type == "gaussian":
-        return GaussianNoiseGenerator()
+        return GaussianNoise()
     elif noise_type == "edge_flip":
-        return EdgeFlipNoiseGenerator()
+        return EdgeFlipNoise()
     elif noise_type == "digress":
-        return DigressNoiseGenerator()
+        return DigressNoise()
     elif noise_type == "rotation":
         if rotation_k is None:
             raise ValueError("rotation_k parameter is required for rotation noise")
-        return RotationNoiseGenerator(k=rotation_k, seed=seed)
+        return RotationNoise(k=rotation_k, seed=seed)
     elif noise_type == "logit":
         clamp_eps = kwargs.get("clamp_eps", 1e-6)
-        return LogitNoiseGenerator(clamp_eps=clamp_eps)
+        return LogitNoise(clamp_eps=clamp_eps)
     else:
         raise ValueError(f"Unknown noise type: {noise_type}")

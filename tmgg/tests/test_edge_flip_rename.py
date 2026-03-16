@@ -7,32 +7,28 @@ def test_edge_flip_function_exists():
     assert callable(add_edge_flip_noise)
 
 
-def test_edge_flip_generator_exists():
+def test_edge_flip_definition_exists():
     from tmgg.utils.noising.noise import (
-        EdgeFlipNoiseGenerator,
+        EdgeFlipNoise,
     )
 
-    assert EdgeFlipNoiseGenerator is not None
+    assert EdgeFlipNoise is not None
 
 
 def test_factory_creates_edge_flip():
     from tmgg.utils.noising.noise import (
-        create_noise_generator,
+        create_noise_definition,
     )
 
-    gen = create_noise_generator("edge_flip")
+    gen = create_noise_definition("edge_flip")
     assert gen is not None
 
 
 def test_factory_digress_still_works():
-    """Existing 'digress' key must still work (backward compat).
-
-    After Task 3b this will return the correct DigressNoiseGenerator,
-    but for now it returns EdgeFlipNoiseGenerator.
-    """
+    """Existing 'digress' key must still work (backward compat)."""
     from tmgg.utils.noising.noise import (
-        create_noise_generator,
+        create_noise_definition,
     )
 
-    gen = create_noise_generator("digress")
+    gen = create_noise_definition("digress")
     assert gen is not None

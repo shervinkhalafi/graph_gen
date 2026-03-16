@@ -42,7 +42,7 @@ from tmgg.models.base import GraphModel
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
-from tmgg.utils.noising.noise import NoiseGenerator, create_noise_generator
+from tmgg.utils.noising.noise import NoiseDefinition, create_noise_definition
 
 
 class SingleStepDenoisingModule(DiffusionModule):
@@ -117,8 +117,8 @@ class SingleStepDenoisingModule(DiffusionModule):
         # Distributional evaluation
         evaluator: GraphEvaluator | None = None,
     ) -> None:
-        # Build the noise generator and wrap it in a ContinuousNoiseProcess
-        noise_generator: NoiseGenerator = create_noise_generator(
+        # Build the noise definition and wrap it in a ContinuousNoiseProcess
+        noise_generator: NoiseDefinition = create_noise_definition(
             noise_type=noise_type, rotation_k=rotation_k, seed=seed
         )
         # T=1 schedule -- the parent's training_step is overridden anyway,
@@ -146,7 +146,6 @@ class SingleStepDenoisingModule(DiffusionModule):
         self.noise_type: str = noise_type
         self._noise_levels_override: list[float] | None = noise_levels
         self._eval_noise_levels_override: list[float] | None = eval_noise_levels
-        self.noise_generator: NoiseGenerator = noise_generator
 
         # Spectral delta logging
         self.spectral_k: int = spectral_k
@@ -268,11 +267,11 @@ class SingleStepDenoisingModule(DiffusionModule):
         # Sample noise level randomly from training noise levels
         eps: float = float(self._noise_rng.choice(self.noise_levels))
 
-        # Apply noise
-        batch_noisy: torch.Tensor = self.noise_generator.add_noise(adj, eps)
+        # Apply noise via unified NoiseProcess interface
+        noisy_gd: GraphData = self.noise_process.apply(batch, noise_level=eps)
 
         # Forward pass: returns edge logits via GraphData bridge
-        output: torch.Tensor = self.forward(batch_noisy)
+        output: torch.Tensor = self.forward(noisy_gd.to_adjacency())
 
         loss: torch.Tensor = self.criterion(output, adj)
 
@@ -320,7 +319,8 @@ class SingleStepDenoisingModule(DiffusionModule):
         N: int = len(self.eval_noise_levels)
 
         for eps in self.eval_noise_levels:
-            batch_noisy: torch.Tensor = self.noise_generator.add_noise(adj, eps)
+            noisy_gd: GraphData = self.noise_process.apply(batch, noise_level=eps)
+            batch_noisy: torch.Tensor = noisy_gd.to_adjacency()
             output: torch.Tensor = self.forward(batch_noisy)
             mode_loss: torch.Tensor = self.criterion(output, target)
 
@@ -490,10 +490,12 @@ class SingleStepDenoisingModule(DiffusionModule):
 
         all_results: dict[float, dict[str, float | None]] = {}
 
+        ref_gd = GraphData.from_adjacency(ref_adjs)
+
         with torch.no_grad():
             for eps in self.eval_noise_levels:
-                noisy = self.noise_generator.add_noise(ref_adjs, eps)
-                output = self.forward(noisy)
+                noisy_gd = self.noise_process.apply(ref_gd, noise_level=eps)
+                output = self.forward(noisy_gd.to_adjacency())
                 predictions = (output > 0).float()
                 predictions = self._zero_diagonal(predictions)
 

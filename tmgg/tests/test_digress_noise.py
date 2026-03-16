@@ -96,8 +96,8 @@ class TestDigressNoise:
         assert "alpha_bar" in params, f"Expected alpha_bar parameter, got {params}"
         assert "p" not in params, "Should use alpha_bar, not raw flip probability p"
 
-    def test_generator_converts_eps_to_alpha_bar(self):
-        """DigressNoiseGenerator.add_noise(A, eps) must convert eps to alpha_bar.
+    def test_definition_converts_eps_to_alpha_bar(self):
+        """DigressNoise.add_noise(A, eps) must convert eps to alpha_bar.
 
         eps=0 -> alpha_bar=1 (clean)
         eps=1 -> alpha_bar=0 (fully noisy)
@@ -105,11 +105,11 @@ class TestDigressNoise:
         import torch
 
         from tmgg.utils.noising.noise import (
-            create_noise_generator,
+            create_noise_definition,
         )
 
         torch.manual_seed(42)
-        gen = create_noise_generator("digress")
+        gen = create_noise_definition("digress")
 
         # eps=0 should produce clean output
         A = torch.zeros(10, 10)
@@ -119,16 +119,16 @@ class TestDigressNoise:
 
     def test_factory_creates_digress(self):
         from tmgg.utils.noising.noise import (
-            create_noise_generator,
+            create_noise_definition,
         )
 
-        gen = create_noise_generator("digress")
-        assert type(gen).__name__ == "DigressNoiseGenerator"
+        gen = create_noise_definition("digress")
+        assert type(gen).__name__ == "DigressNoise"
 
     def test_factory_edge_flip_still_works(self):
         from tmgg.utils.noising.noise import (
-            create_noise_generator,
+            create_noise_definition,
         )
 
-        gen = create_noise_generator("edge_flip")
-        assert type(gen).__name__ == "EdgeFlipNoiseGenerator"
+        gen = create_noise_definition("edge_flip")
+        assert type(gen).__name__ == "EdgeFlipNoise"

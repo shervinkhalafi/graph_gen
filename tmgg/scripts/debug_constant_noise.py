@@ -43,7 +43,6 @@ from tmgg.models.spectral_denoisers import (
     LinearPE,
     SelfAttentionDenoiser,
 )
-from tmgg.training import DebugCallback
 from tmgg.utils.noising import add_digress_noise
 
 
@@ -89,7 +88,11 @@ class DebugLightningModule(pl.LightningModule):
         self, batch: torch.Tensor, batch_idx: int
     ) -> dict[str, torch.Tensor]:
         # Add constant noise
-        batch_noisy = add_digress_noise(batch, p=self.eps) if self.eps > 0 else batch
+        batch_noisy = (
+            add_digress_noise(batch, alpha_bar=1.0 - self.eps)
+            if self.eps > 0
+            else batch
+        )
 
         # Forward pass
         logits = self(batch_noisy)
@@ -114,7 +117,11 @@ class DebugLightningModule(pl.LightningModule):
         return {"loss": loss, "logits": logits}
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
-        batch_noisy = add_digress_noise(batch, p=self.eps) if self.eps > 0 else batch
+        batch_noisy = (
+            add_digress_noise(batch, alpha_bar=1.0 - self.eps)
+            if self.eps > 0
+            else batch
+        )
 
         logits = self(batch_noisy)
         loss = F.binary_cross_entropy_with_logits(logits, batch)
@@ -186,19 +193,22 @@ def run_debug_experiment(
     val_data = torch.stack(val_graphs)
 
     train_loader = torch.utils.data.DataLoader(
-        train_data, batch_size=batch_size, shuffle=True
+        train_data,  # pyright: ignore[reportArgumentType]
+        batch_size=batch_size,
+        shuffle=True,
     )
-    val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size)
+    val_loader = torch.utils.data.DataLoader(
+        val_data,  # pyright: ignore[reportArgumentType]
+        batch_size=batch_size,
+    )
 
-    # Create trainer with debug callback
+    # Create trainer
     logger = TensorBoardLogger("debug_logs", name=f"{model_type}_eps{eps}")
-    debug_callback = DebugCallback(log_interval=10)
 
     trainer = pl.Trainer(
         max_steps=max_steps,
         accelerator="auto",
         logger=logger,
-        callbacks=[debug_callback],
         enable_progress_bar=True,
         log_every_n_steps=10,
         val_check_interval=100,
@@ -212,7 +222,9 @@ def run_debug_experiment(
     _ = pl_module.eval()
     with torch.no_grad():
         sample = val_data[:4]
-        sample_noisy = add_digress_noise(sample, p=eps) if eps > 0 else sample
+        sample_noisy = (
+            add_digress_noise(sample, alpha_bar=1.0 - eps) if eps > 0 else sample
+        )
 
         logits = pl_module(sample_noisy)
         probs = torch.sigmoid(logits)

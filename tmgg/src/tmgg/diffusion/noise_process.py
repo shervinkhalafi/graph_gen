@@ -3,11 +3,11 @@
 Provides ``NoiseProcess`` as the abstract base (``ABC + nn.Module``), with two
 concrete implementations:
 
-- ``ContinuousNoiseProcess`` wraps existing ``NoiseGenerator`` subclasses and
+- ``ContinuousNoiseProcess`` wraps existing ``NoiseDefinition`` subclasses and
   operates on adjacency-based graph representations.
-- ``CategoricalNoiseProcess`` wraps existing transition models
-  (``DiscreteUniformTransition``, ``MarginalUniformTransition``) and operates
-  on one-hot categorical features via transition matrices.
+- ``CategoricalNoiseProcess`` wraps a ``CategoricalNoiseDefinition`` (which
+  itself wraps a ``TransitionModel``) and operates on one-hot categorical
+  features via transition matrices.
 
 Both expose the same ``apply``/``get_posterior`` interface, allowing the
 training loop to be agnostic to the noise type. All subclasses are
@@ -19,6 +19,7 @@ training loop to be agnostic to the noise type. All subclasses are
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -28,16 +29,16 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from tmgg.data.datasets.graph_types import GraphData
+from tmgg.diffusion.categorical_noise import CategoricalNoiseDefinition
 from tmgg.diffusion.protocols import TransitionModel
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.utils.noising.noise import NoiseGenerator
+from tmgg.utils.noising.noise import NoiseDefinition
 
 from .diffusion_math import sum_except_batch
 from .diffusion_sampling import (
     compute_posterior_distribution,
     mask_distributions,
     posterior_distributions,
-    sample_discrete_features,
 )
 
 
@@ -48,6 +49,11 @@ class NoiseProcess(ABC, nn.Module):
     reverse posterior computation (``get_posterior``) for a specific noise
     parameterisation (continuous or categorical).
 
+    The ``apply`` method accepts either an integer timestep ``t_int`` (which
+    is converted to a noise level via the schedule) or a direct
+    ``noise_level`` keyword argument (which bypasses the schedule). Exactly
+    one must be provided.
+
     Extends both ``ABC`` and ``nn.Module`` so that submodules (noise
     schedules, transition models) propagate device and state_dict
     automatically.
@@ -56,23 +62,83 @@ class NoiseProcess(ABC, nn.Module):
     def __init__(self) -> None:
         super().__init__()
 
-    @abstractmethod
-    def apply(self, data: GraphData, t: Tensor) -> GraphData:
-        """Apply forward diffusion noise at timestep ``t``.
+    def apply(
+        self,
+        data: GraphData,
+        t_int: Tensor | None = None,
+        *,
+        noise_level: Tensor | float | None = None,
+    ) -> GraphData:
+        """Apply forward diffusion noise.
+
+        Exactly one of *t_int* or *noise_level* must be provided.
 
         Parameters
         ----------
         data
             Clean (or partially noised) graph data.
-        t
-            Integer timestep indices, shape ``(bs,)``. Both continuous and
-            categorical subclasses convert internally to whatever their
-            generator needs.
+        t_int
+            Integer timestep indices, shape ``(bs,)``. Converted to a
+            noise level via the schedule before applying noise.
+        noise_level
+            Direct noise level, bypassing the schedule. Interpretation
+            depends on the subclass (e.g. ``1 - alpha_bar`` for
+            continuous, ``alpha_bar`` for categorical).
 
         Returns
         -------
         GraphData
             Noised graph data with the same tensor shapes as *data*.
+
+        Raises
+        ------
+        ValueError
+            If both or neither of *t_int* and *noise_level* are provided.
+        """
+        if (t_int is None) == (noise_level is None):
+            raise ValueError(
+                "Provide exactly one of t_int or noise_level, "
+                f"got t_int={'provided' if t_int is not None else 'None'}, "
+                f"noise_level={'provided' if noise_level is not None else 'None'}"
+            )
+
+        if t_int is not None:
+            noise_level = self._schedule_to_level(t_int)
+
+        assert noise_level is not None  # narrowed by the guard above
+        return self._apply_noise(data, noise_level)
+
+    @abstractmethod
+    def _schedule_to_level(self, t_int: Tensor) -> Tensor:
+        """Convert integer timesteps to noise levels via the schedule.
+
+        Parameters
+        ----------
+        t_int
+            Integer timestep indices, shape ``(bs,)``.
+
+        Returns
+        -------
+        Tensor
+            Noise level values, shape ``(bs,)``.
+        """
+        ...
+
+    @abstractmethod
+    def _apply_noise(self, data: GraphData, noise_level: Tensor | float) -> GraphData:
+        """Apply noise at the given level (internal dispatch target).
+
+        Parameters
+        ----------
+        data
+            Graph data to noise.
+        noise_level
+            Noise intensity whose interpretation varies by subclass.
+
+        Returns
+        -------
+        GraphData
+            Noised graph data.
         """
         ...
 
@@ -104,25 +170,25 @@ class NoiseProcess(ABC, nn.Module):
 
 
 class ContinuousNoiseProcess(NoiseProcess):
-    """Wraps a ``NoiseGenerator`` to produce the ``NoiseProcess`` interface.
+    """Wraps a ``NoiseDefinition`` to produce the ``NoiseProcess`` interface.
 
-    Wraps a NoiseGenerator (from tmgg.utils.noising) with a NoiseSchedule to
+    Wraps a NoiseDefinition (from tmgg.utils.noising) with a NoiseSchedule to
     bridge stateless noise functions into the diffusion training loop. The
-    generator only sees the final noise level; this class handles timestep
+    definition only sees the final noise level; this class handles timestep
     conversion and posterior computation.
 
     The forward process extracts the adjacency from ``GraphData``, delegates
-    to the wrapped generator's ``add_noise``, and converts back. The timestep
+    to the wrapped definition's ``add_noise``, and converts back. The timestep
     ``t`` is an integer index into the noise schedule; the noise process
     converts it to a noise level via ``get_noise_level()`` before passing
-    to the generator.
+    to the definition.
 
     Parameters
     ----------
     generator
-        An existing ``NoiseGenerator`` instance (Gaussian, EdgeFlip,
-        DiGress, Logit, etc.).  Not an ``nn.Module`` — stored as a plain
-        attribute.
+        An existing ``NoiseDefinition`` instance (GaussianNoise, EdgeFlipNoise,
+        DigressNoise, LogitNoise, etc.).  Not an ``nn.Module`` -- stored as a
+        plain attribute. Also accessible as ``definition`` (preferred name).
     noise_schedule
         A ``NoiseSchedule`` used by ``get_posterior`` to look up
         ``alpha_bar`` at integer timesteps.  Registered as an ``nn.Module``
@@ -130,31 +196,35 @@ class ContinuousNoiseProcess(NoiseProcess):
     """
 
     def __init__(
-        self, generator: NoiseGenerator, noise_schedule: NoiseSchedule
+        self, generator: NoiseDefinition, noise_schedule: NoiseSchedule
     ) -> None:
         super().__init__()
-        self.generator = generator
+        self.definition = generator
         self.noise_schedule = noise_schedule  # nn.Module — auto-registered
 
-    def apply(self, data: GraphData, t: Tensor) -> GraphData:
-        """Apply continuous noise via the wrapped generator.
+    @property
+    def generator(self) -> NoiseDefinition:
+        """Deprecated alias for ``definition``.
 
-        Parameters
-        ----------
-        data
-            Batched ``GraphData`` with categorical edge features.
-        t
-            Integer timestep indices, shape ``(bs,)``. Converted to noise
-            levels via the schedule before passing to the generator.
-
-        Returns
-        -------
-        GraphData
-            Noised graph data with the same shapes as *data*.
+        .. deprecated::
+            Use ``definition`` instead.
         """
+        warnings.warn(
+            "ContinuousNoiseProcess.generator is deprecated, "
+            "use .definition instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.definition
+
+    def _schedule_to_level(self, t_int: Tensor) -> Tensor:
+        """Convert timestep to noise level via ``1 - alpha_bar(t)``."""
+        return self.noise_schedule.get_noise_level(t_int)
+
+    def _apply_noise(self, data: GraphData, noise_level: Tensor | float) -> GraphData:
+        """Apply continuous noise via the wrapped definition."""
         adj = data.to_adjacency()  # (bs, n, n)
-        noise_levels = self.noise_schedule.get_noise_level(t)  # (bs,)
-        noisy_adj = self.generator.add_noise(adj, noise_levels)
+        noisy_adj = self.definition.add_noise(adj, noise_level)
         return GraphData.from_adjacency(noisy_adj)
 
     def get_posterior(
@@ -165,8 +235,8 @@ class ContinuousNoiseProcess(NoiseProcess):
 
         Implements the closed-form posterior from Ho et al., "Denoising
         Diffusion Probabilistic Models", NeurIPS 2020, Eq. 6-7
-        (arXiv:2006.11239).  With ``ᾱ_t = alpha_bar(t)``, ``ᾱ_s = alpha_bar(s)``,
-        and ``β_t = 1 - ᾱ_t / ᾱ_s``:
+        (arXiv:2006.11239).  With ``alpha_bar_t = alpha_bar(t)``, ``alpha_bar_s = alpha_bar(s)``,
+        and ``beta_t = 1 - alpha_bar_t / alpha_bar_s``:
 
         .. math::
 
@@ -201,7 +271,7 @@ class ContinuousNoiseProcess(NoiseProcess):
         alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t).view(-1, 1, 1)
         alpha_bar_s = self.noise_schedule.get_alpha_bar(t_int=s).view(-1, 1, 1)
 
-        # Single-step noise between s and t: β_t = 1 − ᾱ_t / ᾱ_s
+        # Single-step noise between s and t: beta_t = 1 - alpha_bar_t / alpha_bar_s
         beta_t = 1.0 - alpha_bar_t / alpha_bar_s.clamp(min=1e-8)
 
         # Denominators, clamped once for numerical safety.
@@ -230,17 +300,16 @@ class ContinuousNoiseProcess(NoiseProcess):
 
 
 class CategoricalNoiseProcess(NoiseProcess):
-    """Wraps discrete transition models for the ``NoiseProcess`` interface.
+    """Wraps a ``CategoricalNoiseDefinition`` for the ``NoiseProcess`` interface.
 
-    The transition model is injected directly rather than constructed
-    internally. Pass a fully-configured ``DiscreteUniformTransition`` or
-    ``MarginalUniformTransition`` at construction time, or defer by
-    passing ``None`` and calling ``set_transition_model()`` before first
-    use.
+    Combines a ``CategoricalNoiseDefinition`` (which handles the transition
+    matrix math) with a ``NoiseSchedule`` (which maps timesteps to alpha_bar
+    values). The transition model is injected into the definition, either at
+    construction or deferred via ``set_transition_model()``.
 
-    **Why ``None`` is allowed:** ``MarginalUniformTransition`` requires
+    **Why deferred injection:** ``MarginalUniformTransition`` requires
     empirical class marginals from the dataset, but in Lightning's
-    lifecycle the noise process is created in ``__init__`` — before the
+    lifecycle the noise process is created in ``__init__`` -- before the
     datamodule is attached.  ``DiffusionModule.setup()`` bridges this
     gap: it reads marginals from the datamodule and injects the
     transition model via ``set_transition_model()``.  Calling any method
@@ -262,7 +331,7 @@ class CategoricalNoiseProcess(NoiseProcess):
         An already-constructed transition model, or ``None`` to defer.
         If ``None``, ``set_transition_model()`` **must** be called before
         ``apply``, ``get_posterior``, or any other method that touches the
-        transition model — otherwise those methods raise ``RuntimeError``.
+        transition model -- otherwise those methods raise ``RuntimeError``.
     """
 
     def __init__(
@@ -276,15 +345,44 @@ class CategoricalNoiseProcess(NoiseProcess):
         super().__init__()
 
         self.noise_schedule = noise_schedule  # nn.Module — auto-registered
-        self.x_classes = x_classes
-        self.e_classes = e_classes
+        self.definition = CategoricalNoiseDefinition(
+            x_classes=x_classes,
+            e_classes=e_classes,
+            # Don't pass transition_model here; validate via set_transition_model
+        )
         self.y_classes = y_classes
 
-        # Store as nn.Module attribute so PyTorch tracks it as a submodule
-        # when it's not None (nn.Module.__setattr__ detects Module instances).
-        self._transition_model: TransitionModel | None = None
         if transition_model is not None:
             self.set_transition_model(transition_model)
+
+    # -- Delegated properties ------------------------------------------------
+
+    @property
+    def _transition_model(self) -> TransitionModel | None:
+        """Access to the underlying transition model (may be None).
+
+        Delegates to ``definition._transition_model``. Prefer the
+        validated ``transition_model`` property for normal use.
+        """
+        return self.definition._transition_model
+
+    @property
+    def x_classes(self) -> int:
+        """Number of node feature classes (delegates to definition)."""
+        return self.definition.x_classes
+
+    @property
+    def e_classes(self) -> int:
+        """Number of edge feature classes (delegates to definition)."""
+        return self.definition.e_classes
+
+    @property
+    def transition_model(self) -> TransitionModel:
+        """The active transition model (delegates to definition).
+
+        Raises ``RuntimeError`` if not yet set.
+        """
+        return self.definition.transition_model
 
     def set_transition_model(self, model: TransitionModel) -> None:
         """Set the transition model after construction.
@@ -298,80 +396,27 @@ class CategoricalNoiseProcess(NoiseProcess):
         model
             A fully-configured transition model.
         """
-        if not isinstance(model, TransitionModel):
-            raise TypeError(
-                f"Expected a TransitionModel (protocol requires get_Qt, "
-                f"get_Qt_bar, get_limit_dist), got {type(model).__name__}"
-            )
-        self._transition_model = model
+        self.definition.set_transition_model(model)
 
-    @property
-    def transition_model(self) -> TransitionModel:
-        """The active transition model. Raises RuntimeError if not yet set."""
-        if self._transition_model is None:
-            raise RuntimeError(
-                "Transition model not set. For uniform transitions, pass "
-                "transition_model=DiscreteUniformTransition(...) at construction. "
-                "For marginal transitions, DiffusionModule.setup() should call "
-                "set_transition_model() with a MarginalUniformTransition built "
-                "from the datamodule's marginals — if you see this error during "
-                "training, the setup() hook did not run or the datamodule has no "
-                "marginals."
-            )
-        assert self._transition_model is not None  # narrowed by guard above
-        return self._transition_model
+    # -- NoiseProcess interface ----------------------------------------------
 
-    def apply(self, data: GraphData, t: Tensor) -> GraphData:
-        """Apply categorical forward diffusion at integer timesteps.
+    def _schedule_to_level(self, t_int: Tensor) -> Tensor:
+        """Convert timestep to alpha_bar via the schedule.
 
-        Multiplies one-hot features by the cumulative transition matrix
-        ``Qt_bar(t)`` to get class probabilities, then samples discrete
-        features and converts back to one-hot encoding.
-
-        Parameters
-        ----------
-        data
-            One-hot encoded ``GraphData``, shapes ``(bs, n, dx)`` for X
-            and ``(bs, n, n, de)`` for E.
-        t
-            Integer timestep indices, shape ``(bs,)``.
-
-        Returns
-        -------
-        GraphData
-            Noised one-hot ``GraphData`` with the same shapes as *data*.
+        For categorical noise the "noise level" is ``alpha_bar`` itself
+        (not ``1 - alpha_bar``), since the transition matrices are
+        parameterised by signal retention.
         """
-        transition = self.transition_model
+        return self.noise_schedule.get_alpha_bar(t_int=t_int)
 
-        # Get alpha_bar at timestep t
-        alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t)  # (bs,)
+    def _apply_noise(self, data: GraphData, noise_level: Tensor | float) -> GraphData:
+        """Apply categorical forward noise at the given alpha_bar level.
 
-        # Cumulative transition matrices
-        Qtb = transition.get_Qt_bar(alpha_bar_t)
-
-        # Compute probabilities: one-hot @ transition matrix
-        # X: (bs, n, dx) @ (bs, dx, dx) -> (bs, n, dx)
-        prob_X = data.X.float() @ Qtb.X
-        # E: (bs, n, n, de) @ (bs, de, de) -> (bs, n, n, de)
-        # Need to broadcast: reshape E for matmul
-        bs, n, _, de = data.E.shape
-        E_flat = data.E.float().reshape(bs, n * n, de)  # (bs, n*n, de)
-        prob_E_flat = E_flat @ Qtb.E  # (bs, n*n, de)
-        prob_E = prob_E_flat.reshape(bs, n, n, de)  # (bs, n, n, de)
-
-        # Sample discrete features from the computed probabilities
-        sampled = sample_discrete_features(prob_X, prob_E, data.node_mask)
-
-        # Convert sampled indices to one-hot
-        X_t = F.one_hot(sampled.X.long(), num_classes=self.x_classes).float()
-        E_t = F.one_hot(sampled.E.long(), num_classes=self.e_classes).float()
-
-        return GraphData(
-            X=X_t,
-            E=E_t,
-            y=data.y,
-            node_mask=data.node_mask,
-        ).mask()
+        Delegates to ``CategoricalNoiseDefinition.apply_noise()``.
+        """
+        if isinstance(noise_level, int | float):
+            noise_level = torch.tensor([noise_level])
+        return self.definition.apply_noise(data, noise_level)
 
     def get_posterior(
         self, z_t: GraphData, z_0: GraphData, t: Tensor, s: Tensor

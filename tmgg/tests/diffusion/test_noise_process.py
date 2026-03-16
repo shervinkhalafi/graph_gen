@@ -4,7 +4,7 @@ Test rationale
 --------------
 The ``NoiseProcess`` hierarchy unifies two separate noise systems under a
 single abstract interface. ``ContinuousNoiseProcess`` wraps the existing
-``NoiseGenerator`` subclasses and operates on adjacency representations.
+``NoiseDefinition`` subclasses and operates on adjacency representations.
 ``CategoricalNoiseProcess`` wraps the existing ``DiscreteUniformTransition``
 and ``MarginalUniformTransition`` transition models and operates on one-hot
 categorical representations.
@@ -29,10 +29,10 @@ from tmgg.diffusion.noise_process import (
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.diffusion.transitions import DiscreteUniformTransition
 from tmgg.utils.noising.noise import (
-    DigressNoiseGenerator,
-    EdgeFlipNoiseGenerator,
-    GaussianNoiseGenerator,
-    LogitNoiseGenerator,
+    DigressNoise,
+    EdgeFlipNoise,
+    GaussianNoise,
+    LogitNoise,
 )
 
 # ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ class TestNoiseProcessABC:
     """Verify that both subclasses satisfy the NoiseProcess interface."""
 
     def test_continuous_is_noise_process(self, cosine_schedule: NoiseSchedule) -> None:
-        gen = GaussianNoiseGenerator()
+        gen = GaussianNoise()
         proc = ContinuousNoiseProcess(generator=gen, noise_schedule=cosine_schedule)
         assert isinstance(proc, NoiseProcess)
 
@@ -121,15 +121,15 @@ class TestNoiseProcessABC:
 
 
 class TestContinuousNoiseProcess:
-    """Tests for ContinuousNoiseProcess wrapping NoiseGenerator subclasses."""
+    """Tests for ContinuousNoiseProcess wrapping NoiseDefinition subclasses."""
 
     @pytest.mark.parametrize(
         "generator_cls",
         [
-            GaussianNoiseGenerator,
-            EdgeFlipNoiseGenerator,
-            DigressNoiseGenerator,
-            LogitNoiseGenerator,
+            GaussianNoise,
+            EdgeFlipNoise,
+            DigressNoise,
+            LogitNoise,
         ],
         ids=["gaussian", "edge_flip", "digress", "logit"],
     )
@@ -157,7 +157,7 @@ class TestContinuousNoiseProcess:
         cosine_schedule: NoiseSchedule,
     ) -> None:
         """At t=0, DiGress noise should produce no change (alpha_bar=1)."""
-        gen = DigressNoiseGenerator()
+        gen = DigressNoise()
         proc = ContinuousNoiseProcess(generator=gen, noise_schedule=cosine_schedule)
         t = torch.tensor([0, 0], dtype=torch.long)
         result = proc.apply(graph_data_from_adj, t)
@@ -172,7 +172,7 @@ class TestContinuousNoiseProcess:
         cosine_schedule: NoiseSchedule,
     ) -> None:
         """get_posterior returns a dict with 'mean' and 'std' of correct shape."""
-        gen = GaussianNoiseGenerator()
+        gen = GaussianNoise()
         proc = ContinuousNoiseProcess(generator=gen, noise_schedule=cosine_schedule)
         # Pass integer timesteps — the posterior uses the schedule to look up alpha_bar.
         t = torch.tensor([40, 40], dtype=torch.long)
@@ -202,7 +202,7 @@ class TestContinuousNoiseProcess:
         cosine = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=50)
         linear = NoiseSchedule(schedule_type="linear_ddpm", timesteps=50)
 
-        gen = GaussianNoiseGenerator()
+        gen = GaussianNoise()
         proc_cosine = ContinuousNoiseProcess(generator=gen, noise_schedule=cosine)
         proc_linear = ContinuousNoiseProcess(generator=gen, noise_schedule=linear)
 
@@ -234,7 +234,7 @@ class TestContinuousNoiseProcess:
         cosine_schedule: NoiseSchedule,
     ) -> None:
         """Edge features remain symmetric after applying noise."""
-        gen = GaussianNoiseGenerator()
+        gen = GaussianNoise()
         proc = ContinuousNoiseProcess(generator=gen, noise_schedule=cosine_schedule)
         t = torch.tensor([25, 25], dtype=torch.long)
         result = proc.apply(graph_data_from_adj, t)

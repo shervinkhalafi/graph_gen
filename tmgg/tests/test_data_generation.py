@@ -9,12 +9,12 @@ from tmgg.data import (
     generate_sbm_adjacency,
 )
 from tmgg.utils.noising import (
-    LogitNoiseGenerator,
+    LogitNoise,
     add_edge_flip_noise,
     add_gaussian_noise,
     add_logit_noise,
     add_rotation_noise,
-    create_noise_generator,
+    create_noise_definition,
     random_skew_symmetric_matrix,
 )
 
@@ -380,8 +380,8 @@ class TestLogitNoise:
         ).all(), "Output should be finite with custom eps"
 
     def test_logit_noise_generator_class(self):
-        """Test LogitNoiseGenerator wrapper class."""
-        generator = LogitNoiseGenerator(clamp_eps=1e-6)
+        """Test LogitNoise wrapper class."""
+        generator = LogitNoise(clamp_eps=1e-6)
 
         assert generator.requires_state is False
 
@@ -392,11 +392,11 @@ class TestLogitNoise:
         assert A_noisy.min() > 0 and A_noisy.max() < 1
         assert torch.allclose(A_noisy, A_noisy.T)
 
-    def test_create_noise_generator_logit(self):
-        """Test factory function creates LogitNoiseGenerator correctly."""
-        generator = create_noise_generator("logit")
+    def test_create_noise_definition_logit(self):
+        """Test factory function creates LogitNoise correctly."""
+        generator = create_noise_definition("logit")
 
-        assert isinstance(generator, LogitNoiseGenerator)
+        assert isinstance(generator, LogitNoise)
         assert generator.requires_state is False
 
         A = torch.eye(5)
@@ -404,11 +404,11 @@ class TestLogitNoise:
 
         assert A_noisy.min() > 0 and A_noisy.max() < 1
 
-    def test_create_noise_generator_logit_with_clamp_eps(self):
+    def test_create_noise_definition_logit_with_clamp_eps(self):
         """Test factory function respects clamp_eps parameter."""
-        generator = create_noise_generator("logit", clamp_eps=1e-4)
+        generator = create_noise_definition("logit", clamp_eps=1e-4)
 
-        assert isinstance(generator, LogitNoiseGenerator)
+        assert isinstance(generator, LogitNoise)
         assert generator.clamp_eps == 1e-4
 
 

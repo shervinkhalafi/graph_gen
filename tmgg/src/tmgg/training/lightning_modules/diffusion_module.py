@@ -255,7 +255,7 @@ class DiffusionModule(BaseGraphModule):
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
 
         # Apply forward noise at the sampled timesteps
-        z_t = self.noise_process.apply(batch, t_int)
+        z_t = self.noise_process.apply(batch, t_int=t_int)
 
         # Normalised timestep for model conditioning: t_norm = t/T ∈ [1/T, 1].
         # This is a linear rescaling of the integer index, NOT the noise level
@@ -335,7 +335,7 @@ class DiffusionModule(BaseGraphModule):
 
         # Apply noise at t=1
         t_int = torch.ones(bs, dtype=torch.long, device=device)
-        z_1 = self.noise_process.apply(batch, t_int)
+        z_1 = self.noise_process.apply(batch, t_int=t_int)
 
         # Model prediction at t=1
         t_norm = t_int.float() / self.T
@@ -386,7 +386,7 @@ class DiffusionModule(BaseGraphModule):
 
         # Validation loss at a random timestep
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
-        z_t = self.noise_process.apply(batch, t_int)
+        z_t = self.noise_process.apply(batch, t_int=t_int)
         t_norm = t_int.float() / self.T
         pred = self.model(z_t, t=t_norm)
         loss = self._compute_loss(pred, batch)

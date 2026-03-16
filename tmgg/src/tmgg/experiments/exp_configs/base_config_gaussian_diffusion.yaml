@@ -22,13 +22,13 @@ model:
   noise_process:
     _target_: tmgg.diffusion.noise_process.ContinuousNoiseProcess
     generator:
-      _target_: tmgg.data.DigressNoiseGenerator
+      _target_: tmgg.data.DigressNoise
   sampler:
     _target_: tmgg.diffusion.sampler.ContinuousSampler
     noise_process:
       _target_: tmgg.diffusion.noise_process.ContinuousNoiseProcess
       generator:
-        _target_: tmgg.data.DigressNoiseGenerator
+        _target_: tmgg.data.DigressNoise
     noise_schedule:
       _target_: tmgg.diffusion.schedule.NoiseSchedule
       schedule_type: cosine_iddpm

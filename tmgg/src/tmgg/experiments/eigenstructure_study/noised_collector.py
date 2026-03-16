@@ -13,7 +13,7 @@ from typing import Any
 import torch
 from loguru import logger
 
-from tmgg.utils.noising.noise import create_noise_generator
+from tmgg.utils.noising.noise import create_noise_definition
 from tmgg.utils.spectral.laplacian import compute_laplacian
 
 from .storage import (
@@ -70,14 +70,14 @@ class NoisedEigenstructureCollector:
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.manifest = load_manifest(self.input_dir)
-        self._create_noise_generator()
+        self._create_noise_definition()
 
-    def _create_noise_generator(self) -> None:
-        """Initialize the noise generator."""
+    def _create_noise_definition(self) -> None:
+        """Initialize the noise definition."""
         if self.noise_type == "rotation" and self.rotation_k is None:
             raise ValueError("rotation_k is required for rotation noise")
 
-        self.noise_gen = create_noise_generator(
+        self.noise_gen = create_noise_definition(
             self.noise_type,
             rotation_k=self.rotation_k,
             seed=self.seed,

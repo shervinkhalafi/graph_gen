@@ -7,7 +7,7 @@ lifecycle hook (training_step, validation_step, on_validation_epoch_end)
 behaves as specified.
 
 The tests use a GNN model instantiated directly, paired with a
-ContinuousNoiseProcess wrapping GaussianNoiseGenerator and a
+ContinuousNoiseProcess wrapping GaussianNoise and a
 ContinuousSampler, since those require no external dependencies and
 work with simple adjacency-based graphs.
 """
@@ -39,7 +39,7 @@ from tmgg.models.gnn import GNN as _GNN
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
-from tmgg.utils.noising.noise import GaussianNoiseGenerator
+from tmgg.utils.noising.noise import GaussianNoise
 
 _MODEL_CONFIG: dict[str, Any] = {
     "num_layers": 2,
@@ -64,9 +64,7 @@ def _make_schedule() -> NoiseSchedule:
 
 
 def _make_noise_process() -> ContinuousNoiseProcess:
-    return ContinuousNoiseProcess(
-        GaussianNoiseGenerator(), noise_schedule=_make_schedule()
-    )
+    return ContinuousNoiseProcess(GaussianNoise(), noise_schedule=_make_schedule())
 
 
 def _make_sampler(

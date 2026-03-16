@@ -36,7 +36,7 @@ from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
-from tmgg.utils.noising.noise import DigressNoiseGenerator
+from tmgg.utils.noising.noise import DigressNoise
 
 # Dataset configurations for parametrized tests (excludes LFR due to generation complexity)
 DATASET_CONFIGS: dict[str, dict] = {
@@ -60,16 +60,16 @@ def _make_diffusion_module(
     num_nodes: int = 16,
     eval_num_samples: int = 4,
 ) -> DiffusionModule:
-    """Construct a DiffusionModule with ContinuousNoiseProcess + DigressNoiseGenerator."""
+    """Construct a DiffusionModule with ContinuousNoiseProcess + DigressNoise."""
     if model is None:
         model = SelfAttentionDenoiser(k=8, d_k=16)
     schedule = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=timesteps)
     noise_process = ContinuousNoiseProcess(
-        generator=DigressNoiseGenerator(), noise_schedule=schedule
+        generator=DigressNoise(), noise_schedule=schedule
     )
     sampler = ContinuousSampler(
         noise_process=ContinuousNoiseProcess(
-            generator=DigressNoiseGenerator(), noise_schedule=schedule
+            generator=DigressNoise(), noise_schedule=schedule
         ),
         noise_schedule=schedule,
     )
@@ -247,12 +247,12 @@ class TestDiffusionModuleInstantiation:
             DiffusionModule(
                 model=SelfAttentionDenoiser(k=8, d_k=16),
                 noise_process=ContinuousNoiseProcess(
-                    generator=DigressNoiseGenerator(),
+                    generator=DigressNoise(),
                     noise_schedule=schedule,
                 ),
                 sampler=ContinuousSampler(
                     noise_process=ContinuousNoiseProcess(
-                        generator=DigressNoiseGenerator(),
+                        generator=DigressNoise(),
                         noise_schedule=schedule,
                     ),
                     noise_schedule=schedule,
@@ -367,7 +367,7 @@ class TestDiffusionModuleE2E:
 class TestDiffusionModulePerElementNoise:
     """Regression test: DiffusionModule applies per-element noise levels.
 
-    Test rationale: the ContinuousNoiseProcess wrapping DigressNoiseGenerator
+    Test rationale: the ContinuousNoiseProcess wrapping DigressNoise
     should call add_noise with a (bs,) tensor of distinct noise levels
     derived from distinct timesteps, applying per-sample noise in one
     vectorized call.

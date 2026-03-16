@@ -25,7 +25,7 @@ from omegaconf import DictConfig
 from pytorch_lightning import LightningDataModule
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.utils.noising.noise import NoiseGenerator
+from tmgg.utils.noising.noise import NoiseDefinition
 
 
 def _batch_to_tensor(batch: Any) -> torch.Tensor:
@@ -51,11 +51,12 @@ class SanityCheckableModel(Protocol):
     """Model with attributes needed for sanity checking.
 
     Any model passed to ``maybe_run_sanity_check`` must expose a
-    ``noise_generator`` and a ``criterion``. Callers are expected to
+    ``noise_process`` (whose ``.definition`` attribute is a
+    ``NoiseDefinition``) and a ``criterion``. Callers are expected to
     also pass an ``nn.Module`` (the function asserts this at runtime).
     """
 
-    noise_generator: NoiseGenerator
+    noise_process: Any
     criterion: nn.Module
 
 
@@ -98,7 +99,7 @@ class SanityCheckResult:
 
 
 def _check_noise_generator(
-    noise_generator: NoiseGenerator,
+    noise_generator: NoiseDefinition,
     sample_size: int = 10,
     noise_levels: list[float] | None = None,
 ) -> SanityCheckResult:
@@ -119,9 +120,9 @@ def _check_noise_generator(
     result: SanityCheckResult = SanityCheckResult()
 
     # For rotation noise generator, use its configured k value
-    from tmgg.utils.noising.noise import RotationNoiseGenerator
+    from tmgg.utils.noising.noise import RotationNoise
 
-    if isinstance(noise_generator, RotationNoiseGenerator):
+    if isinstance(noise_generator, RotationNoise):
         sample_size = noise_generator.k
 
     # Create test adjacency matrix
@@ -361,7 +362,7 @@ def _check_loss_computation(
 
 def _run_experiment_sanity_check(
     model: torch.nn.Module,
-    noise_generator: NoiseGenerator,
+    noise_generator: NoiseDefinition,
     data_loader: torch.utils.data.DataLoader[Any],
     criterion: torch.nn.Module,
     device: str | torch.device = "cpu",
@@ -373,7 +374,7 @@ def _run_experiment_sanity_check(
 
     Args:
         model: Model to test
-        noise_generator: Noise generator to test
+        noise_generator: Noise definition to test
         data_loader: DataLoader to test
         criterion: Loss function
         device: Device to run on
@@ -476,8 +477,16 @@ def maybe_run_sanity_check(
         # Get data loader and other components
         train_loader: torch.utils.data.DataLoader[Any] = data_module.train_dataloader()
 
-        # Access model attributes (typed via SanityCheckableModel Protocol)
-        noise_gen = model.noise_generator
+        # Access model attributes (typed via SanityCheckableModel Protocol).
+        # Extract the NoiseDefinition from noise_process.definition for
+        # sanity checks that operate on raw adjacency tensors.
+        np_ = model.noise_process
+        noise_gen = getattr(np_, "definition", None)
+        if not isinstance(noise_gen, NoiseDefinition):
+            raise TypeError(
+                f"Sanity check requires noise_process.definition to be a "
+                f"NoiseDefinition, got {type(noise_gen).__name__}"
+            )
         crit = model.criterion
         assert isinstance(
             model, nn.Module
@@ -502,7 +511,7 @@ def maybe_run_sanity_check(
 
 def _generate_diagnostic_plots(
     model: torch.nn.Module,
-    noise_generator: NoiseGenerator,
+    noise_generator: NoiseDefinition,
     sample_adjacency: torch.Tensor,
     output_dir: Path,
     device: str | torch.device = "cpu",

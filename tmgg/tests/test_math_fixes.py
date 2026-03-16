@@ -2,7 +2,7 @@
 
 F17: LinearPE symmetric mode must produce symmetric output even when the
      internal weight matrix W is not itself symmetric.
-F18: RotationNoiseGenerator must fail loudly when the skew matrix dimension
+F18: RotationNoise must fail loudly when the skew matrix dimension
      does not match the graph dimension.
 """
 
@@ -38,7 +38,7 @@ def test_linear_pe_symmetric_output():
 
 
 def test_rotation_noise_dimension_mismatch():
-    """RotationNoiseGenerator must reject adjacency matrices whose dimension
+    """RotationNoise must reject adjacency matrices whose dimension
     does not match the skew matrix.
 
     The skew-symmetric matrix is created at init with dimension k, but the
@@ -47,22 +47,22 @@ def test_rotation_noise_dimension_mismatch():
     wrong results. An explicit assertion catches this early.
     """
     from tmgg.utils.noising.noise import (
-        RotationNoiseGenerator,
+        RotationNoise,
     )
 
-    gen = RotationNoiseGenerator(k=5, seed=42)
+    gen = RotationNoise(k=5, seed=42)
     A = torch.eye(8)  # dimension 8 != k=5
     with pytest.raises(ValueError, match="Graph dimension"):
         gen.add_noise(A, eps=0.1)
 
 
 def test_rotation_noise_matching_dimension():
-    """RotationNoiseGenerator works when dimensions match."""
+    """RotationNoise works when dimensions match."""
     from tmgg.utils.noising.noise import (
-        RotationNoiseGenerator,
+        RotationNoise,
     )
 
-    gen = RotationNoiseGenerator(k=5, seed=42)
+    gen = RotationNoise(k=5, seed=42)
     A = torch.eye(5)
     result = gen.add_noise(A, eps=0.1)
     assert result.shape == (5, 5)
@@ -73,10 +73,10 @@ def test_rotation_noise_matching_dimension():
 def test_rotation_noise_batch_dimension_mismatch():
     """Batch variant of the dimension check."""
     from tmgg.utils.noising.noise import (
-        RotationNoiseGenerator,
+        RotationNoise,
     )
 
-    gen = RotationNoiseGenerator(k=5, seed=42)
+    gen = RotationNoise(k=5, seed=42)
     A = torch.eye(8).unsqueeze(0).expand(3, -1, -1)  # batch of 3, dim 8
     with pytest.raises(ValueError, match="Graph dimension"):
         gen.add_noise(A, eps=0.1)

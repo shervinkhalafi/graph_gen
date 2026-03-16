@@ -208,15 +208,15 @@ class TestDiffusionModuleGaussianFullFlow:
         from tmgg.training.lightning_modules.diffusion_module import (
             DiffusionModule,
         )
-        from tmgg.utils.noising.noise import DigressNoiseGenerator
+        from tmgg.utils.noising.noise import DigressNoise
 
         schedule = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=5)
         noise_process = ContinuousNoiseProcess(
-            generator=DigressNoiseGenerator(), noise_schedule=schedule
+            generator=DigressNoise(), noise_schedule=schedule
         )
         sampler = ContinuousSampler(
             noise_process=ContinuousNoiseProcess(
-                generator=DigressNoiseGenerator(), noise_schedule=schedule
+                generator=DigressNoise(), noise_schedule=schedule
             ),
             noise_schedule=schedule,
         )

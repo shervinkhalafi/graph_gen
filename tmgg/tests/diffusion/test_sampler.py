@@ -38,7 +38,7 @@ from tmgg.diffusion.sampler import (
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.diffusion.transitions import DiscreteUniformTransition
 from tmgg.models.base import GraphModel
-from tmgg.utils.noising.noise import GaussianNoiseGenerator
+from tmgg.utils.noising.noise import GaussianNoise
 
 # ---------------------------------------------------------------------------
 # Dummy models for testing
@@ -121,7 +121,7 @@ def categorical_noise_process(
 @pytest.fixture()
 def continuous_noise_process() -> ContinuousNoiseProcess:
     return ContinuousNoiseProcess(
-        generator=GaussianNoiseGenerator(),
+        generator=GaussianNoise(),
         noise_schedule=NoiseSchedule("cosine_iddpm", timesteps=T_STEPS),
     )
 
