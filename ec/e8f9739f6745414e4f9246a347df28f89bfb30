@@ -1,0 +1,25 @@
+tmgg/src/tmgg/data/noising/noise.py
+  481719edbe738835 315-323
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 109-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "ece8f9739f6745414e4f9246a347df28f89bfb30",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 14,
+      "overriden_lines": 0
+    }
+  }
+}
