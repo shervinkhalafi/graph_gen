@@ -1,0 +1,53 @@
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 128,130-132,150-151,153-159,161
+tmgg/docs/reports/2026-03-12-tmgg-review/SUMMARY.md
+  481719edbe738835 225
+tmgg/src/tmgg/data/data_modules/single_graph_data_module.py
+  481719edbe738835 14,21-23,25,107-109,146-148,234-262,264-271,283-285,290-296,298-303,307-309,311-313,318,321,323,329,332,334,340,343,345,358,363,365,367,370,375,377,379,382,387,389,391,404,406,408,410,412,416,419
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/datamodule.py
+  481719edbe738835 3-7,24,38-40,108,110-112,119-120,129-130,136-137,139-141,143-145,147-149,151-158,160,164,167,196-198,236,258
+tmgg/src/tmgg/data/datasets/pyg_datasets.py
+  481719edbe738835 11,38-40,89,92,108-109
+tmgg/docs/superpowers/plans/2026-03-16-pyg-datamodule-unification.md
+  481719edbe738835 1-669
+tmgg/tests/data_modules/test_pyg_conversion.py
+  481719edbe738835 1-195
+tmgg/tests/test_integration.py
+  481719edbe738835 18-20,35,45-51,54,301-306
+tmgg/tests/experiments/test_categorical_datamodule.py
+  481719edbe738835 5-8,15,78-79,81-82,85,88-91,105,111-113,115-117,268,270-272,279-280,282-286,288-292
+tmgg/src/tmgg/data/data_modules/multigraph_data_module.py
+  481719edbe738835 7,24,39-40,42-45,47-77,80,82-83,94-95,154-156,340,345,359-361,369,371,380,382,391,393,411-412
+tmgg/integration_test.py
+  481719edbe738835 81
+tmgg/tests/experiment_utils/test_data_module.py
+  481719edbe738835 78,81,95-100,108-109,124-127,135-136,152,157-161,173-174,185,190-193,195-197,201-204,214-215,224,229,232-234,271-272,278-279,282,289-292,294,297-298,310-311,313-314,321,334,337,340
+tmgg/tests/test_datamodule_contracts.py
+  481719edbe738835 104-110,283-285,288-295,307-313,476,478-479
+tmgg/src/tmgg/data/data_modules/data_module.py
+  481719edbe738835 3-6,19-20,38-42,71,114,122-124,126,132-140,148,155,158-160,163,165-168,170-175,177,179,181,183,189-193
+tmgg/src/tmgg/data/datasets/graph_types.py
+  481719edbe738835 18,23-24,174,176-219,261-284,286-288,290-293
+tmgg/tests/test_data_split_reproducibility.py
+  481719edbe738835 15,17,48,60-62,64,66,68-69,72-74,76,78-81,84-86,88,90-93,116,127-128,130,132,134-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "a00ad496526523f93b946f257e2c5fec91344bd9",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1399,
+      "overriden_lines": 0
+    }
+  }
+}
