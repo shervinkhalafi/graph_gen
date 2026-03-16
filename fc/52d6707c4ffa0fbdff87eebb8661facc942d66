@@ -1,0 +1,29 @@
+tmgg/src/tmgg/training/lightning_modules/diffusion_module.py
+  481719edbe738835 258,338,389
+tmgg/tests/test_training_integration.py
+  481719edbe738835 94
+tmgg/src/tmgg/training/lightning_modules/denoising_module.py
+  481719edbe738835 270-271,274,322-323,493-494,497-498
+tmgg/src/tmgg/training/orchestration/sanity_check.py
+  481719edbe738835 54-55,59,480-489
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "fc52d6707c4ffa0fbdff87eebb8661facc942d66",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 27,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    }
+  }
+}
