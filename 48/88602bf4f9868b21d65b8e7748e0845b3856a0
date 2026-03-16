@@ -1,0 +1,35 @@
+tmgg/src/tmgg/experiments/_scaffold/model_config.yaml.j2
+  481719edbe738835 1-22
+tmgg/src/tmgg/experiments/_scaffold/{{cookiecutter.experiment_slug}}/__init__.py
+  481719edbe738835 1-5
+tmgg/pyproject.toml
+  481719edbe738835 69-70,95,103,154
+tmgg/src/tmgg/experiments/_scaffold/cookiecutter.json
+  481719edbe738835 1-10
+tmgg/src/tmgg/experiments/_scaffold/{{cookiecutter.experiment_slug}}/runner.py
+  481719edbe738835 1-22
+tmgg/src/tmgg/experiments/_scaffold/base_config.yaml.j2
+  481719edbe738835 1-11
+tmgg/src/tmgg/experiments/scaffold.py
+  481719edbe738835 1-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "4888602bf4f9868b21d65b8e7748e0845b3856a0",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 338,
+      "total_deletions": 20,
+      "accepted_lines": 1937,
+      "overriden_lines": 0
+    }
+  }
+}
