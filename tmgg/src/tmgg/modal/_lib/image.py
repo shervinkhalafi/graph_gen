@@ -121,7 +121,9 @@ def create_tmgg_image(
         )
 
         # Compile ORCA binary from bundled C++ source
-        orca_src = tmgg_path / "src" / "tmgg" / "experiments" / "_shared_utils" / "orca"
+        orca_src = (
+            tmgg_path / "src" / "tmgg" / "training" / "evaluation_metrics" / "orca"
+        )
         if orca_src.exists():
             image = image.add_local_dir(
                 str(orca_src),

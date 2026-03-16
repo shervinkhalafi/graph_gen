@@ -28,10 +28,10 @@ embedding_study
 
 Shared infrastructure
 ---------------------
-``_shared_utils``
+``tmgg.training``
     Lightning modules, evaluation metrics, orchestration, and spectral
-    utilities shared across experiments.  See ``_shared_utils/__init__.py``
-    for the public API.
+    utilities shared across experiments.  See ``tmgg.training`` for the
+    public API.
 
 ``exp_configs/``
     Hydra configuration files.  Base configs per experiment type, model

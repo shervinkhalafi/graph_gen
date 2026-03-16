@@ -36,8 +36,8 @@ docs = ["pymdown-extensions", "pygments", "mkdocstrings-python"]
 analysis = [
     # graph-tool: install via conda-forge (not pip-installable)
     #   conda install -c conda-forge graph-tool
-    # ORCA: compile from source in src/tmgg/experiments/_shared_utils/orca/
-    #   cd src/tmgg/experiments/_shared_utils/orca && g++ -O2 -std=c++11 -o orca orca.cpp
+    # ORCA: compile from source in src/tmgg/training/evaluation_metrics/orca/
+    #   cd src/tmgg/training/evaluation_metrics/orca && g++ -O2 -std=c++11 -o orca orca.cpp
 ]
 
 [project.scripts]
