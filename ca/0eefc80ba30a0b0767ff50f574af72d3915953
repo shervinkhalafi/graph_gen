@@ -1,0 +1,283 @@
+tmgg/src/tmgg/experiments/_scaffold/base_config.yaml.j2
+  481719edbe738835 1-11
+tmgg/src/tmgg/diffusion/__init__.py
+  481719edbe738835 16,37,44
+tmgg/src/tmgg/experiments/embedding_study/execute.py
+  481719edbe738835 9,91
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small.yaml
+  481719edbe738835 10,30
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_spectral_qk.yaml
+  481719edbe738835 7
+tmgg/src/tmgg/experiments/_scaffold/{{cookiecutter.experiment_slug}}/runner.py
+  481719edbe738835 1-22
+tmgg/src/tmgg/data/data_modules/data_module.py
+  481719edbe738835 9-12,251,253
+tmgg/src/tmgg/experiments/exp_configs/_base_infra.yaml
+  481719edbe738835 57-59
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_vanilla.yaml
+  481719edbe738835 10,30
+tmgg/src/tmgg/experiments/scaffold.py
+  481719edbe738835 1-250
+tmgg/src/tmgg/experiments/eigenstructure_study/collector.py
+  481719edbe738835 7-9,18,316
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_official.yaml
+  481719edbe738835 10-12,58
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/symmetric_gnn.yaml
+  481719edbe738835 5,7-8
+tmgg/tests/models/test_attention.py
+  481719edbe738835 8,11-12,19,33,47
+tmgg/tests/experiments/test_discrete_diffusion_module.py
+  481719edbe738835 98-107,109,116,428-439,447,449,451
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_base.yaml
+  481719edbe738835 3,9,11-16,21-23
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/filter_bank.yaml
+  481719edbe738835 6,8-9
+tmgg/docs/reports/2026-03-12-tmgg-review/SUMMARY.md
+  481719edbe738835 1-269
+tmgg/src/tmgg/experiments/_scaffold/{{cookiecutter.experiment_slug}}/__init__.py
+  481719edbe738835 1-5
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_qk.yaml
+  481719edbe738835 7
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/linear_pe.yaml
+  481719edbe738835 6,8-9
+tmgg/src/tmgg/experiments/gnn_denoising/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_default.yaml
+  481719edbe738835 6-8,43
+tmgg/src/tmgg/data/data_modules/base_data_module.py
+  481719edbe738835 10-13,136,149-198
+tmgg/src/tmgg/models/layers/__init__.py
+  481719edbe738835 5,17
+tmgg/docs/configuration.md
+  481719edbe738835 3-4,6,8,11-19,21-23,26-29,31,33-40,42,45-47,50,53-57,60,62-65,67-70,72-74,76-79
+tmgg/tests/test_model_type_validation.py
+  481719edbe738835 1,3,5,9-13,17-25,27-29,31-37,40-46,49-57,59-61,63-67
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/self_attention.yaml
+  481719edbe738835 6,8-9
+tmgg/src/tmgg/models/layers/mha_layer.py
+  481719edbe738835 8,10
+tmgg/src/tmgg/experiments/eigenstructure_study/__init__.py
+  481719edbe738835 19-20,68
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_small.yaml
+  481719edbe738835 6-8,43
+tmgg/src/tmgg/experiments/exp_configs/grid_search_base.yaml
+  481719edbe738835 35
+tmgg/src/tmgg/models/spectral_denoisers/base_spectral.py
+  481719edbe738835 9-12,85,98,219
+tmgg/src/tmgg/models/spectral_denoisers/bilinear.py
+  481719edbe738835 9-14,23,103,152,239,292,316,333,471,542
+tmgg/docs/extending.md
+  481719edbe738835 1,3,5,7,9,11-13,26,28,37,41,44,46,48,50-83,85-86,89,91-93,97-98,102-103,105-112,119,121-124,126,128-130,133,135-137,139,141,143,145,147-153,155,157,160-161,163-167,170-171,173-196,198-200,202-203,206,208,210,212-221,224,226,228-233,235-236,238-239,241-248,251,253,255,257,259,261-263,265-266,268-269,272,274-279,281,283-287,289,291,293,295,297,299,317,324,326-331,334,336,339,344-345,349,352-357,360,362,364,366,368,370,372,375-376,378-379,381-386,388-394,397,399,402-405,408
+tmgg/src/tmgg/experiments/_scaffold/cookiecutter.json
+  481719edbe738835 1-10
+tmgg/src/tmgg/experiments/gaussian_diffusion_generative/runner.py
+  481719edbe738835 7,10-11,23,31
+tmgg/src/tmgg/experiments/exp_configs/models/discrete/discrete_sbm_eigenvec.yaml
+  481719edbe738835 12-14,28-30,59
+tmgg/tests/experiment_utils/test_eigenstructure.py
+  481719edbe738835 23
+tmgg/src/tmgg/experiments/digress_denoising/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/data/datasets/synthetic_graphs.py
+  481719edbe738835 9-13
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/self_attention_mlp.yaml
+  481719edbe738835 6,8-9
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_gnn.yaml
+  481719edbe738835 11,36
+tmgg/docs/superpowers/plans/2026-03-15-evaluator-sampling-unification.md
+  481719edbe738835 1-678
+tmgg/src/tmgg/experiments/eigenstructure_study/noised_collector.py
+  481719edbe738835 17,340,425,487,490
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_spectral_all.yaml
+  481719edbe738835 7
+tmgg/tests/experiment_utils/test_graph_evaluator.py
+  481719edbe738835 5-9,99-100,108-109,120-121,131-132,142-143,153-155,163-164,171,173,182,193,212-213,223-224,236-237,251-252,320,322-323,325,328,330-336,338-345,347,350-353
+tmgg/docs/architecture.md
+  481719edbe738835 3,10-11,13-15,17-44,51,53,55,57,59,61,63,65,67,69,74,77,81-84,88,91,95,97,99
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/nodevar_gnn.yaml
+  481719edbe738835 5,7-8
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_v.yaml
+  481719edbe738835 7
+tmgg/src/tmgg/experiments/exp_configs/base_config_eigenstructure.yaml
+  481719edbe738835 1-4
+tmgg/src/tmgg/diffusion/sampler.py
+  481719edbe738835 16-18,58-61,76-85,140-143,158-166,177-189,191-193,195,197-201,203-205,207-211,216,219,315-316,319-336,341-343,346,407-410,424-432,443-454,456-458,460,462-466,468,470-472,475,510-517
+tmgg/src/tmgg/data/datasets/sbm.py
+  481719edbe738835 136-166,170-186,190-198,206
+tmgg/src/tmgg/hydra_plugins/tmgg_launcher/launcher.py
+  481719edbe738835 156
+tmgg/pyproject.toml
+  481719edbe738835 34,58,69-70,73,95,103,154
+tmgg/src/tmgg/experiments/exp_configs/base_config_baseline.yaml
+  481719edbe738835 1-3
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_vanilla_gnn.yaml
+  481719edbe738835 11,36
+tmgg/tests/experiment_utils/test_base_graph_module.py
+  481719edbe738835 4,22,42-44,50-51,56,59,78,82-83,85-88,90,92-95,97,101-103,229-230,234,237-240
+tmgg/src/tmgg/experiments/exp_configs/models/hybrid/hybrid_with_transformer.yaml
+  481719edbe738835 5,7-20
+tmgg/src/tmgg/experiments/exp_configs/models/baselines/mlp.yaml
+  481719edbe738835 7,9-10
+tmgg/tests/test_math_fixes.py
+  481719edbe738835 55,81
+tmgg/src/tmgg/experiments/exp_configs/base_config_gnn.yaml
+  481719edbe738835 1-4
+tmgg/src/tmgg/experiments/exp_configs/base_config_digress.yaml
+  481719edbe738835 1-3,10
+tmgg/src/tmgg/diffusion/noise_process.py
+  481719edbe738835 17-19,151-152,158-159,161-164,166,168-171,173-174,195-200,202-203,205-206,208,210,212-213,218-219,301,316-317,361-362,567-572,589,596-597
+tmgg/src/tmgg/experiments/grid_search_runner.py
+  481719edbe738835 10
+tmgg/tach.toml
+  481719edbe738835 38-41,50,63,88,90
+tmgg/src/tmgg/models/spectral_denoisers/filter_bank.py
+  481719edbe738835 109-113,189-192
+tmgg/tests/experiments/test_baseline_denoising_module.py
+  481719edbe738835 66-71,73
+tmgg/README.md
+  481719edbe738835 259
+tmgg/src/tmgg/utils/__init__.py
+  481719edbe738835 1
+tmgg/src/tmgg/experiments/__init__.py
+  481719edbe738835 1-48
+tmgg/tests/experiments/test_discrete_diffusion_runner.py
+  481719edbe738835 72,102-103,105-107,242-243,247-254,256,263
+tmgg/src/tmgg/data/datasets/graph_types.py
+  481719edbe738835 132-135
+tmgg/src/tmgg/diffusion/transitions.py
+  481719edbe738835 9-12,173-177
+tmgg/src/tmgg/models/gnn/nvgnn.py
+  481719edbe738835 22,24,26-27,29,31,33,35-38,46,86-87,98
+tmgg/tests/test_training_integration.py
+  481719edbe738835 7,25-29,48,81,97,99-110,113,118-119,123,135,157,178,218,223
+tmgg/src/tmgg/models/digress/extra_features.py
+  481719edbe738835 26-27,507
+tmgg/src/tmgg/models/digress/transformer_model.py
+  481719edbe738835 1-4,726-727
+tmgg/src/tmgg/diffusion/collectors.py
+  481719edbe738835 1-89
+tmgg/src/tmgg/experiments/gnn_transformer_denoising/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/experiments/exp_configs/base_config_embedding_study.yaml
+  481719edbe738835 1-4
+tmgg/src/tmgg/experiments/exp_configs/models/gnn/standard_gnn.yaml
+  481719edbe738835 5,7-8
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer.yaml
+  481719edbe738835 7
+tmgg/src/tmgg/experiments/_scaffold/model_config.yaml.j2
+  481719edbe738835 1-22
+tmgg/src/tmgg/diffusion/schedule.py
+  481719edbe738835 11-14,62-64
+tmgg/tests/experiment_utils/test_spectral_deltas.py
+  481719edbe738835 26,230
+tmgg/src/tmgg/experiments/exp_configs/base_config_gaussian_diffusion.yaml
+  481719edbe738835 1-3,17-19,47
+tmgg/tests/experiments/test_digress_denoising_module.py
+  481719edbe738835 35,39,78-86,88-89
+tmgg/src/tmgg/models/gnn/gnn.py
+  481719edbe738835 18-21,31,47-49,58,104-105,136
+tmgg/src/tmgg/experiments/eigenstructure_study/analyzer.py
+  481719edbe738835 17,20
+tmgg/tests/models/test_gnn_properties.py
+  481719edbe738835 3,103,178
+tmgg/src/tmgg/data/noising/size_distribution.py
+  481719edbe738835 113-118,158-164,166-168,170
+tmgg/src/tmgg/experiments/eigenstructure_study/cli.py
+  481719edbe738835 199,207,318,507,523,544
+tmgg/src/tmgg/utils/spectral/spectral_deltas.py
+  481719edbe738835 21,97-103,219
+tmgg/tests/test_generative_integration.py
+  481719edbe738835 58,64-65,80,87,172,177,179-183,185-189,191-193,195-202,204-211,213-225,227-230,233-235,245,247,250,255,257,259,264-270,309,311-313,322,325,329-330,370-372,376,380-381,386-389,399,402-404,408-409,412-414
+tmgg/src/tmgg/models/attention/attention.py
+  481719edbe738835 9,55
+tmgg/tests/experiment_utils/test_eigenstructure_study.py
+  481719edbe738835 38,909,942,973,1000
+tmgg/src/tmgg/experiments/exp_configs/models/baselines/linear.yaml
+  481719edbe738835 7,9-10
+tmgg/tests/experiments/test_all_experiments_full_flow.py
+  481719edbe738835 72-74,76,90-97,99,114-124,126-128,142-150,152-153,171-177,179,226,233,264,291-298,300,307
+tmgg/tests/modal/test_evaluate.py
+  481719edbe738835 35
+tmgg/tests/diffusion/test_collectors.py
+  481719edbe738835 1-82
+tmgg/tests/experiment_utils/test_diffusion_module.py
+  481719edbe738835 9,36,50-56,99,101,108,287,289,298-300,306-307,311,322-324,327,330,333,335-358,362,366,368-369,372-373,376-377,379,385-387,393,423,429
+tmgg/src/tmgg/data/data_modules/multigraph_data_module.py
+  481719edbe738835 13-16,355
+tmgg/docs/superpowers/specs/2026-03-15-evaluator-sampling-unification-design.md
+  481719edbe738835 1-31,33-203,205-249
+tmgg/src/tmgg/diffusion/diffusion_math.py
+  481719edbe738835 122-134
+tmgg/src/tmgg/utils/spectral/laplacian.py
+  481719edbe738835 14,28-32,64-66
+tmgg/tests/test_audit_fixes.py
+  481719edbe738835 28,32,50,62
+tmgg/scripts/validate_discrete_diffusion.py
+  481719edbe738835 270-280,282-283,290
+tmgg/src/tmgg/experiments/discrete_diffusion_generative/datamodule.py
+  481719edbe738835 11-15,167-168,172,307
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_highlr.yaml
+  481719edbe738835 10,30
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_sbm_small_vanilla.yaml
+  481719edbe738835 10,30
+tmgg/src/tmgg/experiments/exp_configs/models/digress/digress_transformer_gnn_all.yaml
+  481719edbe738835 7
+tmgg/src/tmgg/data/datasets/graph_dataset.py
+  481719edbe738835 22
+tmgg/src/tmgg/modal/_functions.py
+  481719edbe738835 18-21,204,223,242,269,283,297,309
+tmgg/src/tmgg/experiments/exp_configs/base_config_gnn_transformer.yaml
+  481719edbe738835 1-3
+tmgg/src/tmgg/experiments/exp_configs/models/hybrid/hybrid_gnn_only.yaml
+  481719edbe738835 5,7-14
+tmgg/src/tmgg/models/layers/topk_eigen.py
+  481719edbe738835 9-13,50-52,105-109,185,189
+tmgg/tests/data_modules/test_reference_graphs.py
+  481719edbe738835 1-80
+tmgg/src/tmgg/diffusion/diffusion_sampling.py
+  481719edbe738835 9-11,247-249,301-302
+tmgg/src/tmgg/utils/spectral/__init__.py
+  481719edbe738835 7-8,15
+tmgg/src/tmgg/experiments/exp_configs/task/denoising.yaml
+  481719edbe738835 10-11
+tmgg/src/tmgg/experiments/lin_mlp_baseline_denoising/runner.py
+  481719edbe738835 9-10,22,30
+tmgg/src/tmgg/experiments/exp_configs/models/spectral/multilayer_self_attention.yaml
+  481719edbe738835 6,8-9
+tmgg/tests/models/test_bilinear_rename.py
+  481719edbe738835 1,4,26-28,30,34-36,38
+tmgg/src/tmgg/data/datasets/pyg_datasets.py
+  481719edbe738835 108-109,113,116
+tmgg/src/tmgg/experiments/spectral_arch_denoising/runner.py
+  481719edbe738835 10-11,23,31
+tmgg/tests/experiment_utils/test_denoising_module.py
+  481719edbe738835 8,27,38-44,61,67,69,90,111,115-116,171,178,181,309,332
+tmgg/tests/models/test_attention_properties.py
+  481719edbe738835 13,90-91,98,119,152,169,286,301,310
+tmgg/src/tmgg/data/noising/noise.py
+  481719edbe738835 9-12,17,22,36-37,42-43,47,49,51-52,54-62,65-67,70,72-74,76-77,79-82,89,101,103-104,116-117,135,150-151,153-154,167,169,180-181,206,221-222,224-225,244,256,258-259,271-273,294,318,325-328,359,371,394,414,416-420,428-429,432-433,435,437-441,482,491
+tmgg/src/tmgg/experiments/exp_configs/base_config_discrete_diffusion_generative.yaml
+  481719edbe738835 22,67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "ca0eefc80ba30a0b0767ff50f574af72d3915953",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3509,
+      "overriden_lines": 0
+    }
+  }
+}
