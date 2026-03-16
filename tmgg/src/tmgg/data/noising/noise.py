@@ -6,16 +6,20 @@ subclasses) wrap these functions with optional state management and a uniform
 ``add_noise(A, eps)`` interface for experimental configuration.
 """
 
+# pyright: reportConstantRedefinition=false
+# Uppercase single-letter variables (A, V, R) follow standard math notation
+# and are intentionally reassigned within functions.
+
 from abc import ABC, abstractmethod
 
 import numpy as np
 import torch
-from scipy.linalg import expm
+from torch import Tensor
 
 
 def random_skew_symmetric_matrix(
     n: int, rng: np.random.Generator | None = None
-) -> np.ndarray:
+) -> Tensor:
     """Create a random n x n skew-symmetric matrix.
 
     Parameters
@@ -29,71 +33,60 @@ def random_skew_symmetric_matrix(
 
     Returns
     -------
-    np.ndarray
-        Skew-symmetric matrix of shape ``(n, n)``.
+    Tensor
+        Skew-symmetric matrix of shape ``(n, n)``, dtype ``float32``.
     """
     if rng is None:
         rng = np.random.default_rng()
     A = rng.random((n, n))
-    return (A - A.T) / 2
+    skew = (A - A.T) / 2
+    return torch.tensor(skew, dtype=torch.float32)
 
 
 def add_rotation_noise(
-    A: torch.Tensor | np.ndarray, eps: float, skew: np.ndarray
+    A: torch.Tensor | np.ndarray, eps: float | Tensor, skew: Tensor
 ) -> torch.Tensor:
+    """Add rotation noise to an adjacency matrix by rotating eigenvectors.
+
+    Computes ``V_rot @ diag(λ) @ V_rot^T`` where ``V_rot = V @ expm(eps * skew)``
+    and ``(λ, V)`` are the eigenvalues/eigenvectors of ``A``.
+
+    Parameters
+    ----------
+    A
+        Input adjacency matrix, single ``(n, n)`` or batched ``(bs, n, n)``.
+    eps
+        Rotation angle scaling factor. Scalar applies uniform rotation;
+        a ``(bs,)`` tensor applies per-sample rotation angles.
+    skew
+        Skew-symmetric matrix of shape ``(n, n)``.
+
+    Returns
+    -------
+    torch.Tensor
+        Rotated adjacency matrix with the same shape as *A*.
     """
-    Add rotation noise to adjacency matrix by rotating eigenvectors.
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+    skew = skew.to(device=A.device, dtype=A.dtype)
 
-    Args:
-        A: Input adjacency matrix
-        eps: Noise level
-        skew: Skew-symmetric matrix for rotation
+    # Reshape eps for broadcasting: scalar → unchanged, (bs,) → (bs, 1, 1)
+    if isinstance(eps, Tensor):
+        eps = eps.to(device=A.device, dtype=A.dtype).reshape(-1, 1, 1)
 
-    Returns:
-        Noisy adjacency matrix
-    """
-    # Convert to tensor if needed
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
+    # Batched matrix exponential: eps * skew → (bs, n, n) or (n, n)
+    R = torch.linalg.matrix_exp(eps * skew)
 
-    # Handle both single matrix and batch cases
-    if A.dim() == 2:
-        # Single matrix case
-        eigenvalues, V = torch.linalg.eigh(A)  # pyright: ignore[reportConstantRedefinition]  # math notation
-        R = expm(eps * skew)  # pyright: ignore[reportConstantRedefinition]  # math notation
-        R_tensor = torch.tensor(R, dtype=torch.float32).to(V.device)
-        V_rot = V @ R_tensor
-        A_noisy = V_rot @ torch.diag(eigenvalues) @ V_rot.T
-    else:
-        # Batch case
-        eigenvalues, V = torch.linalg.eigh(A)  # pyright: ignore[reportConstantRedefinition]  # math notation
-        R = expm(eps * skew)  # pyright: ignore[reportConstantRedefinition]  # math notation
-        R_tensor = torch.tensor(R, dtype=torch.float32).to(V.device)
-        V_rot = V @ R_tensor
-
-        # Initialize tensor of appropriate size
-        eig_diag = torch.zeros(
-            eigenvalues.shape[0],
-            eigenvalues.shape[1],
-            eigenvalues.shape[1],
-            device=eigenvalues.device,
-            dtype=eigenvalues.dtype,
-        )
-
-        # Fill diagonal elements for each matrix in the batch
-        batch_indices = torch.arange(eigenvalues.shape[0])
-        diag_indices = torch.arange(eigenvalues.shape[1])
-        eig_diag[batch_indices[:, None], diag_indices, diag_indices] = eigenvalues
-
-        A_noisy = torch.matmul(
-            torch.matmul(V_rot, eig_diag), torch.transpose(V_rot, 1, 2)
-        )
+    eigenvalues, V = torch.linalg.eigh(A)
+    V_rot = V @ R
+    eig_diag = torch.diag_embed(eigenvalues)
+    A_noisy = V_rot @ eig_diag @ V_rot.transpose(-2, -1)
 
     return torch.real(A_noisy)
 
 
 def add_gaussian_noise(
     A: torch.Tensor | np.ndarray,
-    eps: float,
+    eps: float | Tensor,
     generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """Add symmetric Gaussian noise to adjacency matrix.
@@ -105,9 +98,10 @@ def add_gaussian_noise(
     Parameters
     ----------
     A
-        Input adjacency matrix, single (n, n) or batched (batch_size, n, n).
+        Input adjacency matrix, single ``(n, n)`` or batched ``(bs, n, n)``.
     eps
-        Noise standard deviation.
+        Noise standard deviation. Scalar applies uniformly; a ``(bs,)``
+        tensor applies per-sample noise levels.
     generator
         Optional torch RNG for reproducible noise. When ``None``, uses the
         global RNG.
@@ -117,7 +111,10 @@ def add_gaussian_noise(
     torch.Tensor
         Noisy adjacency matrix with symmetric noise.
     """
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+
+    if isinstance(eps, Tensor):
+        eps = eps.to(device=A.device, dtype=A.dtype).reshape(-1, 1, 1)
 
     noise = eps * torch.randn(
         A.shape, dtype=A.dtype, device=A.device, generator=generator
@@ -135,7 +132,7 @@ def add_gaussian_noise(
 
 def add_logit_noise(
     A: torch.Tensor | np.ndarray,
-    sigma: float,
+    sigma: float | Tensor,
     clamp_eps: float = 1e-6,
 ) -> torch.Tensor:
     """Add Gaussian noise in logit space, returning soft adjacency in (0, 1).
@@ -150,11 +147,12 @@ def add_logit_noise(
     Parameters
     ----------
     A
-        Input adjacency matrix (binary or soft). Can be a single matrix (n, n)
-        or a batch (batch_size, n, n).
+        Input adjacency matrix (binary or soft), single ``(n, n)`` or
+        batched ``(bs, n, n)``.
     sigma
-        Standard deviation of Gaussian noise in logit space. Typical range is
-        0.5 to 5.0. Higher values cause more aggressive edge perturbation.
+        Standard deviation of Gaussian noise in logit space. Scalar applies
+        uniformly; a ``(bs,)`` tensor applies per-sample noise levels.
+        Typical range is 0.5 to 5.0.
     clamp_eps
         Small epsilon for clamping to avoid log(0) or log(inf). Default 1e-6.
 
@@ -166,11 +164,9 @@ def add_logit_noise(
 
     Notes
     -----
-    - Unlike flip-based noise (DiGress), this produces soft/continuous outputs
-    - The sigma parameter controls noise severity in log-odds space:
-      - sigma=0.5: mild perturbation, most edges retain original polarity
-      - sigma=2.0: moderate perturbation
-      - sigma=5.0: aggressive perturbation, significant edge flipping
+    Unlike flip-based noise (DiGress), this produces soft/continuous outputs.
+    The sigma parameter controls noise severity in log-odds space:
+    sigma=0.5 is mild, sigma=2.0 moderate, sigma=5.0 aggressive.
 
     Examples
     --------
@@ -179,8 +175,10 @@ def add_logit_noise(
     >>> assert A_noisy.min() > 0 and A_noisy.max() < 1
     >>> assert torch.allclose(A_noisy, A_noisy.T)  # Symmetric
     """
-    # Convert to tensor if needed
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+
+    if isinstance(sigma, Tensor):
+        sigma = sigma.to(device=A.device, dtype=A.dtype).reshape(-1, 1, 1)
 
     # Clamp for numerical stability (avoid log(0) and log(inf))
     A_clamped = A.clamp(clamp_eps, 1 - clamp_eps)
@@ -192,11 +190,9 @@ def add_logit_noise(
     noise = torch.randn_like(L) * sigma
 
     if L.dim() == 2:
-        # Single matrix case
         noise = torch.triu(noise, diagonal=1)
         noise = noise + noise.T
     else:
-        # Batch case
         noise = torch.triu(noise, diagonal=1)
         noise = noise + noise.transpose(-2, -1)
 
@@ -207,7 +203,7 @@ def add_logit_noise(
 
 def add_digress_noise(
     A: torch.Tensor | np.ndarray,
-    alpha_bar: float,
+    alpha_bar: float | Tensor,
 ) -> torch.Tensor:
     """Apply DiGress-style categorical noise to a binary adjacency matrix.
 
@@ -222,13 +218,11 @@ def add_digress_noise(
     Parameters
     ----------
     A
-        Binary adjacency matrix (0s and 1s), single (n, n) or batched
-        (batch_size, n, n).
+        Binary adjacency matrix (0s and 1s), single ``(n, n)`` or batched
+        ``(bs, n, n)``.
     alpha_bar
-        Cumulative noise schedule parameter in [0, 1]. At alpha_bar=1.0,
-        no noise (clean). At alpha_bar=0.0, output is uniform random
-        (fully noisy). Related to the noise schedule by
-        alpha_bar_t = prod_{s=1}^{t} (1 - beta_s).
+        Cumulative noise schedule parameter in [0, 1]. Scalar applies
+        uniformly; a ``(bs,)`` tensor applies per-sample levels.
 
     Returns
     -------
@@ -247,7 +241,7 @@ def add_digress_noise(
 
 def add_edge_flip_noise(
     A: torch.Tensor | np.ndarray,
-    p: float,
+    p: float | Tensor,
     generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """Flip edges with probability p (symmetric Bernoulli noise).
@@ -259,9 +253,10 @@ def add_edge_flip_noise(
     ----------
     A
         Input adjacency matrix (0s and 1s), single ``(n, n)`` or
-        batched ``(batch_size, n, n)``.
+        batched ``(bs, n, n)``.
     p
-        Probability of flipping each edge.
+        Probability of flipping each edge. Scalar applies uniformly;
+        a ``(bs,)`` tensor applies per-sample flip probabilities.
     generator
         Optional torch RNG for reproducible noise. When ``None``, uses the
         global RNG.
@@ -271,8 +266,11 @@ def add_edge_flip_noise(
     torch.Tensor
         Noisy adjacency matrix with same shape as input.
     """
-    # Convert to tensor if needed
-    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()  # pyright: ignore[reportConstantRedefinition]  # math notation
+    A = torch.tensor(A, dtype=torch.float32) if isinstance(A, np.ndarray) else A.float()
+
+    # Reshape p for broadcasting: (bs,) → (bs, 1, 1)
+    if isinstance(p, Tensor):
+        p = p.to(device=A.device, dtype=A.dtype).reshape(-1, 1, 1)
 
     # Generate random values for each element
     random_values = torch.rand(
@@ -283,16 +281,17 @@ def add_edge_flip_noise(
     if A.dim() == 2:
         upper_mask = torch.triu(torch.ones_like(A, dtype=torch.bool), diagonal=1)
     else:
-        # Batch case
-        batch_size = A.shape[0]
         num_nodes = A.shape[1]
-        upper_mask = torch.triu(
-            torch.ones(num_nodes, num_nodes, dtype=torch.bool, device=A.device),
-            diagonal=1,
+        upper_mask = (
+            torch.triu(
+                torch.ones(num_nodes, num_nodes, dtype=torch.bool, device=A.device),
+                diagonal=1,
+            )
+            .unsqueeze(0)
+            .expand(A.shape[0], -1, -1)
         )
-        upper_mask = upper_mask.unsqueeze(0).expand(batch_size, -1, -1)
 
-    # Create flip mask only for upper triangle
+    # Create flip mask only for upper triangle; p broadcasts as (bs,1,1)
     flip_mask_upper = (random_values < p) & upper_mask
 
     # Make symmetric flip mask by mirroring upper triangle to lower
@@ -301,7 +300,7 @@ def add_edge_flip_noise(
     else:
         flip_mask = flip_mask_upper | flip_mask_upper.transpose(-2, -1)
 
-    # Flip the elements where the mask is True (using XOR operation)
+    # Flip the elements where the mask is True
     A_noisy = torch.where(flip_mask, 1 - A, A)
 
     return A_noisy
@@ -316,15 +315,17 @@ class NoiseGenerator(ABC):
     """Abstract base class for noise generators."""
 
     @abstractmethod
-    def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
+    def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Add noise to an adjacency matrix.
 
         Parameters
         ----------
         A : Tensor
             Input adjacency matrix, shape ``(n, n)`` or ``(bs, n, n)``.
-        eps : float
-            Noise intensity whose interpretation varies by subclass:
+        eps : float or Tensor
+            Noise intensity whose interpretation varies by subclass.
+            Scalar applies uniform noise; a ``(bs,)`` tensor applies
+            per-sample noise levels.
 
             ============== ========================= ================
             Subclass       Interpretation            Typical range
@@ -355,7 +356,7 @@ class NoiseGenerator(ABC):
 class GaussianNoiseGenerator(NoiseGenerator):
     """Gaussian noise generator (stateless)."""
 
-    def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
+    def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Add symmetric Gaussian noise with std dev ``eps``."""
         return add_gaussian_noise(A, eps)
 
@@ -367,7 +368,7 @@ class GaussianNoiseGenerator(NoiseGenerator):
 class EdgeFlipNoiseGenerator(NoiseGenerator):
     """Symmetric Bernoulli edge-flip noise generator (stateless)."""
 
-    def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
+    def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Flip edges with probability eps."""
         return add_edge_flip_noise(A, eps)
 
@@ -390,7 +391,7 @@ class DigressNoiseGenerator(NoiseGenerator):
     flip probability (at alpha_bar=0) is 0.5, not 1.0.
     """
 
-    def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
+    def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Apply DiGress categorical noise with ``alpha_bar = 1 - eps``."""
         alpha_bar = 1.0 - eps
         return add_digress_noise(A, alpha_bar=alpha_bar)
@@ -410,34 +411,35 @@ class RotationNoiseGenerator(NoiseGenerator):
     -----
     The skew matrix dimension is fixed at construction and must match
     the input graph size exactly. Variable-size graphs or padded batches
-    will raise ``AssertionError``. Create separate generators for each
+    will raise a dimension error. Create separate generators for each
     graph size, or use ``GaussianNoiseGenerator`` for variable-size inputs.
+
+    Unlike other noise types (Gaussian, edge_flip, DiGress) which produce
+    valid binary adjacency matrices, rotation noise produces
+    continuous-valued matrices via ``V_rot @ diag(λ) @ V_rot^T``.
+    Downstream thresholding or rounding is the caller's responsibility.
     """
 
     def __init__(self, k: int, seed: int | None = None):
-        """
-        Initialize rotation noise generator.
-
-        Args:
-            k: Dimension of the skew matrix (number of eigenvectors)
-            seed: Random seed for reproducible skew matrix generation
-        """
         self.k = k
         self.seed = seed
         self.skew = self._generate_skew_matrix(k, seed)
 
-    def _generate_skew_matrix(self, k: int, seed: int | None) -> np.ndarray:
-        """Generate a random skew-symmetric matrix."""
+    def _generate_skew_matrix(self, k: int, seed: int | None) -> Tensor:
+        """Generate a random skew-symmetric matrix as a torch Tensor."""
         rng = np.random.default_rng(seed)
         A = rng.random((k, k))
-        return (A - A.T) / 2
+        skew = (A - A.T) / 2
+        return torch.tensor(skew, dtype=torch.float32)
 
-    def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
+    def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Rotate eigenvectors by ``expm(eps * skew)``; ``eps`` scales the angle."""
-        assert A.shape[-1] == self.skew.shape[0], (
-            f"Graph dimension {A.shape[-1]} != skew matrix dimension {self.skew.shape[0]}. "
-            f"RotationNoiseGenerator was created with k={self.skew.shape[0]}."
-        )
+        if A.shape[-1] != self.skew.shape[0]:
+            raise ValueError(
+                f"Graph dimension {A.shape[-1]} != skew matrix dimension "
+                f"{self.skew.shape[0]}. RotationNoiseGenerator was created "
+                f"with k={self.skew.shape[0]}."
+            )
         return add_rotation_noise(A, eps, self.skew)
 
     @property
@@ -477,7 +479,7 @@ class LogitNoiseGenerator(NoiseGenerator):
     def __init__(self, clamp_eps: float = 1e-6):
         self.clamp_eps = clamp_eps
 
-    def add_noise(self, A: torch.Tensor, eps: float) -> torch.Tensor:
+    def add_noise(self, A: torch.Tensor, eps: float | Tensor) -> torch.Tensor:
         """Add noise in logit space.
 
         Parameters
@@ -486,7 +488,7 @@ class LogitNoiseGenerator(NoiseGenerator):
             Input adjacency matrix (binary or soft).
         eps
             Standard deviation of Gaussian noise in logit space.
-            Note: This differs from DiGress where eps is flip probability.
+            Scalar or ``(bs,)`` tensor for per-sample levels.
             Typical range: 0.5 to 5.0.
 
         Returns

@@ -4,7 +4,7 @@ Test rationale:
     This test verifies that the end-to-end training pipeline works correctly,
     from configuration loading through model training to final evaluation.
     It ensures that:
-    1. Hydra configuration instantiation produces valid objects
+    1. Model instantiation produces valid objects
     2. The training loop executes without errors
     3. Loss decreases during training (model is learning)
     4. Validation metrics are computed and logged
@@ -22,7 +22,13 @@ import torch
 from omegaconf import OmegaConf
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.experiments._shared_utils.lightning_modules.denoising_module import (
+from tmgg.models.spectral_denoisers import GraphFilterBank, LinearPE
+from tmgg.models.spectral_denoisers.bilinear import (
+    BilinearDenoiserWithMLP,
+    MultiLayerBilinearDenoiser,
+)
+from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
+from tmgg.training.lightning_modules.denoising_module import (
     SingleStepDenoisingModule,
 )
 
@@ -39,13 +45,9 @@ class TestTrainingPipeline:
                 "learning_rate": 1e-3,
                 "weight_decay": 0.0,
                 "optimizer_type": "adam",
-                "loss_type": "BCEWithLogits",
+                "loss_type": "bce_logits",
                 "noise_type": "digress",
                 "noise_levels": [0.1, 0.2],
-                "model": {
-                    "k": 8,
-                    "model_type": "filter_bank",
-                },
                 "paths": {
                     "output_dir": str(tmp_path),
                     "results_dir": str(tmp_path / "results"),
@@ -76,9 +78,9 @@ class TestTrainingPipeline:
 
     def test_spectral_lightning_module_instantiation(self, minimal_config):
         """Test that SingleStepDenoisingModule can be instantiated from config."""
+        model = GraphFilterBank(k=8, polynomial_degree=3)
         module = SingleStepDenoisingModule(
-            model_type=minimal_config.model.model_type,
-            model_config={"k": minimal_config.model.k},
+            model=model,
             learning_rate=minimal_config.learning_rate,
             weight_decay=minimal_config.weight_decay,
             optimizer_type=minimal_config.optimizer_type,
@@ -92,27 +94,33 @@ class TestTrainingPipeline:
         assert hasattr(module, "noise_generator")
 
     @pytest.mark.parametrize(
-        "model_type,model_config",
+        "model",
         [
-            ("linear_pe", {"k": 8}),
-            ("filter_bank", {"k": 8}),
-            ("self_attention", {"k": 8}),
-            ("bilinear_mlp", {"k": 8}),
-            ("multilayer_bilinear", {"k": 8}),
+            LinearPE(k=8),
+            GraphFilterBank(k=8, polynomial_degree=3),
+            SelfAttentionDenoiser(k=8, d_k=16),
+            BilinearDenoiserWithMLP(k=8, d_k=16, mlp_hidden_dim=32, mlp_num_layers=1),
+            MultiLayerBilinearDenoiser(k=8, d_model=16, num_heads=2, num_layers=1),
+        ],
+        ids=[
+            "LinearPE",
+            "GraphFilterBank",
+            "SelfAttentionDenoiser",
+            "BilinearDenoiserWithMLP",
+            "MultiLayerBilinearDenoiser",
         ],
     )
-    def test_all_model_types_instantiate(self, model_type, model_config):
+    def test_all_model_types_instantiate(self, model):
         """Verify all valid spectral model types instantiate without error.
 
         Test Rationale
         --------------
-        Each model_type should produce a valid model through ModelRegistry.
-        This parametrized test ensures SingleStepDenoisingModule can create
+        Each model should produce a valid SingleStepDenoisingModule.
+        This parametrized test ensures SingleStepDenoisingModule can wrap
         all supported spectral architectures.
         """
         module = SingleStepDenoisingModule(
-            model_type=model_type,
-            model_config=model_config,
+            model=model,
             learning_rate=1e-3,
             noise_levels=[0.1],
         )
@@ -124,9 +132,9 @@ class TestTrainingPipeline:
 
     def test_forward_pass_shape(self, minimal_config, sample_adjacency_matrices):
         """Test that forward pass preserves shape."""
+        model = GraphFilterBank(k=8, polynomial_degree=3)
         module = SingleStepDenoisingModule(
-            model_type=minimal_config.model.model_type,
-            model_config={"k": minimal_config.model.k},
+            model=model,
             learning_rate=minimal_config.learning_rate,
             noise_levels=minimal_config.noise_levels,
         )
@@ -146,9 +154,9 @@ class TestTrainingPipeline:
         """
         from unittest.mock import patch
 
+        model = GraphFilterBank(k=8, polynomial_degree=3)
         module = SingleStepDenoisingModule(
-            model_type=minimal_config.model.model_type,
-            model_config={"k": minimal_config.model.k},
+            model=model,
             learning_rate=minimal_config.learning_rate,
             loss_type=minimal_config.loss_type,
             noise_levels=minimal_config.noise_levels,
@@ -167,9 +175,9 @@ class TestTrainingPipeline:
         from tmgg.data.data_modules.data_module import GraphDataModule
 
         # Create model
+        model = GraphFilterBank(k=8, polynomial_degree=3)
         module = SingleStepDenoisingModule(
-            model_type=minimal_config.model.model_type,
-            model_config={"k": minimal_config.model.k},
+            model=model,
             learning_rate=minimal_config.learning_rate,
             noise_levels=minimal_config.noise_levels,
             loss_type=minimal_config.loss_type,
@@ -207,12 +215,12 @@ class TestTrainingPipeline:
         from tmgg.data.data_modules.data_module import GraphDataModule
 
         # Create model with nonlinear model for bounded output with MSE loss
+        model = GraphFilterBank(k=8, polynomial_degree=3)
         module = SingleStepDenoisingModule(
-            model_type=minimal_config.model.model_type,
-            model_config={"k": minimal_config.model.k},
+            model=model,
             learning_rate=1e-2,  # Higher LR for faster convergence in test
             noise_levels=[0.1],  # Single noise level for cleaner test
-            loss_type="MSE",  # MSE is easier to optimize
+            loss_type="mse",  # MSE is easier to optimize
         )
 
         # Create data module with fixed data for deterministic test

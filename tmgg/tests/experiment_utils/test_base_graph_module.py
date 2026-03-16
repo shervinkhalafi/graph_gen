@@ -1,7 +1,7 @@
 """Tests for BaseGraphModule shared Lightning infrastructure.
 
 BaseGraphModule provides common plumbing for all graph learning experiments:
-model creation via ModelRegistry, optimizer/scheduler setup, GraphData batch
+accepting a pre-instantiated model, optimizer/scheduler setup, GraphData batch
 transfer, and parameter-count logging. It carries no training logic.
 
 Testing strategy: a concrete subclass ``_ConcreteModule`` supplies trivial
@@ -18,10 +18,11 @@ import pytest
 import torch
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.experiments._shared_utils.lightning_modules.base_graph_module import (
+from tmgg.models.base import GraphModel
+from tmgg.models.gnn import GNN
+from tmgg.training.lightning_modules.base_graph_module import (
     BaseGraphModule,
 )
-from tmgg.models.base import GraphModel
 
 # -----------------------------------------------------------------------
 # Concrete subclass for testing
@@ -38,25 +39,24 @@ class _ConcreteModule(BaseGraphModule):
         pass
 
 
-# Default model_type and config used throughout the tests.  "gnn" is
-# registered in the factory and produces a GraphModel.
-_DEFAULT_MODEL_TYPE = "gnn"
-_DEFAULT_MODEL_CONFIG: dict[str, Any] = {
-    "num_layers": 2,
-    "num_terms": 2,
-    "feature_dim_in": 10,
-    "feature_dim_out": 10,
-}
+def _make_default_model(**kwargs: Any) -> GNN:
+    """Build a GNN with sensible test defaults, merging any overrides."""
+    defaults: dict[str, Any] = {
+        "num_layers": 2,
+        "num_terms": 2,
+        "feature_dim_in": 10,
+        "feature_dim_out": 10,
+    }
+    defaults.update(kwargs)
+    return GNN(**defaults)
 
 
 def _make_module(**overrides: Any) -> _ConcreteModule:
     """Convenience factory that merges *overrides* into sensible defaults."""
-    kwargs: dict[str, Any] = {
-        "model_type": _DEFAULT_MODEL_TYPE,
-        "model_config": _DEFAULT_MODEL_CONFIG,
-    }
+    model = overrides.pop("model", _make_default_model())
+    kwargs: dict[str, Any] = {}
     kwargs.update(overrides)
-    return _ConcreteModule(**kwargs)
+    return _ConcreteModule(model=model, **kwargs)
 
 
 # -----------------------------------------------------------------------
@@ -75,57 +75,32 @@ class TestBaseGraphModuleIsAbstract:
         """
         with pytest.raises(TypeError):
             BaseGraphModule(  # type: ignore[abstract]
-                model_type=_DEFAULT_MODEL_TYPE,
-                model_config=_DEFAULT_MODEL_CONFIG,
+                model=_make_default_model(),
             )
 
 
-class TestMakeParametrizedModel:
-    """Tests for _make_parametrized_model (model creation via registry)."""
+class TestModelAssignment:
+    """Tests for model assignment at construction."""
 
-    def test_creates_graph_model_from_registry(self) -> None:
-        """The factory should return a GraphModel subclass for a valid model_type.
-
-        Uses the ``"gnn"`` factory registered in ``tmgg.models.factory``.
-        """
-        module = _make_module()
+    def test_creates_with_graph_model(self) -> None:
+        """Passing a GraphModel should be stored on self.model."""
+        model = _make_default_model()
+        module = _make_module(model=model)
         assert isinstance(module.model, GraphModel)
+        assert module.model is model
 
-    def test_model_config_forwarded(self) -> None:
-        """Config values should reach the created model.
-
-        We verify by checking the GNN's ``num_layers`` attribute, which is
-        set from the config dict.
-        """
-        module = _make_module(
-            model_config={
-                "num_layers": 5,
-                "num_terms": 3,
-                "feature_dim_in": 16,
-                "feature_dim_out": 16,
-            }
+    def test_model_config_forwarded_to_hparams(self) -> None:
+        """get_model_config() should reflect the model's own get_config()."""
+        model = _make_default_model(
+            num_layers=5, num_terms=3, feature_dim_in=16, feature_dim_out=16
         )
+        module = _make_module(model=model)
         assert module.model.num_layers == 5  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_rejects_non_graph_model(self) -> None:
-        """If the registry factory returns a non-GraphModel, a TypeError is raised.
-
-        We patch the registry to return a plain nn.Module and confirm the
-        guard clause fires.
-        """
-        with (
-            patch(
-                "tmgg.models.factory.ModelRegistry.create",
-                return_value=torch.nn.Linear(4, 4),
-            ),
-            pytest.raises(TypeError, match="expected GraphModel subclass"),
-        ):
-            _make_module()
-
-    def test_unknown_model_type_raises(self) -> None:
-        """An unregistered model_type should surface a ValueError from the registry."""
-        with pytest.raises(ValueError, match="Unknown model_type"):
-            _make_module(model_type="nonexistent_model_xyz")
+        """Passing a plain nn.Module (not GraphModel) should raise TypeError."""
+        with pytest.raises(TypeError, match="Expected GraphModel subclass"):
+            _ConcreteModule(model=torch.nn.Linear(4, 4))  # type: ignore[arg-type]
 
 
 class TestConfigureOptimizers:
@@ -237,7 +212,7 @@ class TestOnFitStart:
         module._logger = mock_logger  # type: ignore[assignment]
 
         with patch(
-            "tmgg.experiments._shared_utils.lightning_modules.base_graph_module._log_parameter_count"
+            "tmgg.training.lightning_modules.base_graph_module._log_parameter_count"
         ) as mock_log:
             module.on_fit_start()
 
@@ -251,13 +226,18 @@ class TestOnFitStart:
 class TestGetModelName:
     """Tests for get_model_name()."""
 
-    def test_returns_model_type(self) -> None:
-        """get_model_name should return the model_type stored in hparams.
+    def test_returns_model_name(self) -> None:
+        """get_model_name should return the model_name passed at construction.
 
         This is the default behaviour; subclasses can override for custom names.
         """
-        module = _make_module(model_type="gnn")
+        module = _make_module(model_name="gnn")
         assert module.get_model_name() == "gnn"
+
+    def test_returns_unknown_when_not_set(self) -> None:
+        """get_model_name should return 'unknown' when model_name is not set."""
+        module = _make_module()
+        assert module.get_model_name() == "unknown"
 
 
 class TestGetModelConfig:

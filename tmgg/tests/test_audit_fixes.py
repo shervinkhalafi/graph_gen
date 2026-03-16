@@ -18,9 +18,6 @@ import torch.nn as nn
 
 from tmgg.data import generate_sbm_adjacency
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
-    compute_spectral_deltas,
-)
 from tmgg.models.attention.attention import MultiLayerAttention
 from tmgg.models.gnn.gnn_sym import GNNSymmetric
 from tmgg.models.gnn.nvgnn import NodeVarGNN
@@ -28,10 +25,13 @@ from tmgg.models.hybrid.hybrid import SequentialDenoisingModel
 from tmgg.models.layers.eigen_embedding import _EigenEmbedding as EigenEmbedding
 from tmgg.models.layers.gcn import GraphConvolutionLayer
 from tmgg.models.layers.masked_softmax import masked_softmax
-from tmgg.models.layers.mha_layer import MultiHeadAttention
+from tmgg.models.layers.mha_layer import MultiHeadSelfAttention
 from tmgg.models.layers.nvgcn_layer import NodeVarGraphConvolutionLayer
 from tmgg.models.layers.topk_eigen import TopKEigenLayer
 from tmgg.models.spectral_denoisers.filter_bank import GraphFilterBank
+from tmgg.utils.spectral.spectral_deltas import (
+    compute_spectral_deltas,
+)
 
 
 class TestIssue1AttentionScaling:
@@ -47,7 +47,7 @@ class TestIssue1AttentionScaling:
         num_heads = 4
         d_k = d_model // num_heads  # 16
 
-        layer = MultiHeadAttention(d_model=d_model, num_heads=num_heads)
+        layer = MultiHeadSelfAttention(d_model=d_model, num_heads=num_heads)
 
         expected_scale = 1.0 / math.sqrt(d_k)
         assert (
@@ -59,7 +59,7 @@ class TestIssue1AttentionScaling:
         d_model = 256
         num_heads = 4
 
-        layer = MultiHeadAttention(d_model=d_model, num_heads=num_heads)
+        layer = MultiHeadSelfAttention(d_model=d_model, num_heads=num_heads)
         x = torch.randn(2, 10, d_model)
 
         output = layer(x)

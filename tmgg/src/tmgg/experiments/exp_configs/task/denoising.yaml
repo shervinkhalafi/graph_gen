@@ -7,8 +7,8 @@
 defaults:
   - /data: sbm_default
 
-# Loss function (models output logits, BCEWithLogits applies sigmoid internally)
-loss_type: BCEWithLogits
+# Loss function (models output logits, bce_logits applies sigmoid internally)
+loss_type: bce_logits
 
 # Noise configuration
 noise_type: digress
@@ -31,6 +31,5 @@ model:
   seed: ${seed}
   spectral_k: ${spectral_k}
   evaluator:
-    _target_: tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator.GraphEvaluator
+    _target_: tmgg.training.evaluation_metrics.graph_evaluator.GraphEvaluator
     eval_num_samples: 128
-  eval_num_samples: 128

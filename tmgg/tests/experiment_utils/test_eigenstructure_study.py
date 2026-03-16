@@ -16,10 +16,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
-    compute_eigenvalue_drift,
-    compute_subspace_distance_from_eigenvectors,
-)
 from tmgg.experiments.eigenstructure_study import (
     EigenstructureCollector,
     NoisedAnalysisComparator,
@@ -38,6 +34,10 @@ from tmgg.experiments.eigenstructure_study import (
     load_manifest,
     save_dataset_manifest,
     save_decomposition_batch,
+)
+from tmgg.utils.spectral.spectral_deltas import (
+    compute_eigenvalue_drift,
+    compute_subspace_distance_from_eigenvectors,
 )
 
 
@@ -906,7 +906,7 @@ class TestSpectralDeltasModule:
 
     def test_compute_spectral_deltas_all_metrics(self) -> None:
         """compute_spectral_deltas should return all four metrics."""
-        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+        from tmgg.utils.spectral.spectral_deltas import (
             compute_spectral_deltas,
         )
 
@@ -939,7 +939,7 @@ class TestSpectralDeltasModule:
 
     def test_compute_spectral_deltas_identical_graphs(self) -> None:
         """Identical graphs should yield near-zero deltas."""
-        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+        from tmgg.utils.spectral.spectral_deltas import (
             compute_spectral_deltas,
         )
 
@@ -970,7 +970,7 @@ class TestSpectralDeltasModule:
 
     def test_compute_spectral_deltas_2d_input(self) -> None:
         """Should handle 2D input (single graph) correctly."""
-        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+        from tmgg.utils.spectral.spectral_deltas import (
             compute_spectral_deltas,
         )
 
@@ -997,7 +997,7 @@ class TestSpectralDeltasModule:
 
     def test_compute_spectral_deltas_reduce_mean(self) -> None:
         """reduce='mean' should return float means."""
-        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+        from tmgg.utils.spectral.spectral_deltas import (
             compute_spectral_deltas,
         )
 

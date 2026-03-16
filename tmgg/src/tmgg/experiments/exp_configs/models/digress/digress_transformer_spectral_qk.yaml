@@ -4,7 +4,7 @@ defaults:
   - digress_base
   - _self_
 
-model_config:
+model:
   n_layers: 4
   hidden_dims:
     dx: 128

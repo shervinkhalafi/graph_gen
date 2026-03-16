@@ -2,11 +2,12 @@
 # A_pred = W @ A @ W.T + b
 # Initialized at identity for stable learning
 
-_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+_target_: tmgg.training.lightning_modules.denoising_module.SingleStepDenoisingModule
 
-model_type: linear
+model_name: linear
 
-model_config:
+model:
+  _target_: tmgg.models.baselines.LinearBaseline
   # Maximum nodes (determines parameter size)
   max_nodes: 200
 

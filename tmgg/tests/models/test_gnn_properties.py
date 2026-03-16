@@ -1,5 +1,6 @@
 """Property-based tests for GNN models using Hypothesis."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -99,7 +100,7 @@ def batch_adjacency_matrices(
 
 
 @composite
-def gnn_params(draw: DrawFn) -> dict[str, int]:
+def gnn_params(draw: DrawFn) -> dict[str, Any]:
     """Generate valid GNN parameters."""
     num_layers = draw(st.integers(min_value=1, max_value=4))
     num_terms = draw(st.integers(min_value=1, max_value=5))
@@ -174,7 +175,7 @@ class TestGNNProperties:
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=10), params=gnn_params())
     @settings(max_examples=20, deadline=2000)
-    def test_gnn_output_shapes(self, A: torch.Tensor, params: dict[str, int]) -> None:
+    def test_gnn_output_shapes(self, A: torch.Tensor, params: dict[str, Any]) -> None:
         """Test that GNN produces correct output shapes."""
         model = GNN(**params)
 

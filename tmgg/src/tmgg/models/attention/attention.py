@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.models.layers.mha_layer import MultiHeadAttention
+from tmgg.models.layers.mha_layer import MultiHeadSelfAttention
 
 from ..base import GraphModel
 
@@ -52,7 +52,7 @@ class MultiLayerAttention(GraphModel):
         # Create stack of attention layers
         self.layers = nn.ModuleList(
             [
-                MultiHeadAttention(
+                MultiHeadSelfAttention(
                     d_model,
                     num_heads=num_heads,
                     d_k=self.d_k,

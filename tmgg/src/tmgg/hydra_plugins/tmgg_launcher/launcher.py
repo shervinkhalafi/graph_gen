@@ -153,7 +153,7 @@ class TmggLauncher(Launcher):
         hydra_cfg = OmegaConf.to_container(config.get("hydra", {}), resolve=True)
         if not isinstance(hydra_cfg, dict):
             return {}
-        return hydra_cfg.get("launcher", {})  # type: ignore[return-value]
+        return cast(dict[str, Any], hydra_cfg.get("launcher", {}))
 
     def _apply_overrides(
         self, base_config: DictConfig, overrides: list[str]
@@ -192,10 +192,10 @@ class TmggLauncher(Launcher):
         so that multirun-on-Modal writes to the persistent volume rather than
         ephemeral container storage.
         """
-        from tmgg.experiments._shared_utils.orchestration.run_experiment import (
+        from tmgg.modal._lib.volumes import OUTPUTS_MOUNT
+        from tmgg.training.orchestration.run_experiment import (
             generate_run_id,
         )
-        from tmgg.modal._lib.volumes import OUTPUTS_MOUNT
 
         for cfg in configs:
             run_id = generate_run_id(cfg)

@@ -1,11 +1,12 @@
 # Self-Attention denoiser with query/key projections
 # Â = (V W_Q)(V W_K)^T / √d_k (outputs logits)
 
-_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+_target_: tmgg.training.lightning_modules.denoising_module.SingleStepDenoisingModule
 
-model_type: self_attention
+model_name: self_attention
 
-model_config:
+model:
+  _target_: tmgg.models.spectral_denoisers.self_attention.SelfAttentionDenoiser
   # Number of eigenvectors
   k: 8
   # Key dimension

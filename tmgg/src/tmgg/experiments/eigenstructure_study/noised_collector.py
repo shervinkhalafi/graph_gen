@@ -14,7 +14,7 @@ import torch
 from loguru import logger
 
 from tmgg.data.noising.noise import create_noise_generator
-from tmgg.experiments._shared_utils.spectral_utils.laplacian import compute_laplacian
+from tmgg.utils.spectral.laplacian import compute_laplacian
 
 from .storage import (
     iter_batches,
@@ -337,7 +337,7 @@ class NoisedAnalysisComparator:
         dict
             Statistics on projection Frobenius distance.
         """
-        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+        from tmgg.utils.spectral.spectral_deltas import (
             compute_subspace_distance_from_eigenvectors,
         )
 
@@ -422,7 +422,7 @@ class NoisedAnalysisComparator:
         dict
             Statistics on Procrustes rotation angles and residuals for each k.
         """
-        from tmgg.experiments._shared_utils.spectral_utils.subspace import (
+        from tmgg.utils.spectral.subspace import (
             compute_procrustes_rotation,
         )
 
@@ -484,10 +484,10 @@ class NoisedAnalysisComparator:
         list[dict]
             One result dict per noise level with statistics for all metrics.
         """
-        from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+        from tmgg.utils.spectral.spectral_deltas import (
             compute_subspace_distance_from_eigenvectors,
         )
-        from tmgg.experiments._shared_utils.spectral_utils.subspace import (
+        from tmgg.utils.spectral.subspace import (
             compute_procrustes_rotation,
         )
 

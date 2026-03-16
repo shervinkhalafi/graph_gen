@@ -26,16 +26,17 @@ import torch
 
 from tmgg.data.data_modules.data_module import GraphDataModule
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.experiments._shared_utils.lightning_modules.denoising_module import (
+from tmgg.training.lightning_modules.denoising_module import (
     SingleStepDenoisingModule,
 )
 
 N_NODES = 16
 
-# Shared model_config for a small graph_transformer suitable for fast CPU tests
+# Shared config for a small graph_transformer suitable for fast CPU tests
 _TINY_DIGRESS_CONFIG: dict[str, Any] = {
     "k": 8,
     "n_layers": 2,
+    "input_dims": {"X": 2, "E": 2, "y": 0},
     "hidden_mlp_dims": {"X": 32, "E": 16, "y": 32},
     "hidden_dims": {"dx": 32, "de": 16, "dy": 32, "n_head": 2},
     "output_dims": {"X": 0, "E": 2, "y": 0},
@@ -74,10 +75,18 @@ def data_module() -> GraphDataModule:
 @pytest.fixture
 def module() -> SingleStepDenoisingModule:
     """Small DiGress module suitable for fast CPU tests."""
+    from tmgg.models.digress.transformer_model import GraphTransformer
+
+    model = GraphTransformer(
+        n_layers=_TINY_DIGRESS_CONFIG["n_layers"],
+        input_dims=_TINY_DIGRESS_CONFIG["input_dims"],
+        hidden_mlp_dims=_TINY_DIGRESS_CONFIG["hidden_mlp_dims"],
+        hidden_dims=_TINY_DIGRESS_CONFIG["hidden_dims"],
+        output_dims=_TINY_DIGRESS_CONFIG["output_dims"],
+    )
     return SingleStepDenoisingModule(
-        model_type="graph_transformer",
-        model_config=_TINY_DIGRESS_CONFIG,
-        loss_type="MSE",
+        model=model,
+        loss_type="mse",
         noise_type="digress",
         learning_rate=1e-3,
         noise_levels=[0.1, 0.2],

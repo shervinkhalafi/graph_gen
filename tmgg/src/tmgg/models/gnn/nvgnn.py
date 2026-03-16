@@ -19,15 +19,23 @@ class NodeVarGNN(GraphModel):
         num_terms: int = 3,
         feature_dim: int = 10,
         eigenvalue_reg: float = 0.0,
+        symmetrized_output: bool = True,
     ):
-        """
-        Initialize Node-variant GNN.
+        """Initialize Node-variant GNN.
 
-        Args:
-            num_layers: Number of layers
-            num_terms: Number of polynomial terms
-            feature_dim: Feature dimension
-            eigenvalue_reg: Diagonal regularization for eigendecomposition stability
+        Parameters
+        ----------
+        num_layers
+            Number of layers.
+        num_terms
+            Number of polynomial terms.
+        feature_dim
+            Feature dimension.
+        eigenvalue_reg
+            Diagonal regularization for eigendecomposition stability.
+        symmetrized_output
+            If True (default), symmetrize the reconstructed adjacency
+            via ``(A + A.T) / 2`` after the dot product.
         """
         super().__init__()
 
@@ -35,6 +43,7 @@ class NodeVarGNN(GraphModel):
         self.num_terms = num_terms
         self.feature_dim = feature_dim
         self.eigenvalue_reg = eigenvalue_reg
+        self.symmetrized_output = symmetrized_output
 
         self.embedding_layer = TruncatedEigenEmbedding(
             target_dim=feature_dim, eigenvalue_reg=eigenvalue_reg
@@ -74,6 +83,8 @@ class NodeVarGNN(GraphModel):
         emb_x = self.out_x(z)
         emb_y = self.out_y(z)
         result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
+        if self.symmetrized_output:
+            result_adj = (result_adj + result_adj.transpose(1, 2)) / 2
         return GraphData.from_adjacency(result_adj)
 
     @override
@@ -84,4 +95,5 @@ class NodeVarGNN(GraphModel):
             "num_terms": self.num_terms,
             "feature_dim": self.feature_dim,
             "eigenvalue_reg": self.eigenvalue_reg,
+            "symmetrized_output": self.symmetrized_output,
         }

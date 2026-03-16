@@ -1,7 +1,6 @@
-# Baseline denoising experiments (linear, MLP)
-#
-# Run with: uv run tmgg-baseline
-# Override: uv run tmgg-baseline model=baselines/mlp model.hidden_dim=512
+# Linear/MLP baseline denoising on SBM graphs.
+# Inherits: base_config_denoising → _base_infra + task/denoising
+# Run: uv run tmgg-baseline
 
 defaults:
   - base_config_denoising

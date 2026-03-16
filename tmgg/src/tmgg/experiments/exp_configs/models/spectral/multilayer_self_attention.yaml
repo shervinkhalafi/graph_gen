@@ -1,11 +1,12 @@
 # Multilayer Self-Attention denoiser with transformer blocks
 # V → project → L×(attention + residual + [MLP + residual]) → Q,K → Â
 
-_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+_target_: tmgg.training.lightning_modules.denoising_module.SingleStepDenoisingModule
 
-model_type: multilayer_bilinear
+model_name: multilayer_bilinear
 
-model_config:
+model:
+  _target_: tmgg.models.spectral_denoisers.bilinear.MultiLayerBilinearDenoiser
   # Number of eigenvectors (input dimension)
   k: 8
   # Transformer architecture

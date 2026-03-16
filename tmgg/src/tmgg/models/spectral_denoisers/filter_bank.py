@@ -106,6 +106,11 @@ class GraphFilterBank(SpectralDenoiser):
         self.polynomial_degree = polynomial_degree
         self.asymmetric = asymmetric
 
+        # Declare all parameter lists upfront; only one branch populates each.
+        self.H: nn.ParameterList | None = None
+        self.H_X: nn.ParameterList | None = None
+        self.H_Y: nn.ParameterList | None = None
+
         if asymmetric:
             # Separate coefficient matrices for X and Y branches
             self.H_X = nn.ParameterList(
@@ -118,7 +123,6 @@ class GraphFilterBank(SpectralDenoiser):
                 nn.init.xavier_uniform_(h)
             for h in self.H_Y:
                 nn.init.xavier_uniform_(h)
-            self.H = None  # type: ignore[assignment]
         else:
             # Learnable coefficient matrices H^{(ℓ)} ∈ R^{k×k} for ℓ = 0, ..., K-1
             self.H = nn.ParameterList(
@@ -126,8 +130,6 @@ class GraphFilterBank(SpectralDenoiser):
             )
             for h in self.H:
                 nn.init.xavier_uniform_(h)
-            self.H_X = None  # type: ignore[assignment]
-            self.H_Y = None  # type: ignore[assignment]
 
     def _compute_spectral_polynomial(
         self,
@@ -184,11 +186,10 @@ class GraphFilterBank(SpectralDenoiser):
 
         batch_size, n, k = V.shape
 
-        # Per-batch eigenvalue normalization to [-1, 1] (ChebNet convention).
-        # Defferrard et al. "Convolutional Neural Networks on Graphs with Fast
-        # Localized Spectral Filtering" (NIPS 2016, §2.2) rescale eigenvalues to
-        # [-1, 1] so that Chebyshev polynomials T_k remain numerically stable.
-        # Without this, Lambda^ell explodes (e.g., 10^5 for λ=10, ℓ=5).
+        # Per-batch eigenvalue normalization to [-1, 1].
+        # Borrowed from Defferrard et al. (NIPS 2016, §2.2), but note: the
+        # polynomial basis here is monomial {λ⁰, λ¹, λ², ...}, not Chebyshev.
+        # Normalization prevents Lambda^ell from exploding (e.g., 10^5 for λ=10, ℓ=5).
         Lambda_max = Lambda.abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-6)
         Lambda_normalized = Lambda / Lambda_max
 

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from omegaconf import OmegaConf
 
-from tmgg.experiments._shared_utils.orchestration.run_experiment import (
+from tmgg.training.orchestration.run_experiment import (
     check_wandb_run_exists,
     generate_run_id,
 )

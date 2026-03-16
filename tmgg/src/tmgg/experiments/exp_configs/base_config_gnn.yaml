@@ -1,4 +1,7 @@
-# GNN denoising experiments
+# GNN denoising: standard GNN model on SBM graphs.
+# Inherits: base_config_denoising → _base_infra + task/denoising
+# Run: uv run tmgg-gnn
+# Override model: uv run tmgg-gnn model=models/gnn/symmetric_gnn
 
 defaults:
   - base_config_denoising

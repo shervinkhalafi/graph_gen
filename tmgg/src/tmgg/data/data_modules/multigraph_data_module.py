@@ -10,6 +10,10 @@ Usable directly (e.g. as the gaussian diffusion generative datamodule) or
 subclassed when a different data representation is needed.
 """
 
+# pyright: reportExplicitAny=false
+# DataLoader/Dataset generic parameters and config dicts require Any
+# until PyTorch provides complete generic stubs.
+
 from __future__ import annotations
 
 from typing import Any, override
@@ -79,7 +83,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
     num_graphs: int
     train_ratio: float
     val_ratio: float
-    graph_config: dict[str, Any]  # pyright: ignore[reportExplicitAny]
+    graph_config: dict[str, Any]
 
     def __init__(
         self,
@@ -88,7 +92,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         num_graphs: int = 1000,
         train_ratio: float = 0.8,
         val_ratio: float = 0.1,
-        graph_config: dict[str, Any] | None = None,  # pyright: ignore[reportExplicitAny]
+        graph_config: dict[str, Any] | None = None,
         *,
         batch_size: int = 32,
         num_workers: int = 0,
@@ -348,7 +352,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         )
 
     @override
-    def get_dataset_info(self) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny]
+    def get_dataset_info(self) -> dict[str, Any]:
         """Return metadata about the dataset.
 
         Returns

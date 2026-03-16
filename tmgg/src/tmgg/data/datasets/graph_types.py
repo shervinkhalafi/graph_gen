@@ -129,7 +129,10 @@ class GraphData:
         -------
         GraphData
             One-hot encoded graph. Single graphs have no batch dimension;
-            batched inputs produce batched outputs.
+            batched inputs produce batched outputs. Creates an all-ones
+            ``node_mask``, treating every position as real. For variable-size
+            batches with zero-padded graphs, callers must construct the mask
+            separately (see ``collate``).
         """
         single = adj.dim() == 2
         if single:

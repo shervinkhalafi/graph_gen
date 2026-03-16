@@ -256,14 +256,7 @@ The framework supports multiple noise models for training and evaluation:
 ## Testing
 
 ```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov=tmgg --cov-report=html
-
-# Run specific test file
-uv run pytest tests/test_integration.py -v
+uv run pytest tests/ -x --ignore=tests/modal/test_eigenstructure_modal.py -m "not slow" -v
 ```
 
 ## Code Quality

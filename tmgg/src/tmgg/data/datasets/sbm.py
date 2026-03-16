@@ -133,91 +133,79 @@ def generate_block_sizes(
     min_size: int = 2,
     max_size: int = 15,
 ) -> list[list[int]]:
-    """
-    Generate all valid block size partitions for n nodes.
+    """Generate all valid block size partitions for n nodes.
 
-    This function finds all ways to partition n nodes into blocks where:
-    - The number of blocks is between min_blocks and max_blocks (inclusive)
-    - Each block has size between min_size and max_size (inclusive)
-    - The sum of all block sizes equals n
+    Finds all ways to partition n nodes into blocks where the number of blocks
+    is in ``[min_blocks, max_blocks]``, each block size is in
+    ``[min_size, max_size]``, and all sizes sum to n.  The algorithm uses
+    recursive backtracking, pruning branches where the remaining nodes cannot
+    satisfy the min/max size constraints for the remaining blocks.
 
-    The algorithm uses recursive backtracking to explore all valid partitions.
-    For each position, it calculates the valid range of sizes based on:
-    - Minimum size: Must be at least min_size, but also large enough that
-      remaining blocks can fit within max_size constraint
-    - Maximum size: Must be at most max_size, but also small enough that
-      remaining blocks can satisfy min_size constraint
+    Parameters
+    ----------
+    n : int
+        Total number of nodes to partition.
+    min_blocks : int
+        Minimum number of blocks in a partition.
+    max_blocks : int
+        Maximum number of blocks in a partition.
+    min_size : int
+        Minimum size for any single block.
+    max_size : int
+        Maximum size for any single block.
 
-    Args:
-        n: Total number of nodes to partition
-        min_blocks: Minimum number of blocks in a partition
-        max_blocks: Maximum number of blocks in a partition
-        min_size: Minimum size for any block
-        max_size: Maximum size for any block
+    Returns
+    -------
+    list[list[int]]
+        All valid block size partitions; each partition is a list of integers
+        summing to n.
 
-    Returns:
-        List of valid block size partitions, where each partition is a list
-        of integers summing to n
-
-    Example:
-        >>> generate_block_sizes(6, min_blocks=2, max_blocks=3, min_size=2, max_size=4)
-        [[2, 4], [3, 3], [4, 2], [2, 2, 2]]
+    Examples
+    --------
+    >>> generate_block_sizes(6, min_blocks=2, max_blocks=3, min_size=2, max_size=4)
+    [[2, 4], [3, 3], [4, 2], [2, 2, 2]]
     """
     valid_partitions = []
 
+    def generate_partitions(remaining, blocks_left, current_partition):
+        """Recursively generate partitions for remaining nodes.
+
+        Ensures that after choosing a size for the current block, the
+        remaining nodes can still be validly partitioned into the remaining
+        blocks while respecting min_size/max_size constraints.
+
+        Parameters
+        ----------
+        remaining
+            Number of nodes left to partition.
+        blocks_left
+            Number of blocks left to create (including current).
+        current_partition
+            Current partial partition being built (mutated in place).
+        """
+        if blocks_left == 0:
+            if remaining == 0:
+                valid_partitions.append(current_partition[:])
+            return
+
+        # Lower bound: current block must be large enough that remaining
+        # blocks can fit within max_size.
+        start = max(min_size, remaining - (blocks_left - 1) * max_size)
+
+        # Upper bound: current block must be small enough that remaining
+        # blocks can satisfy min_size.
+        end = min(max_size, remaining - (blocks_left - 1) * min_size) + 1
+
+        for size in range(start, end):
+            if size <= remaining:
+                current_partition.append(size)
+                generate_partitions(
+                    remaining - size, blocks_left - 1, current_partition
+                )
+                current_partition.pop()
+
     # Try different numbers of blocks
     for num_blocks in range(min_blocks, max_blocks + 1):
-
-        def generate_partitions(remaining, blocks_left, current_partition):
-            """
-            Recursively generate partitions for remaining nodes.
-
-            The key insight: we must ensure that after choosing a size for the
-            current block, the remaining nodes can still be validly partitioned
-            into the remaining blocks while respecting all constraints.
-
-            Args:
-                remaining: Number of nodes left to partition
-                blocks_left: Number of blocks left to create (including current)
-                current_partition: Current partial partition being built
-            """
-            # Base case: no more blocks to create
-            if blocks_left == 0:
-                # Valid only if we've used exactly all nodes
-                if remaining == 0:
-                    valid_partitions.append(current_partition[:])
-                return
-
-            # Calculate valid size range for current block
-
-            # LOWER BOUND rationale:
-            # - Obviously need at least min_size nodes
-            # - But also: if we take too few nodes now, the remaining blocks might
-            #   be forced to exceed max_size to use up all remaining nodes
-            # - Worst case: all other blocks take max_size. Then current block
-            #   must take at least (remaining - (blocks_left-1)*max_size)
-            # - Example: 20 nodes, 2 blocks left, max_size=15
-            #   Current must be at least 20-1*15=5, or the last block would need >15
-            start = max(min_size, remaining - (blocks_left - 1) * max_size)
-
-            # UPPER BOUND rationale:
-            # - Obviously can't exceed max_size
-            # - But also: if we take too many nodes now, the remaining blocks might
-            #   not have enough nodes to satisfy their min_size requirements
-            # - Best case: all other blocks take min_size. Then current block
-            #   can take at most (remaining - (blocks_left-1)*min_size)
-            # - Example: 20 nodes, 2 blocks left, min_size=2
-            #   Current can be at most 20-1*2=18, or the last block would have <2
-            end = min(max_size, remaining - (blocks_left - 1) * min_size) + 1
-
-            for size in range(start, end):
-                if size <= remaining:
-                    current_partition.append(size)
-                    generate_partitions(
-                        remaining - size, blocks_left - 1, current_partition
-                    )
-                    current_partition.pop()
-
         generate_partitions(n, num_blocks, [])
 
     return valid_partitions

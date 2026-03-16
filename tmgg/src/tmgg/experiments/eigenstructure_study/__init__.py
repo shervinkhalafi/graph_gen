@@ -16,8 +16,8 @@ tmgg-eigenstructure noised    # Phase 3
 tmgg-eigenstructure compare   # Compare original vs noised
 """
 
-from tmgg.experiments._shared_utils.spectral_utils.laplacian import compute_laplacian
-from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+from tmgg.utils.spectral.laplacian import compute_laplacian
+from tmgg.utils.spectral.spectral_deltas import (
     compute_alg_connectivity_delta,
     compute_eigenvalue_drift,
     compute_subspace_distance_from_eigenvectors,
@@ -65,7 +65,7 @@ __all__ = [
     # Delta comparison functions (wrappers returning absolute+relative dicts)
     "compute_eigengap_delta",
     "compute_algebraic_connectivity_delta",
-    # Spectral delta primitives (canonical implementations from _shared_utils.spectral_utils)
+    # Spectral delta primitives (canonical implementations from tmgg.utils.spectral)
     "compute_eigenvalue_drift",
     "compute_subspace_distance_from_eigenvectors",
     "compute_alg_connectivity_delta",

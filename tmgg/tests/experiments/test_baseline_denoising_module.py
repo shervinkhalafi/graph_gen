@@ -25,7 +25,7 @@ import torch
 
 from tmgg.data.data_modules.data_module import GraphDataModule
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.experiments._shared_utils.lightning_modules.denoising_module import (
+from tmgg.training.lightning_modules.denoising_module import (
     SingleStepDenoisingModule,
 )
 
@@ -63,13 +63,14 @@ def data_module() -> GraphDataModule:
 
 def _make_module(model_type: str) -> SingleStepDenoisingModule:
     """Create a small baseline module for CPU tests."""
+    from tmgg.models.baselines import LinearBaseline, MLPBaseline
+
+    if model_type == "linear":
+        model = LinearBaseline(max_nodes=N_NODES)
+    else:
+        model = MLPBaseline(max_nodes=N_NODES, hidden_dim=32, num_layers=1)
     return SingleStepDenoisingModule(
-        model_type=model_type,
-        model_config={
-            "max_nodes": N_NODES,
-            "hidden_dim": 32,
-            "num_layers": 1,
-        },
+        model=model,
         learning_rate=1e-3,
         noise_levels=[0.1, 0.2],
     )

@@ -14,6 +14,9 @@ training loop to be agnostic to the noise type. All subclasses are
 ``nn.Module``s so device management propagates automatically via ``.to()``.
 """
 
+# pyright: reportAttributeAccessIssue=false
+# F.one_hot exists at runtime; pyright cannot resolve it from the functional stub.
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -145,31 +148,30 @@ class ContinuousNoiseProcess(NoiseProcess):
             Noised graph data with the same shapes as *data*.
         """
         adj = data.to_adjacency()  # (bs, n, n)
-        bs = adj.shape[0]
-        noise_levels = self.noise_schedule.get_noise_level(t)
-
-        # Apply noise per-sample (generators may not handle per-element eps)
-        noisy_slices = []
-        for i in range(bs):
-            eps_i = noise_levels[i].item()
-            noisy_slices.append(self.generator.add_noise(adj[i], eps_i))
-        noisy_adj = torch.stack(noisy_slices, dim=0)  # (bs, n, n)
-
+        noise_levels = self.noise_schedule.get_noise_level(t)  # (bs,)
+        noisy_adj = self.generator.add_noise(adj, noise_levels)
         return GraphData.from_adjacency(noisy_adj)
 
     def get_posterior(
         self, z_t: GraphData, z_0: GraphData, t: Tensor, s: Tensor
     ) -> dict[str, Tensor]:
-        """Compute Gaussian posterior for the reverse step.
+        """Compute the Gaussian posterior ``q(x_{t-1} | x_t, x_0)`` for the
+        reverse diffusion step.
 
-        Uses the DDPM-style interpolation posterior:
+        Implements the closed-form posterior from Ho et al., "Denoising
+        Diffusion Probabilistic Models", NeurIPS 2020, Eq. 6-7
+        (arXiv:2006.11239).  With ``ᾱ_t = alpha_bar(t)``, ``ᾱ_s = alpha_bar(s)``,
+        and ``β_t = 1 - ᾱ_t / ᾱ_s``:
 
-            mean = alpha_s * adj_t + (1 - alpha_s) * adj_0
-            std  = sqrt((1 - alpha_s) * (1 - alpha_t/alpha_s))
+        .. math::
 
-        where ``alpha_t`` and ``alpha_s`` are cumulative alpha-bar values
-        looked up from the noise schedule at integer timesteps ``t`` and
-        ``s``.
+            \\tilde{\\mu}_t = \\frac{\\sqrt{\\bar\\alpha_s}\\,\\beta_t}
+                             {1 - \\bar\\alpha_t}\\, x_0
+                           + \\frac{\\sqrt{1 - \\beta_t}\\,(1 - \\bar\\alpha_s)}
+                             {1 - \\bar\\alpha_t}\\, x_t
+
+            \\tilde{\\beta}_t = \\frac{\\beta_t\\,(1 - \\bar\\alpha_s)}
+                               {1 - \\bar\\alpha_t}
 
         Parameters
         ----------
@@ -190,26 +192,32 @@ class ContinuousNoiseProcess(NoiseProcess):
         adj_t = z_t.to_adjacency()
         adj_0 = z_0.to_adjacency()
 
-        # Look up alpha_bar from the noise schedule at integer timesteps.
-        alpha_t = self.noise_schedule.get_alpha_bar(t_int=t).view(-1, 1, 1)
-        alpha_s = self.noise_schedule.get_alpha_bar(t_int=s).view(-1, 1, 1)
+        # Cumulative signal-retention factors from the noise schedule.
+        alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t).view(-1, 1, 1)
+        alpha_bar_s = self.noise_schedule.get_alpha_bar(t_int=s).view(-1, 1, 1)
 
-        # Posterior mean: interpolation between noisy and clean
-        mean = alpha_s * adj_t + (1.0 - alpha_s) * adj_0
+        # Single-step noise between s and t: β_t = 1 − ᾱ_t / ᾱ_s
+        beta_t = 1.0 - alpha_bar_t / alpha_bar_s.clamp(min=1e-8)
 
-        # Posterior variance.
-        # Guard: if alpha_s > alpha_t, the noise *decreased* between steps,
-        # which means the schedule is non-monotonic (broken).  Detect this
-        # before clamping so the error is visible rather than silently masked.
-        raw_var = (1.0 - alpha_s) * (1.0 - alpha_t / alpha_s.clamp(min=1e-8))
+        # Denominators, clamped once for numerical safety.
+        one_minus_alpha_bar_t = (1.0 - alpha_bar_t).clamp(min=1e-8)
+
+        # Posterior mean (Ho et al. 2020, Eq. 7).
+        coeff_x0 = torch.sqrt(alpha_bar_s) * beta_t / one_minus_alpha_bar_t
+        coeff_xt = (
+            torch.sqrt(1.0 - beta_t) * (1.0 - alpha_bar_s) / one_minus_alpha_bar_t
+        )
+        mean = coeff_x0 * adj_0 + coeff_xt * adj_t
+
+        # Posterior variance (Ho et al. 2020, Eq. 7).
+        raw_var = beta_t * (1.0 - alpha_bar_s) / one_minus_alpha_bar_t
         if (raw_var < -1e-6).any():
             raise RuntimeError(
                 f"Negative posterior variance detected "
                 f"(min={raw_var.min().item():.6f}). "
-                f"This indicates alpha_s > alpha_t, i.e. the noise schedule "
-                f"is non-monotonic between the requested timesteps."
+                f"This indicates alpha_bar_s > alpha_bar_t, i.e. the noise "
+                f"schedule is non-monotonic between the requested timesteps."
             )
-        # Small positive floor for numerical stability only (FP rounding).
         var = raw_var.clamp(min=1e-8)
         std = torch.sqrt(var).expand_as(mean)
 
@@ -290,7 +298,7 @@ class CategoricalNoiseProcess(NoiseProcess):
                 f"Expected a TransitionModel (protocol requires get_Qt, "
                 f"get_Qt_bar, get_limit_dist), got {type(model).__name__}"
             )
-        self._transition_model = model  # type: ignore[assignment]
+        self._transition_model = model
 
     @property
     def transition_model(self) -> TransitionModel:
@@ -305,7 +313,8 @@ class CategoricalNoiseProcess(NoiseProcess):
                 "training, the setup() hook did not run or the datamodule has no "
                 "marginals."
             )
-        return self._transition_model  # type: ignore[return-value]
+        assert self._transition_model is not None  # narrowed by guard above
+        return self._transition_model
 
     def apply(self, data: GraphData, t: Tensor) -> GraphData:
         """Apply categorical forward diffusion at integer timesteps.
@@ -349,8 +358,8 @@ class CategoricalNoiseProcess(NoiseProcess):
         sampled = sample_discrete_features(prob_X, prob_E, data.node_mask)
 
         # Convert sampled indices to one-hot
-        X_t = F.one_hot(sampled.X.long(), num_classes=self.x_classes).float()  # pyright: ignore[reportAttributeAccessIssue]  # F.one_hot exists at runtime
-        E_t = F.one_hot(sampled.E.long(), num_classes=self.e_classes).float()  # pyright: ignore[reportAttributeAccessIssue]  # F.one_hot exists at runtime
+        X_t = F.one_hot(sampled.X.long(), num_classes=self.x_classes).float()
+        E_t = F.one_hot(sampled.E.long(), num_classes=self.e_classes).float()
 
         return GraphData(
             X=X_t,
@@ -555,8 +564,12 @@ class CategoricalNoiseProcess(NoiseProcess):
             node_mask=node_mask,
         )
 
-        kl_x = F.kl_div(input=torch.log(pred_X), target=true_X, reduction="none")
-        kl_e = F.kl_div(input=torch.log(pred_E), target=true_E, reduction="none")
+        kl_x = F.kl_div(
+            input=pred_X.clamp(min=1e-10).log(), target=true_X, reduction="none"
+        )
+        kl_e = F.kl_div(
+            input=pred_E.clamp(min=1e-10).log(), target=true_E, reduction="none"
+        )
 
         T = self.noise_schedule.timesteps
         return T * (sum_except_batch(kl_x) + sum_except_batch(kl_e))
@@ -573,15 +586,13 @@ class CategoricalNoiseProcess(NoiseProcess):
             Clean one-hot ``GraphData`` with shapes ``(bs, n, dx)`` for X
             and ``(bs, n, n, de)`` for E.
         pred_probs
-            Predicted probability distributions at ``t=0``. Masked
-            positions should be set to 1 so that ``log(1) = 0`` and they
-            contribute nothing.
+            Predicted probability distributions at ``t=0``.
 
         Returns
         -------
         Tensor
             Per-sample log-probability, shape ``(bs,)``.
         """
-        loss_X = sum_except_batch(clean.X * pred_probs.X.log())
-        loss_E = sum_except_batch(clean.E * pred_probs.E.log())
+        loss_X = sum_except_batch(clean.X * pred_probs.X.clamp(min=1e-10).log())
+        loss_E = sum_except_batch(clean.E * pred_probs.E.clamp(min=1e-10).log())
         return loss_X + loss_E

@@ -6,10 +6,12 @@ Run experiments with::
     tmgg-discrete-gen model.diffusion_steps=100 data.num_nodes=12
 """
 
+from typing import Any
+
 import hydra
 from omegaconf import DictConfig
 
-from tmgg.experiments._shared_utils.orchestration.run_experiment import run_experiment
+from tmgg.training.orchestration.run_experiment import run_experiment
 
 
 @hydra.main(
@@ -17,7 +19,7 @@ from tmgg.experiments._shared_utils.orchestration.run_experiment import run_expe
     config_path="../exp_configs",
     config_name="base_config_discrete_diffusion_generative",
 )
-def main(cfg: DictConfig) -> None:
+def main(cfg: DictConfig) -> dict[str, Any]:
     """Run discrete diffusion graph generation experiment.
 
     Parameters
@@ -25,7 +27,7 @@ def main(cfg: DictConfig) -> None:
     cfg
         Hydra configuration containing model, data, trainer, and logger settings.
     """
-    run_experiment(cfg)
+    return run_experiment(cfg)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,7 @@
+# pyright: reportAttributeAccessIssue=false
+# torch.nn.functional.pad is not fully typed in the PyTorch stubs; the pad
+# function exists at runtime but pyright cannot resolve it via the stub.
+
 import math
 from typing import Any, override
 
@@ -719,8 +723,8 @@ class _GraphTransformer(nn.Module):
             actual_k = V_raw.shape[-1]
             if actual_k < self._spectral_k:
                 pad_size = self._spectral_k - actual_k
-                eigenvectors = F.pad(V_raw, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]
-                eigenvalues = F.pad(Lambda_raw, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]
+                eigenvectors = F.pad(V_raw, (0, pad_size))
+                eigenvalues = F.pad(Lambda_raw, (0, pad_size))
             else:
                 eigenvectors = V_raw
                 eigenvalues = Lambda_raw

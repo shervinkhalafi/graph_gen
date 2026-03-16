@@ -2,11 +2,11 @@
 
 Test Rationale
 --------------
-GraphEvaluator combines MMDEvaluator's accumulate lifecycle with the full set of
-graph generation metrics (degree/clustering/spectral MMD, orbit MMD, SBM accuracy,
-planarity accuracy, uniqueness, novelty). These tests verify the accumulation
-lifecycle, that evaluate() returns all expected fields, and that edge cases (too
-few references, missing setup) are handled correctly.
+GraphEvaluator is a stateless evaluator: callers pass refs and generated graphs
+directly to evaluate(), and optionally train_graphs in the constructor for novelty.
+These tests verify that evaluate(refs, generated) returns all expected fields,
+that edge cases (too few references, missing train_graphs) are handled correctly,
+and that internal truncation to eval_num_samples works.
 
 The compute_orbit_mmd and compute_sbm_accuracy functions depend on external tools
 (orca binary, graph-tool) that may not be available in all environments. Tests
@@ -24,7 +24,7 @@ from typing import Any
 import networkx as nx
 import pytest
 
-from tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator import (
+from tmgg.training.evaluation_metrics.graph_evaluator import (
     EvaluationResults,
     GraphEvaluator,
 )
@@ -36,7 +36,7 @@ _graph_tool_available = importlib.util.find_spec("graph_tool") is not None
 
 _orca_available: bool
 try:
-    from tmgg.experiments._shared_utils.evaluation_metrics.orca import (
+    from tmgg.training.evaluation_metrics.orca import (
         is_available as _orca_is_available,
     )
 
@@ -58,12 +58,6 @@ def er_graphs() -> list[nx.Graph[Any]]:
 def different_er_graphs() -> list[nx.Graph[Any]]:
     """Ten Erdos-Renyi graphs with different parameters (higher density)."""
     return [nx.erdos_renyi_graph(12, 0.7, seed=i + 100) for i in range(10)]
-
-
-@pytest.fixture
-def evaluator() -> GraphEvaluator:
-    """Default GraphEvaluator with eval_num_samples=10."""
-    return GraphEvaluator(eval_num_samples=10)
 
 
 # ---------------------------------------------------------------------------
@@ -92,66 +86,6 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
-class TestSetup:
-    """Verify setup() stores train graphs for novelty computation."""
-
-    def test_setup_stores_train_graphs(
-        self, evaluator: GraphEvaluator, er_graphs: list[nx.Graph[Any]]
-    ) -> None:
-        evaluator.setup(train_graphs=er_graphs)
-        assert evaluator.train_graphs is not None
-        assert len(evaluator.train_graphs) == len(er_graphs)
-
-    def test_setup_overwrites_previous(
-        self, evaluator: GraphEvaluator, er_graphs: list[nx.Graph[Any]]
-    ) -> None:
-        evaluator.setup(train_graphs=er_graphs[:3])
-        evaluator.setup(train_graphs=er_graphs)
-        assert len(evaluator.train_graphs) == len(er_graphs)
-
-
-# ---------------------------------------------------------------------------
-# Accumulation lifecycle
-# ---------------------------------------------------------------------------
-class TestAccumulation:
-    """Verify accumulate/clear lifecycle."""
-
-    def test_accumulate_stores_graphs(
-        self, evaluator: GraphEvaluator, er_graphs: list[nx.Graph[Any]]
-    ) -> None:
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        assert len(evaluator.ref_graphs) == len(er_graphs)
-
-    def test_accumulate_caps_at_eval_num_samples(self) -> None:
-        ev = GraphEvaluator(eval_num_samples=3)
-        graphs = [nx.erdos_renyi_graph(8, 0.3, seed=i) for i in range(10)]
-        for g in graphs:
-            ev.accumulate(g)
-        assert len(ev.ref_graphs) == 3
-
-    def test_clear_resets_ref_graphs(
-        self, evaluator: GraphEvaluator, er_graphs: list[nx.Graph[Any]]
-    ) -> None:
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        evaluator.clear()
-        assert len(evaluator.ref_graphs) == 0
-
-    def test_clear_preserves_train_graphs(
-        self, evaluator: GraphEvaluator, er_graphs: list[nx.Graph[Any]]
-    ) -> None:
-        evaluator.setup(train_graphs=er_graphs)
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        evaluator.clear()
-        # train_graphs should survive clear()
-        assert len(evaluator.train_graphs) == len(er_graphs)
-
-
-# ---------------------------------------------------------------------------
 # Evaluate -- core MMD metrics (always available)
 # ---------------------------------------------------------------------------
 class TestEvaluateCore:
@@ -159,26 +93,20 @@ class TestEvaluateCore:
 
     def test_evaluate_returns_evaluation_results(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert isinstance(result, EvaluationResults)
 
     def test_evaluate_has_mmd_fields(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert isinstance(result.degree_mmd, float)
         assert isinstance(result.clustering_mmd, float)
@@ -186,72 +114,63 @@ class TestEvaluateCore:
 
     def test_evaluate_has_planarity(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert isinstance(result.planarity_accuracy, float)
         assert 0.0 <= result.planarity_accuracy <= 1.0
 
     def test_evaluate_has_uniqueness(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert isinstance(result.uniqueness, float)
         assert 0.0 <= result.uniqueness <= 1.0
 
     def test_evaluate_has_novelty(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert isinstance(result.novelty, float)
         assert 0.0 <= result.novelty <= 1.0
 
     def test_evaluate_returns_none_when_too_few_refs(
         self,
-        evaluator: GraphEvaluator,
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
         """evaluate() requires at least 2 reference graphs for MMD."""
-        evaluator.accumulate(nx.erdos_renyi_graph(10, 0.3, seed=0))
-        result = evaluator.evaluate(different_er_graphs)
+        one_graph = [nx.erdos_renyi_graph(10, 0.3, seed=0)]
+        result = GraphEvaluator(eval_num_samples=10).evaluate(
+            refs=one_graph, generated=different_er_graphs
+        )
         assert result is None
 
     def test_evaluate_returns_none_when_no_refs(
         self,
-        evaluator: GraphEvaluator,
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
-        result = evaluator.evaluate(different_er_graphs)
+        result = GraphEvaluator(eval_num_samples=10).evaluate(
+            refs=[], generated=different_er_graphs
+        )
         assert result is None
 
     def test_novelty_is_none_without_train_graphs(
         self, er_graphs: list[nx.Graph[Any]], different_er_graphs: list[nx.Graph[Any]]
     ) -> None:
-        """If setup() was never called, novelty should be None."""
+        """When train_graphs are not provided, novelty should be None."""
         ev = GraphEvaluator(eval_num_samples=10)
-        for g in er_graphs:
-            ev.accumulate(g)
-        result = ev.evaluate(different_er_graphs)
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert result.novelty is None
 
@@ -260,9 +179,7 @@ class TestEvaluateCore:
     ) -> None:
         """MMD between a distribution and itself should be near zero."""
         ev = GraphEvaluator(eval_num_samples=10)
-        for g in er_graphs:
-            ev.accumulate(g)
-        result = ev.evaluate(er_graphs)
+        result = ev.evaluate(refs=er_graphs, generated=er_graphs)
         assert result is not None
         assert result.degree_mmd == pytest.approx(0.0, abs=0.01)
 
@@ -271,11 +188,9 @@ class TestEvaluateCore:
     ) -> None:
         """MMD between different graph families should be clearly positive."""
         ev = GraphEvaluator(eval_num_samples=10)
-        for g in er_graphs:
-            ev.accumulate(g)
         # Regular graphs (very different degree distribution from ER)
         regular = [nx.random_regular_graph(3, 12, seed=i) for i in range(10)]
-        result = ev.evaluate(regular)
+        result = ev.evaluate(refs=er_graphs, generated=regular)
         assert result is not None
         assert result.degree_mmd > 0.01
 
@@ -291,50 +206,40 @@ class TestEvaluateOrbitSBM:
     )
     def test_orbit_mmd_is_float_when_orca_available(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert isinstance(result.orbit_mmd, float)
 
     @pytest.mark.skipif(not _graph_tool_available, reason="graph-tool not installed")
     def test_sbm_accuracy_is_float_when_graph_tool_available(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert isinstance(result.sbm_accuracy, float)
 
     def test_orbit_mmd_none_when_orca_unavailable(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
         """When orca is not available, orbit_mmd should be None."""
         if _orca_available:
             pytest.skip("orca is available; this test checks the unavailable case")
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert result.orbit_mmd is None
 
     def test_sbm_accuracy_none_when_graph_tool_unavailable(
         self,
-        evaluator: GraphEvaluator,
         er_graphs: list[nx.Graph[Any]],
         different_er_graphs: list[nx.Graph[Any]],
     ) -> None:
@@ -343,10 +248,8 @@ class TestEvaluateOrbitSBM:
             pytest.skip(
                 "graph-tool is available; this test checks the unavailable case"
             )
-        evaluator.setup(train_graphs=er_graphs[:3])
-        for g in er_graphs:
-            evaluator.accumulate(g)
-        result = evaluator.evaluate(different_er_graphs)
+        ev = GraphEvaluator(eval_num_samples=10, train_graphs=er_graphs[:3])
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result is not None
         assert result.sbm_accuracy is None
 
@@ -414,33 +317,42 @@ class TestEvaluationResultsToDict:
 
 
 # ---------------------------------------------------------------------------
-# Full accumulation lifecycle
+# Stateless evaluate — truncation and multi-call behaviour
 # ---------------------------------------------------------------------------
-class TestFullLifecycle:
-    """End-to-end: accumulate, evaluate, clear, accumulate again."""
+class TestStatelessEvaluate:
+    """Verify stateless evaluate(): internal truncation and multi-call correctness."""
 
-    def test_accumulate_evaluate_clear_cycle(
+    def test_truncation_to_eval_num_samples(
         self, er_graphs: list[nx.Graph[Any]], different_er_graphs: list[nx.Graph[Any]]
     ) -> None:
-        ev = GraphEvaluator(eval_num_samples=10)
-        ev.setup(train_graphs=er_graphs[:3])
+        """Passing more graphs than eval_num_samples should still yield results.
 
-        # First cycle
-        for g in er_graphs:
-            ev.accumulate(g)
-        result1 = ev.evaluate(different_er_graphs)
+        The evaluator must truncate internally; callers should not need to
+        pre-filter their graph lists.
+        """
+        # eval_num_samples=5 but we pass 10 refs and 10 generated
+        ev = GraphEvaluator(eval_num_samples=5)
+        result = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
+        assert result is not None
+
+    def test_multiple_calls_are_independent(
+        self, er_graphs: list[nx.Graph[Any]], different_er_graphs: list[nx.Graph[Any]]
+    ) -> None:
+        """Calling evaluate() twice with different inputs should yield independent results.
+
+        The evaluator carries no state between calls; the second call uses
+        structurally different graph families so the MMD must change.
+        """
+        ev = GraphEvaluator(eval_num_samples=10)
+        result1 = ev.evaluate(refs=er_graphs, generated=different_er_graphs)
         assert result1 is not None
 
-        ev.clear()
-        assert len(ev.ref_graphs) == 0
-
-        # Second cycle with different refs
-        for g in different_er_graphs:
-            ev.accumulate(g)
-        result2 = ev.evaluate(er_graphs)
+        # Regular graphs as the second reference set — very different degree
+        # distribution from either ER family, so degree_mmd must change.
+        regular = [nx.random_regular_graph(3, 12, seed=i + 200) for i in range(10)]
+        result2 = ev.evaluate(refs=regular, generated=different_er_graphs)
         assert result2 is not None
 
-        # The two results should differ (different ref/gen pairings)
         assert (
             result1.degree_mmd != result2.degree_mmd
             or result1.clustering_mmd != result2.clustering_mmd

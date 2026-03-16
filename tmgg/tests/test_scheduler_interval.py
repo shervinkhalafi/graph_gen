@@ -20,7 +20,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from tmgg.experiments._shared_utils.lightning_modules.optimizer_config import (
+from tmgg.training.lightning_modules.optimizer_config import (
     configure_optimizers_from_config,
 )
 

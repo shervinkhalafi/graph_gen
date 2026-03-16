@@ -4,13 +4,15 @@ Run experiments with:
     python -m tmgg.experiments.gaussian_diffusion_generative.runner
 
 Override configuration with Hydra:
-    python -m tmgg.experiments.gaussian_diffusion_generative.runner model.model_type=gnn data.num_nodes=100
+    python -m tmgg.experiments.gaussian_diffusion_generative.runner model.model_name=gnn data.num_nodes=100
 """
+
+from typing import Any
 
 import hydra
 from omegaconf import DictConfig
 
-from tmgg.experiments._shared_utils.orchestration.run_experiment import run_experiment
+from tmgg.training.orchestration.run_experiment import run_experiment
 
 
 @hydra.main(
@@ -18,7 +20,7 @@ from tmgg.experiments._shared_utils.orchestration.run_experiment import run_expe
     config_path="../exp_configs",
     config_name="base_config_gaussian_diffusion",
 )
-def main(cfg: DictConfig) -> None:
+def main(cfg: DictConfig) -> dict[str, Any]:
     """Run generative graph modeling experiment.
 
     Parameters
@@ -26,7 +28,7 @@ def main(cfg: DictConfig) -> None:
     cfg : DictConfig
         Hydra configuration containing model, data, trainer, and logger settings.
     """
-    run_experiment(cfg)
+    return run_experiment(cfg)
 
 
 if __name__ == "__main__":

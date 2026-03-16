@@ -7,11 +7,11 @@ and should be imported directly from there to avoid an import cycle.
 ``DiffusionModule`` is the active training module for discrete diffusion.
 """
 
-from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
-    DiffusionModule,
-)
 from tmgg.experiments.discrete_diffusion_generative.datamodule import (
     SyntheticCategoricalDataModule,
+)
+from tmgg.training.lightning_modules.diffusion_module import (
+    DiffusionModule,
 )
 
 __all__ = [

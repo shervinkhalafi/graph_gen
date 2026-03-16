@@ -6,6 +6,11 @@ that supports both fixed-size graphs (all graphs share node count ``n``) and
 variable-size graphs (padded to ``max_n`` with ``node_counts`` tracking).
 """
 
+# pyright: reportConstantRedefinition=false
+# pyright: reportArgumentType=false
+# G is reassigned across retry loops (math notation). NetworkX's
+# to_numpy_array() dtype parameter has incomplete type stubs.
+
 import math
 import random
 
@@ -57,7 +62,7 @@ def generate_regular_graphs(
     for i in range(num_graphs):
         graph_seed = base_seed + i
         G = nx.random_regular_graph(d, n, seed=graph_seed)
-        A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+        A = nx.to_numpy_array(G, dtype=np.float32)
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -99,7 +104,7 @@ def generate_tree_graphs(
         # Prüfer sequence has length n-2, with elements in [0, n-1]
         prufer_seq = [random.randint(0, n - 1) for _ in range(n - 2)]
         G = nx.from_prufer_sequence(prufer_seq)
-        A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+        A = nx.to_numpy_array(G, dtype=np.float32)
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -169,7 +174,7 @@ def generate_lfr_graphs(
         G = None
         for attempt in range(5):
             try:
-                G = nx.LFR_benchmark_graph(  # pyright: ignore[reportConstantRedefinition]  # math notation
+                G = nx.LFR_benchmark_graph(
                     n=n,
                     tau1=tau1,
                     tau2=tau2,
@@ -189,7 +194,7 @@ def generate_lfr_graphs(
         if G is None:
             # Fall back to SBM-like structure if LFR fails
             # This shouldn't happen often with reasonable parameters
-            G = nx.planted_partition_graph(  # pyright: ignore[reportConstantRedefinition]  # math notation
+            G = nx.planted_partition_graph(
                 l=max(2, n // min_community),
                 k=min_community,
                 p_in=1 - mu,
@@ -197,7 +202,7 @@ def generate_lfr_graphs(
                 seed=graph_seed,
             )
 
-        A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+        A = nx.to_numpy_array(G, dtype=np.float32)
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -235,7 +240,7 @@ def generate_erdos_renyi_graphs(
     for i in range(num_graphs):
         graph_seed = base_seed + i
         G = nx.fast_gnp_random_graph(n, p, seed=graph_seed)
-        A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+        A = nx.to_numpy_array(G, dtype=np.float32)
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -289,7 +294,7 @@ def generate_watts_strogatz_graphs(
     for i in range(num_graphs):
         graph_seed = base_seed + i
         G = nx.watts_strogatz_graph(n, k, p, seed=graph_seed)
-        A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+        A = nx.to_numpy_array(G, dtype=np.float32)
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -328,7 +333,7 @@ def generate_random_geometric_graphs(
     for i in range(num_graphs):
         graph_seed = base_seed + i
         G = nx.random_geometric_graph(n, radius, seed=graph_seed)
-        A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+        A = nx.to_numpy_array(G, dtype=np.float32)
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -392,10 +397,10 @@ def generate_configuration_model_graphs(
         # Create graph from degree sequence
         G = nx.configuration_model(deg_seq, seed=graph_seed)
         # Remove parallel edges and self-loops
-        G = nx.Graph(G)  # pyright: ignore[reportConstantRedefinition]  # math notation
+        G = nx.Graph(G)
         G.remove_edges_from(nx.selfloop_edges(G))
 
-        A = nx.to_numpy_array(G, dtype=np.float32, nodelist=range(n))  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+        A = nx.to_numpy_array(G, dtype=np.float32, nodelist=range(n))
         adjacencies.append(A)
 
     return np.stack(adjacencies, axis=0)
@@ -432,7 +437,7 @@ def generate_ring_of_cliques_graphs(
         ``n = num_cliques * clique_size``.
     """
     G = nx.ring_of_cliques(num_cliques, clique_size)
-    A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+    A = nx.to_numpy_array(G, dtype=np.float32)
     return np.stack([A] * num_graphs, axis=0)
 
 
@@ -464,7 +469,7 @@ def generate_lollipop_graphs(
         ``n = cluster_size + path_length``.
     """
     G = nx.lollipop_graph(cluster_size, path_length)
-    A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+    A = nx.to_numpy_array(G, dtype=np.float32)
     return np.stack([A] * num_graphs, axis=0)
 
 
@@ -493,7 +498,7 @@ def generate_circular_ladder_graphs(
         Adjacency matrices, shape ``(num_graphs, 2n, 2n)``.
     """
     G = nx.circular_ladder_graph(n)
-    A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+    A = nx.to_numpy_array(G, dtype=np.float32)
     return np.stack([A] * num_graphs, axis=0)
 
 
@@ -522,7 +527,7 @@ def generate_star_graphs(
         Adjacency matrices, shape ``(num_graphs, n+1, n+1)``.
     """
     G = nx.star_graph(n)
-    A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+    A = nx.to_numpy_array(G, dtype=np.float32)
     return np.stack([A] * num_graphs, axis=0)
 
 
@@ -556,7 +561,7 @@ def generate_square_grid_graphs(
     while h * w < n:
         w += 1
     G = nx.grid_graph([h, w])
-    A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+    A = nx.to_numpy_array(G, dtype=np.float32)
     return np.stack([A] * num_graphs, axis=0)
 
 
@@ -588,7 +593,7 @@ def generate_triangle_grid_graphs(
     while nx.number_of_nodes(nx.triangular_lattice_graph(x, x)) < n:
         x += 1
     G = nx.triangular_lattice_graph(x, x)
-    A = nx.to_numpy_array(G, dtype=np.float32)  # pyright: ignore[reportArgumentType]  # numpy stub limitation
+    A = nx.to_numpy_array(G, dtype=np.float32)
     return np.stack([A] * num_graphs, axis=0)
 
 

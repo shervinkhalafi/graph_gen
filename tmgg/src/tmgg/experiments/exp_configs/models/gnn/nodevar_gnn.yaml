@@ -1,10 +1,11 @@
 # NodeVar GNN model configuration
 
-_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+_target_: tmgg.training.lightning_modules.denoising_module.SingleStepDenoisingModule
 
-model_type: "node_var_gnn"
+model_name: "node_var_gnn"
 
-model_config:
+model:
+  _target_: tmgg.models.gnn.NodeVarGNN
   num_layers: 1
   num_terms: 4
   feature_dim_in: 20

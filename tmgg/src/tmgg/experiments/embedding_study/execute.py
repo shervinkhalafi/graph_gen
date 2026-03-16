@@ -6,7 +6,7 @@ Dispatches to run or analyze phase based on ``config.phase``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -88,7 +88,7 @@ def _run_study(config: DictConfig, output_dir: Path) -> dict[str, Any]:
     # Process datasets
     datasets_raw = config.get("datasets", ["sbm"])
     datasets: list[str] = (
-        OmegaConf.to_container(datasets_raw, resolve=True)  # type: ignore[assignment]
+        cast(list[str], OmegaConf.to_container(datasets_raw, resolve=True))
         if OmegaConf.is_list(datasets_raw)
         else [str(datasets_raw)]
     )

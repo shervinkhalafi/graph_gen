@@ -1,3 +1,7 @@
+# Eigenstructure analysis study (no training — spectral analysis only).
+# Inherits: _base_structural_study (minimal: wandb_entity, seed, paths).
+# Run: uv run tmgg-eigenstructure-exp
+
 defaults:
   - _base_structural_study
   - _self_

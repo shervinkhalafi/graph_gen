@@ -19,7 +19,7 @@ from tmgg.data.datasets.graph_types import GraphData
 # ---------------------------------------------------------------------------
 
 
-class GraphDataset(Dataset):  # type: ignore[type-arg]  # pyright: ignore[reportMissingTypeArgument]
+class GraphDataset(Dataset[GraphData]):
     """
     Unified dataset for graph adjacency matrices with permutation support.
 

@@ -19,11 +19,11 @@ import math
 import pytest
 import torch
 
-from tmgg.experiments._shared_utils.spectral_utils.subspace import (
+from tmgg.experiments.eigenstructure_study.analyzer import compute_principal_angles
+from tmgg.utils.spectral.subspace import (
     compute_procrustes_rotation,
     compute_procrustes_rotation_batch,
 )
-from tmgg.experiments.eigenstructure_study.analyzer import compute_principal_angles
 
 
 @pytest.fixture

@@ -13,6 +13,9 @@ Both accept a ``GraphModel``, a typed ``NoiseProcess``, and a
 list of individual ``GraphData`` graphs.
 """
 
+# pyright: reportAttributeAccessIssue=false
+# F.one_hot exists at runtime; pyright cannot resolve it from the functional stub.
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -22,6 +25,7 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from tmgg.data.datasets.graph_types import GraphData, collapse_to_indices
+from tmgg.diffusion.collectors import StepMetricCollector
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
@@ -51,6 +55,10 @@ class Sampler(ABC):
         num_graphs: int,
         num_nodes: int | Tensor,
         device: torch.device,
+        *,
+        start_from: GraphData | None = None,
+        start_timestep: int | None = None,
+        collector: StepMetricCollector | None = None,
     ) -> list[GraphData]:
         """Generate graphs via reverse diffusion.
 
@@ -65,6 +73,16 @@ class Sampler(ABC):
             per-graph tensor of shape ``(num_graphs,)``.
         device
             Device on which to run sampling.
+        start_from
+            Starting state for partial reverse chains. When ``None``,
+            starts from the marginal/limit distribution at ``t=T``.
+        start_timestep
+            Timestep corresponding to *start_from*. Required when
+            *start_from* is provided; ignored otherwise.
+        collector
+            Per-step metric collector. When provided,
+            ``record(t, s, metrics)`` is called at each reverse step
+            with available metrics (e.g., ``{"kl": ...}``).
 
         Returns
         -------
@@ -119,6 +137,10 @@ class CategoricalSampler(Sampler):
         num_graphs: int,
         num_nodes: int | Tensor,
         device: torch.device,
+        *,
+        start_from: GraphData | None = None,
+        start_timestep: int | None = None,
+        collector: StepMetricCollector | None = None,
     ) -> list[GraphData]:
         """Generate graphs via ancestral categorical reverse diffusion.
 
@@ -133,6 +155,15 @@ class CategoricalSampler(Sampler):
             Fixed node count or per-graph tensor.
         device
             Target device.
+        start_from
+            Starting state for partial reverse chains. When ``None``,
+            starts from the marginal/limit distribution at ``t=T``.
+        start_timestep
+            Timestep corresponding to *start_from*. Required when
+            *start_from* is provided; ignored otherwise.
+        collector
+            Per-step metric collector. When provided,
+            ``record(t, s, metrics)`` is called at each reverse step.
 
         Returns
         -------
@@ -143,29 +174,49 @@ class CategoricalSampler(Sampler):
         bs = num_graphs
         T = self.noise_schedule.timesteps
 
-        # Build node mask
-        if isinstance(num_nodes, int):
-            n_nodes = torch.full((bs,), num_nodes, device=device, dtype=torch.long)
+        # Determine starting point
+        if start_from is not None:
+            if start_timestep is None:
+                raise ValueError(
+                    "start_timestep is required when start_from is provided"
+                )
+            X = start_from.X.to(device)
+            E = start_from.E.to(device)
+            y = start_from.y.to(device)
+            node_mask = start_from.node_mask.to(device)
+            n_max = X.shape[1]
+            T_start = start_timestep
+            # Build n_nodes from node_mask for trimming at the end
+            if isinstance(num_nodes, int):
+                n_nodes = torch.full((bs,), num_nodes, device=device, dtype=torch.long)
+            else:
+                n_nodes = num_nodes.to(device)
         else:
-            n_nodes = num_nodes.to(device)
+            T_start = T
 
-        n_max = int(n_nodes.max().item())
-        arange = torch.arange(n_max, device=device).unsqueeze(0).expand(bs, -1)
-        node_mask = arange < n_nodes.unsqueeze(1)
+            # Build node mask
+            if isinstance(num_nodes, int):
+                n_nodes = torch.full((bs,), num_nodes, device=device, dtype=torch.long)
+            else:
+                n_nodes = num_nodes.to(device)
 
-        # Sample z_T from the limit distribution
-        transition = self.noise_process.transition_model
-        limit_dist = transition.get_limit_dist()
-        z_T = sample_discrete_feature_noise(limit_dist, node_mask)
-        X, E, y = z_T.X.to(device), z_T.E.to(device), z_T.y.to(device)
+            n_max = int(n_nodes.max().item())
+            arange = torch.arange(n_max, device=device).unsqueeze(0).expand(bs, -1)
+            node_mask = arange < n_nodes.unsqueeze(1)
+
+            # Sample z_T from the limit distribution
+            transition = self.noise_process.transition_model
+            limit_dist = transition.get_limit_dist()
+            z_T = sample_discrete_feature_noise(limit_dist, node_mask)
+            X, E, y = z_T.X.to(device), z_T.E.to(device), z_T.y.to(device)
 
         dx = self.noise_process.x_classes
         de = self.noise_process.e_classes
 
-        # Reverse diffusion loop: ancestral sampling from t=T down to t=1.
+        # Reverse diffusion loop: ancestral sampling from t=T_start down to t=1.
         # Implements Eq. 3-4 of Vignac et al., "DiGress: Discrete Denoising
         # Diffusion for Graph Generation" (ICLR 2023).
-        for s_int in reversed(range(0, T)):
+        for s_int in reversed(range(0, T_start)):
             t_int = s_int + 1
             s_tensor = torch.full((bs, 1), s_int, device=device, dtype=torch.long)
             t_tensor = torch.full((bs, 1), t_int, device=device, dtype=torch.long)
@@ -261,9 +312,37 @@ class CategoricalSampler(Sampler):
             # Sample from posterior
             sampled_s = sample_discrete_features(prob_X, prob_E, node_mask=node_mask)
 
-            X = F.one_hot(sampled_s.X.long(), num_classes=dx).float()  # pyright: ignore[reportAttributeAccessIssue]
-            E = F.one_hot(sampled_s.E.long(), num_classes=de).float()  # pyright: ignore[reportAttributeAccessIssue]
+            X = F.one_hot(sampled_s.X.long(), num_classes=dx).float()
+            E = F.one_hot(sampled_s.E.long(), num_classes=de).float()
             y = torch.zeros(bs, 0, device=device).type_as(X)
+
+            if collector is not None:
+                with torch.no_grad():
+                    # Posterior entropy as proxy for per-step VLB contribution.
+                    # True KL requires the prior; entropy captures the posterior
+                    # uncertainty which dominates the VLB at each step.
+                    ent_X = -torch.sum(
+                        prob_X * torch.log(prob_X.clamp(min=1e-30)), dim=-1
+                    )
+                    ent_X = (ent_X * node_mask.float()).sum() / node_mask.sum().clamp(
+                        min=1
+                    )
+                    ent_E = -torch.sum(
+                        prob_E * torch.log(prob_E.clamp(min=1e-30)), dim=-1
+                    )
+                    edge_mask = (
+                        node_mask.unsqueeze(1) & node_mask.unsqueeze(2)
+                    ).float()
+                    ent_E = (ent_E * edge_mask).sum() / edge_mask.sum().clamp(min=1)
+                    collector.record(
+                        t_int,
+                        s_int,
+                        {
+                            "kl": (ent_X + ent_E).item(),
+                            "kl_X": ent_X.item(),
+                            "kl_E": ent_E.item(),
+                        },
+                    )
 
         # Collapse one-hot to class indices and trim per graph
         final = collapse_to_indices(
@@ -325,6 +404,10 @@ class ContinuousSampler(Sampler):
         num_graphs: int,
         num_nodes: int | Tensor,
         device: torch.device,
+        *,
+        start_from: GraphData | None = None,
+        start_timestep: int | None = None,
+        collector: StepMetricCollector | None = None,
     ) -> list[GraphData]:
         """Generate graphs via Gaussian reverse diffusion.
 
@@ -338,6 +421,15 @@ class ContinuousSampler(Sampler):
             Fixed node count or per-graph tensor.
         device
             Target device.
+        start_from
+            Starting state for partial reverse chains. When ``None``,
+            starts from pure symmetric Gaussian noise at ``t=T``.
+        start_timestep
+            Timestep corresponding to *start_from*. Required when
+            *start_from* is provided; ignored otherwise.
+        collector
+            Per-step metric collector. When provided,
+            ``record(t, s, metrics)`` is called at each reverse step.
 
         Returns
         -------
@@ -348,20 +440,39 @@ class ContinuousSampler(Sampler):
         bs = num_graphs
         T = self.noise_schedule.timesteps
 
-        # Build node mask
-        if isinstance(num_nodes, int):
-            n_nodes = torch.full((bs,), num_nodes, device=device, dtype=torch.long)
+        # Determine starting point
+        if start_from is not None:
+            if start_timestep is None:
+                raise ValueError(
+                    "start_timestep is required when start_from is provided"
+                )
+            z_adj = start_from.to_adjacency().to(device)
+            if z_adj.ndim == 2:
+                z_adj = z_adj.unsqueeze(0)
+            bs = z_adj.shape[0]
+            n_max = z_adj.shape[1]
+            if isinstance(num_nodes, int):
+                n_nodes = torch.full((bs,), num_nodes, device=device, dtype=torch.long)
+            else:
+                n_nodes = num_nodes.to(device)
+            T_start = start_timestep
         else:
-            n_nodes = num_nodes.to(device)
+            T_start = T
 
-        n_max = int(n_nodes.max().item())
+            # Build node mask
+            if isinstance(num_nodes, int):
+                n_nodes = torch.full((bs,), num_nodes, device=device, dtype=torch.long)
+            else:
+                n_nodes = num_nodes.to(device)
 
-        # Start from pure symmetric Gaussian noise
-        z_adj = torch.randn(bs, n_max, n_max, device=device)
-        z_adj = (z_adj + z_adj.transpose(1, 2)) / 2.0
+            n_max = int(n_nodes.max().item())
+
+            # Start from pure symmetric Gaussian noise
+            z_adj = torch.randn(bs, n_max, n_max, device=device)
+            z_adj = (z_adj + z_adj.transpose(1, 2)) / 2.0
 
         # Reverse diffusion loop
-        for s_int in reversed(range(0, T)):
+        for s_int in reversed(range(0, T_start)):
             t_int_val = s_int + 1
             t_tensor = torch.full((bs,), t_int_val, device=device, dtype=torch.long)
             s_tensor = torch.full((bs,), s_int, device=device, dtype=torch.long)
@@ -395,6 +506,14 @@ class ContinuousSampler(Sampler):
 
             # Keep symmetric
             z_adj = (z_adj + z_adj.transpose(1, 2)) / 2.0
+
+            if collector is not None:
+                with torch.no_grad():
+                    # Gaussian KL: 0.5 * (sigma^2 + mu^2 - 1 - log sigma^2)
+                    kl = 0.5 * (
+                        std.pow(2) + mean.pow(2) - 1 - 2 * std.clamp(min=1e-30).log()
+                    )
+                    collector.record(t_int_val, s_int, {"kl": kl.mean().item()})
 
         # Threshold to binary, symmetrise, zero diagonal
         adj_final = (z_adj > 0.5).float()

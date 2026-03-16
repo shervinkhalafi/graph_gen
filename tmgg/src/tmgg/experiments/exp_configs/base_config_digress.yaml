@@ -1,10 +1,12 @@
-# DiGress denoising experiments
+# DiGress transformer denoising on SBM graphs.
+# Inherits: base_config_denoising → _base_infra + task/denoising
+# Run: uv run tmgg-digress
 
 defaults:
   - base_config_denoising
   - models/digress/digress_transformer@model
   - _self_
 
-experiment_name: "digress_${model.model_type}"
+experiment_name: "digress_${model.model_name}"
 wandb_project: architecture-study
 _cli_cmd: tmgg-digress

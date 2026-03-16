@@ -38,13 +38,13 @@ from pytorch_lightning.loggers import TensorBoardLogger
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from tmgg.data import add_digress_noise
-from tmgg.experiments._shared_utils import DebugCallback
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
     LinearPE,
     SelfAttentionDenoiser,
 )
+from tmgg.training import DebugCallback
 
 
 def create_model(model_type: str, max_nodes: int = 32, k: int = 8) -> torch.nn.Module:

@@ -29,10 +29,12 @@ from tmgg.data.noising.noise import DigressNoiseGenerator
 from tmgg.diffusion.noise_process import ContinuousNoiseProcess
 from tmgg.diffusion.sampler import ContinuousSampler
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator import (
+from tmgg.models.base import GraphModel
+from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
+from tmgg.training.evaluation_metrics.graph_evaluator import (
     GraphEvaluator,
 )
-from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
+from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
 
@@ -53,14 +55,14 @@ DATASET_CONFIGS: dict[str, dict] = {
 
 
 def _make_diffusion_module(
-    model_type: str = "self_attention",
-    model_config: dict | None = None,
+    model: GraphModel | None = None,
     timesteps: int = 10,
     num_nodes: int = 16,
     eval_num_samples: int = 4,
 ) -> DiffusionModule:
     """Construct a DiffusionModule with ContinuousNoiseProcess + DigressNoiseGenerator."""
-    cfg = model_config or {"k": 8}
+    if model is None:
+        model = SelfAttentionDenoiser(k=8, d_k=16)
     schedule = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=timesteps)
     noise_process = ContinuousNoiseProcess(
         generator=DigressNoiseGenerator(), noise_schedule=schedule
@@ -75,15 +77,14 @@ def _make_diffusion_module(
         eval_num_samples=eval_num_samples, kernel="gaussian", sigma=1.0
     )
     return DiffusionModule(
-        model_type=model_type,
-        model_config=cfg,
+        model=model,
         noise_process=noise_process,
         sampler=sampler,
         noise_schedule=schedule,
         evaluator=evaluator,
         loss_type="mse",
         num_nodes=num_nodes,
-        eval_every_n_epochs=1,
+        eval_every_n_steps=1,
     )
 
 
@@ -168,26 +169,70 @@ class TestDiffusionModuleInstantiation:
     """Verify DiffusionModule instantiates with continuous noise components.
 
     Test rationale: confirms DiffusionModule can be constructed with all
-    registered model types using the injected ContinuousNoiseProcess,
+    supported model types using the injected ContinuousNoiseProcess,
     ContinuousSampler, and NoiseSchedule components.
     """
 
     @pytest.mark.parametrize(
-        "model_type",
+        "model",
         [
-            "linear_pe",
-            "filter_bank",
-            "self_attention",
-            "bilinear_mlp",
-            "multilayer_bilinear",
-            "gnn",
-            "gnn_sym",
-            "hybrid",
+            pytest.param(
+                lambda: __import__(
+                    "tmgg.models.spectral_denoisers", fromlist=["LinearPE"]
+                ).LinearPE(k=8),
+                id="LinearPE",
+            ),
+            pytest.param(
+                lambda: __import__(
+                    "tmgg.models.spectral_denoisers", fromlist=["GraphFilterBank"]
+                ).GraphFilterBank(k=8, polynomial_degree=3),
+                id="GraphFilterBank",
+            ),
+            pytest.param(
+                lambda: SelfAttentionDenoiser(k=8, d_k=16),
+                id="SelfAttentionDenoiser",
+            ),
+            pytest.param(
+                lambda: __import__(
+                    "tmgg.models.spectral_denoisers.bilinear",
+                    fromlist=["BilinearDenoiserWithMLP"],
+                ).BilinearDenoiserWithMLP(
+                    k=8, d_k=16, mlp_hidden_dim=32, mlp_num_layers=1
+                ),
+                id="BilinearDenoiserWithMLP",
+            ),
+            pytest.param(
+                lambda: __import__(
+                    "tmgg.models.spectral_denoisers.bilinear",
+                    fromlist=["MultiLayerBilinearDenoiser"],
+                ).MultiLayerBilinearDenoiser(
+                    k=8, d_model=16, num_heads=2, num_layers=1
+                ),
+                id="MultiLayerBilinearDenoiser",
+            ),
+            pytest.param(
+                lambda: __import__("tmgg.models.gnn", fromlist=["GNN"]).GNN(
+                    num_layers=1, num_terms=2, feature_dim_in=8, feature_dim_out=4
+                ),
+                id="GNN",
+            ),
+            pytest.param(
+                lambda: __import__(
+                    "tmgg.models.gnn", fromlist=["GNNSymmetric"]
+                ).GNNSymmetric(
+                    num_layers=1, num_terms=2, feature_dim_in=8, feature_dim_out=4
+                ),
+                id="GNNSymmetric",
+            ),
+            pytest.param(
+                lambda: _make_hybrid_model(),
+                id="hybrid",
+            ),
         ],
     )
-    def test_model_type_instantiates(self, model_type: str) -> None:
-        """Each supported model_type should produce a valid DiffusionModule."""
-        module = _make_diffusion_module(model_type=model_type)
+    def test_model_type_instantiates(self, model) -> None:
+        """Each supported model type should produce a valid DiffusionModule."""
+        module = _make_diffusion_module(model=model())
         assert module.model is not None
         assert hasattr(module.model, "forward")
 
@@ -197,31 +242,32 @@ class TestDiffusionModuleInstantiation:
             _make_diffusion_module.__wrapped__ if hasattr(  # type: ignore[attr-defined]
                 _make_diffusion_module, "__wrapped__"
             ) else None
+            schedule = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=10)
             DiffusionModule(
-                model_type="self_attention",
-                model_config={"k": 8},
+                model=SelfAttentionDenoiser(k=8, d_k=16),
                 noise_process=ContinuousNoiseProcess(
                     generator=DigressNoiseGenerator(),
-                    noise_schedule=NoiseSchedule(
-                        schedule_type="cosine_iddpm", timesteps=10
-                    ),
+                    noise_schedule=schedule,
                 ),
                 sampler=ContinuousSampler(
                     noise_process=ContinuousNoiseProcess(
                         generator=DigressNoiseGenerator(),
-                        noise_schedule=NoiseSchedule(
-                            schedule_type="cosine_iddpm", timesteps=10
-                        ),
+                        noise_schedule=schedule,
                     ),
-                    noise_schedule=NoiseSchedule(
-                        schedule_type="cosine_iddpm", timesteps=10
-                    ),
+                    noise_schedule=schedule,
                 ),
-                noise_schedule=NoiseSchedule(
-                    schedule_type="cosine_iddpm", timesteps=10
-                ),
+                noise_schedule=schedule,
                 loss_type="invalid",
             )
+
+
+def _make_hybrid_model():
+    """Create a hybrid SequentialDenoisingModel for tests."""
+    from tmgg.models.gnn import GNN
+    from tmgg.models.hybrid import SequentialDenoisingModel
+
+    gnn = GNN(num_layers=1, num_terms=2, feature_dim_in=8, feature_dim_out=4)
+    return SequentialDenoisingModel(embedding_model=gnn, denoising_model=None)
 
 
 class TestDiffusionModuleTrainingStep:
@@ -260,10 +306,11 @@ class TestDiffusionModuleTrainingStep:
 
 
 class TestDiffusionModuleValidation:
-    """Verify DiffusionModule validation accumulates refs and evaluates.
+    """Verify DiffusionModule validation computes loss without accumulating graphs.
 
-    Test rationale: the DiffusionModule should accumulate reference graphs
-    during validation and compute evaluation metrics at epoch end.
+    Test rationale: the DiffusionModule should compute validation loss per
+    batch; reference graphs for evaluation are pulled from the datamodule
+    at epoch end (covered by the E2E test and unit tests in test_diffusion_module.py).
     """
 
     @pytest.fixture
@@ -272,15 +319,15 @@ class TestDiffusionModuleValidation:
         batch = GraphData.from_adjacency(_make_block_adjacency())
         return module, batch
 
-    def test_validation_accumulates_ref_graphs(
+    def test_validation_step_runs_without_accumulation(
         self, module_and_batch: tuple[DiffusionModule, GraphData]
     ) -> None:
-        """Validation step should accumulate reference graphs in the evaluator."""
+        """Validation step should compute loss without buffering graphs."""
         module, batch = module_and_batch
-        assert module.evaluator is not None
         with patch.object(module, "log"):
             module.validation_step(batch, batch_idx=0)
-        assert len(module.evaluator.ref_graphs) > 0
+        # No _ref_graphs buffer should exist on the module
+        assert not hasattr(module, "_ref_graphs")
 
 
 class TestDiffusionModuleE2E:
@@ -320,22 +367,26 @@ class TestDiffusionModulePerElementNoise:
     """Regression test: DiffusionModule applies per-element noise levels.
 
     Test rationale: the ContinuousNoiseProcess wrapping DigressNoiseGenerator
-    should call add_noise once per batch element with distinct noise levels
-    derived from distinct timesteps.
+    should call add_noise with a (bs,) tensor of distinct noise levels
+    derived from distinct timesteps, applying per-sample noise in one
+    vectorized call.
     """
 
     def test_per_element_noise_via_noise_process(self) -> None:
-        """DiffusionModule should apply noise per-element through the noise process."""
+        """DiffusionModule should apply per-sample noise levels as a batched tensor."""
         module = _make_diffusion_module(timesteps=100)
         batch = GraphData.from_adjacency(_make_block_adjacency())
 
-        # Instrument the underlying noise generator to record per-call eps values
-        recorded_eps: list[float] = []
+        # Instrument the underlying noise generator to record the eps argument
+        recorded_eps: list[torch.Tensor] = []
         assert isinstance(module.noise_process, ContinuousNoiseProcess)
         original_add_noise = module.noise_process.generator.add_noise
 
-        def recording_add_noise(A: torch.Tensor, eps: float) -> torch.Tensor:
-            recorded_eps.append(eps)
+        def recording_add_noise(
+            A: torch.Tensor, eps: float | torch.Tensor
+        ) -> torch.Tensor:
+            if isinstance(eps, torch.Tensor):
+                recorded_eps.append(eps.clone())
             return original_add_noise(A, eps)
 
         module.noise_process.generator.add_noise = recording_add_noise  # pyright: ignore[reportAttributeAccessIssue]
@@ -345,15 +396,21 @@ class TestDiffusionModulePerElementNoise:
             module.training_step(batch, batch_idx=0)
 
         assert (
-            len(recorded_eps) == 4
-        ), f"Expected 4 add_noise calls (one per element), got {len(recorded_eps)}"
+            len(recorded_eps) == 1
+        ), f"Expected 1 batched add_noise call, got {len(recorded_eps)}"
+
+        eps_tensor = recorded_eps[0]
+        assert eps_tensor.shape == (
+            4,
+        ), f"Expected eps shape (4,), got {eps_tensor.shape}"
 
         # Noise levels should be in [0, 1] (converted from integer timesteps)
-        for eps in recorded_eps:
-            assert 0.0 <= eps <= 1.0, f"Noise level {eps} not in [0, 1]"
+        assert torch.all(eps_tensor >= 0.0) and torch.all(
+            eps_tensor <= 1.0
+        ), f"Noise levels not in [0, 1]: {eps_tensor}"
 
-        # At least 2 distinct values (same argument as legacy test)
-        assert len(set(recorded_eps)) >= 2, (
-            f"All eps values are identical ({recorded_eps[0]}), "
+        # At least 2 distinct values — per-sample noise, not uniform
+        assert eps_tensor.unique().numel() >= 2, (
+            f"All eps values are identical ({eps_tensor[0].item():.4f}), "
             "noise is not being applied per-element"
         )

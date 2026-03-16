@@ -32,7 +32,7 @@ class TestNoExperimentsImport:
     Rationale
     ---------
     The modal package is a transport layer that should depend only on
-    ``experiments._shared_utils`` (lower layer), never on ``experiments``
+    ``tmgg.training`` (lower layer), never on ``experiments``
     sub-packages (higher layer). The subprocess dispatch pattern keeps
     this boundary clean.
     """
@@ -54,10 +54,7 @@ class TestNoExperimentsImport:
         spec = importlib.util.find_spec("tmgg.modal._lib.evaluate")
         assert spec is not None and spec.origin is not None
         source = Path(spec.origin).read_text()
-        assert (
-            "from tmgg.experiments._shared_utils.evaluation_metrics.mmd_metrics"
-            not in source
-        ), (
+        assert "from tmgg.training.evaluation_metrics.mmd_metrics" not in source, (
             "modal/evaluate.py should not import mmd_metrics directly; "
             "the CLI subprocess handles that"
         )

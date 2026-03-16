@@ -52,7 +52,7 @@ def test_rotation_noise_dimension_mismatch():
 
     gen = RotationNoiseGenerator(k=5, seed=42)
     A = torch.eye(8)  # dimension 8 != k=5
-    with pytest.raises(AssertionError, match="Graph dimension"):
+    with pytest.raises(ValueError, match="Graph dimension"):
         gen.add_noise(A, eps=0.1)
 
 
@@ -78,5 +78,5 @@ def test_rotation_noise_batch_dimension_mismatch():
 
     gen = RotationNoiseGenerator(k=5, seed=42)
     A = torch.eye(8).unsqueeze(0).expand(3, -1, -1)  # batch of 3, dim 8
-    with pytest.raises(AssertionError, match="Graph dimension"):
+    with pytest.raises(ValueError, match="Graph dimension"):
         gen.add_noise(A, eps=0.1)

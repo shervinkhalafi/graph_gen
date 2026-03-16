@@ -7,7 +7,7 @@ defaults:
   - digress_base
   - _self_
 
-model_config:
+model:
   n_layers: 4
   hidden_dims:
     dx: 128
@@ -27,4 +27,4 @@ learning_rate: 0.0002
 weight_decay: 1e-12
 optimizer_type: adamw
 amsgrad: true
-loss_type: "BCEWithLogits"
+loss_type: "bce_logits"

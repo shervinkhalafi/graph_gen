@@ -1,3 +1,7 @@
+# Embedding dimension study (no training — reconstruction analysis).
+# Inherits: _base_structural_study (minimal: wandb_entity, seed, paths).
+# Run: uv run tmgg-embedding-study-exp
+
 defaults:
   - _base_structural_study
   - _self_

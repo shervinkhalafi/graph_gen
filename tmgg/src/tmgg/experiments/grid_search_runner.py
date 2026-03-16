@@ -1,18 +1,13 @@
 """Runner for grid search experiments."""
 
-from pathlib import Path
-
 import hydra
 from omegaconf import DictConfig
 
-from tmgg.experiments._shared_utils.orchestration.run_experiment import run_experiment
-
-# Config directory is a sibling under experiments/
-CONFIG_PATH = str(Path(__file__).parent / "exp_configs")
+from tmgg.training.orchestration.run_experiment import run_experiment
 
 
 @hydra.main(  # pyright: ignore[reportAny]
-    version_base=None, config_path=CONFIG_PATH, config_name="grid_search_base"
+    version_base=None, config_path="../exp_configs", config_name="grid_search_base"
 )
 def main(config: DictConfig):
     """

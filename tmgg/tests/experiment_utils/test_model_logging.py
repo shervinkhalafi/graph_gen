@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 
 import torch.nn as nn
 
-from tmgg.experiments._shared_utils.logging import log_parameter_count
+from tmgg.training.logging import log_parameter_count
 
 # -----------------------------------------------------------------------
 # TestLogParameterCount

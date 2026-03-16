@@ -15,6 +15,10 @@ Serve (hot-reload)::
     uv run modal serve -m tmgg.modal._functions
 """
 
+# pyright: reportArgumentType=false
+# pyright: reportAssignmentType=false
+# Modal's type stubs are incomplete for volume mount and image parameters.
+
 from __future__ import annotations
 
 import re
@@ -43,7 +47,7 @@ try:
 
     experiment_image = create_tmgg_image(discover_tmgg_path())
 except (ImportError, RuntimeError):
-    experiment_image = None  # pyright: ignore[reportAssignmentType]
+    experiment_image = None
 
 tigris_secret = modal.Secret.from_name(
     "tigris-credentials",
@@ -197,7 +201,7 @@ def _evaluate_mmd_impl(task_dict: dict[str, Any]) -> dict[str, Any]:
     timeout=DEFAULT_TIMEOUTS["standard"],
     scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
+    volumes=get_volume_mounts(),
 )
 def modal_run_cli(
     cmd: str,
@@ -216,7 +220,7 @@ def modal_run_cli(
     timeout=DEFAULT_TIMEOUTS["fast"],
     scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
+    volumes=get_volume_mounts(),
 )
 def modal_run_cli_fast(
     cmd: str,
@@ -235,7 +239,7 @@ def modal_run_cli_fast(
     timeout=DEFAULT_TIMEOUTS["debug"],
     scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
+    volumes=get_volume_mounts(),
 )
 def modal_run_cli_debug(
     cmd: str,
@@ -262,7 +266,7 @@ def modal_run_cli_debug(
     timeout=3600,
     scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
+    volumes=get_volume_mounts(),
 )
 def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
     """Evaluate checkpoint MMD metrics on standard GPU (A10G)."""
@@ -276,7 +280,7 @@ def modal_evaluate_mmd(task_dict: dict[str, Any]) -> dict[str, Any]:
     timeout=1800,
     scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
+    volumes=get_volume_mounts(),
 )
 def modal_evaluate_mmd_debug(task_dict: dict[str, Any]) -> dict[str, Any]:
     """Evaluate checkpoint MMD metrics on debug GPU (T4)."""
@@ -290,7 +294,7 @@ def modal_evaluate_mmd_debug(task_dict: dict[str, Any]) -> dict[str, Any]:
     timeout=7200,
     scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
     secrets=[tigris_secret, wandb_secret],
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
+    volumes=get_volume_mounts(),
 )
 def modal_evaluate_mmd_fast(task_dict: dict[str, Any]) -> dict[str, Any]:
     """Evaluate checkpoint MMD metrics on fast GPU (A100)."""
@@ -302,7 +306,7 @@ def modal_evaluate_mmd_fast(task_dict: dict[str, Any]) -> dict[str, Any]:
     image=experiment_image,
     timeout=60,
     scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
-    volumes=get_volume_mounts(),  # pyright: ignore[reportArgumentType]
+    volumes=get_volume_mounts(),
 )
 def modal_list_checkpoints(run_id: str) -> dict[str, Any]:
     """List all checkpoints available for a run."""

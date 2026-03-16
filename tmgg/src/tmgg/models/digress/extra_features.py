@@ -23,6 +23,8 @@ from typing import Protocol, runtime_checkable
 import torch
 from torch import Tensor
 
+from tmgg.utils.spectral.laplacian import compute_laplacian
+
 # ------------------------------------------------------------------
 # ExtraFeaturesProvider protocol
 # ------------------------------------------------------------------
@@ -502,7 +504,7 @@ class EigenFeatures:
             For ``"all"``: ``(n_components, first_k_ev, nonlcc_indicator, k_lowest_eigvec)``.
         """
         A = E[..., 1:].sum(dim=-1).float() * mask_2d(node_mask)
-        L = compute_laplacian(A, normalize=False)
+        L = compute_laplacian(A, normalized=False, symmetrize=True)
 
         # Pad masked nodes with large diagonal values so their eigenvalues
         # are pushed far above zero and don't interfere with the real spectrum.
@@ -546,44 +548,6 @@ class EigenFeatures:
 def mask_2d(node_mask: Tensor) -> Tensor:
     """Expand a ``(bs, n)`` node mask to ``(bs, n, n)`` edge mask."""
     return node_mask.unsqueeze(1) * node_mask.unsqueeze(2)
-
-
-def compute_laplacian(adjacency: Tensor, normalize: bool) -> Tensor:
-    """Compute the graph Laplacian from a batched adjacency matrix.
-
-    Parameters
-    ----------
-    adjacency
-        Batched adjacency matrix ``(bs, n, n)``.
-    normalize
-        If False, returns the combinatorial Laplacian L = D - A.
-        If True, returns the symmetric normalised Laplacian
-        L_sym = I - D^{-1/2} A D^{-1/2}.
-
-    Returns
-    -------
-    Tensor
-        Symmetrised Laplacian ``(bs, n, n)``.
-    """
-    diag = torch.sum(adjacency, dim=-1)  # (bs, n)
-    n = diag.shape[-1]
-    D = torch.diag_embed(diag)  # (bs, n, n)
-    combinatorial = D - adjacency
-
-    if not normalize:
-        return (combinatorial + combinatorial.transpose(1, 2)) / 2
-
-    diag0 = diag.clone()
-    diag[diag == 0] = 1e-12
-
-    diag_norm = 1 / torch.sqrt(diag)
-    D_norm = torch.diag_embed(diag_norm)
-    L = (
-        torch.eye(n, device=adjacency.device, dtype=adjacency.dtype).unsqueeze(0)
-        - D_norm @ adjacency @ D_norm
-    )
-    L[diag0 == 0] = 0
-    return (L + L.transpose(1, 2)) / 2
 
 
 def get_eigenvalues_features(eigenvalues: Tensor, k: int = 5) -> tuple[Tensor, Tensor]:

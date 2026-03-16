@@ -14,10 +14,10 @@ from typing import Any
 import torch
 from loguru import logger
 
-from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+from tmgg.utils.spectral.spectral_deltas import (
     compute_alg_connectivity_delta,
 )
-from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+from tmgg.utils.spectral.spectral_deltas import (
     compute_eigengap_delta as _eigengap_delta_primitive,
 )
 

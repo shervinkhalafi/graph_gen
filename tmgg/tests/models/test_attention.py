@@ -5,18 +5,18 @@ import torch
 
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
-from tmgg.models.layers import MultiHeadAttention
+from tmgg.models.layers import MultiHeadSelfAttention
 
 
-class TestMultiHeadAttention:
-    """Test MultiHeadAttention module."""
+class TestMultiHeadSelfAttention:
+    """Test MultiHeadSelfAttention module."""
 
     def test_init(self):
         """Test initialization."""
         d_model = 64
         num_heads = 8
 
-        attention = MultiHeadAttention(d_model, num_heads)
+        attention = MultiHeadSelfAttention(d_model, num_heads)
 
         assert attention.d_model == d_model
         assert attention.num_heads == num_heads
@@ -30,7 +30,7 @@ class TestMultiHeadAttention:
         d_model = 64
         num_heads = 8
 
-        attention = MultiHeadAttention(d_model, num_heads)
+        attention = MultiHeadSelfAttention(d_model, num_heads)
         x = torch.randn(batch_size, seq_len, d_model)
 
         output = attention(x)
@@ -44,7 +44,7 @@ class TestMultiHeadAttention:
         d_model = 32
         num_heads = 4
 
-        attention = MultiHeadAttention(d_model, num_heads)
+        attention = MultiHeadSelfAttention(d_model, num_heads)
         x = torch.randn(batch_size, seq_len, d_model)
 
         # Create mask that masks out last position

@@ -7,7 +7,7 @@ graph-theoretic properties (degree distribution, clustering, spectral).
 ``DiffusionModule`` from the shared utilities package is the training loop.
 """
 
-from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
+from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
 

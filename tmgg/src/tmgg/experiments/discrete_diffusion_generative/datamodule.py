@@ -8,6 +8,11 @@ Graph generation and index splitting are handled by the
 ``MultiGraphDataModule`` superclass.
 """
 
+# pyright: reportUnknownMemberType=false
+# pyright: reportExplicitAny=false
+# torch.from_numpy().float() and config dict Any parameters have
+# incomplete type stubs.
+
 from __future__ import annotations
 
 from typing import Any, override
@@ -88,7 +93,7 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
         num_workers: int = 0,
         pin_memory: bool = True,
         seed: int = 42,
-        graph_config: dict[str, Any] | None = None,  # pyright: ignore[reportExplicitAny]
+        graph_config: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             graph_type=graph_type,
@@ -127,9 +132,9 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
         train_np, val_np, test_np = self._generate_and_split()
 
         # 2. Convert each adjacency matrix to GraphData
-        train_adj = torch.from_numpy(train_np).float()  # pyright: ignore[reportUnknownMemberType]
-        val_adj = torch.from_numpy(val_np).float()  # pyright: ignore[reportUnknownMemberType]
-        test_adj = torch.from_numpy(test_np).float()  # pyright: ignore[reportUnknownMemberType]
+        train_adj = torch.from_numpy(train_np).float()
+        val_adj = torch.from_numpy(val_np).float()
+        test_adj = torch.from_numpy(test_np).float()
 
         self._train_data = [
             GraphData.from_adjacency(train_adj[i]) for i in range(len(train_adj))
@@ -159,12 +164,12 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
         edge_counts = torch.zeros(de)
 
         for g in self._train_data:
-            n = g.node_mask.shape[0]
-            node_counts += g.X.sum(dim=0)
+            n = int(g.node_mask.sum().item())  # actual nodes, not padded dim
+            node_counts += g.X[:n].sum(dim=0)
 
             # Upper triangle only to avoid double-counting symmetric edges,
             # and exclude diagonal (no self-loops).
-            triu_idx = torch.triu_indices(n, n, offset=1)  # pyright: ignore[reportUnknownMemberType]
+            triu_idx = torch.triu_indices(n, n, offset=1)
             upper_E = g.E[triu_idx[0], triu_idx[1]]  # (num_edges, de)
             edge_counts += upper_E.sum(dim=0)
 
@@ -299,7 +304,7 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
         if not all_data:
             return SizeDistribution.fixed(self.num_nodes)
 
-        node_counts = [g.node_mask.shape[0] for g in all_data]
+        node_counts = [int(g.node_mask.sum().item()) for g in all_data]
         return SizeDistribution.from_node_counts(node_counts)
 
     def sample_n_nodes(self, batch_size: int) -> Tensor:

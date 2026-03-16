@@ -6,6 +6,10 @@ adjacency matrix, process them through an architecture-specific transformation,
 and reconstruct the denoised adjacency matrix.
 """
 
+# pyright: reportAttributeAccessIssue=false
+# torch.nn.functional.pad is not fully typed in the PyTorch stubs; the pad
+# function exists at runtime but pyright cannot resolve it via the stub.
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -78,7 +82,7 @@ class SpectralDenoiser(GraphModel, ABC):
         if embedding_source == "eigenvector":
             self.embedding_layer: TopKEigenLayer | PEARLEmbedding = TopKEigenLayer(k=k)
             # Backward compat: subclasses may reference eigen_layer directly
-            self.eigen_layer = self.embedding_layer
+            self.eigen_layer: TopKEigenLayer | None = self.embedding_layer
         elif embedding_source in ("pearl_random", "pearl_basis"):
             mode = "random" if embedding_source == "pearl_random" else "basis"
             self.embedding_layer = PEARLEmbedding(
@@ -91,7 +95,7 @@ class SpectralDenoiser(GraphModel, ABC):
             )
             # PEARL has no eigen_layer - subclasses using eigen_layer will fail
             # with a clear error
-            self.eigen_layer = None  # type: ignore[assignment]
+            self.eigen_layer = None
         else:
             raise ValueError(
                 f"embedding_source must be 'eigenvector', 'pearl_random', or "
@@ -124,8 +128,8 @@ class SpectralDenoiser(GraphModel, ABC):
             actual_k = V.shape[-1]
             if actual_k < self.k:
                 pad_size = self.k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
-                Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
+                V = torch.nn.functional.pad(V, (0, pad_size))
+                Lambda = torch.nn.functional.pad(Lambda, (0, pad_size))
         else:
             assert isinstance(self.embedding_layer, PEARLEmbedding)
             V = self.embedding_layer(A)
@@ -212,7 +216,7 @@ class SpectralDenoiser(GraphModel, ABC):
             actual_k = V.shape[-1]
             if actual_k < self.k:
                 pad_size = self.k - actual_k
-                V = torch.nn.functional.pad(V, (0, pad_size))  # pyright: ignore[reportAttributeAccessIssue]  # PyTorch stub gap
+                V = torch.nn.functional.pad(V, (0, pad_size))  # PyTorch stub gap
         else:
             assert isinstance(self.embedding_layer, PEARLEmbedding)
             V = self.embedding_layer(A)

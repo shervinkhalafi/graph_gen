@@ -6,6 +6,11 @@ eigenvalue magnitude) from symmetric adjacency matrices, and
 eigendecomposition fails on ill-conditioned matrices.
 """
 
+# pyright: reportUnknownMemberType=false
+# pyright: reportAttributeAccessIssue=false
+# torch._C._LinAlgError is a private C-extension type not declared in the
+# PyTorch stubs; accessing it is valid at runtime for catching LAPACK errors.
+
 from __future__ import annotations
 
 from typing import Any
@@ -42,6 +47,9 @@ class EigenDecompositionError(Exception):
             try:
                 singular_values = np.linalg.svd(A_np, compute_uv=False)
                 condition_number = singular_values[0] / (singular_values[-1] + 1e-10)
+            # Broad catch is intentional: this runs inside a diagnostic for an
+            # already-failed eigendecomposition. A secondary SVD failure here
+            # should not mask the original error.
             except Exception:
                 condition_number = float("inf")
 
@@ -93,6 +101,11 @@ class TopKEigenLayer(nn.Module):
 
     When k >= n (requesting all eigenvectors), returns them in ascending
     eigenvalue order from ``eigh`` without reordering.
+
+    Selects eigenvectors corresponding to eigenvalues with largest absolute
+    value (|λ|), analogous to PCA's variance-maximizing selection. This
+    differs from spectral clustering, which typically uses the smallest
+    Laplacian eigenvalues.
 
     Parameters
     ----------
@@ -169,11 +182,11 @@ class TopKEigenLayer(nn.Module):
         # Eigendecomposition with diagnostic error handling
         try:
             eigenvalues, eigenvectors = torch.linalg.eigh(A_sym)
-        except torch._C._LinAlgError as e:  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        except torch._C._LinAlgError as e:
             for i in range(batch_size):
                 try:
                     torch.linalg.eigh(A_sym[i])
-                except torch._C._LinAlgError:  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+                except torch._C._LinAlgError:
                     raise EigenDecompositionError(i, A[i], e) from e
             raise
         # eigenvalues: (batch, n), eigenvectors: (batch, n, n)

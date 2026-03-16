@@ -1,4 +1,6 @@
-# Hybrid GNN+Transformer denoising experiments
+# GNN-Transformer hybrid denoising on SBM graphs.
+# Inherits: base_config_denoising → _base_infra + task/denoising
+# Run: uv run tmgg-gnn-transformer
 
 defaults:
   - base_config_denoising

@@ -5,9 +5,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class MultiHeadAttention(nn.Module):
+class MultiHeadSelfAttention(nn.Module):
     """
-    Multi-Head Attention module as described in 'Attention Is All You Need' paper.
+    Multi-Head Self-Attention module as described in 'Attention Is All You Need' paper.
 
     This implementation supports masked attention and different input/output dimensions.
     """

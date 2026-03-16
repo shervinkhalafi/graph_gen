@@ -5,8 +5,8 @@ a noise level, corrupt, predict clean in one pass.  These tests verify
 instantiation, training_step, forward bridge, per-noise-level evaluation,
 property fallback behaviour, and both loss types.
 
-The tests use a GNN model registered as ``"gnn"`` via the model factory,
-matching production usage.  Batches are built with
+The tests use a GNN model instantiated directly, matching production usage.
+Batches are built with
 ``GraphData.from_adjacency`` on random symmetric binary matrices.
 """
 
@@ -20,21 +20,28 @@ import torch
 import torch.nn as nn
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.experiments._shared_utils.lightning_modules.denoising_module import (
-    SingleStepDenoisingModule,
-)
 
 # -----------------------------------------------------------------------
 # Shared constants and helpers
 # -----------------------------------------------------------------------
+from tmgg.models.gnn import GNN as _GNN
+from tmgg.training.lightning_modules.denoising_module import (
+    SingleStepDenoisingModule,
+)
 
-_MODEL_TYPE = "gnn"
 _MODEL_CONFIG: dict[str, Any] = {
     "num_layers": 2,
     "num_terms": 2,
     "feature_dim_in": 10,
     "feature_dim_out": 10,
 }
+
+
+def _make_default_model() -> _GNN:
+    """Instantiate the default test GNN model."""
+    return _GNN(**_MODEL_CONFIG)
+
+
 _NOISE_LEVELS = [0.1, 0.3, 0.5]
 _NUM_NODES = 10
 _BATCH_SIZE = 2
@@ -51,15 +58,15 @@ def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
 
 
 def _make_module(
-    loss_type: str = "BCEWithLogits",
+    loss_type: str = "bce_logits",
     noise_levels: list[float] | None = None,
     eval_noise_levels: list[float] | None = None,
     **overrides: Any,
 ) -> SingleStepDenoisingModule:
     """Build a SingleStepDenoisingModule with sensible test defaults."""
+    model = overrides.pop("model", _make_default_model())
     kwargs: dict[str, Any] = {
-        "model_type": _MODEL_TYPE,
-        "model_config": _MODEL_CONFIG,
+        "model": model,
         "noise_type": "digress",
         "noise_levels": noise_levels if noise_levels is not None else _NOISE_LEVELS,
         "eval_noise_levels": eval_noise_levels,
@@ -80,7 +87,7 @@ class TestInstantiation:
 
     def test_default_params(self) -> None:
         """The module should initialise with the specified defaults and
-        set the criterion to BCEWithLogitsLoss.
+        set the criterion to BCEWithLogitsLoss (via loss_type='bce_logits').
         """
         m = _make_module()
         assert isinstance(m.criterion, nn.BCEWithLogitsLoss)
@@ -92,7 +99,7 @@ class TestInstantiation:
         per the design doc's requirement that it semantically hardcodes
         T=1 and sampler=None within the DiffusionModule hierarchy.
         """
-        from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
+        from tmgg.training.lightning_modules.diffusion_module import (
             DiffusionModule,
         )
 
@@ -101,12 +108,12 @@ class TestInstantiation:
 
     def test_mse_criterion(self) -> None:
         """When loss_type='MSE', the criterion should be nn.MSELoss."""
-        m = _make_module(loss_type="MSE")
+        m = _make_module(loss_type="mse")
         assert isinstance(m.criterion, nn.MSELoss)
 
     def test_bce_criterion(self) -> None:
-        """When loss_type='BCEWithLogits', the criterion should be BCEWithLogitsLoss."""
-        m = _make_module(loss_type="BCEWithLogits")
+        """loss_type='bce_logits' installs BCEWithLogitsLoss."""
+        m = _make_module(loss_type="bce_logits")
         assert isinstance(m.criterion, nn.BCEWithLogitsLoss)
 
     def test_unknown_loss_type_raises(self) -> None:
@@ -161,17 +168,17 @@ class TestTrainingStep:
         """training_step should work correctly with MSE loss, producing
         a finite loss with gradient.
         """
-        m = _make_module(loss_type="MSE")
+        m = _make_module(loss_type="mse")
         batch = _make_batch()
         loss = m.training_step(batch, batch_idx=0)
         assert torch.isfinite(loss)
         assert loss.grad_fn is not None
 
     def test_bce_loss_type_works(self) -> None:
-        """training_step should work correctly with BCEWithLogits loss,
+        """training_step should work correctly with bce_logits loss,
         producing a finite loss with gradient.
         """
-        m = _make_module(loss_type="BCEWithLogits")
+        m = _make_module(loss_type="bce_logits")
         batch = _make_batch()
         loss = m.training_step(batch, batch_idx=0)
         assert torch.isfinite(loss)
@@ -299,8 +306,7 @@ class TestNoiseLevelsProperty:
         trainer.datamodule.noise_levels.
         """
         m = SingleStepDenoisingModule(
-            model_type=_MODEL_TYPE,
-            model_config=_MODEL_CONFIG,
+            model=_make_default_model(),
             noise_levels=None,
             seed=42,
         )
@@ -323,8 +329,7 @@ class TestNoiseLevelsProperty:
         the property should raise RuntimeError.
         """
         m = SingleStepDenoisingModule(
-            model_type=_MODEL_TYPE,
-            model_config=_MODEL_CONFIG,
+            model=_make_default_model(),
             noise_levels=None,
             seed=42,
         )

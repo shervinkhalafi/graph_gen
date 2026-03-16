@@ -6,6 +6,10 @@ both as ``nn.Module`` subclasses with registered buffers for automatic
 device propagation.
 """
 
+# pyright: reportUninitializedInstanceVariable=false
+# PyTorch register_buffer() initialises these attributes at runtime;
+# pyright cannot track this pattern.
+
 from __future__ import annotations
 
 import torch
@@ -32,9 +36,9 @@ class DiscreteUniformTransition(nn.Module):
         Number of global feature classes (0 to disable).
     """
 
-    u_x: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
-    u_e: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
-    u_y: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
+    u_x: Tensor
+    u_e: Tensor
+    u_y: Tensor
 
     def __init__(self, x_classes: int, e_classes: int, y_classes: int) -> None:
         super().__init__()
@@ -166,11 +170,11 @@ class MarginalUniformTransition(nn.Module):
         Number of global feature classes (0 to disable).
     """
 
-    u_x: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
-    u_e: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
-    u_y: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
-    x_marginals: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
-    e_marginals: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
+    u_x: Tensor
+    u_e: Tensor
+    u_y: Tensor
+    x_marginals: Tensor
+    e_marginals: Tensor
 
     def __init__(
         self,

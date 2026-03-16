@@ -109,9 +109,13 @@ class SizeDistribution:
         Returns
         -------
         Tensor
-            Log-probabilities with the same shape as ``N``. Returns 0.0
-            for sizes that match the distribution and ``-inf`` for sizes
-            not in the support.
+            Log-probabilities with the same shape as ``N``.
+
+        Notes
+        -----
+        For sizes with near-zero probability (outside the empirical support),
+        returns approximately -69 (``log(1e-30)``), not ``-inf`` or 0, due to
+        internal clamping.
         """
         probs_t = torch.tensor(self.probs, dtype=torch.float32, device=N.device)
         sizes_t = torch.tensor(self.sizes, dtype=torch.long, device=N.device)
@@ -151,9 +155,19 @@ class SizeDistribution:
         sizes = d["sizes"]
         counts = d["counts"]
         max_size = d["max_size"]
-        assert isinstance(sizes, list)
-        assert isinstance(counts, list)
-        assert isinstance(max_size, int)
+        if not isinstance(sizes, list):
+            raise TypeError(
+                f"expected 'sizes' to be a list, got {type(sizes).__name__}"
+            )
+        if not isinstance(counts, list):
+            raise TypeError(
+                f"expected 'counts' to be a list, got {type(counts).__name__}"
+            )
+        if not isinstance(max_size, int):
+            raise TypeError(
+                f"expected 'max_size' to be an int, got {type(max_size).__name__}"
+            )
+
         return cls(
             sizes=tuple(sizes),
             counts=tuple(counts),

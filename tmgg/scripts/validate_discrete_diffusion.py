@@ -55,18 +55,18 @@ from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.sampler import CategoricalSampler
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.diffusion.transitions import DiscreteUniformTransition
-from tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator import (
+from tmgg.experiments.discrete_diffusion_generative.datamodule import (
+    SyntheticCategoricalDataModule,
+)
+from tmgg.training.evaluation_metrics.graph_evaluator import (
     GraphEvaluator,
 )
-from tmgg.experiments._shared_utils.evaluation_metrics.mmd_metrics import (
+from tmgg.training.evaluation_metrics.mmd_metrics import (
     MMDResults,
     compute_mmd_metrics,
 )
-from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
+from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
-)
-from tmgg.experiments.discrete_diffusion_generative.datamodule import (
-    SyntheticCategoricalDataModule,
 )
 
 # ------------------------------------------------------------------
@@ -267,23 +267,27 @@ def run_validation(cfg: ValidationConfig) -> ValidationResult:
         sigma=1.0,
     )
 
+    from tmgg.models.digress.transformer_model import GraphTransformer
+
+    model = GraphTransformer(
+        n_layers=cfg.n_layers,
+        input_dims={"X": dx, "E": de, "y": 0},
+        hidden_mlp_dims=cfg.hidden_mlp_dims,
+        hidden_dims=cfg.hidden_dims,
+        output_dims={"X": dx, "E": de, "y": 0},
+        use_timestep=True,
+    )
+
     module = DiffusionModule(
-        model_type="graph_transformer",
-        model_config={
-            "n_layers": cfg.n_layers,
-            "input_dims": {"X": dx, "E": de, "y": 0},
-            "hidden_mlp_dims": cfg.hidden_mlp_dims,
-            "hidden_dims": cfg.hidden_dims,
-            "output_dims": {"X": dx, "E": de, "y": 0},
-            "use_timestep": True,
-        },
+        model=model,
+        model_name="graph_transformer",
         noise_process=noise_process,
         sampler=sampler,
         noise_schedule=schedule,
         evaluator=evaluator,
         loss_type="cross_entropy",
         num_nodes=cfg.num_nodes,
-        eval_every_n_epochs=1,
+        eval_every_n_steps=1,
         learning_rate=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
     )
@@ -327,7 +331,7 @@ def run_validation(cfg: ValidationConfig) -> ValidationResult:
 
     import networkx as nx
 
-    from tmgg.experiments._shared_utils.evaluation_metrics.mmd_metrics import (
+    from tmgg.training.evaluation_metrics.mmd_metrics import (
         adjacency_to_networkx,
     )
 

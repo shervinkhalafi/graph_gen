@@ -6,6 +6,10 @@ sources produce ``list[torch.Tensor]`` adjacency matrices split into
 train/val/test.
 """
 
+# pyright: reportExplicitAny=false
+# DataLoader/Dataset generic parameters and config dicts require Any
+# until PyTorch provides complete generic stubs.
+
 from __future__ import annotations
 
 import random
@@ -244,9 +248,9 @@ class GraphDataModule(MultiGraphDataModule):
         return self._rng.choice(matrices)
 
     @override
-    def get_dataset_info(self) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny]
+    def get_dataset_info(self) -> dict[str, Any]:
         """Return metadata about the dataset."""
-        info: dict[str, Any] = {  # pyright: ignore[reportExplicitAny]
+        info: dict[str, Any] = {
             "graph_type": self.graph_type,
             "samples_per_graph": self.samples_per_graph,
         }

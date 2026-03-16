@@ -25,7 +25,7 @@ depends_on = []
 [[modules]]
 path = "tmgg.modal"
 depends_on = [
-    "tmgg.experiments._shared_utils.orchestration",  # Uses run_experiment, generate_run_id
+    "tmgg.training.orchestration",  # Uses run_experiment, generate_run_id
     "tmgg.experiments",             # Evaluation function uses datamodule and checkpoint utils
 ]
 # Modal platform integration - depends on cloud abstraction and run_experiment
@@ -35,42 +35,41 @@ depends_on = [
 # ============================================================
 
 [[modules]]
-path = "tmgg.experiments._shared_utils"
-depends_on = [
-    "tmgg.experiments._shared_utils.spectral_utils",
-    "tmgg.experiments._shared_utils.evaluation_metrics",
-    "tmgg.experiments._shared_utils.lightning_modules",
-    "tmgg.experiments._shared_utils.orchestration",
-    "tmgg.data",
-]
-# Top-level: re-exports + cross-cutting files (logging.py, plotting.py, exceptions.py)
-
-[[modules]]
-path = "tmgg.experiments._shared_utils.spectral_utils"
+path = "tmgg.utils.spectral"
 depends_on = []
 # Pure linear algebra — no framework deps
 
 [[modules]]
-path = "tmgg.experiments._shared_utils.evaluation_metrics"
+path = "tmgg.training"
+depends_on = [
+    "tmgg.training.evaluation_metrics",
+    "tmgg.training.lightning_modules",
+    "tmgg.training.orchestration",
+    "tmgg.data",
+]
+# Top-level: re-exports + cross-cutting files (logging.py, exceptions.py)
+
+[[modules]]
+path = "tmgg.training.evaluation_metrics"
 depends_on = [
     "tmgg.data",
 ]
 # reference_graphs.py uses tmgg.data
 
 [[modules]]
-path = "tmgg.experiments._shared_utils.lightning_modules"
+path = "tmgg.training.lightning_modules"
 depends_on = [
-    "tmgg.experiments._shared_utils",
-    "tmgg.experiments._shared_utils.spectral_utils",
-    "tmgg.experiments._shared_utils.evaluation_metrics",
+    "tmgg.training",
+    "tmgg.utils.spectral",
+    "tmgg.training.evaluation_metrics",
     "tmgg.data", "tmgg.models", "tmgg.diffusion",
 ]
 # PL modules use top-level logging.py/exceptions.py + spectral + evaluation + framework
 
 [[modules]]
-path = "tmgg.experiments._shared_utils.orchestration"
+path = "tmgg.training.orchestration"
 depends_on = [
-    "tmgg.experiments._shared_utils",
+    "tmgg.training",
     "tmgg.data",
 ]
 # Uses top-level logging.py; hydra instantiation uses tmgg.data
@@ -86,9 +85,9 @@ depends_on = ["tmgg.data", "tmgg.models"]
 
 [[modules]]
 path = "tmgg.models"
-depends_on = ["tmgg.data"]
+depends_on = ["tmgg.data", "tmgg.utils.spectral"]
 unchecked = true
-# Model architectures - imports GraphData from tmgg.data
+# Model architectures - imports GraphData from tmgg.data, compute_laplacian from tmgg.utils.spectral
 
 [[modules]]
 path = "tmgg.experiments"

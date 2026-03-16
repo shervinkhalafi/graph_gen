@@ -119,14 +119,19 @@ def custom_beta_schedule_discrete(
 
 
 def gaussian_KL(q_mu: torch.Tensor, q_sigma: torch.Tensor) -> torch.Tensor:
-    """Computes the KL distance between a normal distribution and the standard normal.
-    Args:
-        q_mu: Mean of distribution q.
-        q_sigma: Standard deviation of distribution q.
-        p_mu: Mean of distribution p.
-        p_sigma: Standard deviation of distribution p.
-    Returns:
-        The KL distance, summed over all dimensions except the batch dim.
+    """KL divergence from N(q_mu, q_sigma^2) to the standard normal N(0, 1).
+
+    Parameters
+    ----------
+    q_mu
+        Mean of distribution q.
+    q_sigma
+        Standard deviation of distribution q.
+
+    Returns
+    -------
+    torch.Tensor
+        KL divergence, summed over all dimensions except the batch dim.
     """
     return sum_except_batch(torch.log(1 / q_sigma) + 0.5 * (q_sigma**2 + q_mu**2) - 0.5)
 

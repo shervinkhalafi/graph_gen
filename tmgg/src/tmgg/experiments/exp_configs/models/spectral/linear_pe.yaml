@@ -1,11 +1,12 @@
 # Linear Positional Encoding denoiser
 # Â = V W V^T + 1 b^T + b 1^T
 
-_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+_target_: tmgg.training.lightning_modules.denoising_module.SingleStepDenoisingModule
 
-model_type: linear_pe
+model_name: linear_pe
 
-model_config:
+model:
+  _target_: tmgg.models.spectral_denoisers.LinearPE
   # Number of eigenvectors (k in R^{n×k})
   # Sweep: {2, 4, 8, 16, 32, 64}
   k: 16

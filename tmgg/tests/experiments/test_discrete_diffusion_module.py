@@ -24,14 +24,14 @@ from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.sampler import CategoricalSampler
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator import (
-    GraphEvaluator,
-)
-from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
-    DiffusionModule,
-)
 from tmgg.experiments.discrete_diffusion_generative.datamodule import (
     SyntheticCategoricalDataModule,
+)
+from tmgg.training.evaluation_metrics.graph_evaluator import (
+    GraphEvaluator,
+)
+from tmgg.training.lightning_modules.diffusion_module import (
+    DiffusionModule,
 )
 
 # ------------------------------------------------------------------
@@ -95,23 +95,25 @@ def lightning_module(
     unified_schedule: NoiseSchedule,
     evaluator: GraphEvaluator,
 ) -> DiffusionModule:
+    from tmgg.models.digress.transformer_model import GraphTransformer
+
+    model = GraphTransformer(
+        n_layers=2,
+        input_dims={"X": _DX, "E": _DE, "y": 0},
+        hidden_mlp_dims={"X": 16, "E": 16, "y": 16},
+        hidden_dims={"dx": 16, "de": 16, "dy": 16, "n_head": 2},
+        output_dims={"X": _DX, "E": _DE, "y": _DY},
+        use_timestep=True,
+    )
     return DiffusionModule(
-        model_type="graph_transformer",
-        model_config={
-            "n_layers": 2,
-            "input_dims": {"X": _DX, "E": _DE, "y": 0},
-            "hidden_mlp_dims": {"X": 16, "E": 16, "y": 16},
-            "hidden_dims": {"dx": 16, "de": 16, "dy": 16, "n_head": 2},
-            "output_dims": {"X": _DX, "E": _DE, "y": _DY},
-            "use_timestep": True,
-        },
+        model=model,
         noise_process=noise_process,
         sampler=sampler,
         noise_schedule=unified_schedule,
         evaluator=evaluator,
         loss_type="cross_entropy",
         num_nodes=_NUM_NODES,
-        eval_every_n_epochs=1,
+        eval_every_n_steps=1,
     )
 
 
@@ -345,7 +347,7 @@ class TestDiGressAlignment:
         loss_module = lightning_module._compute_loss(pred, batch)  # pyright: ignore[reportUnknownVariableType]
 
         # Loss via direct TrainLossDiscrete call
-        from tmgg.experiments._shared_utils.lightning_modules.train_loss_discrete import (
+        from tmgg.training.lightning_modules.train_loss_discrete import (
             TrainLossDiscrete,
         )
 
@@ -423,26 +425,31 @@ class TestDiGressAlignment:
         Invariant: same predictions yield different scalar losses (unless edge
         loss is exactly zero, which is astronomically unlikely).
         """
+        from tmgg.models.digress.transformer_model import GraphTransformer
+
+        def _make_gt_model() -> GraphTransformer:
+            return GraphTransformer(
+                n_layers=2,
+                input_dims={"X": _DX, "E": _DE, "y": 0},
+                hidden_mlp_dims={"X": 16, "E": 16, "y": 16},
+                hidden_dims={"dx": 16, "de": 16, "dy": 16, "n_head": 2},
+                output_dims={"X": _DX, "E": _DE, "y": _DY},
+                use_timestep=True,
+            )
+
         common_kwargs: dict[str, Any] = dict(  # pyright: ignore[reportExplicitAny]
-            model_type="graph_transformer",
-            model_config={
-                "n_layers": 2,
-                "input_dims": {"X": _DX, "E": _DE, "y": 0},
-                "hidden_mlp_dims": {"X": 16, "E": 16, "y": 16},
-                "hidden_dims": {"dx": 16, "de": 16, "dy": 16, "n_head": 2},
-                "output_dims": {"X": _DX, "E": _DE, "y": _DY},
-                "use_timestep": True,
-            },
             noise_process=noise_process,
             sampler=sampler,
             noise_schedule=unified_schedule,
             evaluator=evaluator,
             loss_type="cross_entropy",
             num_nodes=_NUM_NODES,
-            eval_every_n_epochs=1,
+            eval_every_n_steps=1,
         )
-        mod_low = DiffusionModule(**common_kwargs, lambda_E=1.0)  # pyright: ignore[reportCallIssue]
-        mod_high = DiffusionModule(**common_kwargs, lambda_E=10.0)  # pyright: ignore[reportCallIssue]
+        mod_low = DiffusionModule(model=_make_gt_model(), **common_kwargs, lambda_E=1.0)  # pyright: ignore[reportCallIssue]
+        mod_high = DiffusionModule(
+            model=_make_gt_model(), **common_kwargs, lambda_E=10.0
+        )  # pyright: ignore[reportCallIssue]
 
         # Copy weights so both models produce identical predictions
         mod_high.load_state_dict(mod_low.state_dict())

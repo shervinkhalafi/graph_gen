@@ -23,7 +23,7 @@ import math
 
 import torch
 
-from tmgg.experiments._shared_utils.spectral_utils.spectral_deltas import (
+from tmgg.utils.spectral.spectral_deltas import (
     compute_spectral_deltas,
 )
 
@@ -227,7 +227,7 @@ class TestComputeSpectralDeltas:
         A_disconnected = create_disconnected_graph(n).unsqueeze(0)
 
         # Compute Laplacian eigenvalues
-        from tmgg.experiments._shared_utils.spectral_utils.laplacian import (
+        from tmgg.utils.spectral.laplacian import (
             compute_laplacian,
         )
 

@@ -6,6 +6,12 @@ literature, the core operation is a bilinear form: there is no softmax
 normalization and no value projection, so this is not self-attention.
 """
 
+# pyright: reportIncompatibleMethodOverride=false
+# feature_dim is a read-only property on SpectralDenoiser; subclasses narrow
+# the return value to their specific projection dim, which is compatible at
+# runtime but pyright flags as an incompatible override due to the base
+# property's broad int return type.
+
 from __future__ import annotations
 
 from typing import Any
@@ -14,7 +20,7 @@ import torch
 import torch.nn as nn
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.models.layers.mha_layer import MultiHeadAttention
+from tmgg.models.layers.mha_layer import MultiHeadSelfAttention
 from tmgg.models.spectral_denoisers.base_spectral import (
     EmbeddingSource,
     SpectralDenoiser,
@@ -94,7 +100,7 @@ class BilinearDenoiser(SpectralDenoiser):
         nn.init.xavier_uniform_(self.W_K)
 
     @property
-    def feature_dim(self) -> int:  # pyright: ignore[reportIncompatibleMethodOverride]
+    def feature_dim(self) -> int:
         """Output dimension of ``get_features()``: the key projection dim."""
         return self.d_k
 
@@ -143,7 +149,7 @@ class BilinearDenoiser(SpectralDenoiser):
         config["d_k"] = self.d_k
         return config
 
-    def get_features(self, data: GraphData) -> torch.Tensor:  # type: ignore[override]
+    def get_features(self, data: GraphData) -> torch.Tensor:
         """Extract key projections as node features.
 
         Returns the K = V @ W_K projections, which capture learned
@@ -230,7 +236,7 @@ class BilinearDenoiserWithMLP(SpectralDenoiser):
         self.mlp = nn.Sequential(*layers)
 
     @property
-    def feature_dim(self) -> int:  # pyright: ignore[reportIncompatibleMethodOverride]
+    def feature_dim(self) -> int:
         """Output dimension of ``get_features()``: the key projection dim."""
         return self.d_k
 
@@ -283,7 +289,7 @@ class BilinearDenoiserWithMLP(SpectralDenoiser):
         config["mlp_num_layers"] = self.mlp_num_layers
         return config
 
-    def get_features(self, data: GraphData) -> torch.Tensor:  # type: ignore[override]
+    def get_features(self, data: GraphData) -> torch.Tensor:
         """Extract key projections as node features.
 
         Parameters
@@ -307,7 +313,7 @@ class _TransformerBlock(nn.Module):
     """Single transformer block with attention, residual, and optional MLP.
 
     Uses post-norm style: LN(x + sublayer(x)). Delegates the attention
-    sublayer to ``MultiHeadAttention`` (which handles Q/K/V projections,
+    sublayer to ``MultiHeadSelfAttention`` (which handles Q/K/V projections,
     scaled dot-product, dropout, residual connection, and layer norm).
     """
 
@@ -324,7 +330,7 @@ class _TransformerBlock(nn.Module):
         self.num_heads = num_heads
         self.use_mlp = use_mlp
 
-        self.attention = MultiHeadAttention(
+        self.attention = MultiHeadSelfAttention(
             d_model=d_model,
             num_heads=num_heads,
             bias=False,
@@ -462,7 +468,7 @@ class MultiLayerBilinearDenoiser(SpectralDenoiser):
         self.scale = d_model**-0.5
 
     @property
-    def feature_dim(self) -> int:  # pyright: ignore[reportIncompatibleMethodOverride]
+    def feature_dim(self) -> int:
         """Output dimension of ``get_features()``: the model hidden dim."""
         return self.d_model
 
@@ -533,7 +539,7 @@ class MultiLayerBilinearDenoiser(SpectralDenoiser):
         config["dropout"] = self.dropout
         return config
 
-    def get_features(self, data: GraphData) -> torch.Tensor:  # type: ignore[override]
+    def get_features(self, data: GraphData) -> torch.Tensor:
         """Extract key projections after transformer layers.
 
         Returns K = W_K(h) where h is the output of the transformer stack,

@@ -127,7 +127,7 @@ def resolve_config(
     from hydra import compose, initialize_config_dir
     from hydra.core.global_hydra import GlobalHydra
 
-    from tmgg.experiments._shared_utils.orchestration.run_experiment import (
+    from tmgg.training.orchestration.run_experiment import (
         generate_run_id,
     )
 

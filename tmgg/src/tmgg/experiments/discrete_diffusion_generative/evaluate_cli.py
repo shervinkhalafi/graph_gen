@@ -19,13 +19,13 @@ from typing import Any, Literal
 
 import torch
 
-from tmgg.experiments._shared_utils.evaluation_metrics.mmd_metrics import (
+from tmgg.training.evaluation_metrics.mmd_metrics import (
     adjacency_to_networkx,
 )
-from tmgg.experiments._shared_utils.evaluation_metrics.reference_graphs import (
+from tmgg.training.evaluation_metrics.reference_graphs import (
     generate_reference_graphs,
 )
-from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
+from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
 
@@ -101,7 +101,7 @@ def evaluate_checkpoint(
         generated_graph_data = module.generate_graphs(num_samples)
 
     # Compute MMD using the generated networkx graphs directly
-    from tmgg.experiments._shared_utils.evaluation_metrics.mmd_metrics import (
+    from tmgg.training.evaluation_metrics.mmd_metrics import (
         compute_mmd_metrics,
     )
 

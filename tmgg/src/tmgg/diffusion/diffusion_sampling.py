@@ -6,6 +6,9 @@ helpers. These functions depend on graph-specific types (``GraphData``,
 ``LimitDistribution``, ``TransitionMatrices``) from the diffusion and data packages.
 """
 
+# pyright: reportAttributeAccessIssue=false
+# F.one_hot exists at runtime; pyright cannot resolve it from the functional stub.
+
 import torch
 from torch.nn import functional as F
 
@@ -241,6 +244,9 @@ def mask_distributions(
     true_E[~(node_mask.unsqueeze(1) * node_mask.unsqueeze(2) * diag_mask), :] = row_E
     pred_E[~(node_mask.unsqueeze(1) * node_mask.unsqueeze(2) * diag_mask), :] = row_E
 
+    # Epsilon prevents log(0) = -inf downstream (reconstruction_logp, KL).
+    # Masked positions are already set to one-hot; epsilon only affects
+    # non-masked entries and is removed by renormalization.
     true_X = true_X + 1e-7
     pred_X = pred_X + 1e-7
     true_E = true_E + 1e-7
@@ -292,8 +298,8 @@ def sample_discrete_feature_noise(
     U_E = U_E.type_as(long_mask)
     U_y = U_y.type_as(long_mask)
 
-    U_X = F.one_hot(U_X, num_classes=x_limit.shape[-1]).float()  # pyright: ignore[reportAttributeAccessIssue]  # F.one_hot exists at runtime
-    U_E = F.one_hot(U_E, num_classes=e_limit.shape[-1]).float()  # pyright: ignore[reportAttributeAccessIssue]  # F.one_hot exists at runtime
+    U_X = F.one_hot(U_X, num_classes=x_limit.shape[-1]).float()
+    U_E = F.one_hot(U_E, num_classes=e_limit.shape[-1]).float()
 
     # Get upper triangular part of edge noise, without main diagonal
     upper_triangular_mask = torch.zeros_like(U_E)

@@ -54,9 +54,9 @@ seed: 42
 # Training resumption: set true to ignore existing checkpoints and start fresh
 force_fresh: false
 
-# W&B is required by default — training crashes if WANDB_API_KEY is unset.
-# Set true to degrade to a warning and continue with TensorBoard only.
-allow_no_wandb: false
+# When true (default), training continues with TensorBoard only if WANDB_API_KEY
+# is unset. Set false to enforce W&B — training will crash without the key.
+allow_no_wandb: true
 
 # Stage identifier for multi-stage experiments (stage1_poc, stage2_validation, etc.)
 # Set automatically by stage runners; null when running experiments directly

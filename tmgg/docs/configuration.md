@@ -1,396 +1,79 @@
 # Configuration
 
-The framework uses Hydra for configuration management. This document covers the config hierarchy, common overrides, and how to create custom configurations.
+TMGG uses Hydra for configuration. All configs live under
+`src/tmgg/experiments/exp_configs/`.
 
-## Config Hierarchy
+## Config hierarchy
 
-```
-exp_configs/
-├── base_config_spectral_arch.yaml  # Top-level for spectral experiments
-├── base_config_digress.yaml       # Top-level for DiGress experiments
-├── base_config_gnn.yaml           # Top-level for GNN experiments
-├── base_config_gnn_transformer.yaml # Top-level for hybrid experiments
-├── base_config_gaussian_diffusion.yaml # Top-level for generative experiments
-├── base_config_training.yaml      # Top-level training config
-├── base/
-│   ├── trainer/default.yaml       # PyTorch Lightning trainer settings
-│   └── logger/                    # tensorboard.yaml, wandb.yaml, csv.yaml
-├── models/
-│   ├── baselines/                 # linear.yaml, mlp.yaml
-│   ├── gnn/                       # standard_gnn.yaml, nodevar_gnn.yaml, symmetric_gnn.yaml
-│   ├── digress/                   # digress_sbm_small.yaml, digress_sbm_small_highlr.yaml
-│   ├── hybrid/                    # hybrid_with_transformer.yaml
-│   └── spectral/                  # filter_bank.yaml, linear_pe.yaml, self_attention.yaml
-├── data/
-│   ├── sbm_default.yaml           # SBM with n=20
-│   └── ...
-└── stage/
-    ├── stage1_poc.yaml            # Proof of concept
-    ├── stage1_sanity.yaml         # Constant noise memorization
-    ├── stage2_validation.yaml     # Cross-dataset validation
-    ├── stage3_diversity.yaml      # Dataset diversity (future)
-    ├── stage4_benchmarks.yaml     # Real-world benchmarks (future)
-    └── stage5_full.yaml           # Full validation (future)
-```
-
-## Composition Chain
-
-Hydra composes configurations bottom-up. Each layer can override keys from layers below:
+Two independent inheritance families cover all experiment types.
 
 ```
-base/trainer/default.yaml     <- trainer settings (max_steps, val_check_interval, ...)
-base/logger/default.yaml      <- logger backends (tensorboard, wandb)
-base/callbacks/default.yaml   <- checkpointing, early stopping
-data/sbm_default.yaml         <- dataset configuration
-         |
-base_config_training.yaml     <- shared training infrastructure (optimizer, scheduler,
-         |                       seed, paths, noise config, sweep settings)
-         |
-base_config_<experiment>.yaml <- experiment-specific overrides (model, experiment_name,
-         |                       wandb_project, data section)
-         |
-stage/<stage>.yaml            <- stage-specific overrides (noise_levels, max_steps,
-         |                       per-stage sweep axes)
-         |
-models/<type>/<variant>.yaml  <- model architecture variants
-         |
-CLI overrides                 <- command-line Hydra overrides (highest priority)
+_base_infra.yaml                         ← shared: optimizer, scheduler, seed, paths, W&B
+├── base_config_denoising.yaml           ← adds: task/denoising (loss, noise, data)
+│   ├── base_config_spectral_arch.yaml   ← selects: models/spectral/linear_pe
+│   ├── base_config_gnn.yaml             ← selects: models/gnn/standard_gnn
+│   ├── base_config_gnn_transformer.yaml ← selects: models/hybrid/hybrid_with_transformer
+│   ├── base_config_digress.yaml         ← selects: models/digress/digress_transformer
+│   └── base_config_baseline.yaml        ← selects: models/baselines/linear
+├── base_config_discrete_diffusion_generative.yaml  ← own data + noise (no task/denoising)
+└── base_config_gaussian_diffusion.yaml             ← own data + noise (no task/denoising)
+
+_base_structural_study.yaml              ← minimal: wandb_entity, seed, paths (no training)
+├── base_config_eigenstructure.yaml
+└── base_config_embedding_study.yaml
 ```
 
-The `_self_` directive in each config controls where that file's keys are inserted relative to its defaults. All base configs use `- _self_` as the last default, meaning the file's explicit keys override everything composed below.
+Generative experiments (`discrete_diffusion_generative`, `gaussian_diffusion`) inherit
+`_base_infra` directly and skip the denoising task config entirely, because they manage
+their own data and noise schedules. Structural study experiments do not inherit
+`_base_infra` at all; they carry no trainer, optimizer, or data group.
 
-Each base config composes defaults from subdirectories:
+## Directory layout
 
-```yaml
-# base_config_spectral_arch.yaml
-defaults:
-  - models/spectral/linear_pe@model
-  - data: sbm_default
-  - base/trainer/default@trainer
-  - base/logger/tensorboard@logger
-  - _self_
+`base/` holds trainer, logger, callback, and progress bar defaults composed by
+`_base_infra`. `models/` contains architecture configs organized by family: `spectral`,
+`gnn`, `digress`, `discrete`, `baselines`, and `hybrid`. `data/` defines datasets —
+SBM variants at several sizes, grid, single-graph fixtures, and PyG benchmarks (ENZYMES,
+PROTEINS). `task/` holds task-specific config groups; currently only `denoising.yaml`.
+`stage/` provides overrides for multi-stage sweeps (learning rate, noise levels, batch
+size). `report/` contains analysis templates for eigenstructure, benchmarks, and
+diffusion quality.
 
-experiment_name: "spectral_arch_denoising"
-seed: 42
-```
-
-## Interpolation and `_self_` semantics
-
-### Lazy resolution
-
-OmegaConf `${key}` references resolve at access time, not at file load. The library builds a reference graph and evaluates each node only when its value is actually read. A model config can therefore declare `noise_type: ${data.noise_type}` before the `data` group is composed — the reference becomes valid once the full config tree exists.
-
-### Reference types
-
-Three forms of interpolation cover most use cases:
-
-```yaml
-# Same-level reference
-seed: 42
-run_name: "experiment_seed_${seed}"
-
-# Cross-section reference
-data:
-  noise_type: gaussian
-model:
-  noise_type: ${data.noise_type}
-
-# OmegaConf built-ins
-api_key: ${oc.env:WANDB_API_KEY}          # reads environment variable
-stage: ${oc.select:stage,default_stage}    # returns "default_stage" if `stage` is missing
-```
-
-### `_self_` placement
-
-In the `defaults:` list, `_self_` controls where the current file's explicit keys are inserted relative to composed defaults. All TMGG base configs place `- _self_` last:
-
-```yaml
-defaults:
-  - models/spectral/linear_pe@model
-  - data: sbm_default
-  - _self_         # file's keys override everything above
-```
-
-If `_self_` were first, composed defaults would override the file's explicit values instead.
-
-### Missing interpolation targets
-
-When code accesses a key whose `${...}` target does not exist, OmegaConf raises `InterpolationKeyError` immediately. There is no silent fallback to `None` or an empty string — resolution is fail-fast by design.
-
-### Batch generation context
-
-Architecture YAMLs contain `${learning_rate}`, `${noise_levels}`, and similar placeholders so they remain usable with Hydra's CLI for single-run local invocations. During batch config generation, `strip_interpolations()` in the config builder removes these entries before merging so the resolved values from Phase 1 survive the architecture merge. See the [config generation pipeline](how-to-run-experiments.md#config-generation-pipeline) for the full two-phase design.
-
-## Hydra Override Syntax
-
-Override parameters from the command line:
+## Inspecting configs
 
 ```bash
-# Simple override
-uv run tmgg-spectral-arch model.num_layers=16
-
-# Nested override
-uv run tmgg-gnn model.scheduler_config.T_0=10
-
-# List override (use quotes)
-uv run tmgg-spectral-arch 'data.noise_levels=[0.1,0.2,0.3]'
-
-# Switch config group
-uv run tmgg-gnn data=sbm_default
-
-# Switch model variant
-uv run tmgg-gnn model=gnn/nodevar_gnn
+uv run tmgg-spectral-arch --cfg job              # Print fully composed config
+uv run tmgg-spectral-arch --cfg job --package model  # Print just the model section
+uv run tmgg-spectral-arch --info config          # Show which file provided each value
 ```
 
-## Common Overrides
-
-| What | Override | Example |
-|------|----------|---------|
-| Training steps | `trainer.max_steps=N` | `trainer.max_steps=50000` |
-| Validation frequency | `trainer.val_check_interval=N` | `trainer.val_check_interval=500` |
-| Learning rate | `model.learning_rate=X` | `model.learning_rate=0.001` |
-| Batch size | `data.batch_size=N` | `data.batch_size=64` |
-| Model layers | `model.num_layers=N` | `model.num_layers=8` |
-| Attention heads | `model.num_heads=N` | `model.num_heads=8` |
-| Eigenvectors (spectral) | `model.k=N` | `model.k=50` |
-| Noise levels | `'data.noise_levels=[...]'` | `'data.noise_levels=[0.1,0.2]'` |
-| Noise type | `data.noise_type=X` | `data.noise_type=gaussian` |
-| Scheduler type | `scheduler_config.type=X` | `scheduler_config.type=none` |
-| Random seed | `seed=N` | `seed=123` |
-| Output directory | `hydra.run.dir=PATH` | `hydra.run.dir=./my_output` |
-| Logger backend | `logger=X` | `logger=wandb` |
-
-## Viewing Configuration
-
-View the resolved configuration without running:
+## Common CLI overrides
 
 ```bash
-# Print full config
-uv run tmgg-spectral-arch --cfg job
-
-# Print specific group
-uv run tmgg-spectral-arch --cfg job --package model
+uv run tmgg-gnn model=models/gnn/symmetric_gnn       # Switch model architecture
+uv run tmgg-spectral-arch data=sbm_n200               # Switch dataset
+uv run tmgg-digress 'noise_levels=[0.1,0.3,0.5]'     # Override noise levels
+uv run tmgg-spectral-arch trainer.max_steps=5000      # Change training length
+uv run tmgg-experiment +stage=stage2_validation       # Load stage overrides
 ```
 
-## Multirun (Hyperparameter Sweeps)
+## Hydra composition quick reference
 
-Run multiple configurations:
+**`_self_`** must appear last in the `defaults` list for a file's explicit keys to take
+precedence over anything composed above it. All TMGG base configs follow this convention.
+Placing `_self_` first would reverse the priority, letting composed defaults silently
+overwrite values declared in the file.
 
-```bash
-# Sweep over values
-uv run tmgg-spectral-arch --multirun model.num_layers=4,8,16
+**`@package _global_`** at the top of a config file merges its keys directly into the
+global namespace rather than nesting them under the config group name. Use this when
+you want a file's contents to appear at the root of the composed config rather than
+under a sub-key.
 
-# Multiple parameters
-uv run tmgg-spectral-arch --multirun model.num_layers=4,8 model.learning_rate=0.001,0.01
+**`@model` package target** — writing `models/gnn/standard_gnn@model` in a defaults list
+mounts that config under the `model:` key in the composed output. Without the `@model`
+annotation the keys would land at the root, colliding with other top-level keys.
 
-# Grid search (all combinations)
-uv run tmgg-spectral-arch --multirun \
-  model.num_layers=4,8,16 \
-  model.num_heads=4,8 \
-  seed=1,2,3
-```
-
-## Model Configuration Reference
-
-### Spectral Model
-
-```yaml
-# models/spectral/self_attention.yaml
-_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
-
-model_type: self_attention
-k: 8                  # Number of eigenvectors
-d_k: 64               # Key dimension for self-attention
-learning_rate: ${learning_rate}
-weight_decay: ${weight_decay}
-optimizer_type: ${optimizer_type}
-noise_type: ${noise_type}
-noise_levels: ${noise_levels}
-loss_type: ${loss_type}
-```
-
-### GNN Model
-
-```yaml
-# models/gnn/standard_gnn.yaml
-_target_: tmgg.experiments.gnn_denoising.lightning_module.GNNDenoisingLightningModule
-
-num_layers: 2         # Number of GCN layers
-num_terms: 3          # Polynomial filter terms
-feature_dim_in: 20    # Input feature dimension
-feature_dim_out: 10   # Output feature dimension
-eigenvalue_reg: 0.0   # Eigenvalue regularization (0.001 helps gradient stability)
-```
-
-### Data Configuration
-
-```yaml
-# data/sbm_default.yaml
-dataset_name: sbm
-dataset_config:
-  num_nodes: 20
-  p_intra: 1.0        # Intra-block edge probability
-  p_inter: 0.0        # Inter-block edge probability
-  min_blocks: 2
-  max_blocks: 4
-
-num_samples_per_graph: 1000
-batch_size: 100
-noise_type: "digress"
-noise_levels: [0.005, 0.02, 0.05, 0.1, 0.25, 0.4, 0.5]
-```
-
-### Trainer Configuration (Step-Based)
-
-Training is configured in **steps**, not epochs, to decouple from batch size and dataset size.
-
-```yaml
-# base/trainer/default.yaml
-_target_: pytorch_lightning.Trainer
-
-# Step-based training (no epochs)
-max_steps: 10000              # Total training steps
-max_epochs: -1                # Disable epoch-based termination
-
-# Validation in steps
-val_check_interval: 1000      # Validate every 1000 steps
-check_val_every_n_epoch: null # Disable epoch-based validation
-
-# Hardware
-accelerator: "auto"
-devices: "auto"
-precision: 32
-
-# Gradient clipping
-gradient_clip_val: 1.0
-gradient_clip_algorithm: "norm"
-
-log_every_n_steps: 1
-```
-
-### Learning Rate Scheduler
-
-Configured via `scheduler_config` in base Lightning module:
-
-```yaml
-# base/lightning_base.yaml
-scheduler_config:
-  type: "cosine_warmup"       # "cosine_warmup", "cosine", "step", or null
-  warmup_fraction: 0.02       # 2% of training for linear warmup
-  decay_fraction: 0.8         # LR reaches 0 at 80% of training
-```
-
-The `cosine_warmup` scheduler automatically adapts to total training steps. Stages typically disable scheduling (`type: none`) for simpler optimization.
-
-### Callbacks Configuration (Step-Based)
-
-```yaml
-# base/callbacks/default.yaml
-callbacks:
-  early_stopping:
-    monitor: val/loss
-    mode: min
-    patience: 10              # Validation checks (× val_check_interval = steps until stop)
-    min_delta: 1e-4
-  checkpoint:
-    monitor: val/loss
-    mode: min
-    save_top_k: 3
-    save_last: true
-    filename: "model-step={step:06d}-val_loss={val/loss:.4f}"
-```
-
-### Progress Bar Configuration
-
-```yaml
-# base/progress_bar/default.yaml
-progress_bar:
-  metrics_to_show:
-    - train_loss
-    - val/loss
-  show_epoch: true
-  metrics_format: ".4f"
-```
-
-## Creating Custom Configs
-
-### New Model Configuration
-
-Create a new file in `exp_configs/models/`:
-
-```yaml
-# models/spectral/self_attention_large.yaml
-_target_: tmgg.experiments.spectral_arch_denoising.SpectralDenoisingLightningModule
-
-model_type: self_attention
-k: 50
-d_k: 128
-learning_rate: 0.0005
-```
-
-Use it:
-
-```bash
-uv run tmgg-spectral-arch model=spectral/self_attention_large
-```
-
-### New Data Configuration
-
-Create a file in `exp_configs/data/`:
-
-```yaml
-# data/sbm_large.yaml
-dataset_name: sbm
-dataset_config:
-  num_nodes: 100
-  p_intra: 0.9
-  p_inter: 0.1
-  min_blocks: 3
-  max_blocks: 6
-
-num_samples_per_graph: 500
-batch_size: 32
-noise_type: "gaussian"
-noise_levels: [0.1, 0.2, 0.3]
-```
-
-Use it:
-
-```bash
-uv run tmgg-gnn data=sbm_large
-```
-
-### Experiment Variation
-
-Create a file in `exp_configs/experiments/`:
-
-```yaml
-# experiments/spectral_long_training.yaml
-# @package _global_
-defaults:
-  - /base_config_spectral
-  - _self_
-
-model:
-  k: 50
-  d_k: 128
-
-trainer:
-  max_steps: 100000
-  gradient_clip_val: 0.5
-```
-
-Use it:
-
-```bash
-uv run tmgg-spectral-arch +experiments=spectral_long_training
-```
-
-## Environment Variables
-
-Hydra respects standard environment variables:
-
-```bash
-# Override output directory
-HYDRA_FULL_ERROR=1 uv run tmgg-spectral-arch  # Show full stack traces
-```
+**`${...}` interpolation** — OmegaConf resolves references lazily at access time, so a
+model config can declare `noise_type: ${data.noise_type}` before the `data` group is
+composed. Accessing a key whose target does not exist raises `InterpolationKeyError`
+immediately; there is no silent fallback.

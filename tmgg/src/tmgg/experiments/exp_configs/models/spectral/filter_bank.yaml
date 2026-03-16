@@ -1,11 +1,12 @@
 # Graph Filter Bank denoiser with spectral polynomial
 # W = Σ Λ^ℓ H^{(ℓ)}, Â = V W V^T
 
-_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+_target_: tmgg.training.lightning_modules.denoising_module.SingleStepDenoisingModule
 
-model_type: filter_bank
+model_name: filter_bank
 
-model_config:
+model:
+  _target_: tmgg.models.spectral_denoisers.GraphFilterBank
   # Number of eigenvectors
   k: 8
   # Polynomial degree K

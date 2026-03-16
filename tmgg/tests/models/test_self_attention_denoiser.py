@@ -82,20 +82,6 @@ class TestSelfAttentionDenoiser:
         # All values non-negative (softmax property)
         assert (attn >= 0).all()
 
-    def test_factory_creates_correct_self_attention(self):
-        """Factory key 'self_attention' must return the new correct class."""
-        from tmgg.models.factory import create_model
-
-        model = create_model("self_attention", {"k": 4, "d_k": 8})
-        assert type(model).__name__ == "SelfAttentionDenoiser"
-
-    def test_factory_bilinear_still_works(self):
-        """Factory key 'bilinear' must still return BilinearDenoiser."""
-        from tmgg.models.factory import create_model
-
-        model = create_model("bilinear", {"k": 4, "d_k": 8})
-        assert type(model).__name__ == "BilinearDenoiser"
-
     def test_gradient_flows_to_parameters(self):
         """Verify gradients propagate to model parameters through forward pass."""
         from tmgg.models.spectral_denoisers import SelfAttentionDenoiser

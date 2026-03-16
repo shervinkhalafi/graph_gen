@@ -12,7 +12,7 @@ import math
 import pytest
 import torch
 
-from tmgg.experiments._shared_utils.lightning_modules.train_loss_discrete import (
+from tmgg.training.lightning_modules.train_loss_discrete import (
     TrainLossDiscrete,
 )
 

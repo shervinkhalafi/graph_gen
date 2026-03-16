@@ -25,7 +25,7 @@ import pytest
 import pytorch_lightning as pl
 
 from tmgg.data.data_modules.data_module import GraphDataModule
-from tmgg.experiments._shared_utils.lightning_modules.denoising_module import (
+from tmgg.training.lightning_modules.denoising_module import (
     SingleStepDenoisingModule,
 )
 
@@ -69,9 +69,11 @@ class TestSpectralArchFullFlow:
     """spectral_arch_denoising: filter_bank through the full Lightning path."""
 
     def test_train_val_test(self, denoising_data_module: GraphDataModule) -> None:
+        from tmgg.models.spectral_denoisers import GraphFilterBank
+
+        model = GraphFilterBank(k=4, polynomial_degree=3)
         module = SingleStepDenoisingModule(
-            model_type="filter_bank",
-            model_config={"k": 4},
+            model=model,
             learning_rate=1e-3,
             noise_levels=NOISE_LEVELS,
         )
@@ -85,14 +87,16 @@ class TestGNNFullFlow:
     """gnn_denoising: GNN model through the full Lightning path."""
 
     def test_train_val_test(self, denoising_data_module: GraphDataModule) -> None:
+        from tmgg.models.gnn import GNN
+
+        model = GNN(
+            num_layers=1,
+            num_terms=2,
+            feature_dim_in=8,
+            feature_dim_out=4,
+        )
         module = SingleStepDenoisingModule(
-            model_type="gnn",
-            model_config={
-                "num_layers": 1,
-                "num_terms": 2,
-                "feature_dim_in": 8,
-                "feature_dim_out": 4,
-            },
+            model=model,
             learning_rate=1e-3,
             noise_levels=NOISE_LEVELS,
         )
@@ -106,17 +110,22 @@ class TestGNNTransformerFullFlow:
     """gnn_transformer_denoising: hybrid GNN+Transformer through Lightning."""
 
     def test_train_val_test(self, denoising_data_module: GraphDataModule) -> None:
-        module = SingleStepDenoisingModule(
-            model_type="hybrid_sequential",
-            model_config={
-                "gnn_num_layers": 1,
-                "gnn_num_terms": 2,
-                "gnn_feature_dim_in": 8,
-                "gnn_feature_dim_out": 4,
-                "use_transformer": True,
-                "transformer_num_layers": 1,
-                "transformer_num_heads": 2,
+        from tmgg.models.hybrid import create_sequential_model
+
+        model = create_sequential_model(
+            gnn_config={
+                "num_layers": 1,
+                "num_terms": 2,
+                "feature_dim_in": 8,
+                "feature_dim_out": 4,
             },
+            transformer_config={
+                "num_heads": 2,
+                "num_layers": 1,
+            },
+        )
+        module = SingleStepDenoisingModule(
+            model=model,
             learning_rate=1e-3,
             noise_levels=NOISE_LEVELS,
         )
@@ -130,16 +139,18 @@ class TestDigressFullFlow:
     """digress_denoising: GraphTransformer through the full Lightning path."""
 
     def test_train_val_test(self, denoising_data_module: GraphDataModule) -> None:
+        from tmgg.models.digress.transformer_model import GraphTransformer
+
+        model = GraphTransformer(
+            n_layers=2,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 16, "E": 8, "y": 16},
+            hidden_dims={"dx": 16, "de": 8, "dy": 16, "n_head": 2},
+            output_dims={"X": 0, "E": 2, "y": 0},
+        )
         module = SingleStepDenoisingModule(
-            model_type="graph_transformer",
-            model_config={
-                "k": 4,
-                "n_layers": 2,
-                "hidden_mlp_dims": {"X": 16, "E": 8, "y": 16},
-                "hidden_dims": {"dx": 16, "de": 8, "dy": 16, "n_head": 2},
-                "output_dims": {"X": 0, "E": 2, "y": 0},
-            },
-            loss_type="MSE",
+            model=model,
+            loss_type="mse",
             noise_type="digress",
             learning_rate=1e-3,
             noise_levels=NOISE_LEVELS,
@@ -157,13 +168,15 @@ class TestBaselineFullFlow:
     def test_train_val_test(
         self, model_type: str, denoising_data_module: GraphDataModule
     ) -> None:
+        from tmgg.models.baselines import LinearBaseline, MLPBaseline
+
+        if model_type == "linear":
+            model = LinearBaseline(max_nodes=N_NODES)
+        else:
+            model = MLPBaseline(max_nodes=N_NODES, hidden_dim=32, num_layers=1)
+
         module = SingleStepDenoisingModule(
-            model_type=model_type,
-            model_config={
-                "max_nodes": N_NODES,
-                "hidden_dim": 32,
-                "num_layers": 1,
-            },
+            model=model,
             learning_rate=1e-3,
             noise_levels=NOISE_LEVELS,
         )
@@ -189,10 +202,11 @@ class TestDiffusionModuleGaussianFullFlow:
         from tmgg.diffusion.noise_process import ContinuousNoiseProcess
         from tmgg.diffusion.sampler import ContinuousSampler
         from tmgg.diffusion.schedule import NoiseSchedule
-        from tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator import (
+        from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
+        from tmgg.training.evaluation_metrics.graph_evaluator import (
             GraphEvaluator,
         )
-        from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
+        from tmgg.training.lightning_modules.diffusion_module import (
             DiffusionModule,
         )
 
@@ -209,15 +223,14 @@ class TestDiffusionModuleGaussianFullFlow:
         evaluator = GraphEvaluator(eval_num_samples=4, kernel="gaussian", sigma=1.0)
 
         module = DiffusionModule(
-            model_type="self_attention",
-            model_config={"k": 4},
+            model=SelfAttentionDenoiser(k=4, d_k=16),
             noise_process=noise_process,
             sampler=sampler,
             noise_schedule=schedule,
             evaluator=evaluator,
             loss_type="mse",
             num_nodes=N_NODES,
-            eval_every_n_epochs=1,
+            eval_every_n_steps=1,
             learning_rate=1e-3,
         )
         datamodule = MultiGraphDataModule(
@@ -245,14 +258,15 @@ class TestDiscreteGenerativeFullFlow:
         from tmgg.diffusion.noise_process import CategoricalNoiseProcess
         from tmgg.diffusion.sampler import CategoricalSampler
         from tmgg.diffusion.schedule import NoiseSchedule
-        from tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator import (
-            GraphEvaluator,
-        )
-        from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
-            DiffusionModule,
-        )
         from tmgg.experiments.discrete_diffusion_generative.datamodule import (
             SyntheticCategoricalDataModule,
+        )
+        from tmgg.models.digress.transformer_model import GraphTransformer
+        from tmgg.training.evaluation_metrics.graph_evaluator import (
+            GraphEvaluator,
+        )
+        from tmgg.training.lightning_modules.diffusion_module import (
+            DiffusionModule,
         )
 
         diffusion_steps = 5
@@ -274,23 +288,23 @@ class TestDiscreteGenerativeFullFlow:
             sigma=1.0,
         )
 
+        model = GraphTransformer(
+            n_layers=2,
+            input_dims={"X": dx, "E": de, "y": 0},
+            hidden_mlp_dims={"X": 16, "E": 16, "y": 16},
+            hidden_dims={"dx": 16, "de": 16, "dy": 16, "n_head": 2},
+            output_dims={"X": dx, "E": de, "y": 0},
+            use_timestep=True,
+        )
         module = DiffusionModule(
-            model_type="graph_transformer",
-            model_config={
-                "n_layers": 2,
-                "input_dims": {"X": dx, "E": de, "y": 0},
-                "hidden_mlp_dims": {"X": 16, "E": 16, "y": 16},
-                "hidden_dims": {"dx": 16, "de": 16, "dy": 16, "n_head": 2},
-                "output_dims": {"X": dx, "E": de, "y": 0},
-                "use_timestep": True,
-            },
+            model=model,
             noise_process=noise_process,
             sampler=sampler,
             noise_schedule=schedule,
             evaluator=evaluator,
             loss_type="cross_entropy",
             num_nodes=N_NODES,
-            eval_every_n_epochs=1,
+            eval_every_n_steps=1,
         )
         datamodule = SyntheticCategoricalDataModule(
             num_nodes=N_NODES,

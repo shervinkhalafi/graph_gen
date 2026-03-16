@@ -1,10 +1,6 @@
-# Base configuration for generative graph modeling experiments
-#
-# Inherits shared training infrastructure from _base_infra.yaml directly,
-# skipping the denoising task config (task/denoising.yaml).
-#
-# Run with: python -m tmgg.experiments.gaussian_diffusion_generative.runner
-# Override: python -m tmgg.experiments.gaussian_diffusion_generative.runner model.model_type=gnn
+# Gaussian (continuous) diffusion generative model.
+# Inherits: _base_infra directly (no task/denoising — defines own data and noise inline).
+# Run: uv run tmgg-gaussian-gen
 
 defaults:
   - _base_infra
@@ -17,9 +13,10 @@ _cli_cmd: tmgg-gaussian-gen
 # --- Generative-specific sections (not present in base) ---
 
 model:
-  _target_: tmgg.experiments._shared_utils.lightning_modules.diffusion_module.DiffusionModule
-  model_type: self_attention
-  model_config:
+  _target_: tmgg.training.lightning_modules.diffusion_module.DiffusionModule
+  model_name: self_attention
+  model:
+    _target_: tmgg.models.spectral_denoisers.self_attention.SelfAttentionDenoiser
     k: 8
     d_k: 64
   noise_process:
@@ -41,13 +38,13 @@ model:
     schedule_type: cosine_iddpm
     timesteps: 100
   evaluator:
-    _target_: tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator.GraphEvaluator
+    _target_: tmgg.training.evaluation_metrics.graph_evaluator.GraphEvaluator
     eval_num_samples: 100
     kernel: gaussian
     sigma: 1.0
   loss_type: mse
   num_nodes: ${data.num_nodes}
-  eval_every_n_epochs: 1
+  eval_every_n_steps: 1000
   learning_rate: ${learning_rate}
   weight_decay: ${weight_decay}
   optimizer_type: ${optimizer_type}

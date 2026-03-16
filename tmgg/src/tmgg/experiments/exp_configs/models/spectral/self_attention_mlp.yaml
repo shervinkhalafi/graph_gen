@@ -1,11 +1,12 @@
 # Self-Attention denoiser with MLP post-processing
 # Â = MLP((V W_Q)(V W_K)^T / √d_k) (outputs logits)
 
-_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+_target_: tmgg.training.lightning_modules.denoising_module.SingleStepDenoisingModule
 
-model_type: bilinear_mlp
+model_name: bilinear_mlp
 
-model_config:
+model:
+  _target_: tmgg.models.spectral_denoisers.bilinear.BilinearDenoiserWithMLP
   # Number of eigenvectors
   k: 8
   # Key dimension

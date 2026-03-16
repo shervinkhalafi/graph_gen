@@ -8,6 +8,10 @@ Registered buffers ensure the tensors follow the module to the correct device
 and are included in ``state_dict`` for checkpointing.
 """
 
+# pyright: reportUninitializedInstanceVariable=false
+# PyTorch register_buffer() initialises these attributes at runtime;
+# pyright cannot track this pattern.
+
 from __future__ import annotations
 
 from typing import override
@@ -55,9 +59,9 @@ class NoiseSchedule(nn.Module):
         Default is 2 (binary edge/no-edge).
     """
 
-    betas: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
-    alphas: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
-    alpha_bar: Tensor  # pyright: ignore[reportUninitializedInstanceVariable]
+    betas: Tensor
+    alphas: Tensor
+    alpha_bar: Tensor
 
     def __init__(
         self,

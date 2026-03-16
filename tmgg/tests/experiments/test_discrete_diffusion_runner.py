@@ -27,7 +27,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
 
-from tmgg.experiments._shared_utils.orchestration.run_experiment import (
+from tmgg.training.orchestration.run_experiment import (
     _is_training_complete,
 )
 
@@ -69,7 +69,7 @@ class TestConfigLoads:
     """Verify the Hydra-composed config contains expected structure.
 
     After the migration to DiffusionModule, the model section contains
-    model_type + model_config (factory pattern), noise_process, sampler,
+    model (Hydra _target_ instantiation), noise_process, sampler,
     noise_schedule, and evaluator sub-configs.
     """
 
@@ -99,12 +99,12 @@ class TestConfigLoads:
         assert "_target_" in model_cfg
         assert model_cfg["_target_"].endswith("DiffusionModule")
 
-    def test_has_model_type_and_config(self, cfg: dict[str, Any]) -> None:
-        """Model section must contain model_type and model_config for the factory."""
+    def test_has_model_and_model_name(self, cfg: dict[str, Any]) -> None:
+        """Model section must contain a nested model _target_ for the GraphTransformer."""
         model_cfg = cfg["model"]
-        assert "model_type" in model_cfg
-        assert model_cfg["model_type"] == "graph_transformer"
-        assert "model_config" in model_cfg
+        assert "model" in model_cfg
+        assert model_cfg["model"]["_target_"].endswith("GraphTransformer")
+        assert "model_name" in model_cfg
 
     def test_has_noise_process(self, cfg: dict[str, Any]) -> None:
         """Model section must contain noise_process targeting CategoricalNoiseProcess."""
@@ -210,14 +210,14 @@ class TestEndToEndTraining:
         from tmgg.diffusion.noise_process import CategoricalNoiseProcess
         from tmgg.diffusion.sampler import CategoricalSampler
         from tmgg.diffusion.schedule import NoiseSchedule
-        from tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator import (
-            GraphEvaluator,
-        )
-        from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
-            DiffusionModule,
-        )
         from tmgg.experiments.discrete_diffusion_generative.datamodule import (
             SyntheticCategoricalDataModule,
+        )
+        from tmgg.training.evaluation_metrics.graph_evaluator import (
+            GraphEvaluator,
+        )
+        from tmgg.training.lightning_modules.diffusion_module import (
+            DiffusionModule,
         )
 
         diffusion_steps = 10
@@ -239,26 +239,28 @@ class TestEndToEndTraining:
             sigma=1.0,
         )
 
+        from tmgg.models.digress.transformer_model import GraphTransformer
+
         dm = SyntheticCategoricalDataModule(
             num_nodes=8, num_graphs=32, batch_size=4, seed=42
         )
+        model = GraphTransformer(
+            n_layers=2,
+            input_dims={"X": dx, "E": de, "y": 0},
+            hidden_mlp_dims={"X": 16, "E": 16, "y": 16},
+            hidden_dims={"dx": 16, "de": 16, "dy": 16, "n_head": 2},
+            output_dims={"X": dx, "E": de, "y": 0},
+            use_timestep=True,
+        )
         module = DiffusionModule(
-            model_type="graph_transformer",
-            model_config={
-                "n_layers": 2,
-                "input_dims": {"X": dx, "E": de, "y": 0},
-                "hidden_mlp_dims": {"X": 16, "E": 16, "y": 16},
-                "hidden_dims": {"dx": 16, "de": 16, "dy": 16, "n_head": 2},
-                "output_dims": {"X": dx, "E": de, "y": 0},
-                "use_timestep": True,
-            },
+            model=model,
             noise_process=noise_process,
             sampler=sampler,
             noise_schedule=schedule,
             evaluator=evaluator,
             loss_type="cross_entropy",
             num_nodes=8,
-            eval_every_n_epochs=1,
+            eval_every_n_steps=1,
         )
 
         trainer = pl.Trainer(

@@ -7,6 +7,10 @@ vs. single-graph). Concrete generation and splitting logic lives in
 ``MultiGraphDataModule`` and the leaf classes.
 """
 
+# pyright: reportExplicitAny=false
+# DataLoader/Dataset generic parameters and config dicts require Any
+# until PyTorch provides complete generic stubs.
+
 from __future__ import annotations
 
 import abc
@@ -60,10 +64,10 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
 
     def _make_dataloader(
         self,
-        dataset: Dataset[Any],  # pyright: ignore[reportExplicitAny]
+        dataset: Dataset[Any],
         shuffle: bool,
-        collate_fn: Callable[..., Any] | None = None,  # pyright: ignore[reportExplicitAny]
-    ) -> DataLoader[Any]:  # pyright: ignore[reportExplicitAny]
+        collate_fn: Callable[..., Any] | None = None,
+    ) -> DataLoader[Any]:
         """Create a DataLoader with the module's shared configuration.
 
         Parameters
@@ -112,24 +116,24 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
 
     @override
     @abc.abstractmethod
-    def train_dataloader(self) -> DataLoader[Any]:  # pyright: ignore[reportExplicitAny]
+    def train_dataloader(self) -> DataLoader[Any]:
         """Return the training dataloader."""
         ...
 
     @override
     @abc.abstractmethod
-    def val_dataloader(self) -> DataLoader[Any]:  # pyright: ignore[reportExplicitAny]
+    def val_dataloader(self) -> DataLoader[Any]:
         """Return the validation dataloader."""
         ...
 
     @override
     @abc.abstractmethod
-    def test_dataloader(self) -> DataLoader[Any]:  # pyright: ignore[reportExplicitAny]
+    def test_dataloader(self) -> DataLoader[Any]:
         """Return the test dataloader."""
         ...
 
     @abc.abstractmethod
-    def get_dataset_info(self) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny]
+    def get_dataset_info(self) -> dict[str, Any]:
         """Return metadata about the dataset.
 
         The returned dict should contain at minimum:
@@ -142,3 +146,53 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         ``"num_node_classes"`` for categorical data modules).
         """
         ...
+
+    # ------------------------------------------------------------------
+    # Concrete utility methods
+    # ------------------------------------------------------------------
+
+    def get_reference_graphs(self, stage: str, max_graphs: int) -> list[Any]:
+        """Extract up to *max_graphs* from a dataset split as NetworkX graphs.
+
+        Iterates the appropriate dataloader, converts ``GraphData`` batches
+        to adjacency matrices, and builds NetworkX graphs respecting
+        ``node_mask`` for variable-size graphs. Subclasses may override for
+        efficiency (e.g., reading directly from internal tensors).
+
+        Parameters
+        ----------
+        stage : str
+            ``"val"`` or ``"test"``.
+        max_graphs : int
+            Maximum number of graphs to return.
+
+        Returns
+        -------
+        list[nx.Graph]
+            Up to *max_graphs* NetworkX graphs from the requested split.
+
+        Raises
+        ------
+        ValueError
+            If *stage* is not ``"val"`` or ``"test"``.
+        """
+        import networkx as nx
+
+        if stage == "val":
+            loader = self.val_dataloader()
+        elif stage == "test":
+            loader = self.test_dataloader()
+        else:
+            raise ValueError(f"stage must be 'val' or 'test', got {stage!r}")
+
+        graphs: list[Any] = []
+        for batch in loader:
+            adj = batch.to_adjacency()  # (B, N, N)
+            bs = adj.shape[0]
+            for i in range(bs):
+                if len(graphs) >= max_graphs:
+                    return graphs
+                n = int(batch.node_mask[i].sum().item())
+                A_np = adj[i, :n, :n].cpu().numpy()
+                graphs.append(nx.from_numpy_array(A_np))
+        return graphs

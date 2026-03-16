@@ -25,9 +25,6 @@ wandb_export_full.tar.xz
 logs/
 .mcp.json
 
-# ORCA compiled binary (auto-compiled from source)
-src/tmgg/experiment_utils/orca/orca
-
 # Eigenstructure data (archived externally)
 eigenstructure_results/
 eigenstructure_results_full/

@@ -1,10 +1,11 @@
 # Symmetric GNN model configuration
 
-_target_: tmgg.experiments._shared_utils.lightning_modules.denoising_module.SingleStepDenoisingModule
+_target_: tmgg.training.lightning_modules.denoising_module.SingleStepDenoisingModule
 
-model_type: "gnn_sym"
+model_name: "gnn_sym"
 
-model_config:
+model:
+  _target_: tmgg.models.gnn.GNNSymmetric
   num_layers: 1
   num_terms: 4
   feature_dim_in: 20

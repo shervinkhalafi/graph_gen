@@ -17,17 +17,12 @@ dependencies = [
   "tqdm>=4.64.0",
   "rich>=13.0.0",
   "networkx>=3.5",
-  "tensorboardx>=2.6.4",
   "loguru>=0.7.3",
-  "jupyter>=1.1.1",
-  "torchshow>=0.5.2",
   "click>=8.0.0",
   "pandas>=2.0.0",
   "seaborn>=0.13.2",
-  "s3fs>=2025.12.0",
   "torch-geometric>=2.5.0",  # PyG for benchmark datasets (QM9, ENZYMES, etc.)
   "modal>=0.64.0",           # Modal cloud execution (required for ModalRunner)
-  "boto3>=1.26.0",           # S3-compatible storage for Tigris/AWS
   "safetensors>=0.4.0",      # Fast tensor serialization for eigenstructure study
   "polars>=1.0.0",           # Used by tmgg-modal aggregate
   "pot>=0.9.0",              # Python Optimal Transport (EMD kernel for MMD metrics)
@@ -36,6 +31,7 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
 ray = ["ray[default]>=2.10.0"]  # Optional: local distributed execution with Ray
+notebook = ["jupyter>=1.1.1", "torchshow>=0.5.2"]
 docs = ["pymdown-extensions", "pygments", "mkdocstrings-python"]
 analysis = [
     # graph-tool: install via conda-forge (not pip-installable)
@@ -59,7 +55,7 @@ tmgg-discrete-eval = "tmgg.experiments.discrete_diffusion_generative.evaluate_cl
 # Usage: tmgg-experiment +stage=stage1_poc
 tmgg-experiment = "tmgg.experiments.stages.runner:main"
 tmgg-grid-search = "tmgg.experiments.grid_search_runner:main"
-# Export tools (now separate workspace members: wandb-tools, tensorboard-tools)
+# Export tools (now separate workspace member: wandb-tools)
 # Eigenstructure study CLI
 tmgg-eigenstructure = "tmgg.experiments.eigenstructure_study.cli:main"
 # Eigenstructure study Hydra entry point
@@ -70,9 +66,11 @@ tmgg-embedding-study = "tmgg.experiments.embedding_study.cli:main"
 tmgg-embedding-study-exp = "tmgg.experiments.embedding_study.runner:main"
 # Modal cloud orchestration CLI
 tmgg-modal = "tmgg.modal.cli:main"
+# Experiment scaffold (dev tool)
+tmgg-scaffold = "tmgg.experiments.scaffold:main"
 
 [tool.uv.workspace]
-members = ["wandb-tools", "tensorboard-tools"]
+members = ["wandb-tools"]
 
 [build-system]
 requires = ["hatchling"]
@@ -94,6 +92,7 @@ include = ["src/tmgg/**/*.py", "src/tmgg/**/*.yaml", "src/tmgg/**/*.yml"]
 [dependency-groups]
 dev = [
     "basedpyright>=1.31.1",
+    "cookiecutter>=2.6.0",
     "hypothesis>=6.0.0",
     "pdbpp>=0.11.6",
     "pre-commit>=4.0.0",
@@ -101,6 +100,7 @@ dev = [
     "pytest-cov>=6.2.1",
     "ruff>=0.8.0",
     "tach>=0.32.2",
+    "tomlkit>=0.13.0",
 ]
 
 [tool.coverage.run]
@@ -151,7 +151,7 @@ known-first-party = ["tmgg"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 include = ["src/tmgg", "tests"]
-exclude = ["**/__pycache__", "**/typings", "tests/archived"]
+exclude = ["**/__pycache__", "**/typings", "tests/archived", "src/tmgg/experiments/_scaffold"]
 reportMissingImports = true
 reportMissingTypeStubs = false  # Don't complain about missing stubs for torch etc.
 reportConstantRedefinition = false  # Allow uppercase tensor vars (X, E, Q, K, V) to be reassigned

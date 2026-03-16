@@ -13,6 +13,7 @@ The pipeline composes four kinds of object:
   and ``Q̄_t`` used by the categorical noise process and sampler.
 """
 
+from .collectors import DiffusionLikelihoodCollector, StepMetricCollector
 from .graph_types import LimitDistribution, TransitionMatrices
 from .noise_process import (
     CategoricalNoiseProcess,
@@ -33,12 +34,14 @@ __all__ = [
     "CategoricalSampler",
     "ContinuousNoiseProcess",
     "ContinuousSampler",
+    "DiffusionLikelihoodCollector",
     "DiscreteUniformTransition",
     "LimitDistribution",
     "MarginalUniformTransition",
     "NoiseProcess",
     "NoiseSchedule",
     "Sampler",
+    "StepMetricCollector",
     "TransitionMatrices",
     "TransitionModel",
 ]

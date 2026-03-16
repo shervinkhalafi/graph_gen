@@ -1,9 +1,8 @@
-"""Regression test: BilinearDenoiser exists and old factory keys still work.
+"""Regression test: BilinearDenoiser exists and can be constructed directly.
 
 Verifies that the rename from SelfAttentionDenoiser to BilinearDenoiser
-is complete and backward-compatible. The class computes QK^T/sqrt(d_k)
-without softmax or value projection -- a scaled bilinear form, not
-self-attention.
+is complete. The class computes QK^T/sqrt(d_k) without softmax or value
+projection -- a scaled bilinear form, not self-attention.
 """
 
 import torch
@@ -24,23 +23,19 @@ def test_bilinear_denoiser_with_mlp_importable():
     assert BilinearDenoiserWithMLP is not None
 
 
-def test_factory_creates_bilinear():
-    """New 'bilinear' factory key works."""
-    from tmgg.models.factory import create_model
+def test_bilinear_denoiser_constructible():
+    """BilinearDenoiser can be constructed directly."""
+    from tmgg.models.spectral_denoisers import BilinearDenoiser
 
-    model = create_model("bilinear", {"k": 4, "d_k": 8})
+    model = BilinearDenoiser(k=4, d_k=8)
     assert type(model).__name__ == "BilinearDenoiser"
 
 
-def test_factory_self_attention_still_works():
-    """Existing 'self_attention' key must still work (backward compat).
+def test_self_attention_denoiser_constructible():
+    """SelfAttentionDenoiser can be constructed directly."""
+    from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
 
-    After Task 1b this will return the correct SelfAttentionDenoiser,
-    but for now it returns BilinearDenoiser.
-    """
-    from tmgg.models.factory import create_model
-
-    model = create_model("self_attention", {"k": 4, "d_k": 8})
+    model = SelfAttentionDenoiser(k=4, d_k=8)
     assert model is not None
 
 

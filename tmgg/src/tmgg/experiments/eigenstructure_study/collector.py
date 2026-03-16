@@ -4,6 +4,9 @@ Collects eigendecompositions of both adjacency and Laplacian matrices
 for all graphs in a dataset, storing results in safetensors format.
 """
 
+# pyright: reportAttributeAccessIssue=false
+# torch.nn.functional.pad has incomplete type stubs.
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +15,7 @@ from typing import Any
 import torch
 from loguru import logger
 
-from tmgg.experiments._shared_utils.spectral_utils.laplacian import compute_laplacian
+from tmgg.utils.spectral.laplacian import compute_laplacian
 
 from .storage import save_dataset_manifest, save_decomposition_batch
 
@@ -293,7 +296,7 @@ class EigenstructureCollector:
             n = M.shape[0]
             if n < target_size:
                 pad_size = target_size - n
-                M_padded = torch.nn.functional.pad(  # pyright: ignore[reportAttributeAccessIssue]
+                M_padded = torch.nn.functional.pad(
                     M, (0, pad_size, 0, pad_size), value=0.0
                 )
                 padded.append(M_padded)
@@ -310,7 +313,7 @@ class EigenstructureCollector:
             n = v.shape[0]
             if n < target_size:
                 pad_size = target_size - n
-                v_padded = torch.nn.functional.pad(v, (0, pad_size), value=0.0)  # pyright: ignore[reportAttributeAccessIssue]
+                v_padded = torch.nn.functional.pad(v, (0, pad_size), value=0.0)
                 padded.append(v_padded)
             else:
                 padded.append(v)

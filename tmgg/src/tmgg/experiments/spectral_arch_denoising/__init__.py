@@ -9,7 +9,7 @@ Run via Hydra:
     python -m tmgg.experiments.spectral_arch_denoising.runner
 """
 
-from tmgg.experiments._shared_utils.lightning_modules.denoising_module import (
+from tmgg.training.lightning_modules.denoising_module import (
     SingleStepDenoisingModule,
 )
 

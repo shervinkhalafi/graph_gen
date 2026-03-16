@@ -132,12 +132,8 @@ def collect(
         seed=seed,
     )
 
-    try:
-        collector.collect()
-        click.echo(f"Collection complete. Output: {output_dir}")
-    except Exception as e:
-        logger.exception("Collection failed")
-        raise click.ClickException(str(e)) from e
+    collector.collect()
+    click.echo(f"Collection complete. Output: {output_dir}")
 
 
 @main.command()
@@ -193,42 +189,37 @@ def analyze(
 
     analyzer = SpectralAnalyzer(input_dir)
 
-    try:
-        result = analyzer.analyze()
+    result = analyzer.analyze()
 
-        # Save main results
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / "analysis.json"
-        with open(output_path, "w") as f:
-            json.dump(asdict(result), f, indent=2)
+    # Save main results
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "analysis.json"
+    with open(output_path, "w") as f:
+        json.dump(asdict(result), f, indent=2)
 
-        # Compute and save subspace distances if requested
-        if subspace_k > 0:
-            subspace_results = analyzer.compute_subspace_distances(k=subspace_k)
-            subspace_path = output_dir / "subspace_analysis.json"
-            with open(subspace_path, "w") as f:
-                json.dump(subspace_results, f, indent=2)
-            click.echo(f"Subspace analysis saved to: {subspace_path}")
+    # Compute and save subspace distances if requested
+    if subspace_k > 0:
+        subspace_results = analyzer.compute_subspace_distances(k=subspace_k)
+        subspace_path = output_dir / "subspace_analysis.json"
+        with open(subspace_path, "w") as f:
+            json.dump(subspace_results, f, indent=2)
+        click.echo(f"Subspace analysis saved to: {subspace_path}")
 
-        click.echo(f"Analysis complete. Results: {output_path}")
-        click.echo()
-        click.echo("Summary:")
-        click.echo(f"  Dataset: {result.dataset_name}")
-        click.echo(f"  Graphs: {result.num_graphs}")
-        click.echo(
-            f"  Spectral gap: {result.spectral_gap_mean:.4f} +/- {result.spectral_gap_std:.4f}"
-        )
-        click.echo(
-            f"  Algebraic connectivity: {result.algebraic_connectivity_mean:.4f} +/- {result.algebraic_connectivity_std:.4f}"
-        )
-        click.echo(
-            f"  Coherence: {result.coherence_mean:.4f} +/- {result.coherence_std:.4f}"
-        )
-        click.echo(f"  Effective rank (adj): {result.effective_rank_adj_mean:.2f}")
-
-    except Exception as e:
-        logger.exception("Analysis failed")
-        raise click.ClickException(str(e)) from e
+    click.echo(f"Analysis complete. Results: {output_path}")
+    click.echo()
+    click.echo("Summary:")
+    click.echo(f"  Dataset: {result.dataset_name}")
+    click.echo(f"  Graphs: {result.num_graphs}")
+    click.echo(
+        f"  Spectral gap: {result.spectral_gap_mean:.4f} +/- {result.spectral_gap_std:.4f}"
+    )
+    click.echo(
+        f"  Algebraic connectivity: {result.algebraic_connectivity_mean:.4f} +/- {result.algebraic_connectivity_std:.4f}"
+    )
+    click.echo(
+        f"  Coherence: {result.coherence_mean:.4f} +/- {result.coherence_std:.4f}"
+    )
+    click.echo(f"  Effective rank (adj): {result.effective_rank_adj_mean:.2f}")
 
 
 @main.command()
@@ -314,22 +305,17 @@ def noised(
 
     from .noised_collector import NoisedEigenstructureCollector
 
-    try:
-        collector = NoisedEigenstructureCollector(
-            input_dir=input_dir,
-            output_dir=output_dir,
-            noise_type=noise_type,
-            noise_levels=levels,
-            rotation_k=rotation_k,
-            seed=seed,
-        )
-        collector.collect()
-        click.echo(f"Noised collection complete. Output: {output_dir}")
-        click.echo(f"Noise levels: {levels}")
-
-    except Exception as e:
-        logger.exception("Noised collection failed")
-        raise click.ClickException(str(e)) from e
+    collector = NoisedEigenstructureCollector(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        noise_type=noise_type,
+        noise_levels=levels,
+        rotation_k=rotation_k,
+        seed=seed,
+    )
+    collector.collect()
+    click.echo(f"Noised collection complete. Output: {output_dir}")
+    click.echo(f"Noise levels: {levels}")
 
 
 @main.command()
@@ -403,49 +389,44 @@ def compare(
 
     from .noised_collector import NoisedAnalysisComparator
 
-    try:
-        comparator = NoisedAnalysisComparator(original_dir, noised_dir)
+    comparator = NoisedAnalysisComparator(original_dir, noised_dir)
 
-        results = comparator.compute_full_comparison(
-            k=subspace_k, procrustes_k_values=procrustes_k_values
+    results = comparator.compute_full_comparison(
+        k=subspace_k, procrustes_k_values=procrustes_k_values
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "comparison.json"
+    with open(output_path, "w") as f:
+        json.dump(results, f, indent=2)
+
+    click.echo(f"Comparison complete. Results: {output_path}")
+    click.echo()
+    click.echo("Summary (delta metrics):")
+    for r in results:
+        eps = r["noise_level"]
+        click.echo(f"  eps={eps:.4f}:")
+        click.echo(
+            f"    eigengap_delta={r['eigengap_delta_rel_mean']:+.4f} +/- {r['eigengap_delta_rel_std']:.4f}"
         )
-
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / "comparison.json"
-        with open(output_path, "w") as f:
-            json.dump(results, f, indent=2)
-
-        click.echo(f"Comparison complete. Results: {output_path}")
-        click.echo()
-        click.echo("Summary (delta metrics):")
-        for r in results:
-            eps = r["noise_level"]
-            click.echo(f"  eps={eps:.4f}:")
-            click.echo(
-                f"    eigengap_delta={r['eigengap_delta_rel_mean']:+.4f} +/- {r['eigengap_delta_rel_std']:.4f}"
-            )
-            click.echo(
-                f"    alg_conn_delta={r['alg_conn_delta_rel_mean']:+.4f} +/- {r['alg_conn_delta_rel_std']:.4f}"
-            )
-            click.echo(
-                f"    eigenvalue_drift_adj={r['eigenvalue_drift_adj_mean']:.4f} +/- {r['eigenvalue_drift_adj_std']:.4f}"
-            )
-            click.echo(
-                f"    subspace_distance={r['subspace_distance_mean']:.4f} +/- {r['subspace_distance_std']:.4f}"
-            )
-            # Output Procrustes rotation metrics
-            click.echo("    Procrustes rotation:")
-            for k in procrustes_k_values:
-                angle_key = f"procrustes_angle_k{k}_mean"
-                angle_std_key = f"procrustes_angle_k{k}_std"
-                if angle_key in r:
-                    click.echo(
-                        f"      k={k}: angle={r[angle_key]:.4f}+/-{r[angle_std_key]:.4f} rad"
-                    )
-
-    except Exception as e:
-        logger.exception("Comparison failed")
-        raise click.ClickException(str(e)) from e
+        click.echo(
+            f"    alg_conn_delta={r['alg_conn_delta_rel_mean']:+.4f} +/- {r['alg_conn_delta_rel_std']:.4f}"
+        )
+        click.echo(
+            f"    eigenvalue_drift_adj={r['eigenvalue_drift_adj_mean']:.4f} +/- {r['eigenvalue_drift_adj_std']:.4f}"
+        )
+        click.echo(
+            f"    subspace_distance={r['subspace_distance_mean']:.4f} +/- {r['subspace_distance_std']:.4f}"
+        )
+        # Output Procrustes rotation metrics
+        click.echo("    Procrustes rotation:")
+        for k in procrustes_k_values:
+            angle_key = f"procrustes_angle_k{k}_mean"
+            angle_std_key = f"procrustes_angle_k{k}_std"
+            if angle_key in r:
+                click.echo(
+                    f"      k={k}: angle={r[angle_key]:.4f}+/-{r[angle_std_key]:.4f} rad"
+                )
 
 
 @main.command()
@@ -517,79 +498,72 @@ def covariance(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        if noised_dir is not None and Path(noised_dir).exists():
-            # Compute covariance evolution across noise levels
-            from .noised_collector import NoisedAnalysisComparator
+    if noised_dir is not None and Path(noised_dir).exists():
+        # Compute covariance evolution across noise levels
+        from .noised_collector import NoisedAnalysisComparator
 
-            comparator = NoisedAnalysisComparator(original_dir, noised_dir)
-            evolution = comparator.compute_covariance_evolution(matrix_type)
+        comparator = NoisedAnalysisComparator(original_dir, noised_dir)
+        evolution = comparator.compute_covariance_evolution(matrix_type)
 
-            # Convert dataclasses to dicts for JSON serialization
-            output_data = {
-                "matrix_type": evolution["matrix_type"],
-                "original": asdict(evolution["original"]),
-                "per_noise_level": [
-                    {
-                        "noise_level": item["noise_level"],
-                        "covariance": asdict(item["covariance"]),
-                        "frobenius_delta_relative": item["frobenius_delta_relative"],
-                        "trace_delta_relative": item["trace_delta_relative"],
-                        "off_diagonal_delta_relative": item[
-                            "off_diagonal_delta_relative"
-                        ],
-                    }
-                    for item in evolution["per_noise_level"]
-                ],
-            }
+        # Convert dataclasses to dicts for JSON serialization
+        output_data = {
+            "matrix_type": evolution["matrix_type"],
+            "original": asdict(evolution["original"]),
+            "per_noise_level": [
+                {
+                    "noise_level": item["noise_level"],
+                    "covariance": asdict(item["covariance"]),
+                    "frobenius_delta_relative": item["frobenius_delta_relative"],
+                    "trace_delta_relative": item["trace_delta_relative"],
+                    "off_diagonal_delta_relative": item["off_diagonal_delta_relative"],
+                }
+                for item in evolution["per_noise_level"]
+            ],
+        }
 
-            output_path = output_dir / "covariance_evolution.json"
-            with open(output_path, "w") as f:
-                json.dump(output_data, f, indent=2)
+        output_path = output_dir / "covariance_evolution.json"
+        with open(output_path, "w") as f:
+            json.dump(output_data, f, indent=2)
 
-            click.echo(f"Covariance evolution saved to: {output_path}")
-            click.echo()
-            click.echo("Original covariance summary:")
-            orig = evolution["original"]
-            click.echo(f"  Frobenius norm: {orig.frobenius_norm:.4f}")
-            click.echo(f"  Trace (total variance): {orig.trace:.4f}")
-            click.echo(f"  Off-diagonal ratio: {orig.off_diagonal_ratio:.4f}")
-            click.echo()
-            click.echo("Evolution with noise:")
-            for item in evolution["per_noise_level"]:
-                eps = item["noise_level"]
-                click.echo(
-                    f"  eps={eps:.4f}: "
-                    f"frob_delta={item['frobenius_delta_relative']:+.4f}, "
-                    f"off_diag_delta={item['off_diagonal_delta_relative']:+.4f}"
-                )
+        click.echo(f"Covariance evolution saved to: {output_path}")
+        click.echo()
+        click.echo("Original covariance summary:")
+        orig = evolution["original"]
+        click.echo(f"  Frobenius norm: {orig.frobenius_norm:.4f}")
+        click.echo(f"  Trace (total variance): {orig.trace:.4f}")
+        click.echo(f"  Off-diagonal ratio: {orig.off_diagonal_ratio:.4f}")
+        click.echo()
+        click.echo("Evolution with noise:")
+        for item in evolution["per_noise_level"]:
+            eps = item["noise_level"]
+            click.echo(
+                f"  eps={eps:.4f}: "
+                f"frob_delta={item['frobenius_delta_relative']:+.4f}, "
+                f"off_diag_delta={item['off_diagonal_delta_relative']:+.4f}"
+            )
 
-        else:
-            # Compute covariance for original dataset only
-            from .analyzer import SpectralAnalyzer
+    else:
+        # Compute covariance for original dataset only
+        from .analyzer import SpectralAnalyzer
 
-            analyzer = SpectralAnalyzer(original_dir)
-            result = analyzer.compute_eigenvalue_covariance(matrix_type)
+        analyzer = SpectralAnalyzer(original_dir)
+        result = analyzer.compute_eigenvalue_covariance(matrix_type)
 
-            output_path = output_dir / "covariance.json"
-            with open(output_path, "w") as f:
-                json.dump(asdict(result), f, indent=2)
+        output_path = output_dir / "covariance.json"
+        with open(output_path, "w") as f:
+            json.dump(asdict(result), f, indent=2)
 
-            click.echo(f"Covariance analysis saved to: {output_path}")
-            click.echo()
-            click.echo("Summary:")
-            click.echo(f"  Matrix type: {result.matrix_type}")
-            click.echo(f"  Graphs: {result.num_graphs}")
-            click.echo(f"  Eigenvalues: {result.num_eigenvalues}")
-            click.echo(f"  Frobenius norm: {result.frobenius_norm:.4f}")
-            click.echo(f"  Trace (total variance): {result.trace:.4f}")
-            click.echo(f"  Off-diagonal sum: {result.off_diagonal_sum:.4f}")
-            click.echo(f"  Off-diagonal ratio: {result.off_diagonal_ratio:.4f}")
-            click.echo(f"  Condition number: {result.condition_number:.4f}")
-
-    except Exception as e:
-        logger.exception("Covariance analysis failed")
-        raise click.ClickException(str(e)) from e
+        click.echo(f"Covariance analysis saved to: {output_path}")
+        click.echo()
+        click.echo("Summary:")
+        click.echo(f"  Matrix type: {result.matrix_type}")
+        click.echo(f"  Graphs: {result.num_graphs}")
+        click.echo(f"  Eigenvalues: {result.num_eigenvalues}")
+        click.echo(f"  Frobenius norm: {result.frobenius_norm:.4f}")
+        click.echo(f"  Trace (total variance): {result.trace:.4f}")
+        click.echo(f"  Off-diagonal sum: {result.off_diagonal_sum:.4f}")
+        click.echo(f"  Off-diagonal ratio: {result.off_diagonal_ratio:.4f}")
+        click.echo(f"  Condition number: {result.condition_number:.4f}")
 
 
 @main.command("list-remote")
@@ -640,9 +614,6 @@ def list_remote(verbose: bool) -> None:
             "Modal function not found. Deploy the Modal app first with: "
             "mise run modal-deploy"
         ) from None
-    except Exception as e:
-        logger.exception("Failed to list remote studies")
-        raise click.ClickException(str(e)) from e
 
 
 @main.command()
@@ -741,9 +712,6 @@ def download(
             "Modal functions not found. Deploy the Modal app first with: "
             "mise run modal-deploy"
         ) from None
-    except Exception as e:
-        logger.exception("Download failed")
-        raise click.ClickException(str(e)) from e
 
 
 if __name__ == "__main__":

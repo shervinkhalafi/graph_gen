@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 import torch
 
-from tmgg.experiments._shared_utils.evaluation_metrics.mmd_metrics import (
+from tmgg.training.evaluation_metrics.mmd_metrics import (
     GraphStatistics,
     MMDResults,
     adjacency_to_networkx,

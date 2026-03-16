@@ -10,7 +10,7 @@ from hypothesis.strategies import DrawFn, composite
 
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
-from tmgg.models.layers import MultiHeadAttention
+from tmgg.models.layers import MultiHeadSelfAttention
 
 
 # Custom strategies for generating test data
@@ -87,15 +87,15 @@ def attention_mask(draw: DrawFn, batch_size: int, seq_len: int) -> torch.Tensor:
     return torch.tensor(masks, dtype=torch.float32)
 
 
-class TestMultiHeadAttentionProperties:
-    """Property-based tests for MultiHeadAttention."""
+class TestMultiHeadSelfAttentionProperties:
+    """Property-based tests for MultiHeadSelfAttention."""
 
     @given(dims=attention_dims())
     @settings(deadline=2000)
     def test_output_shape_invariant(self, dims: tuple[int, int]) -> None:
         """Test that output shape matches input shape regardless of internal dimensions."""
         d_model, num_heads = dims
-        model = MultiHeadAttention(d_model, num_heads)
+        model = MultiHeadSelfAttention(d_model, num_heads)
 
         # Test with various input shapes
         for batch_size in [1, 4]:
@@ -116,7 +116,7 @@ class TestMultiHeadAttentionProperties:
     ) -> None:
         """Test that masked positions have exactly zero attention weight."""
         d_model, num_heads = dims
-        model = MultiHeadAttention(d_model, num_heads)
+        model = MultiHeadSelfAttention(d_model, num_heads)
 
         x = torch.randn(batch_size, seq_len, d_model)
 
@@ -149,7 +149,7 @@ class TestMultiHeadAttentionProperties:
 
         x = torch.randn(batch_size, seq_len, d_model)
 
-        model = MultiHeadAttention(d_model, num_heads)
+        model = MultiHeadSelfAttention(d_model, num_heads)
 
         # Test with different input scales
         for scale in [0.01, 1.0, 10.0]:
@@ -166,7 +166,7 @@ class TestMultiHeadAttentionProperties:
     ) -> None:
         """Test that residual connections prevent gradient vanishing."""
         d_model, num_heads = dims
-        model = MultiHeadAttention(d_model, num_heads)
+        model = MultiHeadSelfAttention(d_model, num_heads)
 
         x = torch.randn(2, 10, d_model, requires_grad=True)
         output = model(x)
@@ -283,7 +283,7 @@ class TestAttentionErrorHandling:
 
     def test_handles_dimension_mismatch_gracefully(self) -> None:
         """Test that model handles dimension mismatches appropriately."""
-        model = MultiHeadAttention(d_model=64, num_heads=8)
+        model = MultiHeadSelfAttention(d_model=64, num_heads=8)
 
         # Wrong input dimension will cause an error in the linear layer
         x = torch.randn(2, 10, 32)  # 32 != 64
@@ -298,7 +298,7 @@ class TestAttentionErrorHandling:
         # Mock softmax to return NaN to test error handling
         mock_softmax.return_value = torch.full((2, 10, 10), float("nan"))
 
-        model = MultiHeadAttention(d_model=32, num_heads=4)
+        model = MultiHeadSelfAttention(d_model=32, num_heads=4)
         x = torch.randn(2, 10, 32)
 
         # The model should handle this gracefully
@@ -307,7 +307,7 @@ class TestAttentionErrorHandling:
 
     def test_zero_attention_scores_handling(self) -> None:
         """Test behavior when all attention scores are masked."""
-        model = MultiHeadAttention(d_model=32, num_heads=4)
+        model = MultiHeadSelfAttention(d_model=32, num_heads=4)
         x = torch.randn(1, 5, 32)
 
         # Mask that zeros out everything

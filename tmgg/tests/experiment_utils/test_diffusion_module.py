@@ -6,7 +6,7 @@ These tests verify that the composition wires correctly and that each
 lifecycle hook (training_step, validation_step, on_validation_epoch_end)
 behaves as specified.
 
-The tests use a GNN model (registered as "gnn") with a
+The tests use a GNN model instantiated directly, paired with a
 ContinuousNoiseProcess wrapping GaussianNoiseGenerator and a
 ContinuousSampler, since those require no external dependencies and
 work with simple adjacency-based graphs.
@@ -29,24 +29,31 @@ from tmgg.diffusion.noise_process import (
 from tmgg.diffusion.sampler import CategoricalSampler, ContinuousSampler
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.diffusion.transitions import DiscreteUniformTransition
-from tmgg.experiments._shared_utils.evaluation_metrics.graph_evaluator import (
-    GraphEvaluator,
-)
-from tmgg.experiments._shared_utils.lightning_modules.diffusion_module import (
-    DiffusionModule,
-)
 
 # -----------------------------------------------------------------------
 # Shared fixtures and helpers
 # -----------------------------------------------------------------------
+from tmgg.models.gnn import GNN as _GNN
+from tmgg.training.evaluation_metrics.graph_evaluator import (
+    GraphEvaluator,
+)
+from tmgg.training.lightning_modules.diffusion_module import (
+    DiffusionModule,
+)
 
-_MODEL_TYPE = "gnn"
 _MODEL_CONFIG: dict[str, Any] = {
     "num_layers": 2,
     "num_terms": 2,
     "feature_dim_in": 10,
     "feature_dim_out": 10,
 }
+
+
+def _make_default_gnn() -> _GNN:
+    """Instantiate the default test GNN model."""
+    return _GNN(**_MODEL_CONFIG)
+
+
 _TIMESTEPS = 10
 _NUM_NODES = 6
 _BATCH_SIZE = 3
@@ -89,16 +96,16 @@ def _make_module(
     noise_process = _make_noise_process()
     sampler = _make_sampler(noise_process, schedule)
 
+    model = overrides.pop("model", _make_default_gnn())
     kwargs: dict[str, Any] = {
-        "model_type": _MODEL_TYPE,
-        "model_config": _MODEL_CONFIG,
+        "model": model,
         "noise_process": noise_process,
         "sampler": sampler,
         "noise_schedule": schedule,
         "evaluator": evaluator,
         "loss_type": loss_type,
         "num_nodes": _NUM_NODES,
-        "eval_every_n_epochs": 1,
+        "eval_every_n_steps": 1,
     }
     kwargs.update(overrides)
     return DiffusionModule(**kwargs)
@@ -277,59 +284,31 @@ class TestComputeLoss:
 
 
 class TestValidationStep:
-    """validation_step accumulates reference graphs in the evaluator."""
+    """validation_step computes loss and VLB but does not accumulate graphs."""
 
-    def test_accumulates_reference_graphs(self) -> None:
-        """After processing a batch with bs=3, the evaluator should
-        hold exactly 3 reference graphs. This is the mechanism by
-        which on_validation_epoch_end collects enough data for MMD
-        computation.
-        """
-        evaluator = GraphEvaluator(eval_num_samples=100)
-        module = _make_module(evaluator=evaluator)
-        batch = _make_batch(bs=_BATCH_SIZE)
-
-        assert len(evaluator.ref_graphs) == 0
-        module.validation_step(batch, batch_idx=0)
-        assert len(evaluator.ref_graphs) == _BATCH_SIZE
-
-    def test_no_accumulation_without_evaluator(self) -> None:
+    def test_runs_without_evaluator(self) -> None:
         """When no evaluator is attached, validation_step should
-        still run without error (it just skips graph accumulation).
+        still run without error.
         """
         module = _make_module(evaluator=None)
         batch = _make_batch()
         # Should not raise
         module.validation_step(batch, batch_idx=0)
 
-
-class TestOnValidationEpochEnd:
-    """on_validation_epoch_end clears evaluator and logs metrics."""
-
-    def test_clears_evaluator_after_epoch(self) -> None:
-        """After on_validation_epoch_end runs, the evaluator's
-        ref_graphs buffer must be empty, regardless of whether
-        generative evaluation was triggered. This prevents stale
-        reference data from bleeding across epochs.
+    def test_runs_with_evaluator(self) -> None:
+        """With an evaluator attached, validation_step should still
+        run without error and not accumulate any per-batch state.
         """
         evaluator = GraphEvaluator(eval_num_samples=100)
-        module = _make_module(evaluator=evaluator, eval_every_n_epochs=1)
-
-        # Simulate accumulation
-        batch = _make_batch(bs=5, n=_NUM_NODES)
+        module = _make_module(evaluator=evaluator)
+        batch = _make_batch(bs=_BATCH_SIZE)
         module.validation_step(batch, batch_idx=0)
-        assert len(evaluator.ref_graphs) == 5
+        # No _ref_graphs buffer should exist
+        assert not hasattr(module, "_ref_graphs")
 
-        # Mock trainer to provide current_epoch
-        mock_trainer = MagicMock()
-        mock_trainer.current_epoch = 0
-        module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
 
-        # Patch generate_graphs to avoid actual sampling
-        with patch.object(module, "generate_graphs", return_value=[]):
-            module.on_validation_epoch_end()
-
-        assert len(evaluator.ref_graphs) == 0
+class TestOnValidationEpochEnd:
+    """on_validation_epoch_end pulls refs from datamodule and evaluates."""
 
     def test_skips_when_no_evaluator(self) -> None:
         """on_validation_epoch_end is a no-op when evaluator is None.
@@ -340,58 +319,79 @@ class TestOnValidationEpochEnd:
         # Should not raise
         module.on_validation_epoch_end()
 
-    def test_skips_when_not_eval_epoch(self) -> None:
-        """If current_epoch is not a multiple of eval_every_n_epochs,
-        the method clears the buffer without running generation. This
-        avoids expensive sampling on every epoch.
+    def test_skips_when_not_eval_step(self) -> None:
+        """If global_step is not a multiple of eval_every_n_steps,
+        the method returns without running generation.
         """
         evaluator = GraphEvaluator(eval_num_samples=100)
-        module = _make_module(evaluator=evaluator, eval_every_n_epochs=5)
-
-        batch = _make_batch(bs=3, n=_NUM_NODES)
-        module.validation_step(batch, batch_idx=0)
+        module = _make_module(evaluator=evaluator, eval_every_n_steps=5)
 
         mock_trainer = MagicMock()
-        mock_trainer.current_epoch = 2  # not a multiple of 5
+        mock_trainer.global_step = 2  # not a multiple of 5
         module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
 
+        # Should not raise — skips generation because global_step % 5 != 0
         module.on_validation_epoch_end()
-        # Buffer should be cleared even if we didn't evaluate
-        assert len(evaluator.ref_graphs) == 0
+
+    def test_calls_get_reference_graphs_on_datamodule(self) -> None:
+        """At epoch end, on_validation_epoch_end should call
+        get_reference_graphs on the datamodule to obtain refs.
+        """
+        import networkx as nx
+
+        evaluator = GraphEvaluator(eval_num_samples=4)
+        module = _make_module(evaluator=evaluator, eval_every_n_steps=1)
+
+        mock_dm = MagicMock()
+        mock_dm.get_reference_graphs.return_value = [nx.path_graph(5) for _ in range(4)]
+
+        mock_trainer = MagicMock()
+        mock_trainer.global_step = 0
+        mock_trainer.datamodule = mock_dm
+        module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
+
+        with patch.object(
+            module, "generate_graphs", return_value=[nx.path_graph(5) for _ in range(4)]
+        ):
+            module.on_validation_epoch_end()
+
+        mock_dm.get_reference_graphs.assert_called_once_with("val", 4)
 
     def test_skips_when_too_few_ref_graphs(self) -> None:
         """Generative evaluation needs at least 2 reference graphs for
-        MMD. If fewer are accumulated, the method clears and returns
+        MMD. If the datamodule returns fewer, the method returns
         without attempting to generate or evaluate.
         """
         evaluator = GraphEvaluator(eval_num_samples=100)
-        module = _make_module(evaluator=evaluator, eval_every_n_epochs=1)
+        module = _make_module(evaluator=evaluator, eval_every_n_steps=1)
 
-        # Accumulate only 1 graph
-        batch = _make_batch(bs=1, n=_NUM_NODES)
-        module.validation_step(batch, batch_idx=0)
+        mock_dm = MagicMock()
+        mock_dm.get_reference_graphs.return_value = []  # no refs
 
         mock_trainer = MagicMock()
-        mock_trainer.current_epoch = 0
+        mock_trainer.global_step = 0
+        mock_trainer.datamodule = mock_dm
         module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
 
-        module.on_validation_epoch_end()
-        assert len(evaluator.ref_graphs) == 0
+        # Should not raise and should not call generate_graphs
+        with patch.object(module, "generate_graphs") as mock_gen:
+            module.on_validation_epoch_end()
+        mock_gen.assert_not_called()
 
 
 class TestTestStep:
     """test_step delegates to validation_step."""
 
-    def test_test_step_accumulates(self) -> None:
-        """test_step should accumulate reference graphs identically
-        to validation_step, since it delegates to the same method.
+    def test_test_step_runs_without_error(self) -> None:
+        """test_step delegates to validation_step and should run
+        without error, computing loss but not accumulating graphs.
         """
         evaluator = GraphEvaluator(eval_num_samples=100)
         module = _make_module(evaluator=evaluator)
         batch = _make_batch(bs=2)
 
+        # Should not raise
         module.test_step(batch, batch_idx=0)
-        assert len(evaluator.ref_graphs) == 2
 
 
 # -----------------------------------------------------------------------
@@ -420,14 +420,13 @@ def _make_categorical_module(
     )
     cat_sampler = CategoricalSampler(cat_np, schedule)
     return DiffusionModule(
-        model_type=_MODEL_TYPE,
-        model_config=_MODEL_CONFIG,
+        model=_make_default_gnn(),
         noise_process=cat_np,
         sampler=cat_sampler,
         noise_schedule=schedule,
         loss_type="cross_entropy",
         num_nodes=_NUM_NODES,
-        eval_every_n_epochs=1,
+        eval_every_n_steps=1,
     )
 
 

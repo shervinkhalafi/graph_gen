@@ -15,8 +15,10 @@ from ..base import GraphModel
 class GNN(GraphModel):
     """Graph Neural Network for adjacency matrix reconstruction.
 
-    Returns adjacency logits (pre-sigmoid) directly. Uses asymmetric embeddings
-    (separate X and Y) with reconstruction via X @ Y.T.
+    Computes separate X and Y node embeddings and reconstructs the
+    adjacency via ``X @ Y.T``. By default the output is symmetrized
+    with ``(A + A.T) / 2``; set ``symmetrized_output=False`` to keep
+    the raw asymmetric product.
     """
 
     def __init__(
@@ -26,6 +28,7 @@ class GNN(GraphModel):
         feature_dim_in: int = 10,
         feature_dim_out: int = 10,
         eigenvalue_reg: float = 0.0,
+        symmetrized_output: bool = True,
     ):
         """Initialize GNN.
 
@@ -41,6 +44,9 @@ class GNN(GraphModel):
             Output embedding dimension for adjacency reconstruction.
         eigenvalue_reg
             Diagonal regularization for eigendecomposition stability.
+        symmetrized_output
+            If True (default), symmetrize the reconstructed adjacency
+            via ``(A + A.T) / 2`` after the dot product.
         """
         super().__init__()
 
@@ -49,6 +55,7 @@ class GNN(GraphModel):
         self.feature_dim_in = feature_dim_in
         self.feature_dim_out = feature_dim_out
         self.eigenvalue_reg = eigenvalue_reg
+        self.symmetrized_output = symmetrized_output
 
         self.embedding_layer = TruncatedEigenEmbedding(
             target_dim=feature_dim_in, eigenvalue_reg=eigenvalue_reg
@@ -94,6 +101,8 @@ class GNN(GraphModel):
         A = data.to_adjacency()
         emb_x, emb_y = self._embed(A)
         result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
+        if self.symmetrized_output:
+            result_adj = (result_adj + result_adj.transpose(1, 2)) / 2
         return GraphData.from_adjacency(result_adj)
 
     def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
@@ -124,4 +133,5 @@ class GNN(GraphModel):
             "feature_dim_in": self.feature_dim_in,
             "feature_dim_out": self.feature_dim_out,
             "eigenvalue_reg": self.eigenvalue_reg,
+            "symmetrized_output": self.symmetrized_output,
         }

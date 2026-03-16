@@ -105,15 +105,15 @@ class PyGDatasetWrapper:
 
         # Pad all adjacencies to max size
         padded = []
-        for A in adjacencies:  # pyright: ignore[reportConstantRedefinition]  # math notation
-            n = A.shape[0]
+        for A_raw in adjacencies:
+            n = A_raw.shape[0]
             if n < self.max_n:
                 # Pad with zeros
                 padded_A = np.zeros((self.max_n, self.max_n), dtype=np.float32)
-                padded_A[:n, :n] = A
+                padded_A[:n, :n] = A_raw
                 padded.append(padded_A)
             else:
-                padded.append(A)
+                padded.append(A_raw)
 
         self.adjacencies = np.stack(padded, axis=0)
         self.num_graphs = len(self.adjacencies)

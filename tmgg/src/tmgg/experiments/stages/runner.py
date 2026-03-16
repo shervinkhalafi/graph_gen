@@ -39,7 +39,7 @@ def main(cfg: DictConfig) -> dict[str, Any]:
             hydra/launcher=tmgg_modal \\
             model=models/spectral/linear_pe,models/spectral/filter_bank
     """
-    from tmgg.experiments._shared_utils.orchestration.run_experiment import (
+    from tmgg.training.orchestration.run_experiment import (
         run_experiment,
     )
 
