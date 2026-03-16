@@ -15,9 +15,13 @@ layer iterations.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import torch
 from torch import Tensor
+
+if TYPE_CHECKING:
+    from torch_geometric.data import Batch, Data
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +171,52 @@ class GraphData:
             )
         return cls(X=x_out, E=e_out, y=y_out, node_mask=node_mask)
 
+    @classmethod
+    def from_pyg_batch(cls, batch: Batch) -> GraphData:
+        """Convert a PyG Batch to dense GraphData.
+
+        Parameters
+        ----------
+        batch
+            PyG Batch from ``Batch.from_data_list()``.
+
+        Returns
+        -------
+        GraphData
+            Dense batched one-hot representation with ``dx=2`` (no-node /
+            node) and ``de=2`` (no-edge / edge) encodings. ``node_mask``
+            reflects actual node counts per graph; padded positions are
+            marked ``False``.
+        """
+        from torch_geometric.utils import to_dense_adj
+
+        bs = int(batch.num_graphs)
+        edge_index: Tensor = getattr(batch, "edge_index")  # noqa: B009
+        batch_vec: Tensor = getattr(batch, "batch")  # noqa: B009
+        adj = to_dense_adj(edge_index, batch_vec)
+        n_max = adj.shape[1]
+
+        # Node mask from batch vector
+        node_counts = torch.bincount(batch_vec, minlength=bs)
+        arange = torch.arange(n_max, device=adj.device).unsqueeze(0).expand(bs, -1)
+        node_mask = arange < node_counts.unsqueeze(1)
+
+        # Zero diagonal, symmetrise
+        diag = torch.arange(n_max, device=adj.device)
+        adj[:, diag, diag] = 0.0
+        adj = (adj + adj.transpose(1, 2)).clamp(max=1.0)
+
+        # One-hot edge features (bs, n, n, 2): [no-edge, edge]
+        E = torch.stack([1.0 - adj, adj], dim=-1)
+
+        # One-hot node features (bs, n, 2): [no-node, node]
+        node_ind = node_mask.float()
+        X = torch.stack([1.0 - node_ind, node_ind], dim=-1)
+
+        y = torch.zeros(bs, 0, device=adj.device)
+
+        return cls(X=X, E=E, y=y, node_mask=node_mask)
+
     @staticmethod
     def edge_features_to_adjacency(
         E: Tensor,
@@ -206,6 +256,40 @@ class GraphData:
         Masked node positions are zeroed.
         """
         return GraphData.edge_features_to_adjacency(self.E, self.node_mask)
+
+    def to_pyg(self) -> Data:
+        """Convert this (unbatched) GraphData to a PyG Data object.
+
+        Returns
+        -------
+        torch_geometric.data.Data
+            Sparse COO representation with ``edge_index`` and ``num_nodes``.
+
+        Raises
+        ------
+        ValueError
+            If the GraphData has batch size > 1.
+        """
+        from torch_geometric.data import Data
+        from torch_geometric.utils import dense_to_sparse
+
+        adj = self.to_adjacency()
+        if adj.ndim == 3:
+            if adj.shape[0] != 1:
+                raise ValueError(
+                    f"to_pyg() requires unbatched or batch-size-1 GraphData, "
+                    f"got batch size {adj.shape[0]}"
+                )
+            adj = adj.squeeze(0)
+
+        n = (
+            int(self.node_mask.sum().item())
+            if self.node_mask.ndim == 1
+            else adj.shape[0]
+        )
+        adj_trimmed = adj[:n, :n]
+        edge_index, _ = dense_to_sparse(adj_trimmed)
+        return Data(edge_index=edge_index, num_nodes=n)
 
     @staticmethod
     def collate(graphs: list[GraphData]) -> GraphData:

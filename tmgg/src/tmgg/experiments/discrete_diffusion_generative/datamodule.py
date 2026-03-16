@@ -1,8 +1,10 @@
 """SyntheticCategoricalDataModule for discrete diffusion experiments.
 
-Generates synthetic graphs as adjacency matrices, converts them to the
-categorical ``GraphData`` representation used by discrete diffusion models,
-and provides train/val/test DataLoaders with proper collation.
+Generates synthetic graphs as adjacency matrices, stores them as PyG
+``Data`` objects (matching the parent ``MultiGraphDataModule``), and
+provides train/val/test DataLoaders that collate into dense ``GraphData``
+batches. Marginal distributions over node and edge types are computed
+from the training split at ``setup()`` time.
 
 Graph generation and index splitting are handled by the
 ``MultiGraphDataModule`` superclass.
@@ -19,7 +21,7 @@ from typing import Any, override
 
 import torch
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch_geometric.data import Data
 
 from tmgg.data.data_modules.multigraph_data_module import (
     MultiGraphDataModule,
@@ -28,29 +30,14 @@ from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.noising.size_distribution import SizeDistribution
 
 
-class _GraphDataDataset(Dataset[GraphData]):
-    """Thin Dataset wrapping a list of unbatched ``GraphData`` instances."""
-
-    _data: list[GraphData]
-
-    def __init__(self, data: list[GraphData]) -> None:
-        self._data = data
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    @override
-    def __getitem__(self, idx: int) -> GraphData:
-        return self._data[idx]
-
-
 class SyntheticCategoricalDataModule(MultiGraphDataModule):
     """Data module that generates synthetic graphs in categorical format.
 
     Generates graphs as adjacency matrices using the shared
     ``_generate_adjacencies()`` from ``MultiGraphDataModule``, converts
-    each to a ``GraphData`` instance via ``GraphData.from_adjacency()``,
-    and splits into train/val/test sets.
+    each to a PyG ``Data`` object, and splits into train/val/test sets.
+    DataLoaders collate into dense ``GraphData`` batches via the parent's
+    ``_collate_pyg_to_graphdata`` collation.
 
     The categorical representation uses ``dx=2`` (node present / absent)
     and ``de=2`` (edge present / absent), matching the DiGress convention
@@ -109,83 +96,76 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
         )
 
         # Populated by setup()
-        self._train_data: list[GraphData] | None = None
-        self._val_data: list[GraphData] | None = None
-        self._test_data: list[GraphData] | None = None
         self._node_marginals: Tensor | None = None
         self._edge_marginals: Tensor | None = None
 
     # ------------------------------------------------------------------
-    # Setup and DataLoaders
+    # Setup
     # ------------------------------------------------------------------
 
     @override
     def setup(self, stage: str | None = None) -> None:
-        """Generate graphs, convert to categorical, and split.
+        """Generate graphs, convert to PyG Data, split, and compute marginals.
+
+        Delegates graph generation and storage to the parent, which
+        populates ``_train_data`` / ``_val_data`` / ``_test_data`` as
+        ``list[Data]``. Then computes marginals from training data.
 
         Idempotent: calling setup multiple times is safe.
         """
         if self._train_data is not None:
             return
 
-        # 1. Generate and split adjacency matrices (from MultiGraphDataModule)
-        train_np, val_np, test_np = self._generate_and_split()
+        # Parent generates adjacencies and converts to list[Data]
+        super().setup(stage)
 
-        # 2. Convert each adjacency matrix to GraphData
-        train_adj = torch.from_numpy(train_np).float()
-        val_adj = torch.from_numpy(val_np).float()
-        test_adj = torch.from_numpy(test_np).float()
-
-        self._train_data = [
-            GraphData.from_adjacency(train_adj[i]) for i in range(len(train_adj))
-        ]
-        self._val_data = [
-            GraphData.from_adjacency(val_adj[i]) for i in range(len(val_adj))
-        ]
-        self._test_data = [
-            GraphData.from_adjacency(test_adj[i]) for i in range(len(test_adj))
-        ]
-
-        # 3. Compute marginals from training data only
+        # Compute marginals from training data
         self._compute_marginals()
 
     def _compute_marginals(self) -> None:
         """Compute empirical node and edge type distributions from training data.
 
         Marginals are normalised histograms over the one-hot categories,
-        restricted to real (unmasked) positions.
+        restricted to real (unmasked) positions. Converts to dense
+        representation temporarily for computation.
         """
         assert self._train_data is not None, "setup() must be called first"
 
-        dx: int = int(self._train_data[0].X.shape[-1])
-        de: int = int(self._train_data[0].E.shape[-1])
+        from typing import cast
 
-        node_counts = torch.zeros(dx)
-        edge_counts = torch.zeros(de)
+        from torch_geometric.data import Batch
+        from torch_geometric.data.data import BaseData
 
-        for g in self._train_data:
-            n = int(g.node_mask.sum().item())  # actual nodes, not padded dim
-            node_counts += g.X[:n].sum(dim=0)
+        # Convert to dense GraphData for marginal computation
+        batch = Batch.from_data_list(cast(list[BaseData], self._train_data))
+        dense = GraphData.from_pyg_batch(batch)
 
-            # Upper triangle only to avoid double-counting symmetric edges,
-            # and exclude diagonal (no self-loops).
-            triu_idx = torch.triu_indices(n, n, offset=1)
-            upper_E = g.E[triu_idx[0], triu_idx[1]]  # (num_edges, de)
-            edge_counts += upper_E.sum(dim=0)
+        bs, n_max = dense.node_mask.shape
+        dx = int(dense.X.shape[-1])
+        de = int(dense.E.shape[-1])
 
-        # Normalise to probability distributions
+        # Node marginals: count per-class over real nodes
+        real_nodes = dense.node_mask.bool()  # (bs, n_max)
+        node_counts = dense.X[real_nodes].sum(dim=0)  # (dx,)
+
+        # Edge marginals: upper triangle of real positions only
+        triu = torch.triu_indices(n_max, n_max, offset=1)
+        mask_2d = dense.node_mask.unsqueeze(-1) & dense.node_mask.unsqueeze(
+            -2
+        )  # (bs, n, n)
+        upper_mask = mask_2d[:, triu[0], triu[1]]  # (bs, num_triu)
+        upper_E = dense.E[:, triu[0], triu[1]]  # (bs, num_triu, de)
+        edge_counts = upper_E[upper_mask].sum(dim=0)  # (de,)
+
+        # Normalise
         node_total = node_counts.sum()
         edge_total = edge_counts.sum()
-
-        if node_total > 0:
-            self._node_marginals = node_counts / node_total
-        else:
-            self._node_marginals = torch.ones(dx) / dx
-
-        if edge_total > 0:
-            self._edge_marginals = edge_counts / edge_total
-        else:
-            self._edge_marginals = torch.ones(de) / de
+        self._node_marginals = (
+            node_counts / node_total if node_total > 0 else torch.ones(dx) / dx
+        )
+        self._edge_marginals = (
+            edge_counts / edge_total if edge_total > 0 else torch.ones(de) / de
+        )
 
     @property
     def node_marginals(self) -> Tensor:
@@ -213,38 +193,9 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
             raise RuntimeError("Marginals not available. Call setup() first.")
         return self._edge_marginals
 
-    @override
-    def train_dataloader(self) -> DataLoader[GraphData]:
-        """Return the training DataLoader."""
-        if self._train_data is None:
-            raise RuntimeError("DataModule not set up. Call setup() first.")
-        return self._make_dataloader(
-            _GraphDataDataset(self._train_data),
-            shuffle=True,
-            collate_fn=GraphData.collate,
-        )
-
-    @override
-    def val_dataloader(self) -> DataLoader[GraphData]:
-        """Return the validation DataLoader."""
-        if self._val_data is None:
-            raise RuntimeError("DataModule not set up. Call setup() first.")
-        return self._make_dataloader(
-            _GraphDataDataset(self._val_data),
-            shuffle=False,
-            collate_fn=GraphData.collate,
-        )
-
-    @override
-    def test_dataloader(self) -> DataLoader[GraphData]:
-        """Return the test DataLoader."""
-        if self._test_data is None:
-            raise RuntimeError("DataModule not set up. Call setup() first.")
-        return self._make_dataloader(
-            _GraphDataDataset(self._test_data),
-            shuffle=False,
-            collate_fn=GraphData.collate,
-        )
+    # ------------------------------------------------------------------
+    # Dataset info and size distribution
+    # ------------------------------------------------------------------
 
     @override
     def get_dataset_info(self) -> dict[str, int]:
@@ -282,7 +233,7 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
         -------
         SizeDistribution
         """
-        split_map: dict[str | None, list[GraphData] | None] = {
+        split_map: dict[str | None, list[Data] | None] = {
             "train": self._train_data,
             "val": self._val_data,
             "test": self._test_data,
@@ -304,7 +255,7 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
         if not all_data:
             return SizeDistribution.fixed(self.num_nodes)
 
-        node_counts = [int(g.node_mask.sum().item()) for g in all_data]
+        node_counts = [int(d.num_nodes) for d in all_data]  # type: ignore[arg-type]
         return SizeDistribution.from_node_counts(node_counts)
 
     def sample_n_nodes(self, batch_size: int) -> Tensor:

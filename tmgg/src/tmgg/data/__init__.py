@@ -10,7 +10,6 @@ from .data_modules import (
 )
 from .datasets import (
     GraphData,
-    GraphDataset,
     PyGDatasetWrapper,
     SyntheticGraphDataset,
     collapse_to_indices,
@@ -45,7 +44,6 @@ __all__ = [
     "GraphDataModule",
     "SingleGraphDataModule",
     # Datasets
-    "GraphDataset",
     "SyntheticGraphDataset",
     "PyGDatasetWrapper",
     # Noise functions

@@ -125,11 +125,11 @@ class TestGenerativeDataModule:
         assert datamodule._train_data is not None  # pyright: ignore[reportPrivateUsage]
         assert datamodule._val_data is not None  # pyright: ignore[reportPrivateUsage]
 
-        # Verify shapes
+        # Verify list[Data] structure
         train_data = datamodule._train_data  # pyright: ignore[reportPrivateUsage]
-        assert train_data.dim() == 3
-        assert train_data.shape[1] == 16  # num_nodes
-        assert train_data.shape[2] == 16
+        assert isinstance(train_data, list)
+        assert len(train_data) > 0
+        assert train_data[0].num_nodes == 16  # pyright: ignore[reportAttributeAccessIssue]
 
     @pytest.mark.parametrize("dataset_type", list(DATASET_CONFIGS.keys()))
     def test_generated_graphs_are_valid(self, dataset_type: str) -> None:
@@ -147,17 +147,18 @@ class TestGenerativeDataModule:
         train_data = datamodule._train_data  # pyright: ignore[reportPrivateUsage]
         assert train_data is not None
 
-        # Check binary values
-        assert torch.all((train_data == 0) | (train_data == 1)), "Non-binary adjacency"
+        # Reconstruct adjacency from PyG Data to verify graph properties
+        from torch_geometric.utils import to_dense_adj
 
-        # Check symmetry
-        assert torch.allclose(
-            train_data, train_data.transpose(-2, -1)
-        ), "Adjacency not symmetric"
-
-        # Check zero diagonal
-        for i in range(train_data.shape[0]):
-            assert torch.all(train_data[i].diagonal() == 0), "Self-loops present"
+        for g in train_data:
+            assert g.edge_index is not None
+            adj = to_dense_adj(g.edge_index, max_num_nodes=g.num_nodes).squeeze(0)
+            # Check binary values
+            assert torch.all((adj == 0) | (adj == 1)), "Non-binary adjacency"
+            # Check symmetry
+            assert torch.allclose(adj, adj.T), "Adjacency not symmetric"
+            # Check zero diagonal
+            assert torch.all(adj.diagonal() == 0), "Self-loops present"
 
 
 # ---------------------------------------------------------------------------

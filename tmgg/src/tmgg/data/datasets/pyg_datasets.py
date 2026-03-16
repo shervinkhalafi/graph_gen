@@ -8,6 +8,7 @@ through padding.
 from pathlib import Path
 
 import numpy as np
+from torch_geometric.data import Data
 
 
 class PyGDatasetWrapper:
@@ -34,6 +35,9 @@ class PyGDatasetWrapper:
         Actual number of nodes per graph (before padding).
     max_n : int
         Maximum number of nodes across all graphs.
+    data_list : list[Data]
+        Original PyG ``Data`` objects (one per graph, same order as
+        ``adjacencies``), each holding ``edge_index`` and ``num_nodes``.
     """
 
     VALID_DATASETS = {"qm9", "enzymes", "proteins"}
@@ -82,9 +86,10 @@ class PyGDatasetWrapper:
         if self.max_graphs is not None:
             dataset = dataset[: self.max_graphs]
 
-        # Extract adjacency matrices
+        # Extract adjacency matrices and preserve native Data objects
         adjacencies = []
         num_nodes = []
+        self.data_list: list[Data] = []
 
         for i in range(len(dataset)):
             data = dataset[i]  # pyright: ignore[reportArgumentType]
@@ -99,6 +104,9 @@ class PyGDatasetWrapper:
             A_np = (A_np + A_np.T) / 2
             A_np = (A_np > 0).astype(np.float32)
             adjacencies.append(A_np)
+
+            # Preserve the native Data object (edge_index + num_nodes only)
+            self.data_list.append(Data(edge_index=edge_index, num_nodes=n))
 
         self.num_nodes = np.array(num_nodes)
         self.max_n = int(self.num_nodes.max())

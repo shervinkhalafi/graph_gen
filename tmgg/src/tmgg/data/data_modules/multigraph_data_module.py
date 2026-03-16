@@ -4,7 +4,7 @@ Sits between ``BaseGraphDataModule`` (shared config + DataLoader factory) and
 specialized leaf classes (denoising ``GraphDataModule``, discrete generative
 ``SyntheticCategoricalDataModule``). Provides graph generation, index-based
 splitting, SBM partition-aware splitting, and a default setup that converts
-adjacency arrays to float tensors served via DataLoaders.
+adjacency arrays to PyG ``Data`` objects served via DataLoaders.
 
 Usable directly (e.g. as the gaussian diffusion generative datamodule) or
 subclassed when a different data representation is needed.
@@ -21,6 +21,7 @@ from typing import Any, override
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torch_geometric.data import Data
 
 from tmgg.data._split import split_indices
 from tmgg.data.datasets.graph_types import GraphData
@@ -35,17 +36,51 @@ from tmgg.data.noising.size_distribution import SizeDistribution
 from .base_data_module import BaseGraphDataModule
 
 
-class _UnwrapDataset(Dataset[GraphData]):
-    """Dataset wrapper that yields individual GraphData from a batched tensor."""
+def _adjacencies_to_pyg(adjs: np.ndarray) -> list[Data]:
+    """Convert numpy adjacency matrices to PyG Data objects.
 
-    def __init__(self, data: torch.Tensor) -> None:
-        self.data = data
+    Parameters
+    ----------
+    adjs
+        Adjacency matrices, shape ``(N, n, n)``.
+
+    Returns
+    -------
+    list[Data]
+        One ``Data`` per graph with COO ``edge_index``.
+    """
+    from torch_geometric.utils import dense_to_sparse
+
+    result: list[Data] = []
+    for i in range(len(adjs)):
+        adj_t = torch.from_numpy(adjs[i]).float()
+        edge_index, _ = dense_to_sparse(adj_t)
+        result.append(Data(edge_index=edge_index, num_nodes=adj_t.shape[0]))
+    return result
+
+
+def _collate_pyg_to_graphdata(data_list: list[Data]) -> GraphData:
+    """Collate PyG Data objects into a dense GraphData batch."""
+    from typing import cast
+
+    from torch_geometric.data import Batch
+    from torch_geometric.data.data import BaseData
+
+    batch = Batch.from_data_list(cast(list[BaseData], data_list))
+    return GraphData.from_pyg_batch(batch)
+
+
+class _ListDataset(Dataset[Data]):
+    """Thin wrapper making a list indexable as a Dataset."""
+
+    def __init__(self, data: list[Data]) -> None:
+        self._data = data
 
     def __len__(self) -> int:
-        return len(self.data)
+        return len(self._data)
 
-    def __getitem__(self, idx: int) -> GraphData:
-        return GraphData.from_adjacency(self.data[idx])
+    def __getitem__(self, idx: int) -> Data:
+        return self._data[idx]
 
 
 class MultiGraphDataModule(BaseGraphDataModule):
@@ -56,7 +91,8 @@ class MultiGraphDataModule(BaseGraphDataModule):
     and SBM partition-aware generation.
 
     The default ``setup()`` generates adjacency matrices, converts them to
-    float tensors, and serves them via DataLoaders. Subclasses that need a
+    PyG ``Data`` objects (COO edge_index), and serves them via DataLoaders
+    that collate into dense ``GraphData`` batches. Subclasses that need a
     different representation (e.g. categorical one-hot) override ``setup()``
     and the dataloaders.
 
@@ -115,9 +151,9 @@ class MultiGraphDataModule(BaseGraphDataModule):
         self.save_hyperparameters()
 
         # Populated by setup()
-        self._train_data: torch.Tensor | None = None
-        self._val_data: torch.Tensor | None = None
-        self._test_data: torch.Tensor | None = None
+        self._train_data: list[Data] | None = None
+        self._val_data: list[Data] | None = None
+        self._test_data: list[Data] | None = None
 
     # ------------------------------------------------------------------
     # Graph generation
@@ -301,12 +337,12 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return SizeDistribution.fixed(self.num_nodes)
 
     # ------------------------------------------------------------------
-    # Default setup and DataLoaders (tensor-serving)
+    # Default setup and DataLoaders (PyG Data storage)
     # ------------------------------------------------------------------
 
     @override
     def setup(self, stage: str | None = None) -> None:
-        """Generate graphs, split, and convert to float tensors.
+        """Generate graphs, split, and convert to PyG Data objects.
 
         Idempotent: calling setup multiple times is safe.
 
@@ -320,9 +356,9 @@ class MultiGraphDataModule(BaseGraphDataModule):
 
         train, val, test = self._generate_and_split()
 
-        self._train_data = torch.from_numpy(train).float()
-        self._val_data = torch.from_numpy(val).float()
-        self._test_data = torch.from_numpy(test).float()
+        self._train_data = _adjacencies_to_pyg(train)
+        self._val_data = _adjacencies_to_pyg(val)
+        self._test_data = _adjacencies_to_pyg(test)
 
     @override
     def train_dataloader(self) -> DataLoader[GraphData]:
@@ -330,7 +366,9 @@ class MultiGraphDataModule(BaseGraphDataModule):
         if self._train_data is None:
             raise RuntimeError("DataModule not setup. Call setup() first.")
         return self._make_dataloader(
-            _UnwrapDataset(self._train_data), shuffle=True, collate_fn=GraphData.collate
+            _ListDataset(self._train_data),
+            shuffle=True,
+            collate_fn=_collate_pyg_to_graphdata,
         )
 
     @override
@@ -339,7 +377,9 @@ class MultiGraphDataModule(BaseGraphDataModule):
         if self._val_data is None:
             raise RuntimeError("DataModule not setup. Call setup() first.")
         return self._make_dataloader(
-            _UnwrapDataset(self._val_data), shuffle=False, collate_fn=GraphData.collate
+            _ListDataset(self._val_data),
+            shuffle=False,
+            collate_fn=_collate_pyg_to_graphdata,
         )
 
     @override
@@ -348,7 +388,9 @@ class MultiGraphDataModule(BaseGraphDataModule):
         if self._test_data is None:
             raise RuntimeError("DataModule not setup. Call setup() first.")
         return self._make_dataloader(
-            _UnwrapDataset(self._test_data), shuffle=False, collate_fn=GraphData.collate
+            _ListDataset(self._test_data),
+            shuffle=False,
+            collate_fn=_collate_pyg_to_graphdata,
         )
 
     @override
@@ -366,8 +408,8 @@ class MultiGraphDataModule(BaseGraphDataModule):
             "graph_type": self.graph_type,
         }
 
-    def get_sample_graph(self) -> torch.Tensor:
-        """Get a sample graph for visualization."""
+    def get_sample_graph(self) -> Data:
+        """Get a sample graph as a PyG Data object."""
         if self._train_data is None:
             raise RuntimeError("DataModule not setup. Call setup() first.")
         return self._train_data[0]

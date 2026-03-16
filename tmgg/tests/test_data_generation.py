@@ -5,7 +5,6 @@ import pytest
 import torch
 
 from tmgg.data import (
-    GraphDataset,
     LogitNoiseGenerator,
     add_edge_flip_noise,
     add_gaussian_noise,
@@ -16,7 +15,6 @@ from tmgg.data import (
     generate_sbm_adjacency,
     random_skew_symmetric_matrix,
 )
-from tmgg.data.datasets.graph_types import GraphData
 
 
 class TestSBMGeneration:
@@ -410,103 +408,6 @@ class TestLogitNoise:
 
         assert isinstance(generator, LogitNoiseGenerator)
         assert generator.clamp_eps == 1e-4
-
-
-class TestDatasets:
-    """Test dataset classes."""
-
-    def test_adjacency_matrix_dataset(self):
-        """Test AdjacencyMatrixDataset."""
-        # Use a chain graph (identity only has self-loops, which are
-        # stripped by from_adjacency/to_adjacency by design)
-        A = np.zeros((5, 5))
-        for i in range(4):
-            A[i, i + 1] = A[i + 1, i] = 1.0
-        num_samples = 10
-
-        dataset = GraphDataset(A, num_samples)
-
-        assert len(dataset) == num_samples
-
-        sample = dataset[0]
-        assert isinstance(sample, GraphData)
-        adj = sample.to_adjacency()
-        assert adj.shape == (5, 5)
-        # Permutation preserves edge count: 4 undirected edges → 8 entries
-        assert adj.sum() == 8.0
-
-    def test_permuted_adjacency_dataset(self):
-        """Test PermutedAdjacencyDataset."""
-        A1 = torch.eye(5)
-        A2 = torch.ones(5, 5)
-        matrices = [A1, A2]
-        num_samples = 20
-
-        dataset = GraphDataset(matrices, num_samples)
-
-        assert len(dataset) == num_samples
-
-        sample = dataset[0]
-        assert isinstance(sample, GraphData)
-        assert sample.to_adjacency().shape == (5, 5)
-
-    def test_unified_graph_dataset_single_matrix(self):
-        """Test GraphDataset with single matrix."""
-        # Use a chain graph — identity only has self-loops, which are
-        # stripped by from_adjacency/to_adjacency by design.
-        A = np.zeros((5, 5))
-        for i in range(4):
-            A[i, i + 1] = A[i + 1, i] = 1.0
-        num_samples = 10
-
-        # Test with numpy array
-        dataset = GraphDataset(A, num_samples)
-        assert len(dataset) == num_samples
-
-        sample = dataset[0]
-        assert isinstance(sample, GraphData)
-        assert sample.to_adjacency().shape == (5, 5)
-
-        # Test without permutation — adjacency should round-trip exactly
-        dataset_no_perm = GraphDataset(A, num_samples, apply_permutation=False)
-        sample_no_perm = dataset_no_perm[0]
-        assert isinstance(sample_no_perm, GraphData)
-        assert torch.allclose(
-            sample_no_perm.to_adjacency(),
-            torch.tensor(A, dtype=torch.float32),
-        )
-
-    def test_unified_graph_dataset_multiple_matrices(self):
-        """Test GraphDataset with multiple matrices."""
-        A1 = torch.eye(5)
-        A2 = torch.ones(5, 5)
-        A3 = np.diag([1, 2, 3, 4, 5])
-        matrices = [A1, A2, A3]
-        num_samples = 30
-
-        dataset = GraphDataset(matrices, num_samples)
-        assert len(dataset) == num_samples
-
-        # Test with original index return
-        dataset_with_idx = GraphDataset(matrices, num_samples, return_original_idx=True)
-        result = dataset_with_idx[0]
-        assert isinstance(result, tuple)
-        sample, idx = result
-        assert isinstance(sample, GraphData)
-        assert isinstance(idx, int)
-        assert 0 <= idx < 3
-
-    def test_graph_dataset_type_conversion(self):
-        """Test GraphDataset handles different input types."""
-        # Test with mixed types
-        matrices = [np.eye(4), torch.ones(4, 4), np.random.rand(4, 4)]
-
-        dataset = GraphDataset(matrices, num_samples=10)
-
-        # All should be converted to torch tensors
-        for mat in dataset.adjacency_matrices:
-            assert isinstance(mat, torch.Tensor)
-            assert mat.dtype == torch.float32
 
 
 if __name__ == "__main__":

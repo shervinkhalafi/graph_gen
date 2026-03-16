@@ -1,9 +1,9 @@
 """PyTorch Lightning data module for denoising graph experiments.
 
-Handles multiple data sources: SBM and synthetic graph generation (via
-inherited ``_generate_and_split()``), and PyG benchmark datasets. All
-sources produce ``list[torch.Tensor]`` adjacency matrices split into
-train/val/test.
+Thin subclass of ``MultiGraphDataModule`` that adds PyG benchmark dataset
+support and ``samples_per_graph`` list repetition. All storage and
+dataloader creation is delegated to the parent; this class only extends
+``setup()`` for PyG datasets and repeats the ``list[Data]`` splits.
 """
 
 # pyright: reportExplicitAny=false
@@ -13,31 +13,19 @@ train/val/test.
 from __future__ import annotations
 
 import random
-from typing import Any, Protocol, override
+from typing import Any, override
 
-import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch_geometric.data import Data
+from torch_geometric.utils import to_dense_adj
 
 from tmgg.data._split import split_indices
-from tmgg.data.datasets.graph_dataset import GraphDataset
-from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.pyg_datasets import PyGDatasetWrapper
 
 from .multigraph_data_module import MultiGraphDataModule
 
 # PyG benchmark datasets
 PYG_DATASETS = {"qm9", "enzymes", "proteins"}
-
-
-class SampledDatasetProtocol(Protocol):
-    """Protocol for datasets that expose num_samples attribute."""
-
-    num_samples: int
-
-    def __getitem__(self, idx: int) -> torch.Tensor: ...
-
-    def __len__(self) -> int: ...
 
 
 class GraphDataModule(MultiGraphDataModule):
@@ -47,16 +35,13 @@ class GraphDataModule(MultiGraphDataModule):
     ring_of_cliques, lollipop, circular_ladder, star, square_grid,
     triangle_grid), and PyG benchmark datasets (QM9, ENZYMES, PROTEINS).
 
-    SBM and synthetic graph generation delegates to the inherited
-    ``_generate_and_split()`` from ``MultiGraphDataModule``. PyG
-    datasets are loaded and split via their own method.
+    SBM and synthetic graph generation delegates to the parent's
+    ``setup()`` (which calls ``_generate_and_split()``). PyG datasets
+    are loaded via ``_setup_pyg_dataset()``. In both cases the result
+    is ``list[Data]`` in ``_train_data``/``_val_data``/``_test_data``,
+    optionally repeated by ``samples_per_graph``.
     """
 
-    samples_per_graph: int
-    val_samples_per_graph: int
-    train_adjacency_matrices: list[torch.Tensor] | None
-    val_adjacency_matrices: list[torch.Tensor] | None
-    test_adjacency_matrices: list[torch.Tensor] | None
     _rng: random.Random
 
     def __init__(
@@ -83,7 +68,7 @@ class GraphDataModule(MultiGraphDataModule):
         graph_config
             Dictionary of parameters for the chosen graph type.
         samples_per_graph
-            Number of samples (permutations) per graph for training.
+            Number of samples (repetitions) per graph for training.
         val_samples_per_graph
             Number of samples per graph for validation/test.
             Defaults to ``samples_per_graph // 2`` if not specified.
@@ -126,126 +111,86 @@ class GraphDataModule(MultiGraphDataModule):
             if val_samples_per_graph is not None
             else samples_per_graph // 2
         )
-        # Dedicated RNG for wrapper shuffling and sample selection
+        # Dedicated RNG for sample selection in get_sample_adjacency_matrix
         self._rng = random.Random(self.seed)
-
-        self.train_adjacency_matrices = None
-        self.val_adjacency_matrices = None
-        self.test_adjacency_matrices = None
 
     @override
     def setup(self, stage: str | None = None) -> None:
         """Generate or load graphs and split into train/val/test.
 
         PyG datasets have their own loading logic. SBM and all synthetic
-        graph types delegate to ``_generate_and_split()`` from
-        ``MultiGraphDataModule``.
+        graph types delegate to the parent's ``setup()`` (which calls
+        ``_generate_and_split()``). After population, lists are repeated
+        by ``samples_per_graph`` / ``val_samples_per_graph``.
         """
-        if self.train_adjacency_matrices is not None:
+        if self._train_data is not None:
             return
 
         if self.graph_type.lower() in PYG_DATASETS:
             self._setup_pyg_dataset()
         else:
-            # SBM + all synthetic types → inherited _generate_and_split()
-            train_np, val_np, test_np = self._generate_and_split()
-            self.train_adjacency_matrices = [
-                torch.from_numpy(train_np[i]).float() for i in range(len(train_np))
-            ]
-            self.val_adjacency_matrices = [
-                torch.from_numpy(val_np[i]).float() for i in range(len(val_np))
-            ]
-            self.test_adjacency_matrices = [
-                torch.from_numpy(test_np[i]).float() for i in range(len(test_np))
-            ]
+            super().setup(stage)
+
+        # Repeat graphs for samples_per_graph
+        if self._train_data is not None and self.samples_per_graph > 1:
+            self._train_data = self._train_data * self.samples_per_graph
+        if self._val_data is not None and self.val_samples_per_graph > 1:
+            self._val_data = self._val_data * self.val_samples_per_graph
+        if self._test_data is not None and self.val_samples_per_graph > 1:
+            self._test_data = self._test_data * self.val_samples_per_graph
 
     def _setup_pyg_dataset(self) -> None:
         """Load and split graphs from a PyTorch Geometric dataset."""
-        if self.train_adjacency_matrices is not None:
-            return
-
         root: str | None = self.graph_config.get("root", None)
         max_graphs: int | None = self.graph_config.get("max_graphs", None)
         seed: int = self.graph_config.get("seed", 42)
 
-        dataset = PyGDatasetWrapper(
+        wrapper = PyGDatasetWrapper(
             dataset_name=self.graph_type,
             root=root,
             max_graphs=max_graphs,
         )
 
-        adjacencies = dataset.adjacencies
         train_idx, val_idx, test_idx = split_indices(
-            len(adjacencies), self.train_ratio, self.val_ratio, seed
+            len(wrapper), self.train_ratio, self.val_ratio, seed
         )
 
-        self.train_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in adjacencies[train_idx]
-        ]
-        self.val_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in adjacencies[val_idx]
-        ]
-        self.test_adjacency_matrices = [
-            torch.from_numpy(A).float() for A in adjacencies[test_idx]
-        ]
-
-    def _create_dataloader(
-        self,
-        adjacency_matrices: list[torch.Tensor],
-        samples_per_graph: int,
-        shuffle: bool,
-    ) -> DataLoader[GraphData]:
-        """Create a data loader with common parameters."""
-        matrices: list[np.ndarray | torch.Tensor] = list(adjacency_matrices)
-        dataset = GraphDataset(matrices, samples_per_graph)
-        return self._make_dataloader(
-            dataset, shuffle=shuffle, collate_fn=GraphData.collate
-        )
-
-    @override
-    def train_dataloader(self) -> DataLoader[GraphData]:
-        """Create training data loader."""
-        if self.train_adjacency_matrices is None:
-            raise RuntimeError("Call setup() before accessing dataloaders")
-        return self._create_dataloader(
-            self.train_adjacency_matrices, self.samples_per_graph, shuffle=True
-        )
-
-    @override
-    def val_dataloader(self) -> DataLoader[GraphData]:
-        """Create validation data loader."""
-        if self.val_adjacency_matrices is None:
-            raise RuntimeError("Call setup() before accessing dataloaders")
-        return self._create_dataloader(
-            self.val_adjacency_matrices, self.val_samples_per_graph, shuffle=False
-        )
-
-    @override
-    def test_dataloader(self) -> DataLoader[GraphData]:
-        """Create test data loader."""
-        if self.test_adjacency_matrices is None:
-            raise RuntimeError("Call setup() before accessing dataloaders")
-        return self._create_dataloader(
-            self.test_adjacency_matrices, self.val_samples_per_graph, shuffle=False
-        )
+        self._train_data = [wrapper.data_list[i] for i in train_idx]
+        self._val_data = [wrapper.data_list[i] for i in val_idx]
+        self._test_data = [wrapper.data_list[i] for i in test_idx]
 
     def get_sample_adjacency_matrix(self, stage: str = "train") -> torch.Tensor:
-        """Get a sample adjacency matrix for visualization."""
-        matrices: list[torch.Tensor] | None = None
-        if stage == "train":
-            matrices = self.train_adjacency_matrices
-        elif stage == "val":
-            matrices = self.val_adjacency_matrices
-        elif stage == "test":
-            matrices = self.test_adjacency_matrices
+        """Get a sample adjacency matrix for visualization.
 
-        if not matrices:
+        Parameters
+        ----------
+        stage
+            One of ``"train"``, ``"val"``, ``"test"``.
+
+        Returns
+        -------
+        torch.Tensor
+            Dense adjacency matrix of shape ``(num_nodes, num_nodes)``.
+        """
+        data_list: list[Data] | None = None
+        if stage == "train":
+            data_list = self._train_data
+        elif stage == "val":
+            data_list = self._val_data
+        elif stage == "test":
+            data_list = self._test_data
+
+        if not data_list:
             raise RuntimeError(
                 f"No data available for stage '{stage}'. "
                 "Please ensure setup() has been called and the dataset is not empty."
             )
 
-        return self._rng.choice(matrices)
+        sample = self._rng.choice(data_list)
+        if sample.edge_index is None:
+            raise RuntimeError("Sample graph has no edge_index.")
+        adj = to_dense_adj(sample.edge_index, max_num_nodes=sample.num_nodes)
+        return adj.squeeze(0)
 
     @override
     def get_dataset_info(self) -> dict[str, Any]:

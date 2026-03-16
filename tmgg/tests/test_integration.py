@@ -9,12 +9,16 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from tmgg.data import (
-    GraphDataset,
     add_edge_flip_noise,
     add_gaussian_noise,
     add_rotation_noise,
     generate_sbm_adjacency,
     random_skew_symmetric_matrix,
+)
+from tmgg.data.data_modules.multigraph_data_module import (
+    _adjacencies_to_pyg,
+    _collate_pyg_to_graphdata,
+    _ListDataset,
 )
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
@@ -28,7 +32,7 @@ class TestEndToEndTraining:
     @pytest.fixture
     def training_data(
         self,
-    ) -> tuple[DataLoader[GraphData], list[torch.Tensor]]:
+    ) -> tuple[DataLoader[Any], list[torch.Tensor]]:
         """Create sample training data."""
         # Generate a few SBM graphs
         block_sizes_list = [[5, 5], [3, 3, 4], [7, 3]]
@@ -38,10 +42,16 @@ class TestEndToEndTraining:
             A = generate_sbm_adjacency(block_sizes, p_intra=1.0, p_inter=0.0)
             adjacency_matrices.append(torch.tensor(A, dtype=torch.float32))
 
-        # Create dataset
-        dataset = GraphDataset(adjacency_matrices, num_samples=50)
-        dataloader: DataLoader[GraphData] = DataLoader(
-            dataset, batch_size=10, shuffle=True, collate_fn=GraphData.collate
+        # Create dataset using PyG Data objects
+        import numpy as np
+
+        adjs_np = np.stack([a.numpy() for a in adjacency_matrices])
+        data_list = _adjacencies_to_pyg(adjs_np) * 17  # ~50 samples from 3 graphs
+        dataloader: DataLoader[Any] = DataLoader(
+            _ListDataset(data_list),
+            batch_size=10,
+            shuffle=True,
+            collate_fn=_collate_pyg_to_graphdata,
         )
 
         return dataloader, adjacency_matrices
@@ -288,7 +298,12 @@ class TestEndToEndTraining:
         # Test on each noise level
         _ = model.eval()
         with torch.no_grad():
-            test_batch = dataloader.dataset[0].to_adjacency().unsqueeze(0)
+            from torch_geometric.data import Batch, Data
+
+            sample = dataloader.dataset[0]
+            assert isinstance(sample, Data)
+            test_gd = GraphData.from_pyg_batch(Batch.from_data_list([sample]))
+            test_batch = test_gd.to_adjacency()
 
             for eps in noise_levels:
                 test_noisy = add_edge_flip_noise(test_batch, p=eps)

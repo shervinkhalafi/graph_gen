@@ -78,7 +78,7 @@ def test_datamodule_instantiation():
             datamodule.setup()
 
             print(
-                f"  ✓ Setup completed. Train matrices: {len(datamodule.train_adjacency_matrices) if datamodule.train_adjacency_matrices else 0}"
+                f"  ✓ Setup completed. Train data: {len(datamodule._train_data) if datamodule._train_data else 0}"
             )
 
             # Test just that we can create a dataloader (don't iterate through all batches)

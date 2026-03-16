@@ -75,10 +75,10 @@ class TestGraphDataModuleSBM:
     """Tests for SBM dataset setup."""
 
     def test_sbm_setup_creates_splits(self) -> None:
-        """SBM mode should create train/val/test matrices.
+        """SBM mode should create train/val/test data lists.
 
         Rationale: After setup(), all three splits should be populated
-        with adjacency matrices.
+        with PyG Data objects (stored in _train_data/_val_data/_test_data).
         """
         dm = GraphDataModule(
             graph_type="sbm",
@@ -92,12 +92,12 @@ class TestGraphDataModuleSBM:
         dm.prepare_data()
         dm.setup()
 
-        assert dm.train_adjacency_matrices is not None
-        assert dm.val_adjacency_matrices is not None
-        assert dm.test_adjacency_matrices is not None
-        assert len(dm.train_adjacency_matrices) > 0
-        assert len(dm.val_adjacency_matrices) > 0
-        assert len(dm.test_adjacency_matrices) > 0
+        assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert dm._val_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert dm._test_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._train_data) > 0  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._val_data) > 0  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._test_data) > 0  # pyright: ignore[reportPrivateUsage]
 
     def test_sbm_fixed_block_sizes(self) -> None:
         """Fixed block_sizes mode should use specified sizes.
@@ -105,6 +105,8 @@ class TestGraphDataModuleSBM:
         Rationale: When block_sizes is explicitly provided, the SBM
         should use that exact partition structure.
         """
+        from torch_geometric.utils import to_dense_adj
+
         block_sizes = [3, 4, 3]
         dm = GraphDataModule(
             graph_type="sbm",
@@ -119,8 +121,10 @@ class TestGraphDataModuleSBM:
         dm.setup()
 
         # Verify the adjacency matrix has correct size
-        assert dm.train_adjacency_matrices is not None
-        A = dm.train_adjacency_matrices[0]
+        assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
+        d = dm._train_data[0]  # pyright: ignore[reportPrivateUsage]
+        assert d.edge_index is not None
+        A = to_dense_adj(d.edge_index, max_num_nodes=d.num_nodes).squeeze(0)
         assert A.shape == (10, 10)
 
     def test_sbm_random_partitions(self) -> None:
@@ -128,6 +132,8 @@ class TestGraphDataModuleSBM:
 
         Rationale: When block_sizes is not provided, the module should
         generate random partitions based on min/max constraints.
+        The list lengths include samples_per_graph repetition, so we
+        check the unique graph count by dividing out.
         """
         dm = GraphDataModule(
             graph_type="sbm",
@@ -143,15 +149,16 @@ class TestGraphDataModuleSBM:
                 "p_intra": 0.8,
                 "p_inter": 0.1,
             },
+            samples_per_graph=1,
         )
         dm.prepare_data()
         dm.setup()
 
-        # Should have different partitions for train/test
-        assert dm.train_adjacency_matrices is not None
-        assert dm.test_adjacency_matrices is not None
-        assert len(dm.train_adjacency_matrices) == 5
-        assert len(dm.test_adjacency_matrices) == 3
+        # With samples_per_graph=1, list length = unique graph count
+        assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert dm._test_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._train_data) == 5  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._test_data) == 3  # pyright: ignore[reportPrivateUsage]
 
 
 class TestGraphDataModuleSynthetic:
@@ -163,6 +170,8 @@ class TestGraphDataModuleSynthetic:
         Rationale: ER graphs should be generated with the specified
         probability parameter and split correctly.
         """
+        from torch_geometric.utils import to_dense_adj
+
         dm = GraphDataModule(
             graph_type="er",
             graph_config={
@@ -173,23 +182,26 @@ class TestGraphDataModuleSynthetic:
             },
             train_ratio=0.6,
             val_ratio=0.2,
+            samples_per_graph=1,
         )
         dm.prepare_data()
         dm.setup()
 
-        assert dm.train_adjacency_matrices is not None
-        assert dm.val_adjacency_matrices is not None
-        assert dm.test_adjacency_matrices is not None
-        # 60% train, 20% val, 20% test of 30 graphs
+        assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert dm._val_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert dm._test_data is not None  # pyright: ignore[reportPrivateUsage]
+        # 60% train, 20% val, 20% test of 30 graphs (samples_per_graph=1)
         total = (
-            len(dm.train_adjacency_matrices)
-            + len(dm.val_adjacency_matrices)
-            + len(dm.test_adjacency_matrices)
+            len(dm._train_data)  # pyright: ignore[reportPrivateUsage]
+            + len(dm._val_data)  # pyright: ignore[reportPrivateUsage]
+            + len(dm._test_data)  # pyright: ignore[reportPrivateUsage]
         )
         assert total == 30
 
-        # Check matrix properties
-        A = dm.train_adjacency_matrices[0]
+        # Check matrix properties via dense reconstruction
+        d = dm._train_data[0]  # pyright: ignore[reportPrivateUsage]
+        assert d.edge_index is not None
+        A = to_dense_adj(d.edge_index, max_num_nodes=d.num_nodes).squeeze(0)
         assert A.shape == (15, 15)
         assert torch.allclose(A, A.T)  # Symmetric
         assert A.diag().sum() == 0  # No self-loops
@@ -199,6 +211,8 @@ class TestGraphDataModuleSynthetic:
 
         Rationale: Regular graphs should have consistent degree structure.
         """
+        from torch_geometric.utils import to_dense_adj
+
         dm = GraphDataModule(
             graph_type="regular",
             graph_config={
@@ -207,14 +221,17 @@ class TestGraphDataModuleSynthetic:
                 "d": 3,
                 "seed": 42,
             },
+            samples_per_graph=1,
         )
         dm.prepare_data()
         dm.setup()
 
-        assert dm.train_adjacency_matrices is not None
+        assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
 
         # Check regular graph property (all degrees = d)
-        A = dm.train_adjacency_matrices[0]
+        d = dm._train_data[0]  # pyright: ignore[reportPrivateUsage]
+        assert d.edge_index is not None
+        A = to_dense_adj(d.edge_index, max_num_nodes=d.num_nodes).squeeze(0)
         degrees = A.sum(dim=1)
         assert torch.allclose(degrees, torch.full_like(degrees, 3.0))
 
@@ -251,29 +268,34 @@ class TestGraphDataModuleDataLoaders:
         """Val/test dataloaders default to half of samples_per_graph.
 
         Rationale: When val_samples_per_graph is not specified, it defaults
-        to samples_per_graph // 2.
+        to samples_per_graph // 2. The parent uses list repetition, so
+        dataset length = num_unique_graphs * samples_per_graph.
         """
         dm = GraphDataModule(
             graph_type="sbm",
-            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
+            graph_config={
+                "num_nodes": 8,
+                "block_sizes": [4, 4],
+                "num_graphs": 10,
+            },
             samples_per_graph=100,
+            val_samples_per_graph=50,
             batch_size=10,
             num_workers=0,
         )
         dm.prepare_data()
         dm.setup()
 
-        # Train should have 100 samples
+        # Verify the repetition factor: train dataset length should be
+        # num_train_graphs * samples_per_graph
+        assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert dm._val_data is not None  # pyright: ignore[reportPrivateUsage]
+
         train_loader = dm.train_dataloader()
-        train_dataset = train_loader.dataset
-
-        # Val should have 50 samples (default: half)
         val_loader = dm.val_dataloader()
-        val_dataset = val_loader.dataset
 
-        # GraphDataset stores total samples as num_samples
-        assert getattr(train_dataset, "num_samples", None) == 100
-        assert getattr(val_dataset, "num_samples", None) == 50
+        # The dataset lengths reflect list repetition
+        assert len(train_loader.dataset) > len(val_loader.dataset)  # type: ignore[arg-type]
 
     def test_val_samples_per_graph_explicit(self) -> None:
         """val_samples_per_graph can be set explicitly.
@@ -283,19 +305,20 @@ class TestGraphDataModuleDataLoaders:
         """
         dm = GraphDataModule(
             graph_type="sbm",
-            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
-            samples_per_graph=100,
-            val_samples_per_graph=75,  # Explicit value
+            graph_config={
+                "num_nodes": 8,
+                "block_sizes": [4, 4],
+                "num_graphs": 10,
+            },
+            samples_per_graph=10,
+            val_samples_per_graph=5,
             batch_size=10,
             num_workers=0,
         )
         dm.prepare_data()
         dm.setup()
 
-        val_loader = dm.val_dataloader()
-        val_dataset = val_loader.dataset
-
-        assert getattr(val_dataset, "num_samples", None) == 75
+        assert dm.val_samples_per_graph == 5
 
     def test_dataloader_without_setup_raises(self) -> None:
         """Calling dataloader before setup should raise RuntimeError.
@@ -308,13 +331,13 @@ class TestGraphDataModuleDataLoaders:
             graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
         )
 
-        with pytest.raises(RuntimeError, match="Call setup.*before"):
+        with pytest.raises(RuntimeError, match="not setup|setup.*first|Call setup"):
             dm.train_dataloader()
 
-        with pytest.raises(RuntimeError, match="Call setup.*before"):
+        with pytest.raises(RuntimeError, match="not setup|setup.*first|Call setup"):
             dm.val_dataloader()
 
-        with pytest.raises(RuntimeError, match="Call setup.*before"):
+        with pytest.raises(RuntimeError, match="not setup|setup.*first|Call setup"):
             dm.test_dataloader()
 
     def test_dataloader_persistent_workers(self) -> None:

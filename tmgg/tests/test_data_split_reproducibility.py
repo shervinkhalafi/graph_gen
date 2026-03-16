@@ -12,9 +12,9 @@ Starting state: two freshly constructed ``GraphDataModule`` instances with
 identical parameters (including ``seed``).
 
 Invariants tested:
-    - Identical seeds produce identical train/val/test adjacency matrices.
+    - Identical seeds produce identical train/val/test Data objects.
     - The SBM adjacency generation is also seeded, so the *content* of the
-      matrices (not just the partition selection) matches.
+      graphs (not just the partition selection) matches.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def test_sbm_splits_reproducible():
         batch_size=4,
         num_workers=0,
         seed=42,
-        samples_per_graph=10,
+        samples_per_graph=1,  # No repetition for cleaner comparison
     )
 
     dm1 = GraphDataModule(**common)
@@ -57,33 +57,40 @@ def test_sbm_splits_reproducible():
     dm2.setup()
 
     # --- train ---
-    assert dm1.train_adjacency_matrices is not None
-    assert dm2.train_adjacency_matrices is not None
-    assert len(dm1.train_adjacency_matrices) == len(dm2.train_adjacency_matrices)
+    assert dm1._train_data is not None  # pyright: ignore[reportPrivateUsage]
+    assert dm2._train_data is not None  # pyright: ignore[reportPrivateUsage]
+    assert len(dm1._train_data) == len(dm2._train_data)  # pyright: ignore[reportPrivateUsage]
     for i, (a, b) in enumerate(
-        zip(dm1.train_adjacency_matrices, dm2.train_adjacency_matrices, strict=False)
+        zip(dm1._train_data, dm2._train_data, strict=False)  # pyright: ignore[reportPrivateUsage]
     ):
+        assert a.edge_index is not None and b.edge_index is not None
         assert torch.equal(
-            a, b
-        ), f"Train matrix {i} differs between runs with same seed"
+            a.edge_index, b.edge_index
+        ), f"Train graph {i} differs between runs with same seed"
 
     # --- val ---
-    assert dm1.val_adjacency_matrices is not None
-    assert dm2.val_adjacency_matrices is not None
-    assert len(dm1.val_adjacency_matrices) == len(dm2.val_adjacency_matrices)
+    assert dm1._val_data is not None  # pyright: ignore[reportPrivateUsage]
+    assert dm2._val_data is not None  # pyright: ignore[reportPrivateUsage]
+    assert len(dm1._val_data) == len(dm2._val_data)  # pyright: ignore[reportPrivateUsage]
     for i, (a, b) in enumerate(
-        zip(dm1.val_adjacency_matrices, dm2.val_adjacency_matrices, strict=False)
+        zip(dm1._val_data, dm2._val_data, strict=False)  # pyright: ignore[reportPrivateUsage]
     ):
-        assert torch.equal(a, b), f"Val matrix {i} differs between runs with same seed"
+        assert a.edge_index is not None and b.edge_index is not None
+        assert torch.equal(
+            a.edge_index, b.edge_index
+        ), f"Val graph {i} differs between runs with same seed"
 
     # --- test ---
-    assert dm1.test_adjacency_matrices is not None
-    assert dm2.test_adjacency_matrices is not None
-    assert len(dm1.test_adjacency_matrices) == len(dm2.test_adjacency_matrices)
+    assert dm1._test_data is not None  # pyright: ignore[reportPrivateUsage]
+    assert dm2._test_data is not None  # pyright: ignore[reportPrivateUsage]
+    assert len(dm1._test_data) == len(dm2._test_data)  # pyright: ignore[reportPrivateUsage]
     for i, (a, b) in enumerate(
-        zip(dm1.test_adjacency_matrices, dm2.test_adjacency_matrices, strict=False)
+        zip(dm1._test_data, dm2._test_data, strict=False)  # pyright: ignore[reportPrivateUsage]
     ):
-        assert torch.equal(a, b), f"Test matrix {i} differs between runs with same seed"
+        assert a.edge_index is not None and b.edge_index is not None
+        assert torch.equal(
+            a.edge_index, b.edge_index
+        ), f"Test graph {i} differs between runs with same seed"
 
 
 def test_different_seeds_produce_different_splits():
@@ -106,7 +113,7 @@ def test_different_seeds_produce_different_splits():
         noise_levels=[0.1],
         batch_size=4,
         num_workers=0,
-        samples_per_graph=10,
+        samples_per_graph=1,
     )
 
     dm1 = GraphDataModule(**base, seed=42)
@@ -117,14 +124,16 @@ def test_different_seeds_produce_different_splits():
     dm2.prepare_data()
     dm2.setup()
 
-    assert dm1.train_adjacency_matrices is not None
-    assert dm2.train_adjacency_matrices is not None
+    assert dm1._train_data is not None  # pyright: ignore[reportPrivateUsage]
+    assert dm2._train_data is not None  # pyright: ignore[reportPrivateUsage]
 
-    # At least one matrix should differ (the SBM adjacency generation is random)
+    # At least one graph should differ (the SBM adjacency generation is random)
     any_differ = any(
-        not torch.equal(a, b)
+        not torch.equal(a.edge_index, b.edge_index)  # type: ignore[arg-type]
         for a, b in zip(
-            dm1.train_adjacency_matrices, dm2.train_adjacency_matrices, strict=False
+            dm1._train_data,
+            dm2._train_data,
+            strict=False,  # pyright: ignore[reportPrivateUsage]
         )
     )
     assert (

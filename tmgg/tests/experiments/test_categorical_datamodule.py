@@ -1,14 +1,18 @@
 """Tests for SyntheticCategoricalDataModule.
 
-Verifies that synthetic graph generation, categorical conversion, splitting,
-collation, marginals computation, round-trip fidelity, and size distribution
-interface all behave correctly.
+Verifies that synthetic graph generation, splitting, collation, marginals
+computation, round-trip fidelity, and size distribution interface all
+behave correctly.
+
+Internal storage is ``list[Data]`` (PyG sparse COO format). DataLoaders
+collate into dense ``GraphData`` batches at the batch boundary.
 """
 
 from __future__ import annotations
 
 import pytest
 import torch
+from torch_geometric.data import Data
 
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.noising.size_distribution import SizeDistribution
@@ -71,20 +75,20 @@ class TestSetup:
         assert len(small_dm._val_data) == 10
         assert len(small_dm._test_data) == 10
 
-    def test_graph_data_shapes(self, small_dm: SyntheticCategoricalDataModule) -> None:
-        """Each stored GraphData must have correct shapes.
+    def test_pyg_data_structure(self, small_dm: SyntheticCategoricalDataModule) -> None:
+        """Each stored element must be a PyG Data with edge_index and num_nodes.
 
-        X: (n, 2), E: (n, n, 2), y: (0,), node_mask: (n,).
+        Internal storage uses sparse COO format; dense GraphData is only
+        constructed at collation time by the DataLoader.
         """
         assert small_dm._train_data is not None
-        g = small_dm._train_data[0]
+        d = small_dm._train_data[0]
         n = small_dm.num_nodes
 
-        assert isinstance(g, GraphData)
-        assert g.X.shape == (n, 2)
-        assert g.E.shape == (n, n, 2)
-        assert g.y.shape == (0,)
-        assert g.node_mask.shape == (n,)
+        assert isinstance(d, Data)
+        assert d.num_nodes == n
+        assert d.edge_index is not None
+        assert d.edge_index.shape[0] == 2  # COO format: (2, num_edges)
 
     def test_idempotent_setup(self, small_dm: SyntheticCategoricalDataModule) -> None:
         """Calling setup() a second time should be a no-op (same data objects)."""
@@ -98,18 +102,19 @@ class TestSetup:
     ) -> None:
         """Train, val, and test splits should contain no duplicate graphs.
 
-        We compare by computing a per-graph hash from X and E tensors.
+        We compare by hashing the sorted edge_index tensor for each graph.
         """
         assert small_dm._train_data is not None
         assert small_dm._val_data is not None
         assert small_dm._test_data is not None
 
-        def _hash_graph(g: GraphData) -> int:
-            return hash((g.X.numpy().tobytes(), g.E.numpy().tobytes()))
+        def _hash_graph(d: Data) -> int:
+            assert d.edge_index is not None
+            return hash(d.edge_index.numpy().tobytes())
 
-        train_hashes = {_hash_graph(g) for g in small_dm._train_data}
-        val_hashes = {_hash_graph(g) for g in small_dm._val_data}
-        test_hashes = {_hash_graph(g) for g in small_dm._test_data}
+        train_hashes = {_hash_graph(d) for d in small_dm._train_data}
+        val_hashes = {_hash_graph(d) for d in small_dm._val_data}
+        test_hashes = {_hash_graph(d) for d in small_dm._test_data}
 
         assert train_hashes.isdisjoint(val_hashes)
         assert train_hashes.isdisjoint(test_hashes)
@@ -260,22 +265,31 @@ class TestDatasetInfo:
 
 
 class TestRoundTrip:
-    """Verify adjacency -> categorical -> adjacency preserves structure.
+    """Verify adjacency -> PyG Data -> dense GraphData -> adjacency roundtrip.
 
-    The round-trip invariant: converting a binary adjacency matrix to
-    categorical one-hot and back should recover the original adjacency
-    (modulo self-loops, which are zeroed by the conversion).
+    The invariant: a binary adjacency matrix stored as sparse COO in a
+    PyG ``Data`` object, then collated into a dense ``GraphData`` batch,
+    should recover the original adjacency via ``to_adjacency()``.
     """
 
     def test_single_graph_roundtrip(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Pick a training graph, convert back to adjacency via to_adjacency,
-        and compare with the original edge class channel.
+        """Convert a single stored Data to dense GraphData and verify the
+        adjacency round-trip through to_adjacency().
         """
+        from typing import cast
+
+        from torch_geometric.data import Batch
+        from torch_geometric.data.data import BaseData
+
         assert small_dm._train_data is not None
-        g = small_dm._train_data[0]
+        d = small_dm._train_data[0]
+
+        # Convert single Data to dense GraphData via batch of size 1
+        batch = Batch.from_data_list(cast(list[BaseData], [d]))
+        g = GraphData.from_pyg_batch(batch)
 
         # Reconstruct adjacency via GraphData.to_adjacency
         recovered_adj = g.to_adjacency()

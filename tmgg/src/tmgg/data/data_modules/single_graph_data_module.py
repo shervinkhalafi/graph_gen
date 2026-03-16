@@ -10,43 +10,19 @@ from typing import Any, override
 import numpy as np
 import numpy.typing as npt
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
+from torch_geometric.data import Data
 
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.sbm import generate_sbm_batch
 from tmgg.data.datasets.synthetic_graphs import SyntheticGraphDataset
 
 from .base_data_module import BaseGraphDataModule
-
-
-class SingleGraphDataset(Dataset[GraphData]):
-    """Dataset that returns the same graph repeated for noise sampling.
-
-    During training, the dataloader returns copies of the same graph. The
-    Lightning module applies fresh noise to each sample, creating diverse
-    training examples from a single graph structure.
-
-    Parameters
-    ----------
-    graph : np.ndarray
-        Single adjacency matrix of shape (n, n).
-    num_samples : int
-        Number of samples per epoch.
-    """
-
-    graph_data: GraphData
-    num_samples: int
-
-    def __init__(self, graph: npt.NDArray[np.float32], num_samples: int):
-        self.graph_data = GraphData.from_adjacency(torch.from_numpy(graph).float())
-        self.num_samples = num_samples
-
-    def __len__(self) -> int:
-        return self.num_samples
-
-    def __getitem__(self, idx: int) -> GraphData:
-        # Return the same graph each time (noise applied in training step)
-        return self.graph_data
+from .multigraph_data_module import (
+    _adjacencies_to_pyg,
+    _collate_pyg_to_graphdata,
+    _ListDataset,
+)
 
 
 class SingleGraphDataModule(BaseGraphDataModule):
@@ -128,9 +104,9 @@ class SingleGraphDataModule(BaseGraphDataModule):
     val_test_seed: int
     same_graph_all_splits: bool
     graph_config: dict[str, Any]
-    train_graph: npt.NDArray[np.float32] | None
-    val_graph: npt.NDArray[np.float32] | None
-    test_graph: npt.NDArray[np.float32] | None
+    _train_data: list[Data] | None
+    _val_data: list[Data] | None
+    _test_data: list[Data] | None
     _actual_num_nodes: int
 
     def __init__(
@@ -167,9 +143,9 @@ class SingleGraphDataModule(BaseGraphDataModule):
         self.val_test_seed = val_test_seed
         self.same_graph_all_splits = same_graph_all_splits
 
-        self.train_graph = None
-        self.val_graph = None
-        self.test_graph = None
+        self._train_data = None
+        self._val_data = None
+        self._test_data = None
         self._actual_num_nodes = num_nodes
 
     def _generate_graph(self, seed: int) -> npt.NDArray[np.float32]:
@@ -255,6 +231,44 @@ class SingleGraphDataModule(BaseGraphDataModule):
         self._actual_num_nodes = n
         return A_np
 
+    def _adj_to_data(self, adj: npt.NDArray[np.float32]) -> Data:
+        """Convert a single adjacency matrix to a PyG Data object.
+
+        Parameters
+        ----------
+        adj : np.ndarray
+            Adjacency matrix of shape ``(n, n)``.
+
+        Returns
+        -------
+        Data
+            PyG Data object with COO ``edge_index`` and ``num_nodes``.
+        """
+        return _adjacencies_to_pyg(adj[np.newaxis])[0]
+
+    def _data_to_adj(self, data: Data) -> npt.NDArray[np.float32]:
+        """Reconstruct a dense adjacency matrix from a PyG Data object.
+
+        Parameters
+        ----------
+        data : Data
+            PyG Data object with ``edge_index`` and ``num_nodes``.
+
+        Returns
+        -------
+        np.ndarray
+            Adjacency matrix of shape ``(num_nodes, num_nodes)``, dtype float32.
+        """
+        from torch_geometric.utils import to_dense_adj
+
+        n: int = int(data.num_nodes)  # pyright: ignore[reportArgumentType]
+        if data.edge_index is None:
+            raise ValueError(
+                "Data object has no edge_index — cannot reconstruct adjacency"
+            )
+        adj = to_dense_adj(data.edge_index, max_num_nodes=n)[0]
+        return adj.numpy().astype(np.float32)
+
     @override
     def setup(self, stage: str | None = None) -> None:
         """Generate graphs for train/val/test.
@@ -266,52 +280,69 @@ class SingleGraphDataModule(BaseGraphDataModule):
         """
         # Generate training graph
         if stage in (None, "fit"):
-            self.train_graph = self._generate_graph(self.train_seed)
+            train_adj = self._generate_graph(self.train_seed)
+            train_data = self._adj_to_data(train_adj)
+            self._train_data = [train_data] * self.num_train_samples
 
         if self.same_graph_all_splits:
             # Stage 1 protocol: all splits use identical graph, only noise varies
             if stage in (None, "fit", "validate"):
-                self.val_graph = self.train_graph
+                if self._train_data is None:
+                    # setup called with stage="validate" only — generate train graph
+                    train_adj = self._generate_graph(self.train_seed)
+                    train_data = self._adj_to_data(train_adj)
+                else:
+                    train_data = self._train_data[0]
+                self._val_data = [train_data] * self.num_val_samples
             if stage in (None, "test"):
-                self.test_graph = self.train_graph
+                if self._train_data is None:
+                    train_adj = self._generate_graph(self.train_seed)
+                    train_data = self._adj_to_data(train_adj)
+                else:
+                    train_data = self._train_data[0]
+                self._test_data = [train_data] * self.num_test_samples
         else:
             # Stage 2+ protocol: different graphs for val/test
             if stage in (None, "fit", "validate"):
-                self.val_graph = self._generate_graph(self.val_test_seed)
+                val_adj = self._generate_graph(self.val_test_seed)
+                val_data = self._adj_to_data(val_adj)
+                self._val_data = [val_data] * self.num_val_samples
             if stage in (None, "test"):
-                self.test_graph = self._generate_graph(self.val_test_seed + 1000)
+                test_adj = self._generate_graph(self.val_test_seed + 1000)
+                test_data = self._adj_to_data(test_adj)
+                self._test_data = [test_data] * self.num_test_samples
 
     @override
     def train_dataloader(self) -> DataLoader[GraphData]:
         """Return training dataloader."""
-        if self.train_graph is None:
+        if self._train_data is None:
             raise RuntimeError("Call setup() before accessing dataloaders")
-
-        dataset = SingleGraphDataset(self.train_graph, self.num_train_samples)
         return self._make_dataloader(
-            dataset, shuffle=True, collate_fn=GraphData.collate
+            _ListDataset(self._train_data),
+            shuffle=True,
+            collate_fn=_collate_pyg_to_graphdata,
         )
 
     @override
     def val_dataloader(self) -> DataLoader[GraphData]:
         """Return validation dataloader."""
-        if self.val_graph is None:
+        if self._val_data is None:
             raise RuntimeError("Call setup() before accessing dataloaders")
-
-        dataset = SingleGraphDataset(self.val_graph, self.num_val_samples)
         return self._make_dataloader(
-            dataset, shuffle=False, collate_fn=GraphData.collate
+            _ListDataset(self._val_data),
+            shuffle=False,
+            collate_fn=_collate_pyg_to_graphdata,
         )
 
     @override
     def test_dataloader(self) -> DataLoader[GraphData]:
         """Return test dataloader."""
-        if self.test_graph is None:
+        if self._test_data is None:
             raise RuntimeError("Call setup() before accessing dataloaders")
-
-        dataset = SingleGraphDataset(self.test_graph, self.num_test_samples)
         return self._make_dataloader(
-            dataset, shuffle=False, collate_fn=GraphData.collate
+            _ListDataset(self._test_data),
+            shuffle=False,
+            collate_fn=_collate_pyg_to_graphdata,
         )
 
     @override
@@ -324,40 +355,40 @@ class SingleGraphDataModule(BaseGraphDataModule):
         }
 
     def get_train_graph(self) -> npt.NDArray[np.float32]:
-        """Return the training graph.
+        """Return the training graph as a dense adjacency matrix.
 
         Returns
         -------
         np.ndarray
-            Training adjacency matrix.
+            Training adjacency matrix of shape ``(n, n)``.
         """
-        if self.train_graph is None:
+        if self._train_data is None:
             raise RuntimeError("Call setup() before accessing graphs")
-        return self.train_graph
+        return self._data_to_adj(self._train_data[0])
 
     def get_val_graph(self) -> npt.NDArray[np.float32]:
-        """Return the validation graph.
+        """Return the validation graph as a dense adjacency matrix.
 
         Returns
         -------
         np.ndarray
-            Validation adjacency matrix.
+            Validation adjacency matrix of shape ``(n, n)``.
         """
-        if self.val_graph is None:
+        if self._val_data is None:
             raise RuntimeError("Call setup() before accessing graphs")
-        return self.val_graph
+        return self._data_to_adj(self._val_data[0])
 
     def get_test_graph(self) -> npt.NDArray[np.float32]:
-        """Return the test graph.
+        """Return the test graph as a dense adjacency matrix.
 
         Returns
         -------
         np.ndarray
-            Test adjacency matrix.
+            Test adjacency matrix of shape ``(n, n)``.
         """
-        if self.test_graph is None:
+        if self._test_data is None:
             raise RuntimeError("Call setup() before accessing graphs")
-        return self.test_graph
+        return self._data_to_adj(self._test_data[0])
 
     def get_sample_adjacency_matrix(self, stage: str = "train") -> torch.Tensor:
         """Get a sample adjacency matrix for visualization.
@@ -370,19 +401,19 @@ class SingleGraphDataModule(BaseGraphDataModule):
         Returns
         -------
         torch.Tensor
-            Adjacency matrix as a tensor.
+            Adjacency matrix as a float32 tensor of shape ``(n, n)``.
         """
-        graph: npt.NDArray[np.float32] | None
+        data_list: list[Data] | None
         if stage == "train":
-            graph = self.train_graph
+            data_list = self._train_data
         elif stage == "val":
-            graph = self.val_graph
+            data_list = self._val_data
         elif stage == "test":
-            graph = self.test_graph
+            data_list = self._test_data
         else:
             raise ValueError(f"Unknown stage: {stage}")
 
-        if graph is None:
+        if data_list is None:
             raise RuntimeError(f"Call setup() before accessing {stage} graph")
 
-        return torch.from_numpy(graph).float()
+        return torch.from_numpy(self._data_to_adj(data_list[0]))

@@ -101,10 +101,13 @@ class TestGraphDataModuleContract:
         dm.prepare_data()
         dm.setup()
 
-        assert dm.train_adjacency_matrices is not None  # pyright: ignore[reportAttributeAccessIssue]
-        assert dm.test_adjacency_matrices is not None  # pyright: ignore[reportAttributeAccessIssue]
-        assert len(dm.train_adjacency_matrices) == 3  # pyright: ignore[reportAttributeAccessIssue]
-        assert len(dm.test_adjacency_matrices) == 2  # pyright: ignore[reportAttributeAccessIssue]
+        # samples_per_graph=8, val_samples_per_graph defaults to 8//2=4
+        # train: 3 unique graphs * 8 repetitions = 24
+        # test:  2 unique graphs * 4 repetitions = 8
+        assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert dm._test_data is not None  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._train_data) == 3 * 8  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._test_data) == 2 * 4  # pyright: ignore[reportPrivateUsage]
 
         batch = next(iter(dm.train_dataloader()))
         assert batch.to_adjacency().shape == (4, 20, 20)
@@ -277,12 +280,19 @@ class TestMultiGraphDataModuleContract:
         assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
         assert dm._val_data is not None  # pyright: ignore[reportPrivateUsage]
         assert dm._test_data is not None  # pyright: ignore[reportPrivateUsage]
-        assert dm._train_data.shape[0] == 80  # pyright: ignore[reportPrivateUsage]
-        assert dm._val_data.shape[0] == 10  # pyright: ignore[reportPrivateUsage]
-        assert dm._test_data.shape[0] == 10  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._train_data) == 80  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._val_data) == 10  # pyright: ignore[reportPrivateUsage]
+        assert len(dm._test_data) == 10  # pyright: ignore[reportPrivateUsage]
 
     def test_graph_validity(self) -> None:
-        """Generated graphs should be binary, symmetric, zero-diagonal."""
+        """Generated graphs should be binary, symmetric, zero-diagonal.
+
+        After the PyG Data storage refactor, _train_data is a list[Data]
+        with COO edge_index. We reconstruct dense adjacency to verify the
+        same invariants.
+        """
+        from torch_geometric.utils import to_dense_adj
+
         dm = MultiGraphDataModule(
             graph_type="sbm",
             num_nodes=16,
@@ -294,11 +304,13 @@ class TestMultiGraphDataModuleContract:
         dm.setup()
 
         assert dm._train_data is not None  # pyright: ignore[reportPrivateUsage]
-        data = dm._train_data  # pyright: ignore[reportPrivateUsage]
-        assert torch.all((data == 0) | (data == 1))
-        assert torch.allclose(data, data.transpose(-2, -1))
-        for i in range(data.shape[0]):
-            assert torch.all(data[i].diagonal() == 0)
+        graphs = dm._train_data  # pyright: ignore[reportPrivateUsage]
+        for g in graphs:
+            assert g.edge_index is not None
+            adj = to_dense_adj(g.edge_index, max_num_nodes=g.num_nodes).squeeze(0)
+            assert torch.all((adj == 0) | (adj == 1))
+            assert torch.allclose(adj, adj.T)
+            assert torch.all(adj.diagonal() == 0)
 
     def test_get_dataset_info(self) -> None:
         """get_dataset_info() should return expected metadata."""
@@ -461,7 +473,10 @@ class TestReproducibility:
         dm2.setup()
 
         assert dm1._train_data is not None and dm2._train_data is not None  # pyright: ignore[reportPrivateUsage]
-        assert torch.equal(dm1._train_data, dm2._train_data)  # pyright: ignore[reportPrivateUsage]
+        # Compare edge_index tensors of corresponding Data objects
+        for d1, d2 in zip(dm1._train_data, dm2._train_data, strict=False):  # pyright: ignore[reportPrivateUsage]
+            assert d1.edge_index is not None and d2.edge_index is not None
+            assert torch.equal(d1.edge_index, d2.edge_index)
 
     def test_categorical_reproducible(self) -> None:
         """Two SyntheticCategoricalDataModule instances with the same seed
