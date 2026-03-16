@@ -1,0 +1,23 @@
+tmgg/src/tmgg/training/orchestration/run_experiment.py
+  481719edbe738835 2,11-12,16-20,28-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "9cca3f34799077e3f6c47714fa2300a9d25c9c18",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 101,
+      "total_deletions": 15,
+      "accepted_lines": 99,
+      "overriden_lines": 0
+    }
+  }
+}
