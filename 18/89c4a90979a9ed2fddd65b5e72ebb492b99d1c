@@ -1,0 +1,35 @@
+tmgg/tests/debug/test_learning_sanity.py
+  481719edbe738835 37
+tmgg/src/tmgg/utils/__init__.py
+  481719edbe738835 2-35
+tmgg/src/tmgg/data/__init__.py
+  481719edbe738835 1
+tmgg/tests/test_integration.py
+  481719edbe738835 11,21
+tmgg/tests/debug/test_digress_sanity.py
+  481719edbe738835 15
+tmgg/tests/test_data_generation.py
+  481719edbe738835 8-11
+tmgg/tach.toml
+  481719edbe738835 22-23,43-46,68,79,81,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "1889c4a90979a9ed2fddd65b5e72ebb492b99d1c",
+  "prompts": {
+    "481719edbe738835": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4127849-15ca-4c8b-bb30-51c94e7a3264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Igor Krawczuk <igor@adaptyvbio.com>",
+      "messages": [],
+      "total_additions": 60,
+      "total_deletions": 51,
+      "accepted_lines": 58,
+      "overriden_lines": 0
+    }
+  }
+}
