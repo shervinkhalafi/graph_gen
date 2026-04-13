@@ -96,8 +96,8 @@ class MultiLayerAttention(GraphModel):
         Parameters
         ----------
         data
-            Graph features. The adjacency is extracted via
-            ``data.to_adjacency()``.
+            Graph features. The dense edge state is extracted via
+            ``data.to_edge_state()``.
         t
             Diffusion timestep tensor, or None. Currently unused.
 
@@ -106,9 +106,9 @@ class MultiLayerAttention(GraphModel):
         GraphData
             Denoised graph with 2-class edge features.
         """
-        A = data.to_adjacency()
+        A = data.to_edge_state()
         out = self.apply_attention(A)
-        return GraphData.from_adjacency(out)
+        return GraphData.from_edge_state(out, node_mask=data.node_mask)
 
     @override
     def get_config(self) -> dict[str, Any]:

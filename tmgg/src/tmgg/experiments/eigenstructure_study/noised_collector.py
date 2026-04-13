@@ -7,8 +7,8 @@ reusing original adjacency matrices from Phase 1 collection.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
 import torch
 from loguru import logger
@@ -16,6 +16,7 @@ from loguru import logger
 from tmgg.utils.noising.noise import create_noise_definition
 from tmgg.utils.spectral.laplacian import compute_laplacian
 
+from .analyzer import CovarianceResult
 from .storage import (
     iter_batches,
     load_decomposition_batch,
@@ -25,6 +26,243 @@ from .storage import (
 )
 
 _EPS = 1e-10  # numerical stability for relative metrics
+
+
+@dataclass(frozen=True)
+class MeanStdMetric:
+    """Mean/std summary for one scalar metric aggregated across graphs.
+
+    The comparison code computes many graph-wise tensors and then collapses
+    them into compact statistics for reporting. This value object keeps the
+    Python API typed without changing the flat JSON files that downstream
+    scripts already read.
+    """
+
+    mean: float
+    std: float
+
+    @classmethod
+    def from_tensor(cls, values: torch.Tensor) -> MeanStdMetric:
+        """Build a summary from a one-dimensional tensor of metric values."""
+        return cls(mean=values.mean().item(), std=values.std().item())
+
+    def to_json_dict(self, *, mean_key: str, std_key: str) -> dict[str, float]:
+        """Serialize under explicit field names used at the JSON boundary."""
+        return {mean_key: self.mean, std_key: self.std}
+
+
+@dataclass(frozen=True)
+class DriftComparisonResult:
+    """Relative eigenvalue drift statistics for adjacency and Laplacian spectra."""
+
+    noise_level: float
+    adjacency: MeanStdMetric
+    laplacian: MeanStdMetric
+
+    def to_json_dict(self) -> dict[str, float]:
+        """Serialize to the legacy flat JSON structure."""
+        return {
+            "noise_level": self.noise_level,
+            **self.adjacency.to_json_dict(
+                mean_key="adjacency_drift_mean",
+                std_key="adjacency_drift_std",
+            ),
+            **self.laplacian.to_json_dict(
+                mean_key="laplacian_drift_mean",
+                std_key="laplacian_drift_std",
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class GapDeltaComparisonResult:
+    """Absolute and relative delta summaries for one spectral scalar metric."""
+
+    noise_level: float
+    absolute: MeanStdMetric
+    relative: MeanStdMetric
+
+    def to_json_dict(self, prefix: str) -> dict[str, float]:
+        """Serialize using a metric-specific prefix such as ``eigengap_delta``."""
+        return {
+            "noise_level": self.noise_level,
+            **self.absolute.to_json_dict(
+                mean_key=f"{prefix}_abs_mean",
+                std_key=f"{prefix}_abs_std",
+            ),
+            **self.relative.to_json_dict(
+                mean_key=f"{prefix}_rel_mean",
+                std_key=f"{prefix}_rel_std",
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class SubspaceDistanceResult:
+    """Projection-Frobenius subspace distance summary for one noise level."""
+
+    noise_level: float
+    k: int
+    distance: MeanStdMetric
+
+    def to_json_dict(self) -> dict[str, float | int]:
+        """Serialize to the legacy flat JSON structure."""
+        return {
+            "noise_level": self.noise_level,
+            "k": self.k,
+            **self.distance.to_json_dict(
+                mean_key="subspace_distance_mean",
+                std_key="subspace_distance_std",
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class PrincipalAngleResult:
+    """Principal-angle summaries for original/noised eigenspace comparisons."""
+
+    noise_level: float
+    k: int
+    first_principal_angle: MeanStdMetric
+    mean_principal_angle: MeanStdMetric
+
+    def to_json_dict(self) -> dict[str, float | int]:
+        """Serialize to the legacy flat JSON structure."""
+        return {
+            "noise_level": self.noise_level,
+            "k": self.k,
+            **self.first_principal_angle.to_json_dict(
+                mean_key="first_principal_angle_mean",
+                std_key="first_principal_angle_std",
+            ),
+            **self.mean_principal_angle.to_json_dict(
+                mean_key="mean_principal_angle_mean",
+                std_key="mean_principal_angle_std",
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class ProcrustesKStats:
+    """Angle/residual summaries for one Procrustes subspace dimension ``k``."""
+
+    angle: MeanStdMetric
+    residual: MeanStdMetric
+
+    def to_json_dict(self, k: int) -> dict[str, float]:
+        """Serialize using the historical ``procrustes_*_k{k}_*`` key layout."""
+        return {
+            **self.angle.to_json_dict(
+                mean_key=f"procrustes_angle_k{k}_mean",
+                std_key=f"procrustes_angle_k{k}_std",
+            ),
+            **self.residual.to_json_dict(
+                mean_key=f"procrustes_residual_k{k}_mean",
+                std_key=f"procrustes_residual_k{k}_std",
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class ProcrustesRotationResult:
+    """Procrustes summaries grouped by requested subspace dimension."""
+
+    noise_level: float
+    stats_by_k: dict[int, ProcrustesKStats]
+
+    def to_json_dict(self) -> dict[str, float]:
+        """Serialize to the historical flat key layout."""
+        payload: dict[str, float] = {"noise_level": self.noise_level}
+        for k in sorted(self.stats_by_k):
+            payload.update(self.stats_by_k[k].to_json_dict(k))
+        return payload
+
+
+@dataclass(frozen=True)
+class NoiseLevelComparisonResult:
+    """Full one-pass comparison summary for a single noise level.
+
+    The one-pass collector computes all compatible metrics while paired batches
+    are already in memory. Keeping the result structured here prevents schema
+    drift while still letting callers emit the existing flat JSON artifact.
+    """
+
+    noise_level: float
+    k: int
+    eigengap_delta_relative: MeanStdMetric
+    algebraic_connectivity_delta_relative: MeanStdMetric
+    eigenvalue_drift_adjacency: MeanStdMetric
+    eigenvalue_drift_laplacian: MeanStdMetric
+    subspace_distance: MeanStdMetric
+    procrustes_by_k: dict[int, ProcrustesKStats]
+
+    def to_json_dict(self) -> dict[str, float | int]:
+        """Serialize to the legacy ``comparison.json`` layout."""
+        payload: dict[str, float | int] = {
+            "noise_level": self.noise_level,
+            "k": self.k,
+            **self.eigengap_delta_relative.to_json_dict(
+                mean_key="eigengap_delta_rel_mean",
+                std_key="eigengap_delta_rel_std",
+            ),
+            **self.algebraic_connectivity_delta_relative.to_json_dict(
+                mean_key="alg_conn_delta_rel_mean",
+                std_key="alg_conn_delta_rel_std",
+            ),
+            **self.eigenvalue_drift_adjacency.to_json_dict(
+                mean_key="eigenvalue_drift_adj_mean",
+                std_key="eigenvalue_drift_adj_std",
+            ),
+            **self.eigenvalue_drift_laplacian.to_json_dict(
+                mean_key="eigenvalue_drift_lap_mean",
+                std_key="eigenvalue_drift_lap_std",
+            ),
+            **self.subspace_distance.to_json_dict(
+                mean_key="subspace_distance_mean",
+                std_key="subspace_distance_std",
+            ),
+        }
+        for k in sorted(self.procrustes_by_k):
+            payload.update(self.procrustes_by_k[k].to_json_dict(k))
+        return payload
+
+
+@dataclass(frozen=True)
+class CovarianceEvolutionItem:
+    """Covariance summary and deltas for one noised dataset snapshot."""
+
+    noise_level: float
+    covariance: CovarianceResult
+    frobenius_delta_relative: float
+    trace_delta_relative: float
+    off_diagonal_delta_relative: float
+
+    def to_json_dict(self) -> dict[str, object]:
+        """Serialize one per-noise-level covariance comparison item."""
+        return {
+            "noise_level": self.noise_level,
+            "covariance": asdict(self.covariance),
+            "frobenius_delta_relative": self.frobenius_delta_relative,
+            "trace_delta_relative": self.trace_delta_relative,
+            "off_diagonal_delta_relative": self.off_diagonal_delta_relative,
+        }
+
+
+@dataclass(frozen=True)
+class CovarianceEvolutionResult:
+    """Covariance evolution across all available noise levels."""
+
+    matrix_type: str
+    original: CovarianceResult
+    per_noise_level: list[CovarianceEvolutionItem]
+
+    def to_json_dict(self) -> dict[str, object]:
+        """Serialize to the stable ``covariance_evolution.json`` layout."""
+        return {
+            "matrix_type": self.matrix_type,
+            "original": asdict(self.original),
+            "per_noise_level": [item.to_json_dict() for item in self.per_noise_level],
+        }
 
 
 class NoisedEigenstructureCollector:
@@ -209,7 +447,7 @@ class NoisedAnalysisComparator:
             noised_tensors, _ = load_decomposition_batch(noised_path)
             yield orig_tensors, noised_tensors
 
-    def compute_eigenvalue_drift(self, eps: float) -> dict[str, Any]:
+    def compute_eigenvalue_drift(self, eps: float) -> DriftComparisonResult:
         """Compute eigenvalue drift between original and noised graphs.
 
         Parameters
@@ -219,8 +457,8 @@ class NoisedAnalysisComparator:
 
         Returns
         -------
-        dict
-            Statistics on eigenvalue drift for both adjacency and Laplacian.
+        DriftComparisonResult
+            Relative drift summaries for adjacency and Laplacian eigenvalues.
         """
         adj_drifts: list[torch.Tensor] = []
         lap_drifts: list[torch.Tensor] = []
@@ -242,15 +480,13 @@ class NoisedAnalysisComparator:
         adj_drift = torch.cat(adj_drifts)
         lap_drift = torch.cat(lap_drifts)
 
-        return {
-            "noise_level": eps,
-            "adjacency_drift_mean": adj_drift.mean().item(),
-            "adjacency_drift_std": adj_drift.std().item(),
-            "laplacian_drift_mean": lap_drift.mean().item(),
-            "laplacian_drift_std": lap_drift.std().item(),
-        }
+        return DriftComparisonResult(
+            noise_level=eps,
+            adjacency=MeanStdMetric.from_tensor(adj_drift),
+            laplacian=MeanStdMetric.from_tensor(lap_drift),
+        )
 
-    def compute_eigengap_delta(self, eps: float) -> dict[str, Any]:
+    def compute_eigengap_delta(self, eps: float) -> GapDeltaComparisonResult:
         """Compute eigengap delta between original and noised graphs.
 
         Parameters
@@ -260,8 +496,8 @@ class NoisedAnalysisComparator:
 
         Returns
         -------
-        dict
-            Statistics on spectral gap change for adjacency matrices.
+        GapDeltaComparisonResult
+            Absolute and relative summaries for the adjacency spectral gap.
         """
         from .analyzer import compute_eigengap_delta
 
@@ -278,15 +514,15 @@ class NoisedAnalysisComparator:
         abs_delta = torch.cat(abs_deltas)
         rel_delta = torch.cat(rel_deltas)
 
-        return {
-            "noise_level": eps,
-            "eigengap_delta_abs_mean": abs_delta.mean().item(),
-            "eigengap_delta_abs_std": abs_delta.std().item(),
-            "eigengap_delta_rel_mean": rel_delta.mean().item(),
-            "eigengap_delta_rel_std": rel_delta.std().item(),
-        }
+        return GapDeltaComparisonResult(
+            noise_level=eps,
+            absolute=MeanStdMetric.from_tensor(abs_delta),
+            relative=MeanStdMetric.from_tensor(rel_delta),
+        )
 
-    def compute_algebraic_connectivity_delta(self, eps: float) -> dict[str, Any]:
+    def compute_algebraic_connectivity_delta(
+        self, eps: float
+    ) -> GapDeltaComparisonResult:
         """Compute algebraic connectivity delta between original and noised graphs.
 
         Parameters
@@ -296,8 +532,8 @@ class NoisedAnalysisComparator:
 
         Returns
         -------
-        dict
-            Statistics on Fiedler value change for Laplacian matrices.
+        GapDeltaComparisonResult
+            Absolute and relative summaries for the Fiedler value shift.
         """
         from .analyzer import compute_algebraic_connectivity_delta
 
@@ -314,15 +550,15 @@ class NoisedAnalysisComparator:
         abs_delta = torch.cat(abs_deltas)
         rel_delta = torch.cat(rel_deltas)
 
-        return {
-            "noise_level": eps,
-            "alg_conn_delta_abs_mean": abs_delta.mean().item(),
-            "alg_conn_delta_abs_std": abs_delta.std().item(),
-            "alg_conn_delta_rel_mean": rel_delta.mean().item(),
-            "alg_conn_delta_rel_std": rel_delta.std().item(),
-        }
+        return GapDeltaComparisonResult(
+            noise_level=eps,
+            absolute=MeanStdMetric.from_tensor(abs_delta),
+            relative=MeanStdMetric.from_tensor(rel_delta),
+        )
 
-    def compute_subspace_distance(self, eps: float, k: int = 10) -> dict[str, Any]:
+    def compute_subspace_distance(
+        self, eps: float, k: int = 10
+    ) -> SubspaceDistanceResult:
         """Compute subspace distance between original and noised eigenvectors.
 
         Parameters
@@ -334,8 +570,8 @@ class NoisedAnalysisComparator:
 
         Returns
         -------
-        dict
-            Statistics on projection Frobenius distance.
+        SubspaceDistanceResult
+            Projection-Frobenius distance summary for the chosen ``k``.
         """
         from tmgg.utils.spectral.spectral_deltas import (
             compute_subspace_distance_from_eigenvectors,
@@ -351,14 +587,15 @@ class NoisedAnalysisComparator:
 
         all_distances = torch.cat(distances)
 
-        return {
-            "noise_level": eps,
-            "k": k,
-            "subspace_distance_mean": all_distances.mean().item(),
-            "subspace_distance_std": all_distances.std().item(),
-        }
+        return SubspaceDistanceResult(
+            noise_level=eps,
+            k=k,
+            distance=MeanStdMetric.from_tensor(all_distances),
+        )
 
-    def compute_subspace_deviation(self, eps: float, k: int = 10) -> dict[str, Any]:
+    def compute_subspace_deviation(
+        self, eps: float, k: int = 10
+    ) -> PrincipalAngleResult:
         """Compute subspace deviation via principal angles.
 
         Parameters
@@ -370,8 +607,8 @@ class NoisedAnalysisComparator:
 
         Returns
         -------
-        dict
-            Statistics on principal angles between original and noised subspaces.
+        PrincipalAngleResult
+            First-angle and mean-angle summaries for the chosen ``k``.
 
         Notes
         -----
@@ -395,18 +632,16 @@ class NoisedAnalysisComparator:
         first_angles_t = torch.tensor(first_angles)
         mean_angles_t = torch.tensor(mean_angles)
 
-        return {
-            "noise_level": eps,
-            "k": k,
-            "first_principal_angle_mean": first_angles_t.mean().item(),
-            "first_principal_angle_std": first_angles_t.std().item(),
-            "mean_principal_angle_mean": mean_angles_t.mean().item(),
-            "mean_principal_angle_std": mean_angles_t.std().item(),
-        }
+        return PrincipalAngleResult(
+            noise_level=eps,
+            k=k,
+            first_principal_angle=MeanStdMetric.from_tensor(first_angles_t),
+            mean_principal_angle=MeanStdMetric.from_tensor(mean_angles_t),
+        )
 
     def compute_procrustes_rotation(
         self, eps: float, k_values: list[int] | None = None
-    ) -> dict[str, Any]:
+    ) -> ProcrustesRotationResult:
         """Compute Procrustes rotation metrics between original and noised eigenvectors.
 
         Parameters
@@ -419,8 +654,8 @@ class NoisedAnalysisComparator:
 
         Returns
         -------
-        dict
-            Statistics on Procrustes rotation angles and residuals for each k.
+        ProcrustesRotationResult
+            Procrustes angle and residual summaries indexed by ``k``.
         """
         from tmgg.utils.spectral.subspace import (
             compute_procrustes_rotation,
@@ -446,25 +681,21 @@ class NoisedAnalysisComparator:
                     angles_by_k[k].append(result["angle"].item())
                     residuals_by_k[k].append(result["residual"].item())
 
-        procrustes_stats: dict[str, Any] = {"noise_level": eps}
+        stats_by_k: dict[int, ProcrustesKStats] = {}
         for k in k_values:
             if angles_by_k[k]:
                 angles_t = torch.tensor(angles_by_k[k])
                 residuals_t = torch.tensor(residuals_by_k[k])
-                procrustes_stats[f"procrustes_angle_k{k}_mean"] = angles_t.mean().item()
-                procrustes_stats[f"procrustes_angle_k{k}_std"] = angles_t.std().item()
-                procrustes_stats[f"procrustes_residual_k{k}_mean"] = (
-                    residuals_t.mean().item()
-                )
-                procrustes_stats[f"procrustes_residual_k{k}_std"] = (
-                    residuals_t.std().item()
+                stats_by_k[k] = ProcrustesKStats(
+                    angle=MeanStdMetric.from_tensor(angles_t),
+                    residual=MeanStdMetric.from_tensor(residuals_t),
                 )
 
-        return procrustes_stats
+        return ProcrustesRotationResult(noise_level=eps, stats_by_k=stats_by_k)
 
     def compute_full_comparison(
         self, k: int = 10, procrustes_k_values: list[int] | None = None
-    ) -> list[dict[str, Any]]:
+    ) -> list[NoiseLevelComparisonResult]:
         """Compute all delta metrics across all noise levels in a single pass.
 
         For each noise level, iterates the paired batches once, computing
@@ -481,8 +712,8 @@ class NoisedAnalysisComparator:
 
         Returns
         -------
-        list[dict]
-            One result dict per noise level with statistics for all metrics.
+        list[NoiseLevelComparisonResult]
+            One typed result object per noise level.
         """
         from tmgg.utils.spectral.spectral_deltas import (
             compute_subspace_distance_from_eigenvectors,
@@ -499,7 +730,7 @@ class NoisedAnalysisComparator:
         if procrustes_k_values is None:
             procrustes_k_values = [1, 2, 4, 8, 16]
 
-        results = []
+        results: list[NoiseLevelComparisonResult] = []
         for eps in self.get_noise_levels():
             logger.info(f"Comparing at eps={eps}")
 
@@ -557,47 +788,45 @@ class NoisedAnalysisComparator:
                         angles_by_k[kv].append(pr["angle"].item())
                         residuals_by_k[kv].append(pr["residual"].item())
 
-            # Aggregate statistics
+            # Aggregate the one-pass tensors into typed summaries before anything
+            # crosses the JSON boundary. That keeps the in-memory API structured
+            # even though the persisted artifact is still a flat dict.
             adj_drift = torch.cat(adj_drifts)
             lap_drift = torch.cat(lap_drifts)
             eg_rel = torch.cat(eigengap_rel)
             ac_rel = torch.cat(alg_conn_rel)
             sub_dist = torch.cat(sub_distances)
 
-            combined: dict[str, Any] = {
-                "noise_level": eps,
-                "k": k,
-                "eigengap_delta_rel_mean": eg_rel.mean().item(),
-                "eigengap_delta_rel_std": eg_rel.std().item(),
-                "alg_conn_delta_rel_mean": ac_rel.mean().item(),
-                "alg_conn_delta_rel_std": ac_rel.std().item(),
-                "eigenvalue_drift_adj_mean": adj_drift.mean().item(),
-                "eigenvalue_drift_adj_std": adj_drift.std().item(),
-                "eigenvalue_drift_lap_mean": lap_drift.mean().item(),
-                "eigenvalue_drift_lap_std": lap_drift.std().item(),
-                "subspace_distance_mean": sub_dist.mean().item(),
-                "subspace_distance_std": sub_dist.std().item(),
-            }
+            procrustes_by_k: dict[int, ProcrustesKStats] = {}
             for kv in procrustes_k_values:
                 if angles_by_k[kv]:
                     angles_t = torch.tensor(angles_by_k[kv])
                     residuals_t = torch.tensor(residuals_by_k[kv])
-                    combined[f"procrustes_angle_k{kv}_mean"] = angles_t.mean().item()
-                    combined[f"procrustes_angle_k{kv}_std"] = angles_t.std().item()
-                    combined[f"procrustes_residual_k{kv}_mean"] = (
-                        residuals_t.mean().item()
-                    )
-                    combined[f"procrustes_residual_k{kv}_std"] = (
-                        residuals_t.std().item()
+                    procrustes_by_k[kv] = ProcrustesKStats(
+                        angle=MeanStdMetric.from_tensor(angles_t),
+                        residual=MeanStdMetric.from_tensor(residuals_t),
                     )
 
-            results.append(combined)
+            results.append(
+                NoiseLevelComparisonResult(
+                    noise_level=eps,
+                    k=k,
+                    eigengap_delta_relative=MeanStdMetric.from_tensor(eg_rel),
+                    algebraic_connectivity_delta_relative=MeanStdMetric.from_tensor(
+                        ac_rel
+                    ),
+                    eigenvalue_drift_adjacency=MeanStdMetric.from_tensor(adj_drift),
+                    eigenvalue_drift_laplacian=MeanStdMetric.from_tensor(lap_drift),
+                    subspace_distance=MeanStdMetric.from_tensor(sub_dist),
+                    procrustes_by_k=procrustes_by_k,
+                )
+            )
 
         return results
 
     def compute_covariance_evolution(
         self, matrix_type: str = "adjacency"
-    ) -> dict[str, Any]:
+    ) -> CovarianceEvolutionResult:
         """
         Compute eigenvalue covariance at each noise level.
 
@@ -612,17 +841,10 @@ class NoisedAnalysisComparator:
 
         Returns
         -------
-        dict
-            Dictionary containing:
-            - original: CovarianceResult for original (clean) graphs
-            - per_noise_level: list of dicts with noise_level, CovarianceResult,
-              and delta from original (Frobenius norm change, correlation change)
+        CovarianceEvolutionResult
+            Original covariance plus one typed delta item per noise level.
         """
-        from .analyzer import (
-            CovarianceResult,
-            compute_covariance_summary,
-            compute_eigenvalue_covariance,
-        )
+        from .analyzer import compute_covariance_summary, compute_eigenvalue_covariance
 
         key = "eigenvalues_adj" if matrix_type == "adjacency" else "eigenvalues_lap"
 
@@ -645,7 +867,7 @@ class NoisedAnalysisComparator:
         )
 
         # Compute per noise level
-        per_level_results: list[dict[str, Any]] = []
+        per_level_results: list[CovarianceEvolutionItem] = []
 
         for eps in self.get_noise_levels():
             noised_dir = self.noised_base_dir / f"eps_{eps:.4f}"
@@ -680,13 +902,13 @@ class NoisedAnalysisComparator:
             ) / (abs(orig_summary["off_diagonal_sum"]) + _EPS)
 
             per_level_results.append(
-                {
-                    "noise_level": eps,
-                    "covariance": noised_result,
-                    "frobenius_delta_relative": frob_delta,
-                    "trace_delta_relative": trace_delta,
-                    "off_diagonal_delta_relative": off_diag_delta,
-                }
+                CovarianceEvolutionItem(
+                    noise_level=eps,
+                    covariance=noised_result,
+                    frobenius_delta_relative=frob_delta,
+                    trace_delta_relative=trace_delta,
+                    off_diagonal_delta_relative=off_diag_delta,
+                )
             )
 
             logger.info(
@@ -694,8 +916,8 @@ class NoisedAnalysisComparator:
                 f"off_diag_delta={off_diag_delta:.4f}"
             )
 
-        return {
-            "matrix_type": matrix_type,
-            "original": original_result,
-            "per_noise_level": per_level_results,
-        }
+        return CovarianceEvolutionResult(
+            matrix_type=matrix_type,
+            original=original_result,
+            per_noise_level=per_level_results,
+        )

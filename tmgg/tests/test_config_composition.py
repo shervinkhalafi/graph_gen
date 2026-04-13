@@ -65,7 +65,7 @@ def get_minimal_overrides(tmp_path: Path) -> list[str]:
         "trainer.max_steps=2",
         "trainer.val_check_interval=1",
         "trainer.accelerator=cpu",
-        # Disable logger config (tensorboard/wandb)
+        # Disable logger config to avoid W&B runtime dependencies
         "~logger",
         # Minimal data for fast instantiation
         "data.batch_size=2",
@@ -152,6 +152,29 @@ class TestConfigComposition:
         assert isinstance(
             data_module, pl.LightningDataModule
         ), f"Config {base_config} data is not a LightningDataModule: {type(data_module)}"
+
+    def test_denoising_task_does_not_copy_noise_config_into_data_module(
+        self, exp_config_path: Path, tmp_path: Path
+    ) -> None:
+        """Denoising task config should not inject noise fields into cfg.data.
+
+        Regression rationale
+        --------------------
+        The denoising noise contract belongs to the LightningModule, not the
+        datamodule constructor. When task/denoising.yaml leaks ``noise_type`` or
+        ``noise_levels`` into ``cfg.data``, Hydra instantiation breaks as soon
+        as GraphDataModule stops accepting those dead kwargs.
+        """
+        overrides = get_minimal_overrides(tmp_path)
+
+        with initialize_config_dir(
+            version_base=None,
+            config_dir=str(exp_config_path),
+        ):
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
+
+        assert "noise_type" not in cfg.data
+        assert "noise_levels" not in cfg.data
 
 
 # Configs that use standard adjacency matrix input
@@ -333,3 +356,87 @@ class TestStageConfigComposition:
         assert "model" in cfg
         assert "data" in cfg
         assert "trainer" in cfg
+
+    @pytest.mark.parametrize(
+        ("stage_name", "expected_k"),
+        [
+            ("stage3_diversity", 50),
+            ("stage4_benchmarks", 32),
+            ("stage5_full", 50),
+        ],
+    )
+    def test_future_stages_inherit_shared_runtime_settings(
+        self,
+        stage_name: str,
+        expected_k: int,
+        exp_config_path: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Future stages should inherit the shared runtime config verbatim.
+
+        Rationale
+        ---------
+        Stage 3-5 intentionally share the same executable training settings.
+        This test locks those inherited values so a future stage-specific edit
+        does not silently fork optimizer or noise-level behavior.
+        """
+        overrides = get_minimal_overrides(tmp_path)
+        overrides.append(f"+stage={stage_name}")
+
+        with initialize_config_dir(
+            version_base=None,
+            config_dir=str(exp_config_path),
+        ):
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
+
+        assert cfg.learning_rate == 1e-2
+        assert cfg.weight_decay == 1e-12
+        assert cfg.optimizer_type == "adamw"
+        assert cfg.amsgrad is True
+        assert cfg.scheduler_config.type == "none"
+        assert list(cfg.noise_levels) == [0.1]
+        assert list(cfg.eval_noise_levels) == [0.1]
+        assert cfg.model.k == expected_k
+
+    @pytest.mark.parametrize(
+        ("data_config", "expected_num_nodes", "expected_max_block_size"),
+        [
+            ("sbm_n100", 100, 15),
+            ("sbm_n200", 200, 60),
+        ],
+    )
+    def test_sbm_variants_inherit_default_config(
+        self,
+        data_config: str,
+        expected_num_nodes: int,
+        expected_max_block_size: int,
+        exp_config_path: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Sized SBM configs should override only the intended graph parameters.
+
+        Rationale
+        ---------
+        The n=100 and n=200 variants are maintenance aliases over the default
+        SBM config. This test guards against config copy-paste drift by
+        asserting that inherited probabilities and partition settings remain
+        identical while node-count-specific overrides still apply.
+        """
+        overrides = get_minimal_overrides(tmp_path)
+        overrides.append(f"data={data_config}")
+
+        with initialize_config_dir(
+            version_base=None,
+            config_dir=str(exp_config_path),
+        ):
+            cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
+
+        assert cfg.data.graph_type == "sbm"
+        assert cfg.data.graph_config.num_nodes == expected_num_nodes
+        assert cfg.data.graph_config.max_block_size == expected_max_block_size
+        assert cfg.data.graph_config.p_intra == 1.0
+        assert cfg.data.graph_config.p_inter == 0.0
+        assert cfg.data.graph_config.min_blocks == 2
+        assert cfg.data.graph_config.max_blocks == 4
+        assert cfg.data.graph_config.num_train_partitions == 10
+        assert cfg.data.graph_config.num_test_partitions == 10

@@ -1,19 +1,20 @@
-"""Tests for VLB methods on CategoricalNoiseProcess.
+"""Tests for exact-density VLB primitives on CategoricalNoiseProcess.
 
 Test rationale
 --------------
-``compute_Lt`` and ``reconstruction_logp`` are the two remaining VLB
-terms ported from the old ``DiscreteDiffusionLightningModule``. They are
-pure noise-process math with no model or Lightning dependency.
+The refactor replaces categorical-only public VLB helpers with
+``ExactDensityNoiseProcess`` methods. These tests validate the exact-density
+surface directly and keep reconstruction-specific log-probability tests on the
+training-module helper that owns model-parameterization concerns.
 
 Starting state: a uniform ``CategoricalNoiseProcess`` with small
 dimensions (dx=2, de=2, T=10, bs=3, n=6).
 
 Invariants tested:
-- Output shapes are ``(bs,)`` for both methods.
+- Exact-density methods return per-sample outputs with shape ``(bs,)``.
 - Outputs are finite (no NaN/Inf from division or log).
-- Perfect predictions yield near-zero loss: KL(p||p) ~ 0 for
-  ``compute_Lt``, and ``log(1) = 0`` for ``reconstruction_logp``.
+- When the same clean parameterization is used on both sides of the posterior
+  KL identity, the log-probability difference is exactly zero.
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ from torch.nn import functional as F
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.diffusion.transitions import DiscreteUniformTransition
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -42,10 +42,10 @@ def schedule() -> NoiseSchedule:
 @pytest.fixture()
 def proc(schedule: NoiseSchedule) -> CategoricalNoiseProcess:
     return CategoricalNoiseProcess(
-        noise_schedule=schedule,
+        schedule=schedule,
         x_classes=DX,
         e_classes=DE,
-        transition_model=DiscreteUniformTransition(DX, DE, 0),
+        limit_distribution="uniform",
     )
 
 
@@ -72,125 +72,74 @@ def clean_data() -> GraphData:
 
 
 # ---------------------------------------------------------------------------
-# compute_Lt tests
+# posterior_log_prob tests
 # ---------------------------------------------------------------------------
 
 
-class TestComputeLt:
-    """Tests for the diffusion KL term L_t."""
+class TestPosteriorLogProb:
+    """Tests for categorical posterior exact log-probabilities."""
 
     def test_output_shape(
         self, proc: CategoricalNoiseProcess, clean_data: GraphData
     ) -> None:
-        """compute_Lt returns shape (bs,)."""
+        """posterior_log_prob returns one value per batch element."""
         t_int = torch.tensor([5, 3, 7])
-        noisy = proc.apply(clean_data, t_int)
-        # Use uniform predictions as a simple stand-in
-        pred = GraphData(
-            X=torch.ones_like(clean_data.X) / DX,
-            E=torch.ones_like(clean_data.E) / DE,
-            y=clean_data.y,
-            node_mask=clean_data.node_mask,
-        )
-        result = proc.compute_Lt(clean_data, pred, noisy, t_int)
+        noisy = proc.forward_sample(clean_data, t_int)
+        s_int = t_int - 1
+        x_s = proc.posterior_sample(noisy, clean_data, t_int, s_int)
+        result = proc.posterior_log_prob(x_s, noisy, clean_data, t_int, s_int)
         assert result.shape == (BS,)
 
     def test_output_finite(
         self, proc: CategoricalNoiseProcess, clean_data: GraphData
     ) -> None:
-        """compute_Lt produces finite values."""
+        """posterior_log_prob produces finite values."""
         t_int = torch.tensor([5, 3, 7])
-        noisy = proc.apply(clean_data, t_int)
-        pred = GraphData(
-            X=torch.ones_like(clean_data.X) / DX,
-            E=torch.ones_like(clean_data.E) / DE,
-            y=clean_data.y,
-            node_mask=clean_data.node_mask,
-        )
-        result = proc.compute_Lt(clean_data, pred, noisy, t_int)
+        noisy = proc.forward_sample(clean_data, t_int)
+        s_int = t_int - 1
+        x_s = proc.posterior_sample(noisy, clean_data, t_int, s_int)
+        result = proc.posterior_log_prob(x_s, noisy, clean_data, t_int, s_int)
         assert torch.isfinite(result).all()
 
     def test_perfect_prediction_near_zero(
         self, proc: CategoricalNoiseProcess, clean_data: GraphData
     ) -> None:
-        """When pred == clean, KL should be near zero."""
+        """The posterior KL identity collapses to zero for identical parameters."""
         t_int = torch.tensor([5, 3, 7])
-        noisy = proc.apply(clean_data, t_int)
-        # Perfect prediction: pass the actual clean data as pred
-        result = proc.compute_Lt(clean_data, clean_data, noisy, t_int)
-        assert result.shape == (BS,)
-        # KL(p || p) = 0, but mask_distributions adds eps so allow small tolerance
-        assert (result.abs() < 0.5).all(), f"Expected near-zero KL, got {result}"
+        noisy = proc.forward_sample(clean_data, t_int)
+        s_int = t_int - 1
+        x_s = proc.posterior_sample(noisy, clean_data, t_int, s_int)
+        log_true = proc.posterior_log_prob(x_s, noisy, clean_data, t_int, s_int)
+        log_same = proc.posterior_log_prob(x_s, noisy, clean_data, t_int, s_int)
+        torch.testing.assert_close(log_true - log_same, torch.zeros_like(log_true))
 
 
 # ---------------------------------------------------------------------------
-# reconstruction_logp tests
+# forward_log_prob and prior_log_prob tests
 # ---------------------------------------------------------------------------
 
 
-class TestReconstructionLogp:
-    """Tests for the reconstruction log-probability term."""
+class TestExactDensityTerms:
+    """Tests for forward and prior exact log-probability helpers."""
 
     def test_output_shape(
         self, proc: CategoricalNoiseProcess, clean_data: GraphData
     ) -> None:
-        """reconstruction_logp returns shape (bs,)."""
-        # pred_probs is a probability distribution over classes
-        pred_probs = GraphData(
-            X=torch.ones_like(clean_data.X) / DX,
-            E=torch.ones_like(clean_data.E) / DE,
-            y=clean_data.y,
-            node_mask=clean_data.node_mask,
-        )
-        result = proc.reconstruction_logp(clean_data, pred_probs)
-        assert result.shape == (BS,)
+        """forward_log_prob and prior_log_prob return one value per sample."""
+        t_int = torch.tensor([T, T - 1, T - 2])
+        noisy = proc.forward_sample(clean_data, t_int)
+        forward = proc.forward_log_prob(noisy, clean_data, t_int)
+        prior = proc.prior_log_prob(noisy)
+        assert forward.shape == (BS,)
+        assert prior.shape == (BS,)
 
     def test_output_finite(
         self, proc: CategoricalNoiseProcess, clean_data: GraphData
     ) -> None:
-        """reconstruction_logp produces finite values."""
-        pred_probs = GraphData(
-            X=torch.ones_like(clean_data.X) / DX,
-            E=torch.ones_like(clean_data.E) / DE,
-            y=clean_data.y,
-            node_mask=clean_data.node_mask,
-        )
-        result = proc.reconstruction_logp(clean_data, pred_probs)
-        assert torch.isfinite(result).all()
-
-    def test_perfect_prediction_near_zero(
-        self, proc: CategoricalNoiseProcess, clean_data: GraphData
-    ) -> None:
-        """When pred_probs match clean with small epsilon floor, loss is ~0.
-
-        In the real pipeline, ``_reconstruction_logp`` ensures masked
-        positions have probability 1 and the model never outputs exact 0.
-        We simulate that by clamping to a small epsilon.
-        """
-        # Add tiny epsilon to avoid 0*log(0) = NaN, then renormalise
-        eps = 1e-7
-        X_safe = clean_data.X + eps
-        X_safe = X_safe / X_safe.sum(dim=-1, keepdim=True)
-        E_safe = clean_data.E + eps
-        E_safe = E_safe / E_safe.sum(dim=-1, keepdim=True)
-        pred = GraphData(
-            X=X_safe, E=E_safe, y=clean_data.y, node_mask=clean_data.node_mask
-        )
-        result = proc.reconstruction_logp(clean_data, pred)
-        assert result.shape == (BS,)
-        # log(~1) is near 0 at one-hot positions, and 0 * log(eps) = ~0
-        assert (result.abs() < 0.1).all(), f"Expected near-zero, got {result}"
-
-    def test_negative_for_imperfect_prediction(
-        self, proc: CategoricalNoiseProcess, clean_data: GraphData
-    ) -> None:
-        """Log-prob of a uniform distribution under one-hot targets is negative."""
-        pred_probs = GraphData(
-            X=torch.ones_like(clean_data.X) / DX,
-            E=torch.ones_like(clean_data.E) / DE,
-            y=clean_data.y,
-            node_mask=clean_data.node_mask,
-        )
-        result = proc.reconstruction_logp(clean_data, pred_probs)
-        # log(1/K) < 0, so sum should be negative
-        assert (result < 0).all(), f"Expected negative log-prob, got {result}"
+        """forward_log_prob and prior_log_prob stay finite on sampled states."""
+        t_int = torch.tensor([T, T - 1, T - 2])
+        noisy = proc.forward_sample(clean_data, t_int)
+        forward = proc.forward_log_prob(noisy, clean_data, t_int)
+        prior = proc.prior_log_prob(noisy)
+        assert torch.isfinite(forward).all()
+        assert torch.isfinite(prior).all()

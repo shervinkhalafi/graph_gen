@@ -1,28 +1,23 @@
-"""Tests for discrete noise schedules and transition matrices.
+"""Tests for diffusion schedules and categorical stationary PMFs.
 
 Test rationale
 --------------
-The noise schedule and transition matrices underpin every forward diffusion step
-and every reverse sampling step in DiGress-style discrete diffusion.  An error
-in betas, alpha-bar, or the transition matrix construction would silently corrupt
-training targets and generated samples.  These tests verify the core mathematical
-invariants:
+The noise schedule underpins every forward diffusion step and reverse sampling
+step. Errors in betas or alpha-bar would silently corrupt training targets and
+generated samples. Categorical processes now own their stationary PMFs directly,
+so this file also checks the schedule-adjacent categorical setup rules. These
+tests verify the core invariants:
 
 * **Monotonicity of betas**: the cosine schedule produces non-decreasing betas,
   so noise increases with timestep.
 * **Alpha-bar decay**: alpha-bar starts near 1 (clean data) and decreases toward
   0 (pure noise), ensuring the forward process interpolates correctly.
-* **Stochasticity**: all transition matrices are row-stochastic (rows sum to 1),
-  a necessary condition for valid probability transitions.
-* **Convergence**: at ``alpha_bar ≈ 0`` the cumulative transition matrix should
-  collapse to the stationary distribution — uniform for
-  ``DiscreteUniformTransition``, marginal for ``MarginalUniformTransition``.
 * **Boundary sanity**: t = 0 and t = T produce finite values (no NaN/Inf).
-* **Limit distributions**: ``get_limit_dist()`` returns valid probability
-  distributions that sum to 1.
+* **Stationary PMFs**: categorical uniform mode starts with valid PMFs, and
+  empirical mode learns valid PMFs from real nodes and edges only.
 
-See also: ``src/tmgg/models/digress/diffusion_utils.py`` for schedule functions,
-and ``src/tmgg/models/digress/noise_schedule.py`` for the classes under test.
+See also: [src/tmgg/diffusion/schedule.py](../../src/tmgg/diffusion/schedule.py)
+and [src/tmgg/diffusion/noise_process.py](../../src/tmgg/diffusion/noise_process.py).
 """
 
 from __future__ import annotations
@@ -30,11 +25,9 @@ from __future__ import annotations
 import pytest
 import torch
 
+from tmgg.data.datasets.graph_types import GraphData
+from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.diffusion.transitions import (
-    DiscreteUniformTransition,
-    MarginalUniformTransition,
-)
 
 # ---------------------------------------------------------------------------
 # NoiseSchedule
@@ -106,189 +99,53 @@ class TestNoiseSchedule:
 
 
 # ---------------------------------------------------------------------------
-# DiscreteUniformTransition
+# Categorical process stationary PMFs
 # ---------------------------------------------------------------------------
 
 
-class TestDiscreteUniformTransition:
-    """Invariants on uniform-stationary transition matrices."""
+class TestCategoricalStationaryPmfs:
+    """Schedule-adjacent checks for the categorical process contract."""
 
-    @pytest.fixture()
-    def transition(self) -> DiscreteUniformTransition:
-        return DiscreteUniformTransition(x_classes=3, e_classes=4, y_classes=0)
+    def test_uniform_mode_starts_with_uniform_pmfs(self) -> None:
+        """Uniform categorical mode should construct valid uniform PMFs eagerly."""
+        proc = CategoricalNoiseProcess(
+            schedule=NoiseSchedule(schedule_type="cosine_iddpm", timesteps=32),
+            x_classes=3,
+            e_classes=4,
+            limit_distribution="uniform",
+        )
+        assert proc._limit_x is not None
+        assert proc._limit_e is not None
+        torch.testing.assert_close(proc._limit_x, torch.ones(3) / 3)
+        torch.testing.assert_close(proc._limit_e, torch.ones(4) / 4)
 
-    def test_get_Qt_rows_sum_to_one(
-        self, transition: DiscreteUniformTransition
-    ) -> None:
-        """Each row of the one-step transition matrices must sum to 1."""
-        beta_t = torch.tensor([0.1, 0.5, 0.9])
-        ph = transition.get_Qt(beta_t)
-        for name, q in [("X", ph.X), ("E", ph.E)]:
-            row_sums = q.sum(dim=-1)
-            assert torch.allclose(
-                row_sums, torch.ones_like(row_sums), atol=1e-6
-            ), f"{name} rows don't sum to 1: {row_sums}"
+    def test_empirical_mode_initialises_from_real_nodes_and_upper_edges(self) -> None:
+        """Loader-driven empirical PMFs should ignore masked nodes and mirrored edges."""
+        proc = CategoricalNoiseProcess(
+            schedule=NoiseSchedule(schedule_type="cosine_iddpm", timesteps=16),
+            x_classes=2,
+            e_classes=2,
+            limit_distribution="empirical_marginal",
+        )
 
-    def test_get_Qt_bar_rows_sum_to_one(
-        self, transition: DiscreteUniformTransition
-    ) -> None:
-        """Rows of cumulative transition matrices must sum to 1."""
-        alpha_bar_t = torch.tensor([0.99, 0.5, 0.01])
-        ph = transition.get_Qt_bar(alpha_bar_t)
-        for name, q in [("X", ph.X), ("E", ph.E)]:
-            row_sums = q.sum(dim=-1)
-            assert torch.allclose(
-                row_sums, torch.ones_like(row_sums), atol=1e-6
-            ), f"{name} rows don't sum to 1"
+        X = torch.tensor(
+            [
+                [[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]],
+                [[0.0, 1.0], [1.0, 0.0], [1.0, 0.0]],
+            ]
+        )
+        E = torch.zeros(2, 3, 3, 2)
+        E[..., 0] = 1.0
+        E[0, 0, 1] = torch.tensor([0.0, 1.0])
+        E[0, 1, 0] = torch.tensor([0.0, 1.0])
+        E[1, 0, 1] = torch.tensor([0.0, 1.0])
+        E[1, 1, 0] = torch.tensor([0.0, 1.0])
+        node_mask = torch.tensor([[True, True, False], [True, True, True]])
+        batch = GraphData(X=X, E=E, y=torch.zeros(2, 0), node_mask=node_mask)
 
-    def test_get_Qt_bar_converges_to_uniform(
-        self, transition: DiscreteUniformTransition
-    ) -> None:
-        """At alpha_bar ≈ 0 the cumulative matrix should be nearly uniform."""
-        alpha_bar_t = torch.tensor([1e-7])
-        ph = transition.get_Qt_bar(alpha_bar_t)
+        proc.initialize_from_data([batch])  # type: ignore[arg-type]
 
-        expected_x = torch.ones(1, 3, 3) / 3
-        expected_e = torch.ones(1, 4, 4) / 4
-        assert torch.allclose(
-            ph.X, expected_x, atol=1e-5
-        ), f"X not uniform at alpha_bar≈0: {ph.X}"
-        assert torch.allclose(
-            ph.E, expected_e, atol=1e-5
-        ), f"E not uniform at alpha_bar≈0: {ph.E}"
-
-    def test_get_Qt_bar_identity_at_alpha_bar_one(
-        self, transition: DiscreteUniformTransition
-    ) -> None:
-        """At alpha_bar = 1 the cumulative matrix should be the identity."""
-        alpha_bar_t = torch.tensor([1.0])
-        ph = transition.get_Qt_bar(alpha_bar_t)
-        assert torch.allclose(ph.X, torch.eye(3).unsqueeze(0), atol=1e-6)
-        assert torch.allclose(ph.E, torch.eye(4).unsqueeze(0), atol=1e-6)
-
-    def test_get_limit_dist_sums_to_one(
-        self, transition: DiscreteUniformTransition
-    ) -> None:
-        """Limit distribution for each feature type must sum to 1."""
-        limit = transition.get_limit_dist()
-        assert torch.allclose(limit.X.sum(), torch.tensor(1.0), atol=1e-6)
-        assert torch.allclose(limit.E.sum(), torch.tensor(1.0), atol=1e-6)
-
-    def test_get_limit_dist_is_uniform(
-        self, transition: DiscreteUniformTransition
-    ) -> None:
-        """Limit distribution should be uniform 1/K."""
-        limit = transition.get_limit_dist()
-        assert torch.allclose(limit.X, torch.ones(3) / 3, atol=1e-6)
-        assert torch.allclose(limit.E, torch.ones(4) / 4, atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# MarginalUniformTransition
-# ---------------------------------------------------------------------------
-
-
-class TestMarginalUniformTransition:
-    """Invariants on marginal-stationary transition matrices."""
-
-    @pytest.fixture()
-    def marginals(self) -> tuple[torch.Tensor, torch.Tensor]:
-        x_m = torch.tensor([0.7, 0.2, 0.1])
-        e_m = torch.tensor([0.5, 0.3, 0.15, 0.05])
-        return x_m, e_m
-
-    @pytest.fixture()
-    def transition(
-        self, marginals: tuple[torch.Tensor, torch.Tensor]
-    ) -> MarginalUniformTransition:
-        x_m, e_m = marginals
-        return MarginalUniformTransition(x_m, e_m, y_classes=0)
-
-    def test_get_Qt_rows_sum_to_one(
-        self, transition: MarginalUniformTransition
-    ) -> None:
-        beta_t = torch.tensor([0.1, 0.5, 0.9])
-        ph = transition.get_Qt(beta_t)
-        for name, q in [("X", ph.X), ("E", ph.E)]:
-            row_sums = q.sum(dim=-1)
-            assert torch.allclose(
-                row_sums, torch.ones_like(row_sums), atol=1e-6
-            ), f"{name} rows don't sum to 1"
-
-    def test_get_Qt_bar_converges_to_marginals(
-        self,
-        transition: MarginalUniformTransition,
-        marginals: tuple[torch.Tensor, torch.Tensor],
-    ) -> None:
-        """At alpha_bar ≈ 0, rows of Qt_bar should match the marginal distribution."""
-        x_m, e_m = marginals
-        alpha_bar_t = torch.tensor([1e-7])
-        ph = transition.get_Qt_bar(alpha_bar_t)
-
-        # Each row should be approximately the marginal distribution
-        for row_idx in range(3):
-            assert torch.allclose(
-                ph.X[0, row_idx], x_m, atol=1e-5
-            ), f"X row {row_idx} doesn't match marginal: {ph.X[0, row_idx]}"
-        for row_idx in range(4):
-            assert torch.allclose(
-                ph.E[0, row_idx], e_m, atol=1e-5
-            ), f"E row {row_idx} doesn't match marginal: {ph.E[0, row_idx]}"
-
-    def test_get_Qt_bar_identity_at_alpha_bar_one(
-        self, transition: MarginalUniformTransition
-    ) -> None:
-        alpha_bar_t = torch.tensor([1.0])
-        ph = transition.get_Qt_bar(alpha_bar_t)
-        assert torch.allclose(ph.X, torch.eye(3).unsqueeze(0), atol=1e-6)
-        assert torch.allclose(ph.E, torch.eye(4).unsqueeze(0), atol=1e-6)
-
-    def test_get_limit_dist_sums_to_one(
-        self, transition: MarginalUniformTransition
-    ) -> None:
-        limit = transition.get_limit_dist()
-        assert torch.allclose(limit.X.sum(), torch.tensor(1.0), atol=1e-6)
-        assert torch.allclose(limit.E.sum(), torch.tensor(1.0), atol=1e-6)
-
-    def test_get_limit_dist_matches_marginals(
-        self,
-        transition: MarginalUniformTransition,
-        marginals: tuple[torch.Tensor, torch.Tensor],
-    ) -> None:
-        """Limit distribution should equal the input marginals."""
-        x_m, e_m = marginals
-        limit = transition.get_limit_dist()
-        assert torch.allclose(limit.X, x_m, atol=1e-6)
-        assert torch.allclose(limit.E, e_m, atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# Edge cases: boundary timesteps produce finite values
-# ---------------------------------------------------------------------------
-
-
-class TestBoundaryFiniteness:
-    """Transition matrices at extreme parameter values must remain finite."""
-
-    def test_discrete_uniform_beta_zero(self) -> None:
-        """beta_t = 0 should yield identity matrix."""
-        tr = DiscreteUniformTransition(2, 2, 0)
-        ph = tr.get_Qt(torch.tensor([0.0]))
-        assert torch.isfinite(ph.X).all()
-        assert torch.allclose(ph.X, torch.eye(2).unsqueeze(0), atol=1e-6)
-
-    def test_discrete_uniform_beta_one(self) -> None:
-        """beta_t = 1 should yield the stationary (uniform) matrix."""
-        tr = DiscreteUniformTransition(2, 2, 0)
-        ph = tr.get_Qt(torch.tensor([1.0]))
-        assert torch.isfinite(ph.X).all()
-        expected = torch.ones(1, 2, 2) / 2
-        assert torch.allclose(ph.X, expected, atol=1e-6)
-
-    def test_marginal_beta_zero(self) -> None:
-        x_m = torch.tensor([0.6, 0.4])
-        e_m = torch.tensor([0.8, 0.2])
-        tr = MarginalUniformTransition(x_m, e_m, y_classes=0)
-        ph = tr.get_Qt(torch.tensor([0.0]))
-        assert torch.isfinite(ph.X).all()
-        assert torch.allclose(ph.X, torch.eye(2).unsqueeze(0), atol=1e-6)
+        assert proc._limit_x is not None
+        assert proc._limit_e is not None
+        torch.testing.assert_close(proc._limit_x, torch.tensor([0.6, 0.4]))
+        torch.testing.assert_close(proc._limit_e, torch.tensor([0.5, 0.5]))

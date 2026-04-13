@@ -77,15 +77,15 @@ class TestEndToEndTraining:
         for _ in range(5):
             epoch_loss = 0.0
             for graph_batch in dataloader:
-                batch = graph_batch.to_adjacency()
+                batch = graph_batch.to_binary_adjacency()
                 # Add noise
                 batch_noisy = add_edge_flip_noise(batch, p=0.1)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
                 # Forward pass - GNN returns GraphData, extract logits
-                result = model(GraphData.from_adjacency(batch_noisy))
-                logits = result.E[..., 1]
+                result = model(GraphData.from_edge_state(batch_noisy))
+                logits = result.to_edge_state()
                 A_pred = torch.sigmoid(logits)
 
                 # Compute loss
@@ -112,8 +112,8 @@ class TestEndToEndTraining:
             test_batch = adjacency_matrices[0].unsqueeze(0)
             test_noisy = add_edge_flip_noise(test_batch, p=0.1)
 
-            result = model(GraphData.from_adjacency(test_noisy.float()))
-            logits = result.E[..., 1]
+            result = model(GraphData.from_edge_state(test_noisy.float()))
+            logits = result.to_edge_state()
             A_pred = torch.sigmoid(logits)
 
             assert A_pred.shape == test_batch.shape
@@ -146,7 +146,7 @@ class TestEndToEndTraining:
         for _ in range(5):
             epoch_loss = 0.0
             for graph_batch in dataloader:
-                batch = graph_batch.to_adjacency()
+                batch = graph_batch.to_binary_adjacency()
                 # Add rotation noise
                 batch_noisy = add_rotation_noise(batch, eps=0.1, skew=skew)
                 _, V_noisy = torch.linalg.eigh(batch_noisy.float())
@@ -212,15 +212,15 @@ class TestEndToEndTraining:
         for _ in range(5):
             epoch_loss = 0.0
             for graph_batch in dataloader:
-                batch = graph_batch.to_adjacency()
+                batch = graph_batch.to_binary_adjacency()
                 # Add Gaussian noise
                 batch_noisy = add_gaussian_noise(batch, eps=0.1)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
                 # Forward pass - model returns GraphData, extract logits
-                result = model(GraphData.from_adjacency(batch_noisy))
-                logits = result.E[..., 1]
+                result = model(GraphData.from_edge_state(batch_noisy))
+                logits = result.to_edge_state()
                 A_pred = torch.sigmoid(logits)
 
                 # Compute loss
@@ -247,8 +247,8 @@ class TestEndToEndTraining:
             test_batch = adjacency_matrices[0].unsqueeze(0)
             test_noisy = add_gaussian_noise(test_batch, eps=0.1)
 
-            result = model(GraphData.from_adjacency(test_noisy.float()))
-            logits = result.E[..., 1]
+            result = model(GraphData.from_edge_state(test_noisy.float()))
+            logits = result.to_edge_state()
             A_pred = torch.sigmoid(logits)
 
             assert A_pred.shape == test_batch.shape
@@ -273,7 +273,7 @@ class TestEndToEndTraining:
         _ = model.train()
         for _ in range(3):
             for graph_batch in dataloader:
-                batch = graph_batch.to_adjacency()
+                batch = graph_batch.to_binary_adjacency()
                 # Sample random noise level
                 eps: float = np.random.choice(noise_levels)
 
@@ -283,8 +283,8 @@ class TestEndToEndTraining:
                 batch = batch.float()
 
                 # Forward pass - GNN returns GraphData, extract logits
-                result = model(GraphData.from_adjacency(batch_noisy))
-                logits = result.E[..., 1]
+                result = model(GraphData.from_edge_state(batch_noisy))
+                logits = result.to_edge_state()
                 A_pred = torch.sigmoid(logits)
 
                 # Compute loss
@@ -303,12 +303,12 @@ class TestEndToEndTraining:
             sample = dataloader.dataset[0]
             assert isinstance(sample, Data)
             test_gd = GraphData.from_pyg_batch(Batch.from_data_list([sample]))
-            test_batch = test_gd.to_adjacency()
+            test_batch = test_gd.to_binary_adjacency()
 
             for eps in noise_levels:
                 test_noisy = add_edge_flip_noise(test_batch, p=eps)
-                result = model(GraphData.from_adjacency(test_noisy.float()))
-                logits = result.E[..., 1]
+                result = model(GraphData.from_edge_state(test_noisy.float()))
+                logits = result.to_edge_state()
                 A_pred = torch.sigmoid(logits)
 
                 assert A_pred.shape == test_batch.shape
@@ -338,14 +338,14 @@ class TestEndToEndTraining:
         _ = model.train()
         for _ in range(10):
             for graph_batch in dataloader:
-                batch = graph_batch.to_adjacency()
+                batch = graph_batch.to_binary_adjacency()
                 batch_noisy = add_gaussian_noise(batch, eps=0.1)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
 
                 # Forward pass
-                result = model(GraphData.from_adjacency(batch_noisy))
-                A_pred = result.E[..., 1]
+                result = model(GraphData.from_edge_state(batch_noisy))
+                A_pred = result.to_edge_state()
                 loss = criterion(A_pred, batch)
 
                 # Backward pass
@@ -380,12 +380,12 @@ class TestEndToEndTraining:
         model = GNN(num_layers=2, feature_dim_out=5, eigenvalue_reg=1e-3)
         _ = model.float()
 
-        batch = next(iter(dataloader)).to_adjacency()
+        batch = next(iter(dataloader)).to_binary_adjacency()
         batch_noisy = add_edge_flip_noise(batch, p=0.1).float()
         batch = batch.float()
 
-        result = model(GraphData.from_adjacency(batch_noisy))
-        logits = result.E[..., 1]
+        result = model(GraphData.from_edge_state(batch_noisy))
+        logits = result.to_edge_state()
         output = torch.sigmoid(logits)
         loss = torch.mean((output - batch) ** 2)
         loss.backward()
@@ -425,12 +425,12 @@ class TestEndToEndTraining:
         model = create_sequential_model(gnn_config, transformer_config)
         _ = model.float()
 
-        batch = next(iter(dataloader)).to_adjacency()
+        batch = next(iter(dataloader)).to_binary_adjacency()
         batch_noisy = add_edge_flip_noise(batch, p=0.1).float()
         batch = batch.float()
 
-        result = model(GraphData.from_adjacency(batch_noisy))
-        output = result.E[..., 1]
+        result = model(GraphData.from_edge_state(batch_noisy))
+        output = result.to_edge_state()
         loss = torch.mean((output - batch) ** 2)
         loss.backward()
 
@@ -476,11 +476,11 @@ class TestEndToEndTraining:
         model = GNN(num_layers=2, feature_dim_out=5, eigenvalue_reg=0.0)
         _ = model.float()
 
-        batch = next(iter(dataloader)).to_adjacency()
+        batch = next(iter(dataloader)).to_binary_adjacency()
         batch = batch.float()
 
-        result = model(GraphData.from_adjacency(batch))
-        logits = result.E[..., 1]
+        result = model(GraphData.from_edge_state(batch))
+        logits = result.to_edge_state()
         output = torch.sigmoid(logits)
         loss = torch.mean((output - batch) ** 2)
         loss.backward()

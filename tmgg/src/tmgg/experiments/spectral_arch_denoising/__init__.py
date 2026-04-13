@@ -6,7 +6,7 @@ architectures: Linear PE, Graph Filter Bank, and Self-Attention denoisers.
 Usage
 -----
 Run via Hydra:
-    python -m tmgg.experiments.spectral_arch_denoising.runner
+    uv run tmgg-spectral-arch
 """
 
 from tmgg.training.lightning_modules.denoising_module import (

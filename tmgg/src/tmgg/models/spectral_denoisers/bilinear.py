@@ -548,8 +548,8 @@ class MultiLayerBilinearDenoiser(SpectralDenoiser):
         Parameters
         ----------
         data
-            Graph features. The adjacency is extracted via
-            ``data.to_adjacency()``.
+            Graph features. The dense edge state is extracted via
+            ``data.to_edge_state()``.
 
         Returns
         -------

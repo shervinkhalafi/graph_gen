@@ -31,8 +31,8 @@ def test_linear_pe_symmetric_output():
 
     A = torch.randn(2, 10, 10)
     A = (A + A.transpose(-2, -1)) / 2  # symmetric input
-    result = model(GraphData.from_adjacency(A))
-    adj = result.to_adjacency()
+    result = model(GraphData.from_edge_state(A))
+    adj = result.to_edge_state()
     diff = (adj - adj.transpose(-2, -1)).abs().max().item()
     assert diff < 1e-5, f"LinearPE output asymmetry: {diff}"
 

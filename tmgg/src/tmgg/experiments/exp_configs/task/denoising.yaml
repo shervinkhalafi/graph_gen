@@ -16,18 +16,11 @@ noise_levels: [0.01, 0.05, 0.1, 0.2, 0.3]
 eval_noise_levels: null  # Noise levels for evaluation. null = use noise_levels
 fixed_noise_seed: null  # Set to int for constant noise (sanity check mode)
 
-# Sync data module noise config with top-level settings.
-# Ensures LightningModule and DataModule hparams agree (Lightning merges them).
-data:
-  noise_levels: ${noise_levels}
-  noise_type: ${noise_type}
-
-# Model-data sync (merged into whichever model config is loaded).
-# Denoising models need noise_type/levels from the data config plus global
-# seed and spectral logging settings.
+# Model sync (merged into whichever model config is loaded).
+# Denoising models read noise_type/levels from the top-level task config.
 model:
-  noise_type: ${data.noise_type}
-  noise_levels: ${data.noise_levels}
+  noise_type: ${noise_type}
+  noise_levels: ${noise_levels}
   seed: ${seed}
   spectral_k: ${spectral_k}
   evaluator:

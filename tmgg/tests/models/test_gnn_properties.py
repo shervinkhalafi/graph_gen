@@ -180,11 +180,11 @@ class TestGNNProperties:
         model = GNN(**params)
 
         try:
-            result = model(GraphData.from_adjacency(A))
+            result = model(GraphData.from_edge_state(A))
 
             batch_size, num_nodes, _ = A.shape
             assert isinstance(result, GraphData)
-            assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
+            assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
         except EigenDecompositionError:
             pass  # Expected for some matrices
 
@@ -195,14 +195,14 @@ class TestGNNProperties:
         model = GNNSymmetric(num_layers=2, feature_dim_out=5)
 
         try:
-            result = model(GraphData.from_adjacency(A))
+            result = model(GraphData.from_edge_state(A))
 
             # Check shape
             assert isinstance(result, GraphData)
-            assert result.to_adjacency().shape == A.shape
+            assert result.to_edge_state().shape == A.shape
 
             # Check symmetry of raw edge features
-            raw_adj = result.E[:, :, :, 1]
+            raw_adj = result.to_edge_state()
             diff = torch.abs(raw_adj - raw_adj.transpose(-2, -1))
             assert torch.max(diff) < 0.1  # Allow some asymmetry
         except EigenDecompositionError:
@@ -218,14 +218,14 @@ class TestGNNProperties:
         model = NodeVarGNN(num_layers=num_layers, feature_dim=5)
 
         try:
-            result = model(GraphData.from_adjacency(A))
+            result = model(GraphData.from_edge_state(A))
 
             # Check shape
             assert isinstance(result, GraphData)
-            assert result.to_adjacency().shape == A.shape
+            assert result.to_edge_state().shape == A.shape
 
             # Check raw edge features are valid
-            raw_adj = result.E[:, :, :, 1]
+            raw_adj = result.to_edge_state()
             assert not torch.isnan(raw_adj).any()
             assert not torch.isinf(raw_adj).any()
         except EigenDecompositionError:
@@ -320,9 +320,9 @@ class TestGNNErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         try:
-            result = model(GraphData.from_adjacency(A))
+            result = model(GraphData.from_edge_state(A))
             # Model should handle this by padding or truncating
-            assert result.to_adjacency().shape == (1, 5, 5)
+            assert result.to_edge_state().shape == (1, 5, 5)
         except EigenDecompositionError:
             pass  # Also acceptable
 

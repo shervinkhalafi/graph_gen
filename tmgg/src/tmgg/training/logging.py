@@ -23,6 +23,16 @@ from torch import nn
 if TYPE_CHECKING:
     from rich.console import Console
 
+type ParameterCountTree = dict[str, int | ParameterCountTree]
+
+
+def _get_parameter_count_int(counts: ParameterCountTree, key: str) -> int:
+    """Return a required integer leaf from a parameter-count tree."""
+    value = counts[key]
+    if not isinstance(value, int):
+        raise TypeError(f"Expected integer parameter count at key '{key}'")
+    return value
+
 
 def setup_rich_logging(console: "Console") -> None:
     """Configure loguru to output through Rich console for progress bar compatibility.
@@ -52,7 +62,7 @@ def _has_wandb_credentials() -> bool:
 def create_loggers(config: DictConfig) -> list[Logger]:
     """Create PyTorch Lightning loggers based on configuration.
 
-    Supported backends: W&B (primary) and CSV (lightweight fallback).
+    Supported backends: W&B (primary) and CSV (lightweight alternative).
 
     Parameters
     ----------
@@ -108,14 +118,21 @@ def create_loggers(config: DictConfig) -> list[Logger]:
                     wandb_name = logger_params.get("name") or config.get(
                         "run_id", config.get("experiment_name", "unknown")
                     )
-                    wandb_logger = WandbLogger(
-                        project=logger_params.get("project"),
-                        name=wandb_name,
-                        tags=logger_params.get("tags", []),
-                        save_dir=logger_params.get("save_dir", config.paths.output_dir),
-                        entity=logger_params.get("entity", None),
-                        log_model=logger_params.get("log_model", False),
-                    )
+                    wandb_kwargs: dict[str, Any] = {
+                        "project": logger_params.get("project"),
+                        "name": wandb_name,
+                        "tags": logger_params.get("tags", []),
+                        "save_dir": logger_params.get(
+                            "save_dir", config.paths.output_dir
+                        ),
+                        "entity": logger_params.get("entity", None),
+                        "log_model": logger_params.get("log_model", False),
+                    }
+                    for optional_key in ("group", "notes", "offline"):
+                        if optional_key in logger_params:
+                            wandb_kwargs[optional_key] = logger_params.get(optional_key)
+
+                    wandb_logger = WandbLogger(**wandb_kwargs)
                     loggers.append(wandb_logger)
 
                 elif logger_type == "csv":
@@ -133,6 +150,11 @@ def create_loggers(config: DictConfig) -> list[Logger]:
                         ),
                     )
                     loggers.append(csv_logger)
+                else:
+                    raise ValueError(
+                        f"Unsupported logger type {logger_type!r}. "
+                        "Supported types: 'wandb', 'csv'."
+                    )
 
     if not loggers:
         loguru.warning("No loggers configured — metrics will not be persisted")
@@ -308,9 +330,9 @@ def log_parameter_count(
             logger.log_hyperparams({"total_parameters": total_params})
         return
 
-    param_counts: dict[str, Any] = model.parameter_count()
+    param_counts: ParameterCountTree = model.parameter_count()
 
-    def format_counts(counts: dict[str, Any], indent: int = 0) -> list[str]:
+    def format_counts(counts: ParameterCountTree, indent: int = 0) -> list[str]:
         """Recursively format parameter counts."""
         lines: list[str] = []
         prefix: str = "  " * indent
@@ -319,12 +341,14 @@ def log_parameter_count(
             if key == "total" and indent == 0:
                 continue
             elif key == "self":
-                if value > 0:
-                    _ = lines.append(f"{prefix}├─ {key}: {value:,}")
+                self_count = _get_parameter_count_int(counts, key)
+                if self_count > 0:
+                    _ = lines.append(f"{prefix}├─ {key}: {self_count:,}")
             elif isinstance(value, dict):
                 if "total" in value:
-                    _ = lines.append(f"{prefix}├─ {key}: {value['total']:,}")
-                    sub_items: dict[str, Any] = {
+                    child_total = _get_parameter_count_int(value, "total")
+                    _ = lines.append(f"{prefix}├─ {key}: {child_total:,}")
+                    sub_items: ParameterCountTree = {
                         k: v for k, v in value.items() if k != "total"
                     }
                     if sub_items:
@@ -342,7 +366,10 @@ def log_parameter_count(
     print(f"\n{'=' * 60}")
     print(f"Model Parameter Count: {model_name}")
     print(f"{'=' * 60}")
-    print(f"Total Trainable Parameters: {param_counts['total']:,}")
+    print(
+        f"Total Trainable Parameters: "
+        f"{_get_parameter_count_int(param_counts, 'total'):,}"
+    )
     print("-" * 60)
 
     formatted_lines: list[str] = format_counts(param_counts)
@@ -354,7 +381,7 @@ def log_parameter_count(
     if logger:
         logger.log_hyperparams(
             {
-                "total_parameters": param_counts["total"],
+                "total_parameters": _get_parameter_count_int(param_counts, "total"),
                 "parameter_breakdown": param_counts,
             }
         )

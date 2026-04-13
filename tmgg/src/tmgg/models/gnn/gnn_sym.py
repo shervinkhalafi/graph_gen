@@ -44,8 +44,8 @@ class GNNSymmetric(GNN):
         Parameters
         ----------
         data
-            Graph features. The adjacency is extracted via
-            ``data.to_adjacency()``.
+            Graph features. The dense edge state is extracted via
+            ``data.to_edge_state()``.
         t
             Diffusion timestep tensor, or None. Currently unused.
 
@@ -54,7 +54,7 @@ class GNNSymmetric(GNN):
         GraphData
             Denoised graph with 2-class edge features.
         """
-        A = data.to_adjacency()
+        A = data.to_edge_state()
         z = self.embedding_layer(A)
 
         for layer in self.layers:
@@ -62,7 +62,7 @@ class GNNSymmetric(GNN):
 
         emb = self.out_x(z)
         result_adj = torch.bmm(emb, emb.transpose(1, 2))
-        return GraphData.from_adjacency(result_adj)
+        return GraphData.from_edge_state(result_adj, node_mask=data.node_mask)
 
     @override
     def get_config(self) -> dict[str, Any]:

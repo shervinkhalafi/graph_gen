@@ -31,15 +31,13 @@ model:
 
 noise_process:
   _target_: tmgg.diffusion.noise_process.CategoricalNoiseProcess
-  transition_type: marginal
-  noise_schedule: ${model.noise_schedule}  # Hydra interpolation: reuses config, but instantiate() creates a separate object
+  limit_distribution: empirical_marginal
+  schedule: ${model.noise_schedule}
   x_classes: 2
   e_classes: 2
 
 sampler:
   _target_: tmgg.diffusion.sampler.CategoricalSampler
-  noise_process: ${model.noise_process}  # same config as model.noise_process (separate instance)
-  noise_schedule: ${model.noise_schedule}  # same config as model.noise_schedule (separate instance)
 
 noise_schedule:
   _target_: tmgg.diffusion.schedule.NoiseSchedule

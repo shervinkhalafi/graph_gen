@@ -232,8 +232,10 @@ class EigenvectorAugmentation:
     """Top-k eigenvector augmentation for node features.
 
     Extracts the top-k eigenvectors of the adjacency derived from the
-    edge features (``E.argmax(-1) > 0``) and returns them as extra node
-    features. Equivalent to the old ``use_eigenvectors`` path in
+    edge features and returns them as extra node features. Accepts either
+    single-channel edge-state tensors ``(..., 1)`` or categorical edge
+    features where class 0 means "no edge". Equivalent to the old
+    ``use_eigenvectors`` path in
     ``GraphTransformer``, factored out into the shared augmentation
     interface.
 
@@ -263,7 +265,9 @@ class EigenvectorAugmentation:
         X
             Node features ``(bs, n, dx)``.
         E
-            Edge features ``(bs, n, n, de)``. ``argmax(-1) > 0`` gives adjacency.
+            Edge features ``(bs, n, n, de)``. Single-channel inputs are treated
+            as scalar adjacency/state tensors; categorical inputs use
+            ``argmax(-1) > 0`` to recover adjacency.
         y
             Global features ``(bs, dy)``.
         node_mask
@@ -276,7 +280,7 @@ class EigenvectorAugmentation:
             ``(bs, n, k)``, zero-padded when the graph has fewer than *k*
             eigenvalues.
         """
-        adj = (E.argmax(dim=-1) > 0).float()
+        adj = E[..., 0] if E.shape[-1] == 1 else (E.argmax(dim=-1) > 0).float()
         V, _ = self._eigen_layer(adj)
 
         actual_k = V.shape[-1]

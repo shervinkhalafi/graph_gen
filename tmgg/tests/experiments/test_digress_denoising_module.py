@@ -36,10 +36,10 @@ N_NODES = 16
 _TINY_DIGRESS_CONFIG: dict[str, Any] = {
     "k": 8,
     "n_layers": 2,
-    "input_dims": {"X": 2, "E": 2, "y": 0},
+    "input_dims": {"X": 2, "E": 1, "y": 0},
     "hidden_mlp_dims": {"X": 32, "E": 16, "y": 32},
     "hidden_dims": {"dx": 32, "de": 16, "dy": 32, "n_head": 2},
-    "output_dims": {"X": 0, "E": 2, "y": 0},
+    "output_dims": {"X": 0, "E": 1, "y": 0},
 }
 
 
@@ -59,7 +59,7 @@ def sample_adjacency() -> torch.Tensor:
 @pytest.fixture
 def sample_batch(sample_adjacency: torch.Tensor) -> GraphData:
     """GraphData batch wrapping the sample adjacency matrices."""
-    return GraphData.from_adjacency(sample_adjacency)
+    return GraphData.from_binary_adjacency(sample_adjacency)
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def data_module() -> GraphDataModule:
         graph_type="sbm",
         graph_config={"num_nodes": N_NODES, "num_graphs": 8},
         batch_size=4,
-        noise_levels=[0.1, 0.2],
+        num_workers=0,
     )
 
 

@@ -11,7 +11,7 @@ These tests verify:
 2. A concrete subclass that implements ``forward`` and ``get_config`` works.
 3. ``parameter_count()`` is inherited from BaseModel and functions correctly.
 4. ``forward`` accepts both with-timestep and without-timestep calls.
-5. ``GraphData.from_adjacency()`` round-trips correctly through a trivial model.
+5. ``GraphData.from_binary_adjacency()`` round-trips correctly through a trivial model.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import torch
 from torch import Tensor
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.models.base import BaseModel, GraphModel
+from tmgg.models.base import BaseModel, GraphModel, get_parameter_count_int
 
 # -- Concrete test fixture ---------------------------------------------------
 
@@ -125,7 +125,7 @@ class TestConcreteGraphModel:
         adj[0, 1, 0] = 1.0
         adj[1, 0, 2] = 1.0
         adj[1, 2, 0] = 1.0
-        return GraphData.from_adjacency(adj)
+        return GraphData.from_binary_adjacency(adj)
 
     def test_forward_without_timestep(
         self, model: IdentityGraphModel, batched_data: GraphData
@@ -163,10 +163,12 @@ class TestConcreteGraphModel:
         """parameter_count() inherited from BaseModel reports the linear layer."""
         counts = model.parameter_count()
         assert "total" in counts
-        assert counts["total"] > 0
+        assert get_parameter_count_int(counts, "total") > 0
         assert "linear" in counts
         # Linear(8, 8) has 8*8 weight + 8 bias = 72 parameters
-        assert counts["linear"]["total"] == 72
+        linear_counts = counts["linear"]
+        assert isinstance(linear_counts, dict)
+        assert get_parameter_count_int(linear_counts, "total") == 72
 
     def test_single_graph_forward(self, model: IdentityGraphModel) -> None:
         """Forward works with a single (unbatched) graph created from a
@@ -174,7 +176,7 @@ class TestConcreteGraphModel:
         adj = torch.zeros(3, 3)
         adj[0, 1] = 1.0
         adj[1, 0] = 1.0
-        data = GraphData.from_adjacency(adj)
+        data = GraphData.from_binary_adjacency(adj)
         result = model(data)
         assert isinstance(result, GraphData)
         assert torch.equal(result.E, data.E)

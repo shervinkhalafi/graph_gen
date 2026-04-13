@@ -4,7 +4,7 @@
 # skipping the denoising task config (task/denoising.yaml).
 #
 # The model architecture comes from a model config in models/discrete/.
-# Override the default with: tmgg-discrete-gen model=models/discrete/discrete_sbm_official
+# Override the default with: tmgg-discrete-gen +models/discrete@model=discrete_sbm_official
 #
 # Run with: tmgg-discrete-gen
 # Override: tmgg-discrete-gen model.noise_schedule.timesteps=50 data.num_nodes=20
@@ -12,6 +12,8 @@
 defaults:
   - _base_infra
   - models/discrete/discrete_default@model
+  - override /base/logger: discrete_wandb
+  - override /base/callbacks: discrete_nll
   - _self_
 
 experiment_name: "discrete_diffusion"
@@ -46,34 +48,6 @@ data:
     num_blocks: 2
     p_intra: 0.7
     p_inter: 0.1
-
-# --- Override callbacks: monitor val/epoch_NLL instead of val/loss ---
-
-callbacks:
-  early_stopping:
-    monitor: val/epoch_NLL
-    mode: min
-    patience: 10
-    min_delta: 1e-4
-  checkpoint:
-    monitor: val/epoch_NLL
-    mode: min
-    save_top_k: 3
-    save_last: true
-    filename: "model-step={step:06d}-val_nll={val/epoch_NLL:.4f}"
-    auto_insert_metric_name: false
-    every_n_train_steps: null
-
-# --- Override logger: wandb name without model_name ---
-
-logger:
-  - wandb:
-      project: ${wandb_project}
-      name: ${experiment_name}_T${model.noise_schedule.timesteps}_n${data.num_nodes}_${data.graph_type}
-      tags: []
-      save_dir: ${paths.output_dir}
-      entity: ${wandb_entity}
-      log_model: false
 
 # --- Output directories ---
 

@@ -9,12 +9,12 @@ behaves as specified.
 The tests use a GNN model instantiated directly, paired with a
 ContinuousNoiseProcess wrapping GaussianNoise and a
 ContinuousSampler, since those require no external dependencies and
-work with simple adjacency-based graphs.
+work with simple binary-topology graphs lifted into edge-state space.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,13 +24,14 @@ from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
+    ExactDensityNoiseProcess,
 )
 from tmgg.diffusion.sampler import CategoricalSampler, ContinuousSampler
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.diffusion.transitions import DiscreteUniformTransition
 from tmgg.evaluation.graph_evaluator import (
     GraphEvaluator,
 )
+from tmgg.models.base import GraphModel
 
 # -----------------------------------------------------------------------
 # Shared fixtures and helpers
@@ -38,6 +39,7 @@ from tmgg.evaluation.graph_evaluator import (
 from tmgg.models.gnn import GNN as _GNN
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
+    _categorical_reconstruction_log_prob,
 )
 from tmgg.utils.noising.noise import GaussianNoise
 
@@ -64,35 +66,39 @@ def _make_schedule() -> NoiseSchedule:
 
 
 def _make_noise_process() -> ContinuousNoiseProcess:
-    return ContinuousNoiseProcess(GaussianNoise(), noise_schedule=_make_schedule())
+    return ContinuousNoiseProcess(GaussianNoise(), schedule=_make_schedule())
 
 
-def _make_sampler(
-    noise_process: ContinuousNoiseProcess, schedule: NoiseSchedule
-) -> ContinuousSampler:
-    return ContinuousSampler(noise_process, schedule)
+def _make_sampler() -> ContinuousSampler:
+    return ContinuousSampler()
 
 
 def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
-    """Create a synthetic GraphData batch with random binary adjacency."""
+    """Create a continuous edge-state batch from a binary topology."""
     adj = torch.zeros(bs, n, n)
     for i in range(bs):
         # Random symmetric adjacency with no self-loops
         upper = (torch.rand(n, n) > 0.5).float()
         sym = upper.triu(diagonal=1)
         adj[i] = sym + sym.t()
-    return GraphData.from_adjacency(adj)
+    return GraphData.from_edge_state(adj)
+
+
+def _make_categorical_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
+    """Create a categorical binary-topology batch for discrete tests."""
+    adj = _make_batch(bs=bs, n=n).to_edge_state()
+    return GraphData.from_binary_adjacency(adj)
 
 
 def _make_module(
     evaluator: GraphEvaluator | None = None,
-    loss_type: str = "cross_entropy",
+    loss_type: str = "mse",
     **overrides: Any,
 ) -> DiffusionModule:
     """Build a DiffusionModule with sensible test defaults."""
     schedule = _make_schedule()
     noise_process = _make_noise_process()
-    sampler = _make_sampler(noise_process, schedule)
+    sampler = _make_sampler()
 
     model = overrides.pop("model", _make_default_gnn())
     kwargs: dict[str, Any] = {
@@ -215,13 +221,57 @@ class TestForward:
 class TestTrainingStep:
     """training_step must produce a finite scalar loss with gradient."""
 
+    def test_uses_noise_process_condition_vector_for_model_input(self) -> None:
+        """training_step should get model conditioning from the process.
+
+        Test rationale: Step 1 removes module-owned conditioning semantics.
+        The module should ask the noise process for the condition vector and
+        pass that exact tensor to the model, rather than reconstructing
+        ``t / T`` locally.
+        """
+        module = _make_module(loss_type="mse")
+        batch = _make_batch()
+        fixed_t = torch.tensor([2, 5, 7], dtype=torch.long)
+        expected_condition = torch.tensor([0.13, 0.57, 0.91], dtype=torch.float32)
+
+        observed_t: list[torch.Tensor] = []
+        observed_condition: list[torch.Tensor | None] = []
+
+        def condition_vector(t: torch.Tensor) -> torch.Tensor:
+            observed_t.append(t.detach().clone())
+            return expected_condition.to(device=t.device)
+
+        original_forward = module.model.forward
+
+        def spy_forward(
+            data: GraphData,
+            t: torch.Tensor | None = None,
+        ) -> GraphData:
+            observed_condition.append(None if t is None else t.detach().clone())
+            return original_forward(data, t=t)
+
+        module.noise_process.process_state_condition_vector = condition_vector  # type: ignore[method-assign]
+        module.model.forward = spy_forward  # type: ignore[assignment]
+
+        with patch(
+            "tmgg.training.lightning_modules.diffusion_module.torch.randint",
+            return_value=fixed_t.clone(),
+        ):
+            module.training_step(batch, batch_idx=0)
+
+        assert len(observed_t) == 1
+        torch.testing.assert_close(observed_t[0], fixed_t)
+        assert len(observed_condition) == 1
+        assert observed_condition[0] is not None
+        torch.testing.assert_close(observed_condition[0], expected_condition)
+
     def test_loss_is_finite_and_has_grad(self) -> None:
         """A single training step on a synthetic batch must return a
         finite scalar tensor that retains its computation graph (i.e.
         ``requires_grad`` is True). This confirms the forward noise,
         model prediction, and loss computation all compose correctly.
         """
-        module = _make_module(loss_type="cross_entropy")
+        module = _make_module(loss_type="mse")
         batch = _make_batch()
         loss = module.training_step(batch, batch_idx=0)
 
@@ -253,7 +303,7 @@ class TestComputeLoss:
         to a finite scalar.
         """
         module = _make_module(loss_type="cross_entropy")
-        batch = _make_batch(bs=2, n=4)
+        batch = _make_categorical_batch(bs=2, n=4)
         # Simulate model prediction: same shape but with logits
         pred = GraphData(
             X=torch.randn_like(batch.X),
@@ -392,33 +442,100 @@ class TestTestStep:
         module.test_step(batch, batch_idx=0)
 
 
+class TestGenerateGraphs:
+    """generate_graphs should use the module-owned sampler inputs."""
+
+    def test_passes_module_noise_process_to_sampler(self) -> None:
+        """Generation must pass the module's process instance through.
+
+        Test rationale: Step 2 removes sampler-owned process state. The
+        sampler should receive the exact ``module.noise_process`` object so
+        setup-time initialization cannot diverge between training and
+        generation.
+        """
+        module = _make_module()
+        observed: dict[str, Any] = {}
+
+        def fake_sample(
+            *,
+            model: GraphModel,
+            noise_process: ContinuousNoiseProcess,
+            num_graphs: int,
+            num_nodes: int | torch.Tensor,
+            device: torch.device,
+            collector: Any = None,
+        ) -> list[GraphData]:
+            observed["model"] = model
+            observed["noise_process"] = noise_process
+            observed["num_graphs"] = num_graphs
+            observed["num_nodes"] = num_nodes
+            observed["device"] = device
+            observed["collector"] = collector
+            graph = GraphData.from_binary_adjacency(torch.zeros(_NUM_NODES, _NUM_NODES))
+            return [graph for _ in range(num_graphs)]
+
+        module.sampler.sample = fake_sample  # type: ignore[assignment]
+
+        generated = module.generate_graphs(2)
+
+        assert len(generated) == 2
+        assert observed["model"] is module.model
+        assert observed["noise_process"] is module.noise_process
+        assert observed["num_graphs"] == 2
+
+
 # -----------------------------------------------------------------------
 # VLB wiring tests
 # -----------------------------------------------------------------------
 
-_DX = 2  # node classes (matches from_adjacency output)
+_DX = 2  # node classes (matches from_binary_adjacency output)
 _DE = 2  # edge classes
 
 
+class _CategoricalLogitModel(GraphModel):
+    """Minimal categorical model stub for DiffusionModule tests."""
+
+    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        del t
+        node_logits = torch.where(
+            data.X > 0,
+            torch.full_like(data.X, 2.0),
+            torch.full_like(data.X, -2.0),
+        )
+        edge_logits = torch.where(
+            data.E > 0,
+            torch.full_like(data.E, 2.0),
+            torch.full_like(data.E, -2.0),
+        )
+        return GraphData(
+            X=node_logits,
+            E=edge_logits,
+            y=data.y,
+            node_mask=data.node_mask,
+        )
+
+    def get_config(self) -> dict[str, Any]:
+        return {"type": "categorical_logit_stub"}
+
+
 def _make_categorical_module(
-    transition_type: str = "uniform",
+    limit_distribution: Literal["uniform", "empirical_marginal"] = "uniform",
 ) -> DiffusionModule:
     """Build a DiffusionModule backed by a CategoricalNoiseProcess.
 
-    Uses the same GNN model as the continuous tests. The GNN internally
-    extracts adjacency and outputs via ``from_adjacency``, so ``feature_dim``
-    does not need to match the categorical class count.
+    Uses a categorical-logit stub model so the discrete loss path does not
+    depend on a continuous edge-state model.
     """
     schedule = NoiseSchedule("cosine_iddpm", timesteps=_TIMESTEPS)
-    tm = (
-        DiscreteUniformTransition(_DX, _DE, 0) if transition_type == "uniform" else None
-    )
     cat_np = CategoricalNoiseProcess(
-        noise_schedule=schedule, x_classes=_DX, e_classes=_DE, transition_model=tm
+        schedule=schedule,
+        x_classes=_DX,
+        e_classes=_DE,
+        limit_distribution=limit_distribution,
     )
-    cat_sampler = CategoricalSampler(cat_np, schedule)
+    cat_sampler = CategoricalSampler()
     return DiffusionModule(
-        model=_make_default_gnn(),
+        model=_CategoricalLogitModel(),
         noise_process=cat_np,
         sampler=cat_sampler,
         noise_schedule=schedule,
@@ -431,15 +548,15 @@ def _make_categorical_module(
 class TestVLBWiring:
     """DiffusionModule computes VLB when noise_process is CategoricalNoiseProcess."""
 
-    def test_categorical_module_has_vlb_flag(self) -> None:
-        """``_is_categorical`` should be True for CategoricalNoiseProcess."""
+    def test_categorical_module_uses_exact_density_process(self) -> None:
+        """Categorical modules should expose exact-density VLB semantics."""
         module = _make_categorical_module()
-        assert module._is_categorical is True
+        assert isinstance(module.noise_process, ExactDensityNoiseProcess)
 
-    def test_continuous_module_has_no_vlb_flag(self) -> None:
-        """``_is_categorical`` should be False for ContinuousNoiseProcess."""
+    def test_continuous_module_is_not_exact_density(self) -> None:
+        """Continuous modules should skip exact-density VLB bookkeeping."""
         module = _make_module()
-        assert module._is_categorical is False
+        assert not isinstance(module.noise_process, ExactDensityNoiseProcess)
 
     def test_vlb_accumulators_start_empty(self) -> None:
         """All VLB accumulator lists should be empty at construction."""
@@ -454,7 +571,7 @@ class TestVLBWiring:
         accumulator should contain exactly one entry (one per batch).
         """
         module = _make_categorical_module()
-        batch = _make_batch(bs=_BATCH_SIZE)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
         module.validation_step(batch, batch_idx=0)
 
         assert len(module._vlb_nll) == 1
@@ -470,7 +587,7 @@ class TestVLBWiring:
         model to return uniform probabilities.
         """
         module = _make_categorical_module()
-        batch = _make_batch(bs=_BATCH_SIZE)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
 
         original_forward = module.model.forward
 
@@ -494,7 +611,7 @@ class TestVLBWiring:
         the VLB accumulators; they should remain empty.
         """
         module = _make_module()
-        batch = _make_batch(bs=_BATCH_SIZE)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
         module.validation_step(batch, batch_idx=0)
 
         assert len(module._vlb_nll) == 0
@@ -503,7 +620,7 @@ class TestVLBWiring:
     def test_on_validation_epoch_start_clears_accumulators(self) -> None:
         """``on_validation_epoch_start`` must reset all VLB accumulators."""
         module = _make_categorical_module()
-        batch = _make_batch(bs=_BATCH_SIZE)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
         module.validation_step(batch, batch_idx=0)
 
         assert len(module._vlb_nll) == 1
@@ -518,7 +635,7 @@ class TestVLBWiring:
         accumulators for a categorical module with accumulated data.
         """
         module = _make_categorical_module()
-        batch = _make_batch(bs=_BATCH_SIZE)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
         module.validation_step(batch, batch_idx=0)
 
         # Mock trainer for current_epoch and log
@@ -548,7 +665,7 @@ class TestVLBWiring:
     def test_epoch_end_no_vlb_when_continuous(self) -> None:
         """A continuous-noise module should not log VLB metrics at all."""
         module = _make_module(evaluator=None)
-        batch = _make_batch(bs=_BATCH_SIZE)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
         module.validation_step(batch, batch_idx=0)
 
         logged: dict[str, float] = {}
@@ -564,6 +681,33 @@ class TestVLBWiring:
         assert "val/epoch_NLL" not in logged
 
 
+class TestCategoricalReconstructionLogProb:
+    """Module-local categorical reconstruction helper stays finite and masked."""
+
+    def test_output_shape(self) -> None:
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        pred_probs = GraphData(
+            X=torch.ones_like(batch.X) / _DX,
+            E=torch.ones_like(batch.E) / _DE,
+            y=batch.y,
+            node_mask=batch.node_mask,
+        )
+        result = _categorical_reconstruction_log_prob(batch, pred_probs)
+        assert result.shape == (_BATCH_SIZE,)
+
+    def test_perfect_prediction_near_zero(self) -> None:
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        eps = 1e-7
+        x_safe = batch.X + eps
+        x_safe = x_safe / x_safe.sum(dim=-1, keepdim=True)
+        e_safe = batch.E + eps
+        e_safe = e_safe / e_safe.sum(dim=-1, keepdim=True)
+        pred_probs = GraphData(X=x_safe, E=e_safe, y=batch.y, node_mask=batch.node_mask)
+        result = _categorical_reconstruction_log_prob(batch, pred_probs)
+        assert torch.isfinite(result).all()
+        assert (result.abs() < 0.1).all()
+
+
 class TestReconstructionMasking:
     """M-6: reconstruction log-prob must mask invalid positions."""
 
@@ -575,7 +719,7 @@ class TestReconstructionMasking:
         sets pred[invalid] = 1 (so log(1) = 0) and clean[invalid] = 0.
         """
         module = _make_categorical_module()
-        batch = _make_batch(bs=_BATCH_SIZE)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
 
         # Mask out the last node in each graph to simulate variable sizes
         batch.node_mask[:, -1] = False
@@ -604,23 +748,28 @@ class TestReconstructionMasking:
 
 
 class TestSetup:
-    """DiffusionModule.setup() initialises marginal noise process."""
+    """DiffusionModule.setup() initialises categorical stationary PMFs."""
 
     def test_setup_with_uniform_is_noop(self) -> None:
-        """Uniform CategoricalNoiseProcess already has a transition_model;
-        setup() should not raise or modify it.
-        """
-        module = _make_categorical_module(transition_type="uniform")
+        """Uniform categorical setup should skip marginal counting."""
+        module = _make_categorical_module(limit_distribution="uniform")
         assert isinstance(module.noise_process, CategoricalNoiseProcess)
-        original_tm = module.noise_process.transition_model
+        assert module.noise_process._limit_x is not None
+        assert module.noise_process._limit_e is not None
+        original_x = module.noise_process._limit_x.clone()
+        original_e = module.noise_process._limit_e.clone()
 
-        # setup() needs self.trainer; mock it
+        mock_dm = MagicMock()
+        mock_dm.get_size_distribution.return_value = MagicMock()
         mock_trainer = MagicMock()
+        mock_trainer.datamodule = mock_dm
         module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
         module.setup(stage="fit")
 
-        # Should not have changed the transition model
-        assert module.noise_process.transition_model is original_tm
+        torch.testing.assert_close(module.noise_process._limit_x, original_x)
+        torch.testing.assert_close(module.noise_process._limit_e, original_e)
+        mock_dm.train_dataloader.assert_not_called()
+        mock_dm.get_size_distribution.assert_called_once_with("train")
 
     def test_setup_continuous_is_noop(self) -> None:
         """For a continuous noise process, setup() should be a no-op."""
@@ -631,29 +780,32 @@ class TestSetup:
         module.setup(stage="fit")
 
     def test_setup_marginal_initialises_transition(self) -> None:
-        """For a marginal CategoricalNoiseProcess with no transition_model,
-        setup() should read marginals from the datamodule and initialise it.
-        """
-        module = _make_categorical_module(transition_type="marginal")
+        """Empirical-marginal setup should initialise from the train loader."""
+        module = _make_categorical_module(limit_distribution="empirical_marginal")
         assert isinstance(module.noise_process, CategoricalNoiseProcess)
-        assert module.noise_process._transition_model is None
+        assert module.noise_process._limit_x is None
+        assert module.noise_process._limit_e is None
 
         mock_dm = MagicMock()
-        mock_dm.node_marginals = torch.tensor([0.5, 0.5])
-        mock_dm.edge_marginals = torch.tensor([0.5, 0.5])
+        mock_dm.train_dataloader.return_value = [
+            _make_categorical_batch(bs=_BATCH_SIZE)
+        ]
 
         mock_trainer = MagicMock()
         mock_trainer.datamodule = mock_dm
         module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
 
         module.setup(stage="fit")
-        assert module.noise_process.transition_model is not None
+        assert module.noise_process._limit_x is not None
+        assert module.noise_process._limit_e is not None
+        assert module.noise_process.is_initialized() is True
+        mock_dm.get_size_distribution.assert_called_once_with("train")
 
     def test_setup_marginal_no_dm_raises(self) -> None:
         """setup() must raise RuntimeError if the datamodule is None but
         a marginal transition needs initialising.
         """
-        module = _make_categorical_module(transition_type="marginal")
+        module = _make_categorical_module(limit_distribution="empirical_marginal")
 
         mock_trainer = MagicMock()
         mock_trainer.datamodule = None

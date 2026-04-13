@@ -57,20 +57,16 @@ def noise_process(
     unified_schedule: NoiseSchedule,
 ) -> CategoricalNoiseProcess:
     return CategoricalNoiseProcess(
-        noise_schedule=unified_schedule,
+        schedule=unified_schedule,
         x_classes=_DX,
         e_classes=_DE,
+        limit_distribution="empirical_marginal",
     )
 
 
 @pytest.fixture()
-def sampler(
-    noise_process: CategoricalNoiseProcess,
-    unified_schedule: NoiseSchedule,
-) -> CategoricalSampler:
-    return CategoricalSampler(
-        noise_process=noise_process, noise_schedule=unified_schedule
-    )
+def sampler() -> CategoricalSampler:
+    return CategoricalSampler()
 
 
 @pytest.fixture()
@@ -121,7 +117,7 @@ def _attach_trainer_and_setup(
     module: DiffusionModule,
     dm: SyntheticCategoricalDataModule,
 ) -> None:
-    """Attach a minimal trainer and run setup so the transition model exists."""
+    """Attach a minimal trainer and run setup so stationary PMFs exist."""
     trainer = pl.Trainer(
         max_steps=1,
         enable_checkpointing=False,
@@ -140,22 +136,23 @@ def _attach_trainer_and_setup(
 
 
 class TestSetup:
-    """Verify that setup() constructs the transition model via CategoricalNoiseProcess."""
+    """Verify that setup() initialises empirical stationary PMFs."""
 
     def test_setup_constructs_transition(
         self,
         lightning_module: DiffusionModule,
         datamodule: SyntheticCategoricalDataModule,
     ) -> None:
-        """After setup, the noise process transition model is populated.
+        """After setup, the noise process stationary PMFs are populated.
 
-        Starting state: fresh module with no transition model (marginal).
-        Invariant: setup('fit') populates the transition model on the noise process.
+        Starting state: fresh module with no stationary PMF (marginal).
+        Invariant: setup('fit') populates the stationary PMFs on the noise process.
         """
         _attach_trainer_and_setup(lightning_module, datamodule)
 
         assert isinstance(lightning_module.noise_process, CategoricalNoiseProcess)
-        assert lightning_module.noise_process.transition_model is not None
+        assert lightning_module.noise_process._limit_x is not None
+        assert lightning_module.noise_process._limit_e is not None
 
     def test_setup_is_idempotent(
         self,
@@ -165,15 +162,17 @@ class TestSetup:
         """Calling setup() twice does not error or reconstruct.
 
         Starting state: module already set up.
-        Invariant: second call is a no-op; transition model is the same object.
+        Invariant: second call is a no-op; stationary PMFs are the same objects.
         """
         _attach_trainer_and_setup(lightning_module, datamodule)
 
         assert isinstance(lightning_module.noise_process, CategoricalNoiseProcess)
-        tm_first = lightning_module.noise_process.transition_model
+        x_first = lightning_module.noise_process._limit_x
+        e_first = lightning_module.noise_process._limit_e
 
         lightning_module.setup("fit")
-        assert lightning_module.noise_process.transition_model is tm_first
+        assert lightning_module.noise_process._limit_x is x_first
+        assert lightning_module.noise_process._limit_e is e_first
 
 
 class TestForward:
@@ -195,7 +194,7 @@ class TestForward:
 
         lightning_module.eval()
         t_int = torch.randint(1, _T + 1, (batch.X.shape[0],))
-        z_t = lightning_module.noise_process.apply(batch, t_int)
+        z_t = lightning_module.noise_process.forward_sample(batch, t_int)
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
@@ -223,7 +222,7 @@ class TestTraining:
         lightning_module.train()
         bs = batch.X.shape[0]
         t_int = torch.randint(1, _T + 1, (bs,))
-        z_t = lightning_module.noise_process.apply(batch, t_int)
+        z_t = lightning_module.noise_process.forward_sample(batch, t_int)
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
@@ -310,9 +309,10 @@ class TestSmokeTraining:
         )
         trainer.fit(lightning_module, datamodule)
 
-        # After fit, the categorical noise process transition model should be initialised
+        # After fit, the categorical noise process stationary PMFs should exist
         assert isinstance(lightning_module.noise_process, CategoricalNoiseProcess)
-        assert lightning_module.noise_process.transition_model is not None
+        assert lightning_module.noise_process._limit_x is not None
+        assert lightning_module.noise_process._limit_e is not None
 
 
 class TestDiGressAlignment:
@@ -339,7 +339,7 @@ class TestDiGressAlignment:
 
         # Get model prediction
         t_int = torch.randint(1, _T + 1, (batch.X.shape[0],))
-        z_t = lightning_module.noise_process.apply(batch, t_int)
+        z_t = lightning_module.noise_process.forward_sample(batch, t_int)
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
@@ -382,7 +382,7 @@ class TestDiGressAlignment:
 
         # Get predictions
         t_int = torch.randint(1, _T + 1, (batch.X.shape[0],))
-        z_t = lightning_module.noise_process.apply(batch_padded, t_int)
+        z_t = lightning_module.noise_process.forward_sample(batch_padded, t_int)
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
@@ -469,7 +469,7 @@ class TestDiGressAlignment:
 
         batch = next(iter(datamodule.train_dataloader()))
         t_int = torch.randint(1, _T + 1, (batch.X.shape[0],))
-        z_t = noise_process.apply(batch, t_int)
+        z_t = noise_process.forward_sample(batch, t_int)
         t_norm = t_int.float() / _T
         pred = mod_low.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 

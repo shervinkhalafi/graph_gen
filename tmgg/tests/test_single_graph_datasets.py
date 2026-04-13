@@ -17,6 +17,9 @@ These tests ensure the SingleGraphDataModule abstraction works uniformly across
 all graph types, catching integration issues early.
 """
 
+from typing import Any, cast
+
+import networkx as nx
 import numpy as np
 import pytest
 import torch
@@ -25,6 +28,32 @@ from tmgg.data.data_modules.single_graph_data_module import (
     SingleGraphDataModule,
 )
 from tmgg.data.datasets.graph_types import GraphData
+
+
+def _graphdata_to_numpy(batch: GraphData, index: int = 0) -> np.ndarray:
+    """Extract one graph from a dense batch.
+
+    Rationale
+    ---------
+    The cleaned datamodule contract exposes split access through
+    dataloaders and ``get_reference_graphs()``. Tests reconstruct dense
+    adjacency matrices from those boundaries instead of relying on the
+    deleted graph accessors.
+    """
+    num_nodes = int(batch.node_mask[index].sum().item())
+    adj = batch.to_binary_adjacency()[index, :num_nodes, :num_nodes]
+    return adj.cpu().numpy()
+
+
+def _first_train_graph(dm: SingleGraphDataModule) -> np.ndarray:
+    """Return the first training graph from the train dataloader."""
+    return _graphdata_to_numpy(next(iter(dm.train_dataloader())))
+
+
+def _first_reference_graph(dm: SingleGraphDataModule, stage: str) -> np.ndarray:
+    """Return one validation or test graph through the public reference API."""
+    graph = dm.get_reference_graphs(stage, max_graphs=1)[0]
+    return np.asarray(nx.to_numpy_array(graph), dtype=np.float32)
 
 
 class TestSyntheticGraphs:
@@ -53,7 +82,7 @@ class TestSyntheticGraphs:
         )
         dm.setup()
 
-        A = dm.get_train_graph()
+        A = _first_train_graph(dm)
 
         # Shape check
         assert A.shape == (50, 50), f"Expected (50, 50), got {A.shape}"
@@ -91,9 +120,9 @@ class TestSyntheticGraphs:
         )
         dm.setup()
 
-        train_graph = dm.get_train_graph()
-        val_graph = dm.get_val_graph()
-        test_graph = dm.get_test_graph()
+        train_graph = _first_train_graph(dm)
+        val_graph = _first_reference_graph(dm, "val")
+        test_graph = _first_reference_graph(dm, "test")
 
         assert np.array_equal(
             train_graph, val_graph
@@ -123,9 +152,9 @@ class TestSyntheticGraphs:
         )
         dm.setup()
 
-        train_graph = dm.get_train_graph()
-        val_graph = dm.get_val_graph()
-        test_graph = dm.get_test_graph()
+        train_graph = _first_train_graph(dm)
+        val_graph = _first_reference_graph(dm, "val")
+        test_graph = _first_reference_graph(dm, "test")
 
         # Graphs should differ (with high probability for random graphs)
         assert not np.array_equal(train_graph, val_graph), "Train and val should differ"
@@ -161,7 +190,7 @@ class TestSyntheticGraphs:
         batch = next(iter(loader))
 
         assert isinstance(batch, GraphData)
-        adj = batch.to_adjacency()
+        adj = batch.to_binary_adjacency()
         assert adj.shape == (
             batch_size,
             50,
@@ -187,7 +216,7 @@ class TestNetworkXGraphs:
         )
         dm.setup()
 
-        A = dm.get_train_graph()
+        A = _first_train_graph(dm)
 
         # Total nodes = num_cliques * clique_size = 20
         assert A.shape == (20, 20), f"Expected (20, 20), got {A.shape}"
@@ -214,7 +243,7 @@ class TestNetworkXGraphs:
         )
         dm.setup()
 
-        A = dm.get_train_graph()
+        A = _first_train_graph(dm)
 
         assert A.shape == (200, 200), f"Expected (200, 200), got {A.shape}"
         assert np.allclose(A, A.T), "Should be symmetric"
@@ -234,8 +263,9 @@ class TestNetworkXGraphs:
         )
         dm.setup()
 
-        assert np.array_equal(dm.get_train_graph(), dm.get_val_graph())
-        assert np.array_equal(dm.get_train_graph(), dm.get_test_graph())
+        train_graph = _first_train_graph(dm)
+        assert np.array_equal(train_graph, _first_reference_graph(dm, "val"))
+        assert np.array_equal(train_graph, _first_reference_graph(dm, "test"))
 
 
 class TestPyGGraphs:
@@ -270,7 +300,7 @@ class TestPyGGraphs:
         )
         dm.setup()
 
-        A = dm.get_train_graph()
+        A = _first_train_graph(dm)
 
         # Shape should be square
         assert A.shape[0] == A.shape[1], f"Expected square matrix, got {A.shape}"
@@ -298,12 +328,35 @@ class TestPyGGraphs:
         )
         dm.setup()
 
-        assert np.array_equal(dm.get_train_graph(), dm.get_val_graph())
-        assert np.array_equal(dm.get_train_graph(), dm.get_test_graph())
+        train_graph = _first_train_graph(dm)
+        assert np.array_equal(train_graph, _first_reference_graph(dm, "val"))
+        assert np.array_equal(train_graph, _first_reference_graph(dm, "test"))
 
 
 class TestEdgeCases:
     """Test edge cases and error handling."""
+
+    def test_rejects_legacy_noise_levels_argument(self) -> None:
+        """Legacy ``noise_levels`` should fail at construction."""
+        legacy_kwargs = cast(Any, {"noise_levels": [0.1]})
+        with pytest.raises(TypeError, match="noise_levels"):
+            SingleGraphDataModule(
+                graph_type="sbm",
+                num_nodes=50,
+                graph_config={"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3},
+                **legacy_kwargs,
+            )
+
+    def test_rejects_legacy_noise_type_argument(self) -> None:
+        """Legacy ``noise_type`` should fail at construction."""
+        legacy_kwargs = cast(Any, {"noise_type": "digress"})
+        with pytest.raises(TypeError, match="noise_type"):
+            SingleGraphDataModule(
+                graph_type="sbm",
+                num_nodes=50,
+                graph_config={"p_intra": 0.7, "p_inter": 0.05, "num_blocks": 3},
+                **legacy_kwargs,
+            )
 
     def test_unknown_graph_type_raises(self):
         """Test that unknown graph types raise ValueError."""
@@ -316,14 +369,16 @@ class TestEdgeCases:
             dm.setup()
 
     def test_setup_required_before_access(self):
-        """Test that accessing graphs before setup raises RuntimeError."""
+        """Dataloaders and reference-graph extraction require setup()."""
         dm = SingleGraphDataModule(
             graph_type="sbm",
             num_nodes=50,
             same_graph_all_splits=True,
         )
         with pytest.raises(RuntimeError, match="Call setup"):
-            dm.get_train_graph()
+            dm.train_dataloader()
+        with pytest.raises(RuntimeError, match="Call setup"):
+            dm.get_reference_graphs("val", max_graphs=1)
 
     def test_reproducibility_with_seed(self):
         """Test that the same seed produces identical graphs."""
@@ -347,7 +402,7 @@ class TestEdgeCases:
         )
         dm2.setup()
 
-        assert np.array_equal(dm1.get_train_graph(), dm2.get_train_graph())
+        assert np.array_equal(_first_train_graph(dm1), _first_train_graph(dm2))
 
     def test_different_seeds_produce_different_graphs(self):
         """Test that different seeds produce different graphs."""
@@ -371,4 +426,4 @@ class TestEdgeCases:
         )
         dm2.setup()
 
-        assert not np.array_equal(dm1.get_train_graph(), dm2.get_train_graph())
+        assert not np.array_equal(_first_train_graph(dm1), _first_train_graph(dm2))

@@ -1,3 +1,4 @@
+# @package _global_
 # Gaussian noise — inherits shared grid config from grid_base
 
 defaults:

@@ -1,4 +1,8 @@
-"""Train/val/test index splitting by ratio."""
+"""Train/val/test index splitting by ratio.
+
+This helper lives with the datamodule generation code because those callers
+are the only in-repo consumers of the split contract.
+"""
 
 from __future__ import annotations
 

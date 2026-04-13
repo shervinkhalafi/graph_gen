@@ -1,10 +1,4 @@
-"""Sampling, posterior computation, and masking utilities for discrete diffusion.
-
-Contains noise sampling (Gaussian and categorical), posterior distribution
-computation for the reverse diffusion step, and mask validation/normalization
-helpers. These functions depend on graph-specific types (``GraphData``,
-``LimitDistribution``, ``TransitionMatrices``) from the diffusion and data packages.
-"""
+"""Categorical sampling and masking utilities for graph diffusion."""
 
 # pyright: reportAttributeAccessIssue=false
 # F.one_hot exists at runtime; pyright cannot resolve it from the functional stub.
@@ -13,94 +7,6 @@ import torch
 from torch.nn import functional as F
 
 from tmgg.data.datasets.graph_types import GraphData
-
-from .diffusion_graph_types import LimitDistribution, TransitionMatrices
-
-
-def assert_correctly_masked(variable: torch.Tensor, node_mask: torch.Tensor) -> None:
-    max_val = (variable * (1 - node_mask.long())).abs().max().item()
-    if not max_val < 1e-4:
-        raise AssertionError("Variables not masked properly.")
-
-
-def check_mask_correct(variables: list[torch.Tensor], node_mask: torch.Tensor) -> None:
-    for _, variable in enumerate(variables):
-        if len(variable) > 0:
-            assert_correctly_masked(variable, node_mask)
-
-
-def check_tensor_same_size(*args: torch.Tensor) -> None:
-    for i, arg in enumerate(args):
-        if i == 0:
-            continue
-        if not args[0].size() == arg.size():
-            raise AssertionError(
-                f"Tensors have different sizes: {args[0].size()} != {arg.size()}"
-            )
-
-
-def sample_gaussian(size: torch.Size | tuple[int, ...]) -> torch.Tensor:
-    x = torch.randn(size)
-    return x
-
-
-def sample_gaussian_with_mask(
-    size: torch.Size | tuple[int, ...], node_mask: torch.Tensor
-) -> torch.Tensor:
-    x = torch.randn(size)
-    x = x.type_as(node_mask.float())
-    x_masked = x * node_mask
-    return x_masked
-
-
-def sample_feature_noise(
-    X_size: torch.Size | tuple[int, ...],
-    E_size: torch.Size | tuple[int, ...],
-    y_size: torch.Size | tuple[int, ...],
-    node_mask: torch.Tensor,
-) -> GraphData:
-    """Standard normal noise for all features.
-    Output size: X.size(), E.size(), y.size()"""
-    # Device placement handled by .type_as() below — works under DDP.
-    epsX = sample_gaussian(X_size)
-    epsE = sample_gaussian(E_size)
-    epsy = sample_gaussian(y_size)
-
-    float_mask = node_mask.float()
-    epsX = epsX.type_as(float_mask)
-    epsE = epsE.type_as(float_mask)
-    epsy = epsy.type_as(float_mask)
-
-    # Get upper triangular part of edge noise, without main diagonal
-    upper_triangular_mask = torch.zeros_like(epsE)
-    indices = torch.triu_indices(row=epsE.size(1), col=epsE.size(2), offset=1)
-    upper_triangular_mask[:, indices[0], indices[1], :] = 1
-
-    epsE = epsE * upper_triangular_mask
-    epsE = epsE + torch.transpose(epsE, 1, 2)
-
-    if not (epsE == torch.transpose(epsE, 1, 2)).all():
-        raise AssertionError("Edge noise is not symmetric")
-
-    return GraphData(X=epsX, E=epsE, y=epsy, node_mask=node_mask).mask()
-
-
-def sample_normal(
-    mu_X: torch.Tensor,
-    mu_E: torch.Tensor,
-    mu_y: torch.Tensor,
-    sigma: torch.Tensor,
-    node_mask: torch.Tensor,
-) -> GraphData:
-    """Samples from a Normal distribution."""
-    # Device placement handled by .type_as() — works under DDP.
-    eps = sample_feature_noise(
-        mu_X.size(), mu_E.size(), mu_y.size(), node_mask
-    ).type_as(mu_X)
-    X = mu_X + sigma * eps.X
-    E = mu_E + sigma.unsqueeze(1) * eps.E
-    y = mu_y + sigma.squeeze(1) * eps.y
-    return GraphData(X=X, E=E, y=y, node_mask=node_mask)
 
 
 def sample_discrete_features(
@@ -178,42 +84,6 @@ def compute_posterior_distribution(
     return prob
 
 
-def compute_batched_over0_posterior_distribution(
-    X_t: torch.Tensor, Qt: torch.Tensor, Qsb: torch.Tensor, Qtb: torch.Tensor
-) -> torch.Tensor:
-    """M: X or E
-    Compute xt @ Qt.T * x0 @ Qsb / x0 @ Qtb @ xt.T for each possible value of x0
-    X_t: bs, n, dt          or bs, n, n, dt
-    Qt: bs, d_t-1, dt
-    Qsb: bs, d0, d_t-1
-    Qtb: bs, d0, dt.
-    """
-    # Flatten feature tensors
-    # Careful with this line. It does nothing if X is a node feature. If X is an edge features it maps to
-    # bs x (n ** 2) x d
-    X_t = X_t.flatten(start_dim=1, end_dim=-2).to(torch.float32)  # bs x N x dt
-
-    Qt_T = Qt.transpose(-1, -2)  # bs, dt, d_t-1
-    left_term = X_t @ Qt_T  # bs, N, d_t-1
-    left_term = left_term.unsqueeze(dim=2)  # bs, N, 1, d_t-1
-
-    right_term = Qsb.unsqueeze(1)  # bs, 1, d0, d_t-1
-    numerator = left_term * right_term  # bs, N, d0, d_t-1
-
-    X_t_transposed = X_t.transpose(-1, -2)  # bs, dt, N
-
-    prod = Qtb @ X_t_transposed  # bs, d0, N
-    prod = prod.transpose(-1, -2)  # bs, N, d0
-    denominator = prod.unsqueeze(-1)  # bs, N, d0, 1
-    # Clamp denominator to avoid division by near-zero values.
-    # The original exact-zero check (denominator == 0) only caught exact zeros,
-    # missing values like 1e-30 that cause overflow.
-    denominator = denominator.clamp(min=1e-6)
-
-    out = numerator / denominator
-    return out
-
-
 def mask_distributions(
     true_X: torch.Tensor,
     true_E: torch.Tensor,
@@ -260,38 +130,27 @@ def mask_distributions(
     return true_X, true_E, pred_X, pred_E
 
 
-def posterior_distributions(
-    X: torch.Tensor,
-    E: torch.Tensor,
-    y: torch.Tensor,
-    X_t: torch.Tensor,
-    E_t: torch.Tensor,
-    y_t: torch.Tensor,
-    Qt: TransitionMatrices,
-    Qsb: TransitionMatrices,
-    Qtb: TransitionMatrices,
-    node_mask: torch.Tensor,
-) -> GraphData:
-    prob_X = compute_posterior_distribution(
-        M=X, M_t=X_t, Qt_M=Qt.X, Qsb_M=Qsb.X, Qtb_M=Qtb.X
-    )  # (bs, n, dx)
-    prob_E = compute_posterior_distribution(
-        M=E, M_t=E_t, Qt_M=Qt.E, Qsb_M=Qsb.E, Qtb_M=Qtb.E
-    )  # (bs, n * n, de)
-
-    return GraphData(X=prob_X, E=prob_E, y=y_t, node_mask=node_mask)
-
-
 def sample_discrete_feature_noise(
-    limit_dist: LimitDistribution, node_mask: torch.Tensor
+    x_limit: torch.Tensor,
+    e_limit: torch.Tensor,
+    node_mask: torch.Tensor,
+    y_limit: torch.Tensor | None = None,
 ) -> GraphData:
-    """Sample from the limit distribution of the diffusion process"""
+    """Sample one-hot categorical noise from stationary class PMFs."""
     bs, n_max = node_mask.shape
-    x_limit = limit_dist.X[None, None, :].expand(bs, n_max, -1)
-    e_limit = limit_dist.E[None, None, None, :].expand(bs, n_max, n_max, -1)
+    x_limit = x_limit.to(node_mask.device)[None, None, :].expand(bs, n_max, -1)
+    e_limit = e_limit.to(node_mask.device)[None, None, None, :].expand(
+        bs, n_max, n_max, -1
+    )
     U_X = x_limit.flatten(end_dim=-2).multinomial(1).reshape(bs, n_max)
     U_E = e_limit.flatten(end_dim=-2).multinomial(1).reshape(bs, n_max, n_max)
-    U_y = torch.empty((bs, 0))
+
+    if y_limit is None or y_limit.numel() == 0:
+        U_y = torch.empty((bs, 0), device=node_mask.device)
+    else:
+        y_limit = y_limit.to(node_mask.device)[None, :].expand(bs, -1)
+        U_y = y_limit.multinomial(1).squeeze(-1)
+        U_y = F.one_hot(U_y, num_classes=y_limit.shape[-1]).float()
 
     long_mask = node_mask.long()
     U_X = U_X.type_as(long_mask)

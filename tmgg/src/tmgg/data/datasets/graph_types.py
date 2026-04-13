@@ -1,10 +1,10 @@
 """Typed containers for categorical graph data and structural context.
 
 ``GraphData`` is the universal batch type for all experiments. It holds
-batched one-hot node/edge/global features alongside a ``node_mask`` that
-tracks which node positions are real versus padding. Conversion methods
-bridge the categorical representation and the simpler adjacency format
-used by denoising experiments.
+batched node/edge/global features alongside a ``node_mask`` that tracks
+which node positions are real versus padding. Conversion methods split
+into explicit binary-topology helpers and lossless dense edge-state
+helpers.
 
 ``GraphStructure`` bundles pre-computed topological features (adjacency,
 eigenvectors, eigenvalues) derived from a ``GraphData`` instance before
@@ -116,7 +116,7 @@ class GraphData:
     # ---- Conversion classmethods / methods ----------------------------
 
     @classmethod
-    def from_adjacency(cls, adj: Tensor) -> GraphData:
+    def from_binary_adjacency(cls, adj: Tensor) -> GraphData:
         """Convert binary adjacency matrices to one-hot categorical features.
 
         Produces ``dx=2`` (no-node / node) and ``de=2`` (no-edge / edge)
@@ -161,6 +161,66 @@ class GraphData:
 
         y_out = torch.zeros(bs, 0, device=adj.device, dtype=adj.dtype)
         node_mask = torch.ones(bs, n, device=adj.device, dtype=torch.bool)
+
+        if single:
+            return cls(
+                X=x_out.squeeze(0),
+                E=e_out.squeeze(0),
+                y=y_out.squeeze(0),
+                node_mask=node_mask.squeeze(0),
+            )
+        return cls(X=x_out, E=e_out, y=y_out, node_mask=node_mask)
+
+    @classmethod
+    def from_edge_state(
+        cls,
+        edge_state: Tensor,
+        *,
+        node_mask: Tensor | None = None,
+    ) -> GraphData:
+        """Wrap a dense edge-valued state without binary projection.
+
+        Parameters
+        ----------
+        edge_state
+            Dense edge state, shape ``(n, n)`` or ``(bs, n, n)``.
+        node_mask
+            Optional node-validity mask. When omitted, all nodes are
+            treated as real.
+        """
+        single = edge_state.dim() == 2
+        if single:
+            edge_state = edge_state.unsqueeze(0)
+
+        if edge_state.dim() == 4 and edge_state.shape[-1] == 1:
+            edge_state = edge_state[..., 0]
+
+        if edge_state.dim() != 3:
+            raise ValueError(
+                "from_edge_state() expects a 2D or 3D edge-state tensor, "
+                f"got shape {tuple(edge_state.shape)}"
+            )
+
+        bs, n, _ = edge_state.shape
+        edge_state = edge_state.float()
+
+        if node_mask is None:
+            node_mask = torch.ones(bs, n, device=edge_state.device, dtype=torch.bool)
+        elif node_mask.dim() == 1:
+            node_mask = node_mask.unsqueeze(0)
+
+        if node_mask.shape != (bs, n):
+            raise ValueError(
+                "node_mask must have shape (bs, n) for from_edge_state(), "
+                f"got {tuple(node_mask.shape)}"
+            )
+
+        x_out = torch.zeros(bs, n, 2, device=edge_state.device, dtype=edge_state.dtype)
+        x_out[:, :, 1] = node_mask.float()
+        x_out[:, :, 0] = 1.0 - node_mask.float()
+
+        e_out = edge_state.unsqueeze(-1)
+        y_out = torch.zeros(bs, 0, device=edge_state.device, dtype=edge_state.dtype)
 
         if single:
             return cls(
@@ -217,45 +277,35 @@ class GraphData:
 
         return cls(X=X, E=E, y=y, node_mask=node_mask)
 
-    @staticmethod
-    def edge_features_to_adjacency(
-        E: Tensor,
-        node_mask: Tensor | None = None,
-    ) -> Tensor:
-        """Extract binary adjacency from categorical edge features.
+    def to_binary_adjacency(self) -> Tensor:
+        """Convert categorical edge features to a binary adjacency matrix."""
+        if self.E.shape[-1] > 1:
+            adj = (self.E.argmax(dim=-1) > 0).float()
+        else:
+            adj = self.E[..., 0].clone()
 
-        Inverse of the encoding in ``from_adjacency``: channel 0 is
-        "no-edge", so ``argmax > 0`` recovers the adjacency. Single-channel
-        ``E`` is treated as a raw adjacency (legacy format).
+        mask_2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
+        return adj * mask_2d.float()
 
-        Parameters
-        ----------
-        E
-            Edge features, shape ``(..., de)``.
-        node_mask
-            Boolean or float mask, shape ``(bs, n)`` or broadcastable.
-            When provided, masked node positions are zeroed in the output.
+    def to_edge_state(self) -> Tensor:
+        """Return a dense edge-valued state tensor.
 
-        Returns
-        -------
-        Tensor
-            Binary adjacency, shape ``(...)`` (last dim collapsed).
+        Single-channel edge-state graphs round-trip directly. Binary-topology
+        graphs expose their explicit edge-indicator channel as a lossless
+        0/1 state tensor so continuous diffusion code can lift clean graphs
+        without going back through binary-topology helpers.
         """
-        adj = (E.argmax(dim=-1) > 0).float() if E.shape[-1] > 1 else E[..., 0].clone()
-
-        if node_mask is not None:
-            mask_2d = node_mask.unsqueeze(-1) * node_mask.unsqueeze(-2)
-            adj = adj * mask_2d.float()
-
-        return adj
-
-    def to_adjacency(self) -> Tensor:
-        """Convert categorical edge features to a binary adjacency matrix.
-
-        Class 0 is "no edge"; any other class is treated as an edge.
-        Masked node positions are zeroed.
-        """
-        return GraphData.edge_features_to_adjacency(self.E, self.node_mask)
+        if self.E.shape[-1] == 1:
+            edge_state = self.E[..., 0]
+        elif self.E.shape[-1] == 2:
+            edge_state = self.E[..., 1]
+        else:
+            raise ValueError(
+                "to_edge_state() requires single-channel edge states or "
+                "binary-topology edge features with 2 channels, "
+                f"got edge feature shape {tuple(self.E.shape)}"
+            )
+        return edge_state
 
     def to_pyg(self) -> Data:
         """Convert this (unbatched) GraphData to a PyG Data object.
@@ -273,7 +323,7 @@ class GraphData:
         from torch_geometric.data import Data
         from torch_geometric.utils import dense_to_sparse
 
-        adj = self.to_adjacency()
+        adj = self.to_binary_adjacency()
         if adj.ndim == 3:
             if adj.shape[0] != 1:
                 raise ValueError(

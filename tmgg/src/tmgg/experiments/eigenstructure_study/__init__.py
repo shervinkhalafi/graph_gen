@@ -36,7 +36,20 @@ from .analyzer import (
     compute_spectral_gap,
 )
 from .collector import EigenstructureCollector
-from .noised_collector import NoisedAnalysisComparator, NoisedEigenstructureCollector
+from .noised_collector import (
+    CovarianceEvolutionItem,
+    CovarianceEvolutionResult,
+    DriftComparisonResult,
+    GapDeltaComparisonResult,
+    MeanStdMetric,
+    NoisedAnalysisComparator,
+    NoisedEigenstructureCollector,
+    NoiseLevelComparisonResult,
+    PrincipalAngleResult,
+    ProcrustesKStats,
+    ProcrustesRotationResult,
+    SubspaceDistanceResult,
+)
 from .storage import (
     iter_batches,
     load_decomposition_batch,
@@ -62,7 +75,18 @@ __all__ = [
     "compute_eigenvalue_entropy",
     "compute_effective_rank",
     "compute_principal_angles",
-    # Delta comparison functions (wrappers returning absolute+relative dicts)
+    # Typed delta comparison result objects
+    "MeanStdMetric",
+    "DriftComparisonResult",
+    "GapDeltaComparisonResult",
+    "SubspaceDistanceResult",
+    "PrincipalAngleResult",
+    "ProcrustesKStats",
+    "ProcrustesRotationResult",
+    "NoiseLevelComparisonResult",
+    "CovarianceEvolutionItem",
+    "CovarianceEvolutionResult",
+    # Delta comparison functions
     "compute_eigengap_delta",
     "compute_algebraic_connectivity_delta",
     # Spectral delta primitives (canonical implementations from tmgg.utils.spectral)

@@ -46,9 +46,9 @@ def test_bilinear_output_shape():
     model = BilinearDenoiser(k=4, d_k=8)
     A = torch.randn(2, 10, 10)
     A = (A + A.transpose(-1, -2)) / 2
-    result = model(GraphData.from_adjacency(A))
+    result = model(GraphData.from_edge_state(A))
     assert isinstance(result, GraphData)
-    assert result.to_adjacency().shape == (2, 10, 10)
+    assert result.to_edge_state().shape == (2, 10, 10)
 
 
 def test_bilinear_has_no_softmax():
@@ -58,9 +58,8 @@ def test_bilinear_has_no_softmax():
     model = BilinearDenoiser(k=4, d_k=8)
     A = torch.randn(2, 10, 10)
     A = (A + A.transpose(-1, -2)) / 2
-    result = model(GraphData.from_adjacency(A))
-    # Extract raw adjacency values from edge features (channel 1 = edge probability)
-    raw_adj = result.E[:, :, :, 1]
+    result = model(GraphData.from_edge_state(A))
+    raw_adj = result.to_edge_state()
     # Raw logits can be negative and > 1 -- softmax output would be in [0,1]
     # with rows summing to 1. Bilinear should have neither property.
     assert raw_adj.min() < 0 or raw_adj.max() > 1, "Output looks softmax-bounded"

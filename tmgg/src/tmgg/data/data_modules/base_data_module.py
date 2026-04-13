@@ -20,6 +20,8 @@ from typing import Any, override
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 
+from tmgg.utils.noising.size_distribution import SizeDistribution
+
 
 class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
     """Abstract base class for all graph data modules.
@@ -44,6 +46,8 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
     num_workers: int
     pin_memory: bool
     seed: int
+    graph_type: str
+    num_nodes: int
 
     def __init__(
         self,
@@ -132,24 +136,31 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         """Return the test dataloader."""
         ...
 
-    @abc.abstractmethod
-    def get_dataset_info(self) -> dict[str, Any]:
-        """Return metadata about the dataset.
-
-        The returned dict should contain at minimum:
-
-        - ``"num_graphs"``: total number of graphs across all splits.
-        - ``"num_nodes"``: node count (int for fixed-size, tuple for
-          min/max range).
-
-        Subclasses add representation-specific keys (e.g.,
-        ``"num_node_classes"`` for categorical data modules).
-        """
-        ...
-
     # ------------------------------------------------------------------
     # Concrete utility methods
     # ------------------------------------------------------------------
+
+    def get_size_distribution(self, split: str | None = None) -> SizeDistribution:
+        """Return the graph-size distribution for a dataset split.
+
+        The base contract assumes fixed-size graphs and therefore returns
+        a degenerate distribution at ``self.num_nodes`` regardless of
+        *split*. Variable-size datamodules should override this method.
+
+        Parameters
+        ----------
+        split
+            Split selector. Accepted for interface compatibility with
+            variable-size subclasses and ignored by the fixed-size base
+            implementation.
+
+        Returns
+        -------
+        SizeDistribution
+            Degenerate distribution at ``self.num_nodes``.
+        """
+        _ = split
+        return SizeDistribution.fixed(self.num_nodes)
 
     def get_reference_graphs(self, stage: str, max_graphs: int) -> list[Any]:
         """Extract up to *max_graphs* from a dataset split as NetworkX graphs.
@@ -187,7 +198,7 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
 
         graphs: list[Any] = []
         for batch in loader:
-            adj = batch.to_adjacency()  # (B, N, N)
+            adj = batch.to_binary_adjacency()  # (B, N, N)
             bs = adj.shape[0]
             for i in range(bs):
                 if len(graphs) >= max_graphs:

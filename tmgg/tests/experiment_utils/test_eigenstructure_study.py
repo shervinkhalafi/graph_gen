@@ -10,11 +10,14 @@ Test rationale:
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
 import numpy as np
 import torch
+from click.testing import CliRunner
+from omegaconf import OmegaConf
 
 from tmgg.experiments.eigenstructure_study import (
     EigenstructureCollector,
@@ -34,6 +37,11 @@ from tmgg.experiments.eigenstructure_study import (
     load_manifest,
     save_dataset_manifest,
     save_decomposition_batch,
+)
+from tmgg.experiments.eigenstructure_study.noised_collector import (
+    CovarianceEvolutionResult,
+    GapDeltaComparisonResult,
+    NoiseLevelComparisonResult,
 )
 from tmgg.utils.spectral.spectral_deltas import (
     compute_eigenvalue_drift,
@@ -455,6 +463,111 @@ class TestSpectralAnalyzer:
             assert result.coherence_mean > 0
             assert result.effective_rank_adj_mean > 0
 
+    def test_execute_analyze_uses_save_results(self) -> None:
+        """Hydra analyze path should delegate main JSON writing to save_results.
+
+        Rationale
+        ---------
+        ``SpectralAnalyzer.save_results`` exists to own the canonical
+        ``analysis.json`` write path. Both CLI and Hydra execution used to
+        bypass it and duplicate the same ``json.dump(asdict(...))`` block.
+        This test keeps the execute path routed through the analyzer helper.
+        """
+        from tmgg.experiments.eigenstructure_study import execute as execute_module
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            collector = EigenstructureCollector(
+                dataset_name="regular",
+                dataset_config={"num_nodes": 8, "num_graphs": 6, "d": 3},
+                output_dir=output_dir / "original",
+                batch_size=3,
+                seed=42,
+            )
+            collector.collect()
+
+            save_calls: list[tuple[str, Path]] = []
+            original_save = SpectralAnalyzer.save_results
+
+            def wrapped_save(
+                self, result, output_path: Path
+            ):  # pragma: no cover - exercised via _run_analyze
+                save_calls.append((result.dataset_name, Path(output_path)))
+                return original_save(self, result, output_path)
+
+            SpectralAnalyzer.save_results = wrapped_save  # type: ignore[method-assign]
+            try:
+                cfg = OmegaConf.create(
+                    {
+                        "analysis": {
+                            "subspace_k": 0,
+                            "compute_covariance": False,
+                            "matrix_type": "adjacency",
+                        }
+                    }
+                )
+                result = execute_module._run_analyze(cfg, output_dir)
+            finally:
+                SpectralAnalyzer.save_results = original_save  # type: ignore[method-assign]
+
+            assert result["status"] == "completed"
+            assert save_calls == [("regular", output_dir / "analysis")]
+            assert (output_dir / "analysis" / "analysis.json").exists()
+
+    def test_cli_analyze_uses_save_results(self) -> None:
+        """CLI analyze command should use save_results for analysis.json too.
+
+        The CLI and Hydra execution path should not drift on the main analysis
+        artifact. This test invokes the Click command directly and verifies
+        the CLI routes its primary JSON write through ``save_results``.
+        """
+        from tmgg.experiments.eigenstructure_study import cli as cli_module
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            input_dir = tmp_path / "input"
+            output_dir = tmp_path / "analysis"
+
+            collector = EigenstructureCollector(
+                dataset_name="er",
+                dataset_config={"num_nodes": 8, "num_graphs": 6, "p": 0.3},
+                output_dir=input_dir,
+                batch_size=3,
+                seed=42,
+            )
+            collector.collect()
+
+            save_calls: list[Path] = []
+            original_save = SpectralAnalyzer.save_results
+
+            def wrapped_save(
+                self, result, output_path: Path
+            ):  # pragma: no cover - exercised via Click command
+                save_calls.append(Path(output_path))
+                return original_save(self, result, output_path)
+
+            SpectralAnalyzer.save_results = wrapped_save  # type: ignore[method-assign]
+            try:
+                runner = CliRunner()
+                invocation = runner.invoke(
+                    cli_module.main,
+                    [
+                        "analyze",
+                        "--input-dir",
+                        str(input_dir),
+                        "--output-dir",
+                        str(output_dir),
+                        "--subspace-k",
+                        "0",
+                    ],
+                )
+            finally:
+                SpectralAnalyzer.save_results = original_save  # type: ignore[method-assign]
+
+            assert invocation.exit_code == 0, invocation.output
+            assert save_calls == [output_dir]
+            assert (output_dir / "analysis.json").exists()
+
 
 class TestNoisedCollector:
     """Tests for NoisedEigenstructureCollector."""
@@ -671,13 +784,11 @@ class TestNoisedAnalysisComparator:
             assert set(comparator.get_noise_levels()) == {0.05, 0.1}
 
             drift = comparator.compute_eigenvalue_drift(0.1)
-            assert "adjacency_drift_mean" in drift
-            assert "laplacian_drift_mean" in drift
-            assert drift["adjacency_drift_mean"] >= 0
+            assert drift.adjacency.mean >= 0
+            assert drift.laplacian.mean >= 0
 
             subspace = comparator.compute_subspace_deviation(0.1, k=3)
-            assert "first_principal_angle_mean" in subspace
-            assert subspace["first_principal_angle_mean"] >= 0
+            assert subspace.first_principal_angle.mean >= 0
 
     def test_get_noise_levels_parsing(self) -> None:
         """Should parse eps_0.0100, eps_0.1000 format correctly.
@@ -1032,7 +1143,14 @@ class TestNoisedAnalysisComparatorDeltaMethods:
     """
 
     def test_compute_eigengap_delta(self) -> None:
-        """compute_eigengap_delta should return correct statistics."""
+        """compute_eigengap_delta should return typed absolute and relative stats.
+
+        Rationale
+        ---------
+        The noised comparison layer now uses typed result objects instead of
+        ad-hoc dicts. This test locks the result shape at the Python API level
+        and separately verifies that the legacy JSON field names remain stable.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             original_dir = Path(tmpdir) / "original"
             noised_dir = Path(tmpdir) / "noised"
@@ -1059,12 +1177,18 @@ class TestNoisedAnalysisComparatorDeltaMethods:
             comparator = NoisedAnalysisComparator(original_dir, noised_dir)
             result = comparator.compute_eigengap_delta(0.1)
 
-            assert "eigengap_delta_abs_mean" in result
-            assert "eigengap_delta_rel_mean" in result
-            assert "eigengap_delta_rel_std" in result
+            assert isinstance(result, GapDeltaComparisonResult)
+            assert result.noise_level == 0.1
+            assert torch.isfinite(torch.tensor(result.absolute.mean))
+            assert torch.isfinite(torch.tensor(result.relative.mean))
+
+            payload = result.to_json_dict("eigengap_delta")
+            assert "eigengap_delta_abs_mean" in payload
+            assert "eigengap_delta_rel_mean" in payload
+            assert "eigengap_delta_rel_std" in payload
 
     def test_compute_algebraic_connectivity_delta(self) -> None:
-        """compute_algebraic_connectivity_delta should return correct statistics."""
+        """compute_algebraic_connectivity_delta should return typed stats."""
         with tempfile.TemporaryDirectory() as tmpdir:
             original_dir = Path(tmpdir) / "original"
             noised_dir = Path(tmpdir) / "noised"
@@ -1090,12 +1214,25 @@ class TestNoisedAnalysisComparatorDeltaMethods:
             comparator = NoisedAnalysisComparator(original_dir, noised_dir)
             result = comparator.compute_algebraic_connectivity_delta(0.1)
 
-            assert "alg_conn_delta_abs_mean" in result
-            assert "alg_conn_delta_rel_mean" in result
-            assert "alg_conn_delta_rel_std" in result
+            assert isinstance(result, GapDeltaComparisonResult)
+            assert result.noise_level == 0.1
+            assert torch.isfinite(torch.tensor(result.absolute.mean))
+            assert torch.isfinite(torch.tensor(result.relative.mean))
+
+            payload = result.to_json_dict("alg_conn_delta")
+            assert "alg_conn_delta_abs_mean" in payload
+            assert "alg_conn_delta_rel_mean" in payload
+            assert "alg_conn_delta_rel_std" in payload
 
     def test_compute_full_comparison_all_metrics(self) -> None:
-        """compute_full_comparison should include all four delta metrics."""
+        """compute_full_comparison should return typed results with stable JSON keys.
+
+        Rationale
+        ---------
+        The one-pass comparison is the public aggregation API for study output.
+        We want typed fields for internal callers while preserving the current
+        `comparison.json` wire shape written by the CLI and Hydra entry points.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             original_dir = Path(tmpdir) / "original"
             noised_dir = Path(tmpdir) / "noised"
@@ -1123,12 +1260,16 @@ class TestNoisedAnalysisComparatorDeltaMethods:
 
             assert len(results) == 1
             r = results[0]
+            assert isinstance(r, NoiseLevelComparisonResult)
+            assert r.noise_level == 0.1
+            assert r.k == 3
 
-            # All four metrics should be present
-            assert "eigengap_delta_rel_mean" in r
-            assert "alg_conn_delta_rel_mean" in r
-            assert "eigenvalue_drift_adj_mean" in r
-            assert "subspace_distance_mean" in r
+            payload = r.to_json_dict()
+            assert "eigengap_delta_rel_mean" in payload
+            assert "alg_conn_delta_rel_mean" in payload
+            assert "eigenvalue_drift_adj_mean" in payload
+            assert "subspace_distance_mean" in payload
+            assert "procrustes_angle_k1_mean" in payload
 
 
 class TestCovarianceComputation:
@@ -1290,7 +1431,14 @@ class TestCovarianceComputation:
             assert len(result.covariance_matrix[0]) == 8
 
     def test_covariance_evolution_computation(self) -> None:
-        """NoisedAnalysisComparator should compute covariance evolution."""
+        """NoisedAnalysisComparator should compute typed covariance evolution.
+
+        Rationale
+        ---------
+        The covariance evolution result is consumed by both the CLI and the
+        Hydra execution path. This test locks the typed API and its JSON
+        serializer together so later refactors cannot drift the file shape.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             original_dir = Path(tmpdir) / "original"
             noised_dir = Path(tmpdir) / "noised"
@@ -1316,12 +1464,17 @@ class TestCovarianceComputation:
             comparator = NoisedAnalysisComparator(original_dir, noised_dir)
             evolution = comparator.compute_covariance_evolution(matrix_type="adjacency")
 
-            assert "original" in evolution
-            assert "per_noise_level" in evolution
-            assert len(evolution["per_noise_level"]) == 2
+            assert isinstance(evolution, CovarianceEvolutionResult)
+            assert evolution.matrix_type == "adjacency"
+            assert len(evolution.per_noise_level) == 2
 
-            # Check delta metrics are present
-            for item in evolution["per_noise_level"]:
+            payload = evolution.to_json_dict()
+            assert "original" in payload
+            assert "per_noise_level" in payload
+            per_noise_level = payload["per_noise_level"]
+            assert isinstance(per_noise_level, list)
+            for item in per_noise_level:
+                assert isinstance(item, dict)
                 assert "noise_level" in item
                 assert "covariance" in item
                 assert "frobenius_delta_relative" in item
@@ -1428,3 +1581,105 @@ class TestCovarianceCLI:
 
             assert result.exit_code == 0
             assert (output_dir / "covariance_evolution.json").exists()
+
+    def test_covariance_evolution_json_matches_cli_and_hydra_execute(self) -> None:
+        """CLI and Hydra execution should serialize covariance evolution identically.
+
+        Rationale
+        ---------
+        The file format is a compatibility boundary. Both execution paths
+        should delegate to the same dataclass-owned serializer so the JSON
+        payload cannot drift across entry points.
+        """
+        from click.testing import CliRunner
+
+        from tmgg.experiments.eigenstructure_study.cli import main
+        from tmgg.experiments.eigenstructure_study.execute import (
+            execute_eigenstructure,
+        )
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            original_dir = root / "original"
+            noised_dir = root / "noised"
+
+            collector = EigenstructureCollector(
+                dataset_name="er",
+                dataset_config={"num_nodes": 6, "num_graphs": 10, "p": 0.3},
+                output_dir=original_dir,
+                batch_size=5,
+                seed=42,
+            )
+            collector.collect()
+
+            noised_collector = NoisedEigenstructureCollector(
+                input_dir=original_dir,
+                output_dir=noised_dir,
+                noise_type="gaussian",
+                noise_levels=[0.1],
+                seed=42,
+            )
+            noised_collector.collect()
+
+            comparator = NoisedAnalysisComparator(original_dir, noised_dir)
+            expected = comparator.compute_covariance_evolution(
+                matrix_type="adjacency"
+            ).to_json_dict()
+
+            cli_output_dir = root / "cli_output"
+            cli_result = runner.invoke(
+                main,
+                [
+                    "covariance",
+                    "--original-dir",
+                    str(original_dir),
+                    "--noised-dir",
+                    str(noised_dir),
+                    "--output-dir",
+                    str(cli_output_dir),
+                ],
+            )
+            assert cli_result.exit_code == 0
+            with open(cli_output_dir / "covariance_evolution.json") as f:
+                assert json.load(f) == expected
+
+            hydra_output_dir = root / "hydra_output"
+            (hydra_output_dir / "original").mkdir(parents=True)
+            (hydra_output_dir / "noised").mkdir(parents=True)
+
+            for source_dir, target_dir in (
+                (original_dir, hydra_output_dir / "original"),
+                (noised_dir, hydra_output_dir / "noised"),
+            ):
+                for item in source_dir.iterdir():
+                    if item.is_file():
+                        target_path = target_dir / item.name
+                        target_path.write_bytes(item.read_bytes())
+                    else:
+                        nested_target = target_dir / item.name
+                        nested_target.mkdir()
+                        for nested in item.iterdir():
+                            (nested_target / nested.name).write_bytes(
+                                nested.read_bytes()
+                            )
+
+            cfg = OmegaConf.create(
+                {
+                    "phase": "compare",
+                    "seed": 42,
+                    "paths": {"output_dir": str(hydra_output_dir)},
+                    "comparison": {
+                        "subspace_k": 3,
+                        "procrustes_k_values": [1, 2, 4],
+                        "compute_covariance_evolution": True,
+                    },
+                    "analysis": {"matrix_type": "adjacency"},
+                }
+            )
+            execute_eigenstructure(cfg)
+
+            with open(
+                hydra_output_dir / "comparison" / "covariance_evolution.json"
+            ) as f:
+                assert json.load(f) == expected

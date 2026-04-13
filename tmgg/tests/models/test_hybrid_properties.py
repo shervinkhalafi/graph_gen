@@ -138,7 +138,7 @@ class MockEmbeddingModel(nn.Module):
 
     def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute embeddings from graph data."""
-        A = data.to_adjacency()
+        A = data.to_edge_state()
         batch_size, num_nodes, _ = A.shape
         # Use input A to maintain gradient connection
         A_sum = A.sum(dim=-1, keepdim=True)  # (batch_size, num_nodes, 1)
@@ -154,7 +154,7 @@ class MockEmbeddingModel(nn.Module):
         """Compute adjacency from graph data."""
         X, Y = self.embeddings(data)
         A_recon = torch.bmm(X, Y.transpose(1, 2))
-        return GraphData.from_adjacency(A_recon)
+        return GraphData.from_edge_state(A_recon, node_mask=data.node_mask)
 
     def get_config(self) -> dict[str, int]:
         return {"feature_dim": self.feature_dim}
@@ -200,11 +200,11 @@ class TestSequentialDenoisingModelProperties:
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         # Check shape preservation
         assert isinstance(result, GraphData)
-        assert result.to_adjacency().shape == A.shape
+        assert result.to_edge_state().shape == A.shape
 
         # Check no NaN/Inf in edge features
         assert not torch.isnan(result.E).any()
@@ -225,9 +225,9 @@ class TestSequentialDenoisingModelProperties:
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
         assert isinstance(result, GraphData)
-        assert result.to_adjacency().shape == A.shape
+        assert result.to_edge_state().shape == A.shape
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=8))
     @settings(max_examples=15, deadline=2000)
@@ -235,7 +235,7 @@ class TestSequentialDenoisingModelProperties:
         """Test that residual connection in denoising doesn't degrade quality."""
         feature_dim = 5
         embedding_model = MockEmbeddingModel(feature_dim)
-        data = GraphData.from_adjacency(A)
+        data = GraphData.from_edge_state(A)
 
         # Model without denoising
         model_no_denoise = SequentialDenoisingModel(embedding_model, None)
@@ -247,8 +247,8 @@ class TestSequentialDenoisingModelProperties:
         result_with_denoise = model_with_denoise(data)
 
         # Both should produce valid outputs with correct shape
-        assert result_no_denoise.to_adjacency().shape == A.shape
-        assert result_with_denoise.to_adjacency().shape == A.shape
+        assert result_no_denoise.to_edge_state().shape == A.shape
+        assert result_with_denoise.to_edge_state().shape == A.shape
 
     @given(config=hybrid_config())
     @settings(max_examples=10, deadline=2000)
@@ -269,10 +269,10 @@ class TestSequentialDenoisingModelProperties:
         model = create_sequential_model(gnn_config, transformer_config)
 
         try:
-            result = model(GraphData.from_adjacency(A))
+            result = model(GraphData.from_edge_state(A))
 
             assert isinstance(result, GraphData)
-            assert result.to_adjacency().shape == A.shape
+            assert result.to_edge_state().shape == A.shape
             assert not torch.isnan(result.E).any()
         except EigenDecompositionError:
             # Expected for some matrices
@@ -351,8 +351,10 @@ class TestHybridModelErrorHandling:
             def forward(
                 self, data: GraphData, t: torch.Tensor | None = None
             ) -> GraphData:
-                A = data.to_adjacency()
-                return GraphData.from_adjacency(torch.randn_like(A))
+                A = data.to_edge_state()
+                return GraphData.from_edge_state(
+                    torch.randn_like(A), node_mask=data.node_mask
+                )
 
             def get_config(self) -> dict[str, Any]:
                 return {}
@@ -375,7 +377,7 @@ class TestHybridModelErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         with pytest.raises(EigenDecompositionError):
-            _ = model(GraphData.from_adjacency(A))
+            _ = model(GraphData.from_edge_state(A))
 
     def test_dimension_mismatch_handling(self) -> None:
         """Test handling of dimension mismatches between components."""
@@ -389,9 +391,9 @@ class TestHybridModelErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         # Model should still work, though denoising might not be optimal
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
         assert isinstance(result, GraphData)
-        assert result.to_adjacency().shape == A.shape
+        assert result.to_edge_state().shape == A.shape
 
 
 class TestCompositionProperties:
@@ -420,9 +422,8 @@ class TestCompositionProperties:
         for i in range(1, batch_size):
             A_batch[i] = torch.eye(num_nodes) * 0.1
 
-        result = model(GraphData.from_adjacency(A_batch))
-        # Compare raw edge features (channel 1 = adjacency probability)
-        raw_adj = result.E[:, :, :, 1]
+        result = model(GraphData.from_edge_state(A_batch))
+        raw_adj = result.to_edge_state()
 
         # Check that first reconstruction is different from others
         first_recon = raw_adj[0]

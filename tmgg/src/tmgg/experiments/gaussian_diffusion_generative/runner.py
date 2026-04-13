@@ -1,10 +1,10 @@
 """Hydra entry point for generative graph modeling experiments.
 
 Run experiments with:
-    python -m tmgg.experiments.gaussian_diffusion_generative.runner
+    uv run tmgg-gaussian-gen
 
 Override configuration with Hydra:
-    python -m tmgg.experiments.gaussian_diffusion_generative.runner model.model_name=gnn data.num_nodes=100
+    uv run tmgg-gaussian-gen model.model_name=gnn data.num_nodes=100
 """
 
 from typing import Any

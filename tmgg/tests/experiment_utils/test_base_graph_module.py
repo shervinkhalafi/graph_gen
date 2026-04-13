@@ -174,7 +174,7 @@ class TestTransferBatchToDevice:
         We verify that all constituent tensors land on the target device.
         """
         module = _make_module()
-        batch = GraphData.from_adjacency(torch.randn(2, 5, 5))
+        batch = GraphData.from_edge_state(torch.randn(2, 5, 5))
         device = torch.device("cpu")
 
         result = module.transfer_batch_to_device(batch, device, dataloader_idx=0)

@@ -23,6 +23,5 @@ num_test_samples: 100
 batch_size: 16
 num_workers: 4
 
-# Noise configuration — injected by task/denoising.yaml via
-# data.noise_levels: ${noise_levels} and data.noise_type: ${noise_type}.
-# Do not hardcode here; override noise_levels/noise_type at top level.
+# Noise is configured at top level by task/denoising.yaml.
+# Do not add noise kwargs to the datamodule config.

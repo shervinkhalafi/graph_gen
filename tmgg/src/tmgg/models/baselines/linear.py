@@ -58,8 +58,8 @@ class LinearBaseline(GraphModel):
         Parameters
         ----------
         data
-            Graph features. The adjacency is extracted via
-            ``data.to_adjacency()``.
+            Graph features. The dense edge state is extracted via
+            ``data.to_edge_state()``.
         t
             Diffusion timestep tensor, or None. Currently unused.
 
@@ -68,7 +68,7 @@ class LinearBaseline(GraphModel):
         GraphData
             Denoised graph with 2-class edge features.
         """
-        A = data.to_adjacency()
+        A = data.to_edge_state()
         B, N, _ = A.shape
 
         W = self.W[:N, :N]
@@ -78,7 +78,7 @@ class LinearBaseline(GraphModel):
         out = torch.bmm(torch.bmm(W_expanded, A), W_expanded.transpose(-2, -1))
         out = out + b.unsqueeze(0)
 
-        return GraphData.from_adjacency(out)
+        return GraphData.from_edge_state(out, node_mask=data.node_mask)
 
     def get_config(self) -> dict[str, Any]:
         """Return model configuration."""

@@ -167,7 +167,8 @@ tmgg-experiment +stage=stage1_poc --multirun hydra/launcher=basic \
 
 ### W&B Logging
 
-W&B logging is required by default — training crashes if `WANDB_API_KEY` is not set. To degrade to a warning (TensorBoard-only fallback), pass `allow_no_wandb=true`:
+W&B logging is required by default. To degrade a missing `WANDB_API_KEY`
+to a warning and continue without W&B logging, pass `allow_no_wandb=true`:
 
 ```bash
 tmgg-experiment +stage=stage1_poc allow_no_wandb=true
@@ -185,6 +186,6 @@ tmgg-experiment +stage=stage1_poc trainer.max_steps=10000
 # Change batch size
 tmgg-experiment +stage=stage1_poc data.batch_size=32
 
-# Allow training without W&B (TensorBoard fallback)
+# Allow training without W&B logging
 tmgg-experiment +stage=stage1_poc allow_no_wandb=true
 ```

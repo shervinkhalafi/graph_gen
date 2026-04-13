@@ -24,7 +24,3 @@ graph_config:
   num_test_partitions: 10
 
 samples_per_graph: 1000
-
-# Noise configuration (interpolated from top-level for single-source-of-truth)
-noise_type: ${noise_type}
-noise_levels: ${noise_levels}

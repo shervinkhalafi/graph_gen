@@ -27,7 +27,8 @@ scheduler_config:
 
 # Full spectrum for n=50 graph
 model:
-  k: 50
+  model:
+    k: 50
 
 # Single noise level per experiment (swept via hyperparameters)
 noise_levels: [0.1]

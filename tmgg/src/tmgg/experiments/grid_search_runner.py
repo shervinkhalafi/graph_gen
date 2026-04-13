@@ -7,7 +7,7 @@ from tmgg.training.orchestration.run_experiment import run_experiment
 
 
 @hydra.main(  # pyright: ignore[reportAny]
-    version_base=None, config_path="../exp_configs", config_name="grid_search_base"
+    version_base=None, config_path="exp_configs", config_name="grid_search_base"
 )
 def main(config: DictConfig):
     """

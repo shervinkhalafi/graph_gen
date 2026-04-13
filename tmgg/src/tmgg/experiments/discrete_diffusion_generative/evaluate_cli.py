@@ -11,6 +11,7 @@ earlier LightningModule implementations are incompatible.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from datetime import datetime
@@ -21,13 +22,83 @@ import torch
 
 from tmgg.evaluation.mmd_metrics import (
     adjacency_to_networkx,
+    compute_mmd_metrics,
 )
 from tmgg.evaluation.reference_graphs import (
     generate_reference_graphs,
 )
+from tmgg.models.base import GraphModel
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
+
+
+def _instantiate_checkpoint_model(
+    checkpoint_path: Path,
+    *,
+    device: str,
+) -> GraphModel:
+    """Reconstruct the nested graph model from checkpoint metadata.
+
+    ``DiffusionModule`` intentionally excludes the graph model from
+    ``save_hyperparameters`` because the instantiated module object is not a
+    stable constructor argument. The checkpoint still stores
+    ``model_class`` and ``model_config`` in the hyperparameters, which is the
+    canonical source for rebuilding that nested model at load time.
+    """
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    hparams = checkpoint.get("hyper_parameters")
+    if not isinstance(hparams, dict):
+        raise TypeError(
+            f"Expected checkpoint hyperparameters dict in {checkpoint_path}, "
+            f"got {type(hparams).__name__}"
+        )
+
+    model_class_path = hparams.get("model_class")
+    model_config = hparams.get("model_config")
+    if not isinstance(model_class_path, str):
+        raise TypeError(
+            f"Checkpoint {checkpoint_path} is missing string model_class metadata"
+        )
+    if not isinstance(model_config, dict):
+        raise TypeError(
+            f"Checkpoint {checkpoint_path} is missing dict model_config metadata"
+        )
+
+    module_path, class_name = model_class_path.rsplit(".", 1)
+    model_module = importlib.import_module(module_path)
+    model_class = getattr(model_module, class_name)
+    if not isinstance(model_class, type) or not issubclass(model_class, GraphModel):
+        raise TypeError(
+            f"Checkpoint model class {model_class_path!r} is not a GraphModel subclass"
+        )
+
+    model = model_class(**model_config)
+    return model
+
+
+def _load_diffusion_module(
+    checkpoint_path: Path,
+    *,
+    device: str,
+) -> DiffusionModule:
+    """Load a diffusion checkpoint, rebuilding the nested model if needed."""
+    try:
+        return DiffusionModule.load_from_checkpoint(
+            str(checkpoint_path), map_location=device
+        )
+    except TypeError as exc:
+        if "missing 1 required keyword-only argument: 'model'" not in str(exc):
+            raise
+
+    # Newer checkpoints persist model metadata but not the instantiated model.
+    # Rebuild the nested GraphModel explicitly and retry the Lightning load.
+    model = _instantiate_checkpoint_model(checkpoint_path, device=device)
+    return DiffusionModule.load_from_checkpoint(
+        str(checkpoint_path),
+        map_location=device,
+        model=model,
+    )
 
 
 def evaluate_checkpoint(
@@ -78,9 +149,7 @@ def evaluate_checkpoint(
     # Load model from checkpoint (save_hyperparameters stores constructor args)
     # Only DiffusionModule checkpoints are supported.
     print("\nLoading model...")
-    module = DiffusionModule.load_from_checkpoint(
-        str(checkpoint_path), map_location=device
-    )
+    module = _load_diffusion_module(checkpoint_path, device=device)
     module = module.to(device)
     module.eval()
 
@@ -99,11 +168,6 @@ def evaluate_checkpoint(
     print(f"Sampling {num_samples} graphs from model...")
     with torch.no_grad():
         generated_graph_data = module.generate_graphs(num_samples)
-
-    # Compute MMD using the generated networkx graphs directly
-    from tmgg.evaluation.mmd_metrics import (
-        compute_mmd_metrics,
-    )
 
     mmd_results = compute_mmd_metrics(
         ref_graphs, generated_graph_data, kernel=mmd_kernel, sigma=mmd_sigma

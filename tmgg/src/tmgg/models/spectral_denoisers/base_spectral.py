@@ -108,8 +108,8 @@ class SpectralDenoiser(GraphModel, ABC):
         Parameters
         ----------
         data
-            Graph features. The adjacency matrix is extracted via
-            ``data.to_adjacency()``.
+            Graph features. The dense edge state is extracted via
+            ``data.to_edge_state()``.
         t
             Diffusion timestep tensor, or None for unconditional denoising.
             Currently unused; reserved for future diffusion pipeline.
@@ -119,7 +119,7 @@ class SpectralDenoiser(GraphModel, ABC):
         GraphData
             Denoised graph with 2-class edge features.
         """
-        A = data.to_adjacency()
+        A = data.to_edge_state()
 
         if self.embedding_source == "eigenvector":
             assert isinstance(self.embedding_layer, TopKEigenLayer)
@@ -140,7 +140,7 @@ class SpectralDenoiser(GraphModel, ABC):
                 Lambda = torch.zeros(V.shape[0], self.k, device=V.device, dtype=V.dtype)
 
         result_adj = self._spectral_forward(V, Lambda, A)
-        return GraphData.from_adjacency(result_adj)
+        return GraphData.from_edge_state(result_adj, node_mask=data.node_mask)
 
     @abstractmethod
     def _spectral_forward(
@@ -199,15 +199,15 @@ class SpectralDenoiser(GraphModel, ABC):
         Parameters
         ----------
         data
-            Graph features. The adjacency is extracted via
-            ``data.to_adjacency()``.
+            Graph features. The dense edge state is extracted via
+            ``data.to_edge_state()``.
 
         Returns
         -------
         torch.Tensor
             Node features of shape ``(batch, n, feature_dim)``.
         """
-        A = data.to_adjacency()
+        A = data.to_edge_state()
 
         if self.embedding_source == "eigenvector":
             assert isinstance(self.embedding_layer, TopKEigenLayer)

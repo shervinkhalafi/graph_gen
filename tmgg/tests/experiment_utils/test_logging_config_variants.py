@@ -1,0 +1,237 @@
+"""Tests for Hydra logger/callback config variants and runtime helpers.
+
+These tests cover the config-surface cleanup that moves experiment-specific
+callback and logger policy into named Hydra config groups. They are intended
+to stay fast: configs are composed in-process, callbacks are constructed
+directly, and wandb logger creation is stubbed so no network calls occur.
+
+Key invariants
+--------------
+- Key experiment configs resolve cleanly with logger enabled.
+- Grid-search and discrete diffusion select logger/callback variants through
+  Hydra defaults rather than inline overrides.
+- ``create_callbacks()`` builds callback objects from top-level
+  ``config.callbacks`` and ignores ``trainer.callbacks``.
+- ``create_loggers()`` forwards supported wandb metadata fields that appear
+  in the config variants.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Generator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from hydra import compose, initialize_config_dir
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf, open_dict
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+
+from tmgg.training.logging import create_loggers
+from tmgg.training.orchestration.run_experiment import create_callbacks
+
+EXP_CONFIG_DIR = (
+    Path(__file__).resolve().parents[2] / "src" / "tmgg" / "experiments" / "exp_configs"
+)
+
+
+def _base_overrides(tmp_path: Path) -> list[str]:
+    """Return generic overrides that keep config composition self-contained."""
+    return [
+        f"paths.output_dir={tmp_path}",
+        f"paths.results_dir={tmp_path}/results",
+        f"hydra.run.dir={tmp_path}",
+        "trainer.max_steps=2",
+        "trainer.val_check_interval=1",
+        "trainer.accelerator=cpu",
+        "data.batch_size=2",
+        "data.num_workers=0",
+    ]
+
+
+def _compose_config(
+    tmp_path: Path,
+    config_name: str,
+    overrides: list[str] | None = None,
+    *,
+    disable_logger: bool = False,
+) -> DictConfig:
+    """Compose a config with minimal runtime-independent overrides."""
+    extra_overrides = list(overrides or [])
+    if disable_logger:
+        extra_overrides.append("~logger")
+
+    with initialize_config_dir(version_base=None, config_dir=str(EXP_CONFIG_DIR)):
+        return compose(
+            config_name=config_name,
+            overrides=_base_overrides(tmp_path) + extra_overrides,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _clear_hydra() -> Generator[None, None, None]:
+    """Clear Hydra global state before and after each test."""
+    GlobalHydra.instance().clear()
+    yield
+    GlobalHydra.instance().clear()
+
+
+@pytest.mark.integration
+@pytest.mark.config
+class TestLoggerAndCallbackVariants:
+    """Verify config composition lands on the expected Hydra variants."""
+
+    @pytest.mark.parametrize(
+        ("config_name", "overrides"),
+        [
+            ("base_config_spectral_arch", []),
+            ("grid_search_base", []),
+            ("base_config_discrete_diffusion_generative", []),
+        ],
+    )
+    def test_key_configs_resolve_with_logger_enabled(
+        self,
+        tmp_path: Path,
+        config_name: str,
+        overrides: list[str],
+    ) -> None:
+        """Critical configs should fully resolve without disabling logger."""
+        cfg = _compose_config(tmp_path, config_name, overrides=overrides)
+        resolved = OmegaConf.to_container(cfg, resolve=True)
+        assert isinstance(resolved, dict)
+        assert "logger" in resolved
+        assert "callbacks" in resolved
+
+    def test_base_config_uses_wandb_logger_variant(self, tmp_path: Path) -> None:
+        """Base infra should now compose a wandb-only logger config."""
+        cfg = _compose_config(tmp_path, "base_config_spectral_arch")
+        logger_cfg = cfg.logger
+
+        assert len(logger_cfg) == 1
+        assert list(logger_cfg[0].keys()) == ["wandb"]
+        assert "tensorboard" not in logger_cfg[0]
+
+    def test_grid_search_uses_top_level_variants(self, tmp_path: Path) -> None:
+        """Grid search should select logger/callback variants via defaults."""
+        cfg = _compose_config(tmp_path, "grid_search_base")
+
+        assert "callbacks" in cfg
+        assert "callbacks" not in cfg.trainer
+        assert cfg.callbacks.early_stopping.monitor == "val/loss"
+        assert cfg.callbacks.early_stopping.patience == 4
+        assert cfg.callbacks.checkpoint.filename == (
+            "grid_search_4k_params-step={step:06d}-val_loss={val/loss:.4f}"
+        )
+        assert len(cfg.logger) == 1
+        assert list(cfg.logger[0].keys()) == ["wandb"]
+        assert cfg.logger[0].wandb.group == f"unknown_{cfg.data.noise_type}"
+
+    def test_discrete_config_uses_top_level_variants(self, tmp_path: Path) -> None:
+        """Discrete diffusion should select NLL callbacks and discrete wandb naming."""
+        cfg = _compose_config(tmp_path, "base_config_discrete_diffusion_generative")
+
+        assert cfg.callbacks.early_stopping.monitor == "val/epoch_NLL"
+        assert cfg.callbacks.checkpoint.monitor == "val/epoch_NLL"
+        assert cfg.callbacks.checkpoint.filename == (
+            "model-step={step:06d}-val_nll={val/epoch_NLL:.4f}"
+        )
+        assert len(cfg.logger) == 1
+        assert list(cfg.logger[0].keys()) == ["wandb"]
+        assert cfg.logger[0].wandb.name == "discrete_diffusion_T500_n20_sbm"
+
+
+class TestCreateCallbacks:
+    """Verify runtime callbacks are built from the top-level callback config."""
+
+    def test_grid_search_variant_sets_monitor_and_patience(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Grid-search callback config should drive ModelCheckpoint/EarlyStopping."""
+        cfg = _compose_config(tmp_path, "grid_search_base", disable_logger=True)
+        callbacks = create_callbacks(cfg)
+
+        early_stopping = next(cb for cb in callbacks if isinstance(cb, EarlyStopping))
+        checkpoint = next(cb for cb in callbacks if isinstance(cb, ModelCheckpoint))
+
+        assert early_stopping.monitor == "val/loss"
+        assert early_stopping.patience == 4
+        assert checkpoint.monitor == "val/loss"
+        assert checkpoint.filename == (
+            "grid_search_4k_params-step={step:06d}-val_loss={val/loss:.4f}"
+        )
+
+    def test_discrete_variant_sets_nll_monitor(self, tmp_path: Path) -> None:
+        """Discrete callback config should swap monitor keys to epoch NLL."""
+        cfg = _compose_config(
+            tmp_path,
+            "base_config_discrete_diffusion_generative",
+            disable_logger=True,
+        )
+        callbacks = create_callbacks(cfg)
+
+        early_stopping = next(cb for cb in callbacks if isinstance(cb, EarlyStopping))
+        checkpoint = next(cb for cb in callbacks if isinstance(cb, ModelCheckpoint))
+
+        assert early_stopping.monitor == "val/epoch_NLL"
+        assert checkpoint.monitor == "val/epoch_NLL"
+
+
+class TestCreateLoggers:
+    """Verify wandb logger creation honors the config variant surface."""
+
+    def test_grid_wandb_variant_forwards_supported_metadata(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Grid-search logger config should forward group/notes/offline."""
+        cfg = _compose_config(tmp_path, "grid_search_base")
+        captured: list[dict[str, Any]] = []
+
+        class DummyWandbLogger:
+            """Capture wandb init kwargs without touching the real backend."""
+
+            def __init__(self, **kwargs: Any) -> None:
+                captured.append(kwargs)
+
+        monkeypatch.setattr(
+            "tmgg.training.logging._has_wandb_credentials", lambda: True
+        )
+        monkeypatch.setattr("tmgg.training.logging.WandbLogger", DummyWandbLogger)
+
+        loggers = create_loggers(cfg)
+
+        assert len(loggers) == 1
+        assert len(captured) == 1
+        kwargs = captured[0]
+        assert kwargs["group"] == f"unknown_{cfg.data.noise_type}"
+        assert kwargs["notes"] == "Grid search with ~4k params across architectures"
+        assert kwargs["offline"] is False
+
+    def test_wandb_logger_uses_run_id_when_name_is_null(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Base wandb config should keep runtime name derivation via run_id."""
+        cfg = _compose_config(tmp_path, "base_config_spectral_arch")
+        with open_dict(cfg):
+            cfg.run_id = "spectral-test-run"
+        captured: list[dict[str, Any]] = []
+
+        class DummyWandbLogger:
+            """Capture runtime-derived wandb kwargs."""
+
+            def __init__(self, **kwargs: Any) -> None:
+                captured.append(kwargs)
+
+        monkeypatch.setattr(
+            "tmgg.training.logging._has_wandb_credentials", lambda: True
+        )
+        monkeypatch.setattr("tmgg.training.logging.WandbLogger", DummyWandbLogger)
+
+        create_loggers(cfg)
+
+        assert captured[0]["name"] == "spectral-test-run"

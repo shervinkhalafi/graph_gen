@@ -5,6 +5,7 @@ timeout handling and output validation. Designed for testing experiment
 runners without risking Hydra state conflicts.
 """
 
+import os
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -15,6 +16,7 @@ def run_cli_command(
     cmd: Sequence[str],
     timeout: int = 120,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a CLI command with timeout, returning captured output.
 
@@ -26,6 +28,9 @@ def run_cli_command(
         Maximum execution time in seconds. Defaults to 120s.
     cwd
         Working directory for the command. Defaults to current directory.
+    env
+        Optional subprocess environment. When omitted, inherits the current
+        process environment unchanged.
 
     Returns
     -------
@@ -43,13 +48,13 @@ def run_cli_command(
         text=True,
         timeout=timeout,
         cwd=cwd,
-        env=None,  # Inherit environment
+        env=env,
     )
     return result
 
 
-def assert_training_success(result: subprocess.CompletedProcess[str]) -> None:
-    """Assert that a training run completed without Python exceptions.
+def assert_cli_success(result: subprocess.CompletedProcess[str]) -> None:
+    """Assert that a CLI command completed without Python exceptions.
 
     Parameters
     ----------
@@ -90,6 +95,28 @@ def assert_training_success(result: subprocess.CompletedProcess[str]) -> None:
             )
 
 
+def assert_training_success(result: subprocess.CompletedProcess[str]) -> None:
+    """Backward-compatible alias for training-focused smoke tests."""
+    assert_cli_success(result)
+
+
+def get_test_subprocess_env(scratch_dir: Path) -> dict[str, str]:
+    """Return a stable subprocess environment for tiny smoke tests.
+
+    Test rationale
+    --------------
+    Many CLI entrypoints import matplotlib transitively. Pointing
+    ``MPLCONFIGDIR`` at a writable test-local directory avoids warnings and
+    expensive cache regeneration under the user's home directory.
+    """
+    mpl_dir = scratch_dir / ".mplconfig"
+    mpl_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["MPLCONFIGDIR"] = str(mpl_dir)
+    return env
+
+
 def get_quick_training_overrides(
     output_dir: Path,
     data_module: str = "denoising",
@@ -98,7 +125,7 @@ def get_quick_training_overrides(
 
     These overrides configure the experiment to complete in seconds by:
     - Limiting to 2 training steps
-    - Disabling checkpointing and logging
+    - Using the local CSV logger instead of external services
     - Using minimal data
     - Running on CPU
 
@@ -130,8 +157,9 @@ def get_quick_training_overrides(
         # Note: enable_checkpointing and enable_progress_bar must stay true
         # because create_callbacks unconditionally adds ModelCheckpoint and
         # StepProgressBar, which conflict with False settings
-        # Disable logger config (tensorboard/wandb) - falls back to CSVLogger
-        "~logger",
+        # Use a local-only logger profile; the default callback stack includes
+        # LearningRateMonitor, which Lightning rejects when no logger exists.
+        "base/logger=csv",
         # Data reduction - common keys that exist in all DataModules
         "data.batch_size=2",
         "data.num_workers=0",

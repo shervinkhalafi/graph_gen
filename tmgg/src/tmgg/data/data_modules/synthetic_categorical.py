@@ -3,8 +3,7 @@
 Generates synthetic graphs as adjacency matrices, stores them as PyG
 ``Data`` objects (matching the parent ``MultiGraphDataModule``), and
 provides train/val/test DataLoaders that collate into dense ``GraphData``
-batches. Marginal distributions over node and edge types are computed
-from the training split at ``setup()`` time.
+batches.
 
 Graph generation and index splitting are handled by the
 ``MultiGraphDataModule`` superclass.
@@ -19,14 +18,11 @@ from __future__ import annotations
 
 from typing import Any, override
 
-import torch
-from torch import Tensor
 from torch_geometric.data import Data
 
 from tmgg.data.data_modules.multigraph_data_module import (
     MultiGraphDataModule,
 )
-from tmgg.data.datasets.graph_types import GraphData
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
 
@@ -95,124 +91,23 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
             seed=seed,
         )
 
-        # Populated by setup()
-        self._node_marginals: Tensor | None = None
-        self._edge_marginals: Tensor | None = None
-
     # ------------------------------------------------------------------
     # Setup
     # ------------------------------------------------------------------
 
     @override
     def setup(self, stage: str | None = None) -> None:
-        """Generate graphs, convert to PyG Data, split, and compute marginals.
+        """Generate graphs, convert to PyG Data, and split the dataset.
 
-        Delegates graph generation and storage to the parent, which
-        populates ``_train_data`` / ``_val_data`` / ``_test_data`` as
-        ``list[Data]``. Then computes marginals from training data.
-
+        Delegates graph generation and storage to the parent, which populates
+        ``_train_data`` / ``_val_data`` / ``_test_data`` as ``list[Data]``.
         Idempotent: calling setup multiple times is safe.
         """
-        if self._train_data is not None:
-            return
-
-        # Parent generates adjacencies and converts to list[Data]
         super().setup(stage)
 
-        # Compute marginals from training data
-        self._compute_marginals()
-
-    def _compute_marginals(self) -> None:
-        """Compute empirical node and edge type distributions from training data.
-
-        Marginals are normalised histograms over the one-hot categories,
-        restricted to real (unmasked) positions. Converts to dense
-        representation temporarily for computation.
-        """
-        assert self._train_data is not None, "setup() must be called first"
-
-        from typing import cast
-
-        from torch_geometric.data import Batch
-        from torch_geometric.data.data import BaseData
-
-        # Convert to dense GraphData for marginal computation
-        batch = Batch.from_data_list(cast(list[BaseData], self._train_data))
-        dense = GraphData.from_pyg_batch(batch)
-
-        bs, n_max = dense.node_mask.shape
-        dx = int(dense.X.shape[-1])
-        de = int(dense.E.shape[-1])
-
-        # Node marginals: count per-class over real nodes
-        real_nodes = dense.node_mask.bool()  # (bs, n_max)
-        node_counts = dense.X[real_nodes].sum(dim=0)  # (dx,)
-
-        # Edge marginals: upper triangle of real positions only
-        triu = torch.triu_indices(n_max, n_max, offset=1)
-        mask_2d = dense.node_mask.unsqueeze(-1) & dense.node_mask.unsqueeze(
-            -2
-        )  # (bs, n, n)
-        upper_mask = mask_2d[:, triu[0], triu[1]]  # (bs, num_triu)
-        upper_E = dense.E[:, triu[0], triu[1]]  # (bs, num_triu, de)
-        edge_counts = upper_E[upper_mask].sum(dim=0)  # (de,)
-
-        # Normalise
-        node_total = node_counts.sum()
-        edge_total = edge_counts.sum()
-        self._node_marginals = (
-            node_counts / node_total if node_total > 0 else torch.ones(dx) / dx
-        )
-        self._edge_marginals = (
-            edge_counts / edge_total if edge_total > 0 else torch.ones(de) / de
-        )
-
-    @property
-    def node_marginals(self) -> Tensor:
-        """Empirical node type distribution from the training split.
-
-        Returns
-        -------
-        Tensor
-            Shape ``(dx,)`` summing to 1.
-        """
-        if self._node_marginals is None:
-            raise RuntimeError("Marginals not available. Call setup() first.")
-        return self._node_marginals
-
-    @property
-    def edge_marginals(self) -> Tensor:
-        """Empirical edge type distribution from the training split.
-
-        Returns
-        -------
-        Tensor
-            Shape ``(de,)`` summing to 1.
-        """
-        if self._edge_marginals is None:
-            raise RuntimeError("Marginals not available. Call setup() first.")
-        return self._edge_marginals
-
     # ------------------------------------------------------------------
-    # Dataset info and size distribution
+    # Size distribution
     # ------------------------------------------------------------------
-
-    @override
-    def get_dataset_info(self) -> dict[str, int]:
-        """Return metadata about the categorical dataset.
-
-        Returns
-        -------
-        dict
-            Keys: ``num_graphs``, ``num_nodes``, ``num_node_classes``,
-            ``num_edge_classes``.
-        """
-        return {
-            "num_graphs": self.num_graphs,
-            "num_nodes": self.num_nodes,
-            "num_node_classes": 2,
-            "num_edge_classes": 2,
-        }
 
     @override
     def get_size_distribution(self, split: str | None = None) -> SizeDistribution:
@@ -257,24 +152,3 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
 
         node_counts = [int(d.num_nodes) for d in all_data]  # type: ignore[arg-type]
         return SizeDistribution.from_node_counts(node_counts)
-
-    def sample_n_nodes(self, batch_size: int) -> Tensor:
-        """Sample graph sizes from the training split's empirical distribution.
-
-        For fixed-size synthetic data this returns ``num_nodes`` repeated
-        ``batch_size`` times (degenerate distribution). When variable-size
-        datasets are wired in, the distribution reflects actual per-graph
-        sizes from the training split.
-
-        Parameters
-        ----------
-        batch_size
-            Number of node counts to sample.
-
-        Returns
-        -------
-        Tensor
-            Integer tensor of shape ``(batch_size,)`` with sampled sizes.
-        """
-        dist = self.get_size_distribution("train")
-        return dist.sample(batch_size)

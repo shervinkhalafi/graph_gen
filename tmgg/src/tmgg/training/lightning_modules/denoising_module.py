@@ -26,6 +26,7 @@ multi-step parent class does not provide.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import MutableMapping
 from typing import Any, cast, override
 
 import networkx as nx
@@ -73,9 +74,9 @@ class SingleStepDenoisingModule(DiffusionModule):
     noise_type : str
         Noise generator type (``"digress"``, ``"gaussian"``, ``"edge_flip"``,
         ``"rotation"``, ``"logit"``).
-    noise_levels : list[float] | None
-        Noise levels for training. When ``None``, reads from the datamodule's
-        ``noise_levels`` attribute at runtime.
+    noise_levels : list[float]
+        Noise levels for training. Required; the module no longer reads them
+        from the datamodule at runtime.
     eval_noise_levels : list[float] | None
         Noise levels for evaluation. Falls back to ``noise_levels`` when ``None``.
     loss_type : str
@@ -107,7 +108,7 @@ class SingleStepDenoisingModule(DiffusionModule):
         scheduler_config: dict[str, Any] | None = None,
         # Denoising-specific params
         noise_type: str = "digress",
-        noise_levels: list[float] | None = None,
+        noise_levels: list[float],
         eval_noise_levels: list[float] | None = None,
         loss_type: str = "bce_logits",
         rotation_k: int = 20,
@@ -117,6 +118,9 @@ class SingleStepDenoisingModule(DiffusionModule):
         # Distributional evaluation
         evaluator: GraphEvaluator | None = None,
     ) -> None:
+        if not noise_levels:
+            raise ValueError("noise_levels must be a non-empty list of floats.")
+
         # Build the noise definition and wrap it in a ContinuousNoiseProcess
         noise_generator: NoiseDefinition = create_noise_definition(
             noise_type=noise_type, rotation_k=rotation_k, seed=seed
@@ -141,11 +145,16 @@ class SingleStepDenoisingModule(DiffusionModule):
             evaluator=evaluator,
             loss_type=loss_type,
         )
+        self._drop_unused_diffusion_hparams()
 
         # Denoising-specific state
         self.noise_type: str = noise_type
-        self._noise_levels_override: list[float] | None = noise_levels
-        self._eval_noise_levels_override: list[float] | None = eval_noise_levels
+        self._noise_levels: list[float] = list(noise_levels)
+        self._eval_noise_levels: list[float] = (
+            list(eval_noise_levels)
+            if eval_noise_levels is not None
+            else list(noise_levels)
+        )
 
         # Spectral delta logging
         self.spectral_k: int = spectral_k
@@ -153,63 +162,37 @@ class SingleStepDenoisingModule(DiffusionModule):
         # Seeded RNG for noise level sampling (avoids global numpy state)
         self._noise_rng: np.random.Generator = np.random.default_rng(seed)
 
+    def _drop_unused_diffusion_hparams(self) -> None:
+        """Remove generative diffusion hparams that do not belong to T=1 denoising.
+
+        Lightning merges module and datamodule hparams when a logger is active.
+        ``SingleStepDenoisingModule`` inherits ``num_nodes`` and
+        ``eval_every_n_steps`` from ``DiffusionModule`` only because the parent
+        class saves its constructor kwargs wholesale. Those settings drive the
+        multi-step reverse sampler, not single-step reconstruction, so keeping
+        them on the denoising module both misstates its public surface and can
+        create false merge conflicts with the datamodule.
+        """
+        self.hparams.pop("num_nodes", None)
+        self.hparams.pop("eval_every_n_steps", None)
+        initial_hparams = getattr(self, "_hparams_initial", None)
+        if isinstance(initial_hparams, MutableMapping):
+            initial_hparams.pop("num_nodes", None)
+            initial_hparams.pop("eval_every_n_steps", None)
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 
     @property
     def noise_levels(self) -> list[float]:
-        """Noise levels for training.
-
-        Returns the explicitly provided list if set, otherwise reads from the
-        datamodule's ``noise_levels`` attribute.
-
-        Raises
-        ------
-        RuntimeError
-            If no noise levels were provided and the datamodule is unavailable
-            or lacks a ``noise_levels`` attribute.
-        """
-        if self._noise_levels_override is not None:
-            return self._noise_levels_override
-        dm = self._datamodule
-        if dm is None:
-            raise RuntimeError(
-                "Cannot access noise_levels: none were provided at construction"
-                " and no trainer/datamodule is attached."
-            )
-        levels = getattr(dm, "noise_levels", None)
-        if levels is None:
-            raise RuntimeError(
-                f"Datamodule {type(dm).__name__} does not have a noise_levels attribute."
-            )
-        return cast(list[float], levels)
+        """Noise levels for training."""
+        return self._noise_levels
 
     @property
     def eval_noise_levels(self) -> list[float]:
-        """Noise levels for evaluation.
-
-        Returns the explicitly provided eval levels if set, otherwise falls
-        back to :attr:`noise_levels`.
-        """
-        if self._eval_noise_levels_override is not None:
-            return self._eval_noise_levels_override
-        return self.noise_levels
-
-    @property
-    def _datamodule(self) -> Any | None:
-        """Access the trainer's datamodule, if attached.
-
-        Lightning's ``trainer`` property raises ``RuntimeError`` when no
-        trainer is attached, so we catch that rather than comparing to None.
-        """
-        try:
-            trainer = self.trainer
-        except RuntimeError:
-            return None
-        if trainer is None:  # pyright: ignore[reportUnnecessaryComparison]
-            return None
-        return getattr(trainer, "datamodule", None)
+        """Noise levels for evaluation."""
+        return self._eval_noise_levels
 
     # ------------------------------------------------------------------
     # Forward
@@ -217,16 +200,15 @@ class SingleStepDenoisingModule(DiffusionModule):
 
     @override
     def forward(self, x: torch.Tensor, t: torch.Tensor | None = None) -> torch.Tensor:
-        """Bridge raw adjacency tensors to the ``GraphData`` model interface.
+        """Bridge dense edge-state tensors to the ``GraphData`` model interface.
 
         Wraps the input as ``GraphData``, calls the model, and extracts
-        edge-channel logits (``E[..., 1]``) for backward compatibility with
-        BCE/MSE loss computation.
+        the dense edge state for BCE/MSE loss computation.
 
         Parameters
         ----------
         x
-            Input adjacency matrix, shape ``(B, N, N)``.
+            Input dense edge state, shape ``(B, N, N)``.
         t
             Optional timestep tensor (unused by most single-step models).
 
@@ -235,9 +217,9 @@ class SingleStepDenoisingModule(DiffusionModule):
         torch.Tensor
             Edge logits, shape ``(B, N, N)``.
         """
-        data = GraphData.from_adjacency(x)
+        data = GraphData.from_edge_state(x)
         result: GraphData = self.model(data, t=t)  # pyright: ignore[reportUnknownVariableType]
-        return result.E[..., 1]
+        return result.to_edge_state()
 
     # ------------------------------------------------------------------
     # Training
@@ -247,8 +229,9 @@ class SingleStepDenoisingModule(DiffusionModule):
     def training_step(self, batch: GraphData, batch_idx: int) -> torch.Tensor:
         """Execute a single-step denoising training iteration.
 
-        Samples a random noise level, corrupts the clean adjacency, runs
-        the model forward, and computes loss against the clean target.
+        Samples a random noise level, corrupts the clean graph in edge-state
+        form, runs the model forward, and computes loss against the clean
+        binary target.
 
         Parameters
         ----------
@@ -262,16 +245,19 @@ class SingleStepDenoisingModule(DiffusionModule):
         torch.Tensor
             Scalar loss with gradient.
         """
-        adj = batch.to_adjacency()
+        adj = batch.to_binary_adjacency()
+        clean_state = GraphData.from_edge_state(adj, node_mask=batch.node_mask)
 
         # Sample noise level randomly from training noise levels
         eps: float = float(self._noise_rng.choice(self.noise_levels))
 
         # Apply noise via unified NoiseProcess interface
-        noisy_gd: GraphData = self.noise_process.apply(batch, noise_level=eps)
+        noisy_gd = cast(ContinuousNoiseProcess, self.noise_process).sample_at_level(
+            clean_state, eps
+        )
 
-        # Forward pass: returns edge logits via GraphData bridge
-        output: torch.Tensor = self.forward(noisy_gd.to_adjacency())
+        # Forward pass: returns edge-state logits via GraphData bridge
+        output: torch.Tensor = self.forward(noisy_gd.to_edge_state())
 
         loss: torch.Tensor = self.criterion(output, adj)
 
@@ -309,7 +295,8 @@ class SingleStepDenoisingModule(DiffusionModule):
         dict[str, torch.Tensor]
             Noise-level-averaged loss and metrics.
         """
-        adj = batch.to_adjacency()
+        adj = batch.to_binary_adjacency()
+        clean_state = GraphData.from_edge_state(adj, node_mask=batch.node_mask)
         target = adj
 
         mode_loss_sum = torch.tensor(0.0, device=adj.device)
@@ -319,8 +306,10 @@ class SingleStepDenoisingModule(DiffusionModule):
         N: int = len(self.eval_noise_levels)
 
         for eps in self.eval_noise_levels:
-            noisy_gd: GraphData = self.noise_process.apply(batch, noise_level=eps)
-            batch_noisy: torch.Tensor = noisy_gd.to_adjacency()
+            noisy_gd = cast(ContinuousNoiseProcess, self.noise_process).sample_at_level(
+                clean_state, eps
+            )
+            batch_noisy: torch.Tensor = noisy_gd.to_edge_state()
             output: torch.Tensor = self.forward(batch_noisy)
             mode_loss: torch.Tensor = self.criterion(output, target)
 
@@ -490,12 +479,14 @@ class SingleStepDenoisingModule(DiffusionModule):
 
         all_results: dict[float, dict[str, float | None]] = {}
 
-        ref_gd = GraphData.from_adjacency(ref_adjs)
+        ref_gd = GraphData.from_edge_state(ref_adjs)
 
         with torch.no_grad():
             for eps in self.eval_noise_levels:
-                noisy_gd = self.noise_process.apply(ref_gd, noise_level=eps)
-                output = self.forward(noisy_gd.to_adjacency())
+                noisy_gd = cast(
+                    ContinuousNoiseProcess, self.noise_process
+                ).sample_at_level(ref_gd, eps)
+                output = self.forward(noisy_gd.to_edge_state())
                 predictions = (output > 0).float()
                 predictions = self._zero_diagonal(predictions)
 

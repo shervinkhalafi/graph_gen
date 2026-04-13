@@ -9,6 +9,37 @@ from torch import Tensor
 
 from tmgg.data.datasets.graph_types import GraphData
 
+type ParameterCountTree = dict[str, int | ParameterCountTree]
+"""Recursive parameter-count structure returned by ``BaseModel.parameter_count``."""
+
+
+def get_parameter_count_int(counts: ParameterCountTree, key: str) -> int:
+    """Return a required integer leaf from a parameter-count tree.
+
+    Parameters
+    ----------
+    counts
+        Hierarchical parameter-count mapping.
+    key
+        Name of the leaf entry to extract.
+
+    Returns
+    -------
+    int
+        Integer parameter count stored at ``counts[key]``.
+
+    Raises
+    ------
+    TypeError
+        If ``counts[key]`` is itself a nested subtree instead of an integer
+        leaf. Internal callers use this to fail fast when the expected count
+        shape drifts.
+    """
+    value = counts[key]
+    if not isinstance(value, int):
+        raise TypeError(f"Expected integer parameter count at key '{key}'")
+    return value
+
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):
@@ -35,43 +66,46 @@ class BaseModel(nn.Module, ABC):
         """Return model hyperparameters for logging and serialization."""
         pass
 
-    def parameter_count(self) -> dict[str, Any]:
+    def parameter_count(self) -> ParameterCountTree:
         """Count trainable parameters in this module and its children.
 
         Returns
         -------
-        dict[str, Any]
+        ParameterCountTree
             Hierarchical counts: ``"total"`` for the full module,
             ``"self"`` for parameters not in children, and one entry
             per named child module.
         """
-        counts: dict[str, Any] = {"total": 0, "self": 0}
+        self_total = 0
+        total = 0
+        child_breakdown: ParameterCountTree = {}
 
         # Count parameters directly owned by this module (not in children)
         for _, param in self.named_parameters(recurse=False):
             if param.requires_grad:
-                counts["self"] += param.numel()
+                self_total += param.numel()
 
         # Recursively count child modules
         for name, module in self.named_children():
-            if hasattr(module, "parameter_count") and callable(module.parameter_count):
+            if isinstance(module, BaseModel):
                 # Child has parameter_count method - use it for recursive counting
-                child_counts = module.parameter_count()
-                counts[name] = child_counts
-                counts["total"] += child_counts["total"]
+                counts = module.parameter_count()
+                child_breakdown[name] = counts
+                total += get_parameter_count_int(counts, "total")
             else:
                 # Standard PyTorch module - count its parameters
                 child_total = sum(
                     p.numel() for p in module.parameters() if p.requires_grad
                 )
                 if child_total > 0:
-                    counts[name] = {"total": child_total}
-                    counts["total"] += child_total
+                    child_breakdown[name] = {"total": child_total}
+                    total += child_total
 
-        # Add self parameters to total
-        counts["total"] += counts["self"]
-
-        return counts
+        return {
+            "total": total + self_total,
+            "self": self_total,
+            **child_breakdown,
+        }
 
 
 class GraphModel(BaseModel, ABC):

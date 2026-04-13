@@ -1,0 +1,10 @@
+# @package _global_
+
+logger:
+  - wandb:
+      project: ${wandb_project}
+      name: ${experiment_name}_T${model.noise_schedule.timesteps}_n${data.num_nodes}_${data.graph_type}
+      tags: []
+      save_dir: ${paths.output_dir}
+      entity: ${wandb_entity}
+      log_model: false

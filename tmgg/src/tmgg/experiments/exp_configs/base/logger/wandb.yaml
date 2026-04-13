@@ -3,8 +3,8 @@
 logger:
   - wandb:
       project: ${wandb_project}
-      name: ${experiment_name}
-      tags: ["attention", "denoising"]
+      name: null  # Derived from run_id programmatically in create_loggers()
+      tags: []
       save_dir: ${paths.output_dir}
       entity: ${wandb_entity}
       log_model: false  # Whether to log model checkpoints to wandb

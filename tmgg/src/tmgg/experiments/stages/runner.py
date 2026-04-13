@@ -15,6 +15,8 @@ from typing import Any
 import hydra
 from omegaconf import DictConfig
 
+from tmgg.training.orchestration.run_experiment import run_experiment
+
 # Config path relative to this file — resolves to src/tmgg/experiments/exp_configs/
 _CONFIG_PATH = "../exp_configs"
 
@@ -39,10 +41,6 @@ def main(cfg: DictConfig) -> dict[str, Any]:
             hydra/launcher=tmgg_modal \\
             model=models/spectral/linear_pe,models/spectral/filter_bank
     """
-    from tmgg.training.orchestration.run_experiment import (
-        run_experiment,
-    )
-
     return run_experiment(cfg)
 
 

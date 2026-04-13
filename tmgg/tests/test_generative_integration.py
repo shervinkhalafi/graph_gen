@@ -64,15 +64,8 @@ def _make_diffusion_module(
     if model is None:
         model = SelfAttentionDenoiser(k=8, d_k=16)
     schedule = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=timesteps)
-    noise_process = ContinuousNoiseProcess(
-        generator=DigressNoise(), noise_schedule=schedule
-    )
-    sampler = ContinuousSampler(
-        noise_process=ContinuousNoiseProcess(
-            generator=DigressNoise(), noise_schedule=schedule
-        ),
-        noise_schedule=schedule,
-    )
+    noise_process = ContinuousNoiseProcess(definition=DigressNoise(), schedule=schedule)
+    sampler = ContinuousSampler()
     evaluator = GraphEvaluator(
         eval_num_samples=eval_num_samples, kernel="gaussian", sigma=1.0
     )
@@ -247,16 +240,10 @@ class TestDiffusionModuleInstantiation:
             DiffusionModule(
                 model=SelfAttentionDenoiser(k=8, d_k=16),
                 noise_process=ContinuousNoiseProcess(
-                    generator=DigressNoise(),
-                    noise_schedule=schedule,
+                    definition=DigressNoise(),
+                    schedule=schedule,
                 ),
-                sampler=ContinuousSampler(
-                    noise_process=ContinuousNoiseProcess(
-                        generator=DigressNoise(),
-                        noise_schedule=schedule,
-                    ),
-                    noise_schedule=schedule,
-                ),
+                sampler=ContinuousSampler(),
                 noise_schedule=schedule,
                 loss_type="invalid",
             )
@@ -281,7 +268,7 @@ class TestDiffusionModuleTrainingStep:
     @pytest.fixture
     def module_and_batch(self) -> tuple[DiffusionModule, GraphData]:
         module = _make_diffusion_module()
-        batch = GraphData.from_adjacency(_make_block_adjacency())
+        batch = GraphData.from_binary_adjacency(_make_block_adjacency())
         return module, batch
 
     def test_training_step_finite_loss(
@@ -317,7 +304,7 @@ class TestDiffusionModuleValidation:
     @pytest.fixture
     def module_and_batch(self) -> tuple[DiffusionModule, GraphData]:
         module = _make_diffusion_module(eval_num_samples=4)
-        batch = GraphData.from_adjacency(_make_block_adjacency())
+        batch = GraphData.from_binary_adjacency(_make_block_adjacency())
         return module, batch
 
     def test_validation_step_runs_without_accumulation(
@@ -376,12 +363,12 @@ class TestDiffusionModulePerElementNoise:
     def test_per_element_noise_via_noise_process(self) -> None:
         """DiffusionModule should apply per-sample noise levels as a batched tensor."""
         module = _make_diffusion_module(timesteps=100)
-        batch = GraphData.from_adjacency(_make_block_adjacency())
+        batch = GraphData.from_binary_adjacency(_make_block_adjacency())
 
         # Instrument the underlying noise generator to record the eps argument
         recorded_eps: list[torch.Tensor] = []
         assert isinstance(module.noise_process, ContinuousNoiseProcess)
-        original_add_noise = module.noise_process.generator.add_noise
+        original_add_noise = module.noise_process.definition.add_noise
 
         def recording_add_noise(
             A: torch.Tensor, eps: float | torch.Tensor
@@ -390,7 +377,7 @@ class TestDiffusionModulePerElementNoise:
                 recorded_eps.append(eps.clone())
             return original_add_noise(A, eps)
 
-        module.noise_process.generator.add_noise = recording_add_noise  # pyright: ignore[reportAttributeAccessIssue]
+        module.noise_process.definition.add_noise = recording_add_noise  # pyright: ignore[reportAttributeAccessIssue]
 
         torch.manual_seed(12345)
         with patch.object(module, "log"):

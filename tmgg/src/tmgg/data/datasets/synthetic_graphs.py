@@ -17,6 +17,7 @@ import random
 import networkx as nx
 import numpy as np
 import torch
+from torch.utils.data import Dataset
 
 
 def generate_regular_graphs(
@@ -597,13 +598,16 @@ def generate_triangle_grid_graphs(
     return np.stack([A] * num_graphs, axis=0)
 
 
-class SyntheticGraphDataset:
-    """Dataset wrapper for synthetic graphs.
+class SyntheticGraphDataset(Dataset[np.ndarray]):
+    """Torch Dataset wrapper for synthetic adjacency matrices.
 
     Provides a unified interface for generating and accessing synthetic
     graph datasets of various types. Supports both fixed-size graphs (all
     graphs share the same node count) and deterministic-topology types
     where the actual node count derives from the generator parameters.
+    Each item is a single adjacency matrix rather than a PyG ``Data``
+    object, because the denoising experiments operate on dense adjacency
+    tensors directly.
 
     Parameters
     ----------

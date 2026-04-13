@@ -182,12 +182,12 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert isinstance(
             result, GraphData
         ), f"GNN should return GraphData, got {type(result)}"
-        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
+        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
 
     def test_gnn_symmetric_returns_graph_data(self) -> None:
         """Verify GNNSymmetric returns GraphData."""
@@ -199,12 +199,12 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert isinstance(
             result, GraphData
         ), f"GNNSymmetric should return GraphData, got {type(result)}"
-        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
+        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
 
     def test_nodevar_gnn_returns_graph_data(self) -> None:
         """Verify NodeVarGNN returns GraphData."""
@@ -216,12 +216,12 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert isinstance(
             result, GraphData
         ), f"NodeVarGNN should return GraphData, got {type(result)}"
-        assert result.to_adjacency().shape == (batch_size, num_nodes, num_nodes)
+        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
 
 
 @pytest.mark.integration

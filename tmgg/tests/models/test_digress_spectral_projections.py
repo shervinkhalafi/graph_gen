@@ -330,7 +330,7 @@ class TestGraphTransformerSpectral:
         # Forward pass with adjacency matrix
         x = torch.rand(2, 20, 20)
         x = (x + x.transpose(-1, -2)) / 2  # Symmetrize for eigendecomposition
-        result = model(GraphData.from_adjacency(x))
+        result = model(GraphData.from_binary_adjacency(x))
 
         assert isinstance(result, GraphData)
         assert result.E.shape == (2, 20, 20, 2)
@@ -362,7 +362,7 @@ class TestGraphTransformerSpectral:
         # Forward pass should work
         x = torch.rand(2, 20, 20)
         x = (x + x.transpose(-1, -2)) / 2
-        result = model(GraphData.from_adjacency(x))
+        result = model(GraphData.from_binary_adjacency(x))
 
         assert isinstance(result, GraphData)
         assert result.E.shape == (2, 20, 20, 2)
@@ -391,7 +391,7 @@ class TestGraphTransformerSpectral:
         x = torch.rand(2, 12, 12)
         x = (x + x.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_adjacency(x))
+        result = model(GraphData.from_binary_adjacency(x))
         # Use only edge-probability channel: both channels of 2-class encoding
         # sum to 1.0 per position, so E.sum() is constant with zero gradient.
         loss = result.E[..., 1].sum()
@@ -440,7 +440,7 @@ class TestGraphTransformerSpectral:
             adj[0, i, i + 1] = 1.0
             adj[0, i + 1, i] = 1.0
 
-        gd = GraphData.from_adjacency(adj)
+        gd = GraphData.from_binary_adjacency(adj)
 
         # Verify encoding: channel 0 is no-edge, channel 1 is edge
         assert gd.E[0, 0, 1, 1] == 1.0, "Edge (0,1) should have class 1"

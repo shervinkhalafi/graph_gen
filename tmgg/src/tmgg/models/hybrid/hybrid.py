@@ -56,8 +56,8 @@ class SequentialDenoisingModel(GraphModel):
         Parameters
         ----------
         data
-            Graph features. The adjacency is extracted via
-            ``data.to_adjacency()`` and passed to the embedding model.
+            Graph features. The dense edge state is extracted via
+            ``data.to_edge_state()`` and passed to the embedding model.
         t
             Diffusion timestep tensor, or None. Currently unused.
 
@@ -95,7 +95,7 @@ class SequentialDenoisingModel(GraphModel):
 
         # Reconstruct adjacency matrix
         A_recon = torch.bmm(X_pred, Y_pred.transpose(1, 2))
-        return GraphData.from_adjacency(A_recon)
+        return GraphData.from_edge_state(A_recon, node_mask=data.node_mask)
 
     @override
     def get_config(self) -> dict[str, object]:

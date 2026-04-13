@@ -12,20 +12,10 @@ dataloader creation is delegated to the parent; this class only extends
 
 from __future__ import annotations
 
-import random
 from typing import Any, override
 
-import torch
-from torch_geometric.data import Data
-from torch_geometric.utils import to_dense_adj
-
-from tmgg.data._split import split_indices
-from tmgg.data.datasets.pyg_datasets import PyGDatasetWrapper
-
+from .graph_generation import load_pyg_dataset_split, uses_pyg_dataset_split
 from .multigraph_data_module import MultiGraphDataModule
-
-# PyG benchmark datasets
-PYG_DATASETS = {"qm9", "enzymes", "proteins"}
 
 
 class GraphDataModule(MultiGraphDataModule):
@@ -42,8 +32,6 @@ class GraphDataModule(MultiGraphDataModule):
     optionally repeated by ``samples_per_graph``.
     """
 
-    _rng: random.Random
-
     def __init__(
         self,
         graph_type: str,
@@ -55,8 +43,6 @@ class GraphDataModule(MultiGraphDataModule):
         pin_memory: bool = True,
         train_ratio: float = 0.6,
         val_ratio: float = 0.2,
-        noise_levels: list[float] | None = None,
-        noise_type: str = "digress",
         seed: int = 42,
     ):
         """Initialize the GraphDataModule.
@@ -82,12 +68,6 @@ class GraphDataModule(MultiGraphDataModule):
             Fraction of data to use for training.
         val_ratio
             Fraction of data to use for validation. Remainder goes to test.
-        noise_levels
-            Accepted for Hydra compatibility (interpolated by task configs)
-            but not stored — the training module owns noise configuration.
-        noise_type
-            Accepted for Hydra compatibility (interpolated by task configs)
-            but not stored — the training module owns noise configuration.
         seed
             Random seed for reproducible splitting and generation.
         """
@@ -111,8 +91,6 @@ class GraphDataModule(MultiGraphDataModule):
             if val_samples_per_graph is not None
             else samples_per_graph // 2
         )
-        # Dedicated RNG for sample selection in get_sample_adjacency_matrix
-        self._rng = random.Random(self.seed)
 
     @override
     def setup(self, stage: str | None = None) -> None:
@@ -126,7 +104,7 @@ class GraphDataModule(MultiGraphDataModule):
         if self._train_data is not None:
             return
 
-        if self.graph_type.lower() in PYG_DATASETS:
+        if uses_pyg_dataset_split(self.graph_type):
             self._setup_pyg_dataset()
         else:
             super().setup(stage)
@@ -141,65 +119,10 @@ class GraphDataModule(MultiGraphDataModule):
 
     def _setup_pyg_dataset(self) -> None:
         """Load and split graphs from a PyTorch Geometric dataset."""
-        root: str | None = self.graph_config.get("root", None)
-        max_graphs: int | None = self.graph_config.get("max_graphs", None)
-        seed: int = self.graph_config.get("seed", 42)
-
-        wrapper = PyGDatasetWrapper(
-            dataset_name=self.graph_type,
-            root=root,
-            max_graphs=max_graphs,
+        self._train_data, self._val_data, self._test_data = load_pyg_dataset_split(
+            graph_type=self.graph_type,
+            graph_config=self.graph_config,
+            train_ratio=self.train_ratio,
+            val_ratio=self.val_ratio,
+            seed=self.seed,
         )
-
-        train_idx, val_idx, test_idx = split_indices(
-            len(wrapper), self.train_ratio, self.val_ratio, seed
-        )
-
-        self._train_data = [wrapper.data_list[i] for i in train_idx]
-        self._val_data = [wrapper.data_list[i] for i in val_idx]
-        self._test_data = [wrapper.data_list[i] for i in test_idx]
-
-    def get_sample_adjacency_matrix(self, stage: str = "train") -> torch.Tensor:
-        """Get a sample adjacency matrix for visualization.
-
-        Parameters
-        ----------
-        stage
-            One of ``"train"``, ``"val"``, ``"test"``.
-
-        Returns
-        -------
-        torch.Tensor
-            Dense adjacency matrix of shape ``(num_nodes, num_nodes)``.
-        """
-        data_list: list[Data] | None = None
-        if stage == "train":
-            data_list = self._train_data
-        elif stage == "val":
-            data_list = self._val_data
-        elif stage == "test":
-            data_list = self._test_data
-
-        if not data_list:
-            raise RuntimeError(
-                f"No data available for stage '{stage}'. "
-                "Please ensure setup() has been called and the dataset is not empty."
-            )
-
-        sample = self._rng.choice(data_list)
-        if sample.edge_index is None:
-            raise RuntimeError("Sample graph has no edge_index.")
-        adj = to_dense_adj(sample.edge_index, max_num_nodes=sample.num_nodes)
-        return adj.squeeze(0)
-
-    @override
-    def get_dataset_info(self) -> dict[str, Any]:
-        """Return metadata about the dataset."""
-        info: dict[str, Any] = {
-            "graph_type": self.graph_type,
-            "samples_per_graph": self.samples_per_graph,
-        }
-        num_nodes = self.graph_config.get("num_nodes")
-        if num_nodes is not None:
-            info["num_nodes"] = num_nodes
-        return info

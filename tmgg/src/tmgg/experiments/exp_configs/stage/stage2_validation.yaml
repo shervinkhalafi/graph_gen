@@ -35,7 +35,8 @@ scheduler_config:
 
 # Model settings
 model:
-  k: 50
+  model:
+    k: 50
 
 # Default noise levels (overridden in sweep)
 noise_levels: [0.1]

@@ -222,7 +222,6 @@ architectures:
 
 datasets:                                 # optional; omit to use base default
   - sbm_default
-  - er_spectral
 
 hyperparameters:
   learning_rate: [1e-4, 1e-3]

@@ -114,12 +114,12 @@ class TestFromPygBatch:
         assert gd.E[0, :, 3, 1].sum() == 0.0, "Padded column should have no edges."
 
     def test_adjacency_round_trip(self) -> None:
-        """from_pyg_batch → to_adjacency recovers original adjacency."""
+        """from_pyg_batch → to_binary_adjacency recovers original adjacency."""
         triangle = _make_triangle_graph()
         batch = Batch.from_data_list([triangle])
         gd = GraphData.from_pyg_batch(batch)
 
-        adj = gd.to_adjacency()
+        adj = gd.to_binary_adjacency()
         expected = torch.tensor([[[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]])
         assert torch.allclose(
             adj, expected
@@ -177,7 +177,7 @@ class TestToPyg:
         adj_original = torch.tensor([[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
 
         # adjacency → GraphData (unbatched)
-        gd_from_adj = GraphData.from_adjacency(adj_original)
+        gd_from_adj = GraphData.from_binary_adjacency(adj_original)
 
         # GraphData → PyG Data
         data = gd_from_adj.to_pyg()
@@ -187,7 +187,7 @@ class TestToPyg:
         gd_recovered = GraphData.from_pyg_batch(batch)
 
         # GraphData → adjacency (batched, shape (1, 3, 3))
-        adj_recovered = gd_recovered.to_adjacency().squeeze(0)
+        adj_recovered = gd_recovered.to_binary_adjacency().squeeze(0)
 
         assert torch.allclose(adj_recovered, adj_original), (
             f"Full round-trip failed.\nOriginal:\n{adj_original}\n"

@@ -184,9 +184,9 @@ class TestAsymmetricLinearPE:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
-        assert result.to_adjacency().shape == (2, 20, 20)
+        assert result.to_edge_state().shape == (2, 20, 20)
 
     def test_asymmetric_output_differs_from_symmetric(self):
         """Test asymmetric produces different output than symmetric."""
@@ -198,7 +198,7 @@ class TestAsymmetricLinearPE:
 
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
-        data = GraphData.from_adjacency(A)
+        data = GraphData.from_edge_state(A)
 
         out_sym = model_sym(data)
         out_asym = model_asym(data)
@@ -233,9 +233,9 @@ class TestAsymmetricGraphFilterBank:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
-        assert result.to_adjacency().shape == (2, 20, 20)
+        assert result.to_edge_state().shape == (2, 20, 20)
 
 
 class TestPEARLIntegration:
@@ -248,9 +248,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
-        assert result.to_adjacency().shape == (2, 20, 20)
+        assert result.to_edge_state().shape == (2, 20, 20)
         assert model.embedding_source == "pearl_random"
 
     def test_filter_bank_with_pearl(self):
@@ -265,9 +265,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
-        assert result.to_adjacency().shape == (2, 20, 20)
+        assert result.to_edge_state().shape == (2, 20, 20)
 
     def test_self_attention_with_pearl(self):
         """Test SelfAttentionDenoiser with PEARL embeddings."""
@@ -278,9 +278,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
-        assert result.to_adjacency().shape == (2, 20, 20)
+        assert result.to_edge_state().shape == (2, 20, 20)
 
     def test_pearl_basis_mode_integration(self):
         """Test B-PEARL integration."""
@@ -291,9 +291,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 30, 30)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
-        assert result.to_adjacency().shape == (2, 30, 30)
+        assert result.to_edge_state().shape == (2, 30, 30)
 
     def test_invalid_embedding_source(self):
         """Test invalid embedding source raises error."""

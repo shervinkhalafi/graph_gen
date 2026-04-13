@@ -10,9 +10,9 @@
 
 defaults:
   - base/trainer/default@trainer
-  - base/logger/default
-  - base/callbacks/default
-  - base/progress_bar/default
+  - base/logger: wandb
+  - base/callbacks: default
+  - base/progress_bar: default
   - _self_
 
 # Experiment identification (overridden by each experiment type)
@@ -56,8 +56,8 @@ seed: 42
 # Training resumption: set true to ignore existing checkpoints and start fresh
 force_fresh: false
 
-# When true (default), training continues with TensorBoard only if WANDB_API_KEY
-# is unset. Set false to enforce W&B — training will crash without the key.
+# When true (default), training continues without W&B logging if WANDB_API_KEY
+# is unset. Set false to enforce W&B and crash without the key.
 allow_no_wandb: true
 
 # Stage identifier for multi-stage experiments (stage1_poc, stage2_validation, etc.)

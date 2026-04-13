@@ -1,16 +1,11 @@
-"""Tests for GraphData conversion classmethods and collation.
+"""Tests for ``GraphData`` conversion helpers and collation.
 
-Test rationale: Conversion between adjacency and categorical representations
-is the bridge between the spectral denoiser pipeline and the discrete
-diffusion pipeline. Off-by-one errors in one-hot encoding or incorrect
-masking in the collation function produce data that is structurally valid
-but semantically wrong, leading to silent training failures. These tests
-verify round-trip identity, correct one-hot encoding, padding behavior,
-and edge symmetry preservation.
-
-These tests cover ``GraphData.from_adjacency()``, ``GraphData.to_adjacency()``,
-and ``GraphData.collate()`` — the methods that replaced the standalone
-``conversions.py`` functions.
+Test rationale
+--------------
+Binary-topology helpers are the boundary between dense graph tensors and
+discrete graph exports. Edge-state helpers are the boundary for continuous
+models and must preserve values exactly. These tests protect both contracts
+and the padding semantics in ``GraphData.collate()``.
 """
 
 import pytest
@@ -34,12 +29,12 @@ def binary_adjacency() -> torch.Tensor:
     return A
 
 
-class TestFromAdjacency:
-    """Verify GraphData.from_adjacency() conversion."""
+class TestBinaryAdjacencyHelpers:
+    """Verify binary-topology conversion helpers."""
 
     def test_output_shapes(self, binary_adjacency: torch.Tensor) -> None:
         """All fields have the expected shapes."""
-        g = GraphData.from_adjacency(binary_adjacency)
+        g = GraphData.from_binary_adjacency(binary_adjacency)
         assert g.X.shape == (BS, N, 2)
         assert g.E.shape == (BS, N, N, 2)
         assert g.y.shape == (BS, 0)
@@ -47,33 +42,33 @@ class TestFromAdjacency:
 
     def test_nodes_are_one_hot(self, binary_adjacency: torch.Tensor) -> None:
         """All node features should be [0, 1] (real node)."""
-        g = GraphData.from_adjacency(binary_adjacency)
+        g = GraphData.from_binary_adjacency(binary_adjacency)
         assert (g.X[:, :, 0] == 0).all()
         assert (g.X[:, :, 1] == 1).all()
 
     def test_edges_are_one_hot(self, binary_adjacency: torch.Tensor) -> None:
         """Edge features should sum to 1 along the last dim (one-hot)."""
-        g = GraphData.from_adjacency(binary_adjacency)
+        g = GraphData.from_binary_adjacency(binary_adjacency)
         sums = g.E.sum(dim=-1)
         assert torch.allclose(sums, torch.ones_like(sums))
 
     def test_diagonal_is_no_edge(self, binary_adjacency: torch.Tensor) -> None:
         """Diagonal entries should be [1, 0] (no self-loops)."""
-        g = GraphData.from_adjacency(binary_adjacency)
+        g = GraphData.from_binary_adjacency(binary_adjacency)
         diag_idx = torch.arange(N)
         assert (g.E[:, diag_idx, diag_idx, 0] == 1).all()
         assert (g.E[:, diag_idx, diag_idx, 1] == 0).all()
 
     def test_all_nodes_valid(self, binary_adjacency: torch.Tensor) -> None:
         """node_mask should be all True (no padding at this stage)."""
-        g = GraphData.from_adjacency(binary_adjacency)
+        g = GraphData.from_binary_adjacency(binary_adjacency)
         assert g.node_mask.all()
 
     def test_single_graph(self) -> None:
         """Unbatched (n, n) input should return unbatched outputs."""
         A = torch.eye(4)
         A[0, 1] = A[1, 0] = 1.0
-        g = GraphData.from_adjacency(A)
+        g = GraphData.from_binary_adjacency(A)
         assert g.X.dim() == 2
         assert g.X.shape == (4, 2)
         assert g.E.dim() == 3
@@ -81,13 +76,13 @@ class TestFromAdjacency:
         assert g.node_mask.dim() == 1
 
 
-class TestToAdjacency:
-    """Verify GraphData.to_adjacency() conversion."""
+class TestToBinaryAdjacency:
+    """Verify binary adjacency recovery."""
 
     def test_round_trip(self, binary_adjacency: torch.Tensor) -> None:
-        """adjacency -> from_adjacency -> to_adjacency should recover the original."""
-        g = GraphData.from_adjacency(binary_adjacency)
-        A_recovered = g.to_adjacency()
+        """Binary topology should round-trip exactly."""
+        g = GraphData.from_binary_adjacency(binary_adjacency)
+        A_recovered = g.to_binary_adjacency()
         # The diagonal is always zeroed (no self-loops)
         A_no_diag = binary_adjacency.clone()
         diag_idx = torch.arange(N)
@@ -99,8 +94,8 @@ class TestToAdjacency:
         A = torch.zeros(5, 5)
         A[0, 1] = A[1, 0] = 1.0
         A[2, 3] = A[3, 2] = 1.0
-        g = GraphData.from_adjacency(A)
-        A_recovered = g.to_adjacency()
+        g = GraphData.from_binary_adjacency(A)
+        A_recovered = g.to_binary_adjacency()
         assert torch.allclose(A_recovered, A)
 
     def test_masking_zeros_invalid_edges(self) -> None:
@@ -115,16 +110,64 @@ class TestToAdjacency:
             y=torch.zeros(2, 0),
             node_mask=node_mask,
         )
-        A = g.to_adjacency()
+        A = g.to_binary_adjacency()
         # Last row/col should be zero
         assert (A[:, 3, :] == 0).all()
         assert (A[:, :, 3] == 0).all()
 
     def test_symmetry_preservation(self, binary_adjacency: torch.Tensor) -> None:
         """Recovered adjacency should be symmetric if input edges were."""
-        g = GraphData.from_adjacency(binary_adjacency)
-        A = g.to_adjacency()
+        g = GraphData.from_binary_adjacency(binary_adjacency)
+        A = g.to_binary_adjacency()
         assert torch.allclose(A, A.transpose(1, 2))
+
+
+class TestEdgeStateHelpers:
+    """Verify continuous edge-state conversion helpers."""
+
+    def test_binary_topology_lifts_to_edge_state(self) -> None:
+        """Binary-topology graphs should expose their edge indicator as state."""
+        adjacency = torch.tensor(
+            [
+                [
+                    [0.0, 1.0, 0.0],
+                    [1.0, 0.0, 1.0],
+                    [0.0, 1.0, 0.0],
+                ]
+            ]
+        )
+        g = GraphData.from_binary_adjacency(adjacency)
+        torch.testing.assert_close(g.to_edge_state(), adjacency)
+
+    def test_round_trip_preserves_values(self) -> None:
+        """Edge state should round-trip without binary projection."""
+        edge_state = torch.tensor(
+            [
+                [
+                    [0.0, -0.25, 1.5],
+                    [2.0, 0.5, -3.25],
+                    [4.5, 1.75, 0.0],
+                ],
+                [
+                    [7.0, 8.5, -1.0],
+                    [-2.5, 0.0, 3.0],
+                    [9.25, -4.0, 6.0],
+                ],
+            ]
+        )
+        g = GraphData.from_edge_state(edge_state)
+        recovered = g.to_edge_state()
+        torch.testing.assert_close(recovered, edge_state)
+
+    def test_round_trip_preserves_node_mask(self) -> None:
+        """Explicit masks should be preserved in edge-state graphs."""
+        edge_state = torch.randn(2, 4, 4)
+        node_mask = torch.tensor(
+            [[True, True, False, False], [True, True, True, False]]
+        )
+        g = GraphData.from_edge_state(edge_state, node_mask=node_mask)
+        assert torch.equal(g.node_mask, node_mask)
+        torch.testing.assert_close(g.to_edge_state(), edge_state)
 
 
 class TestCollate:

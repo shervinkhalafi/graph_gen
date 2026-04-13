@@ -6,6 +6,7 @@ defaults:
   - _base_structural_study
   - _self_
 
+_cli_cmd: tmgg-embedding-study-exp
 experiment_name: embedding_study
 wandb_project: embedding-study
 

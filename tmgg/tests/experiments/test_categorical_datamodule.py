@@ -10,6 +10,7 @@ collate into dense ``GraphData`` batches at the batch boundary.
 
 from __future__ import annotations
 
+import networkx as nx
 import pytest
 import torch
 from torch_geometric.data import Data
@@ -176,89 +177,75 @@ class TestDataloaders:
         assert batch.E.shape[-1] == 2  # de
 
 
-# -- TestMarginals ----------------------------------------------------------
+# -- TestCategoricalBatches -------------------------------------------------
 
 
-class TestMarginals:
-    """Verify that marginal distributions are valid probability vectors."""
+class TestCategoricalBatches:
+    """Verify the categorical batch contract exposed by the datamodule."""
 
-    def test_node_marginals_shape(
+    def test_node_features_have_expected_class_dim(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """node_marginals should have shape (dx,) = (2,)."""
-        assert small_dm.node_marginals.shape == (2,)
+        """Node features should expose the binary categorical basis."""
+        batch: GraphData = next(iter(small_dm.train_dataloader()))
+        assert batch.X.shape[-1] == 2
 
-    def test_edge_marginals_shape(
+    def test_edge_features_have_expected_class_dim(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """edge_marginals should have shape (de,) = (2,)."""
-        assert small_dm.edge_marginals.shape == (2,)
+        """Edge features should expose the binary categorical basis."""
+        batch: GraphData = next(iter(small_dm.train_dataloader()))
+        assert batch.E.shape[-1] == 2
 
-    def test_node_marginals_sum_to_one(
+    def test_node_features_are_one_hot_on_real_nodes(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Node marginals must form a valid probability distribution."""
+        """Real-node categorical features should sum to one."""
+        batch: GraphData = next(iter(small_dm.train_dataloader()))
+        node_sums = batch.X[batch.node_mask].sum(dim=-1)
+        assert torch.allclose(node_sums, torch.ones_like(node_sums))
+
+    def test_edge_features_are_one_hot_on_real_edges(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        """Real-edge categorical features should sum to one."""
+        batch: GraphData = next(iter(small_dm.train_dataloader()))
+        edge_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
+        edge_sums = batch.E[edge_mask].sum(dim=-1)
+        assert torch.allclose(edge_sums, torch.ones_like(edge_sums))
+
+    def test_real_nodes_use_present_node_class(
+        self,
+        small_dm: SyntheticCategoricalDataModule,
+    ) -> None:
+        """Synthetic graphs should mark every real node with the present-node class."""
+        batch: GraphData = next(iter(small_dm.train_dataloader()))
+        present_class = batch.X[..., 1]
         assert torch.allclose(
-            small_dm.node_marginals.sum(), torch.tensor(1.0), atol=1e-6
+            present_class[batch.node_mask],
+            torch.ones_like(present_class[batch.node_mask]),
         )
 
-    def test_edge_marginals_sum_to_one(
+
+# -- TestReferenceGraphs ----------------------------------------------------
+
+
+class TestReferenceGraphs:
+    """Verify the val/test graph extraction boundary."""
+
+    def test_val_returns_networkx_graphs(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Edge marginals must form a valid probability distribution."""
-        assert torch.allclose(
-            small_dm.edge_marginals.sum(), torch.tensor(1.0), atol=1e-6
-        )
-
-    def test_node_marginals_nonnegative(
-        self,
-        small_dm: SyntheticCategoricalDataModule,
-    ) -> None:
-        """All entries of node_marginals should be >= 0."""
-        assert (small_dm.node_marginals >= 0).all()
-
-    def test_edge_marginals_nonnegative(
-        self,
-        small_dm: SyntheticCategoricalDataModule,
-    ) -> None:
-        """All entries of edge_marginals should be >= 0."""
-        assert (small_dm.edge_marginals >= 0).all()
-
-    def test_node_marginals_are_nontrivial(
-        self,
-        small_dm: SyntheticCategoricalDataModule,
-    ) -> None:
-        """For synthetic graphs all nodes are real, so class-1 (real node)
-        should dominate: node_marginals[1] should be close to 1.0.
-        """
-        assert small_dm.node_marginals[1] > 0.99
-
-    def test_marginals_not_available_before_setup(self) -> None:
-        """Accessing marginals before setup() should raise RuntimeError."""
-        dm = SyntheticCategoricalDataModule(num_graphs=10, num_nodes=5)
-        with pytest.raises(RuntimeError, match="Call setup"):
-            _ = dm.node_marginals
-        with pytest.raises(RuntimeError, match="Call setup"):
-            _ = dm.edge_marginals
-
-
-# -- TestDatasetInfo --------------------------------------------------------
-
-
-class TestDatasetInfo:
-    """Verify get_dataset_info returns the expected metadata keys."""
-
-    def test_keys(self, small_dm: SyntheticCategoricalDataModule) -> None:
-        """All four required keys must be present."""
-        info = small_dm.get_dataset_info()
-        assert info["num_graphs"] == 100
-        assert info["num_nodes"] == 20
-        assert info["num_node_classes"] == 2
-        assert info["num_edge_classes"] == 2
+        """Reference extraction should return bounded NetworkX graphs."""
+        graphs = small_dm.get_reference_graphs("val", max_graphs=3)
+        assert len(graphs) == 3
+        assert all(isinstance(graph, nx.Graph) for graph in graphs)
+        assert all(graph.number_of_nodes() == 20 for graph in graphs)
 
 
 # -- TestRoundTrip ----------------------------------------------------------
@@ -269,7 +256,7 @@ class TestRoundTrip:
 
     The invariant: a binary adjacency matrix stored as sparse COO in a
     PyG ``Data`` object, then collated into a dense ``GraphData`` batch,
-    should recover the original adjacency via ``to_adjacency()``.
+    should recover the original adjacency via ``to_binary_adjacency()``.
     """
 
     def test_single_graph_roundtrip(
@@ -277,7 +264,7 @@ class TestRoundTrip:
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
         """Convert a single stored Data to dense GraphData and verify the
-        adjacency round-trip through to_adjacency().
+        adjacency round-trip through ``to_binary_adjacency()``.
         """
         from typing import cast
 
@@ -291,8 +278,8 @@ class TestRoundTrip:
         batch = Batch.from_data_list(cast(list[BaseData], [d]))
         g = GraphData.from_pyg_batch(batch)
 
-        # Reconstruct adjacency via GraphData.to_adjacency
-        recovered_adj = g.to_adjacency()
+        # Reconstruct adjacency via GraphData.to_binary_adjacency
+        recovered_adj = g.to_binary_adjacency()
 
         # Build original adjacency from the one-hot E
         original_adj = g.E[..., 1]  # class 1 = edge
@@ -305,7 +292,7 @@ class TestRoundTrip:
     ) -> None:
         """Collated batch edge argmax should recover E[..., 1] at real positions."""
         batch: GraphData = next(iter(small_dm.train_dataloader()))
-        recovered = batch.to_adjacency()
+        recovered = batch.to_binary_adjacency()
 
         expected = batch.E[..., 1]
         mask_2d = batch.node_mask.unsqueeze(-1) & batch.node_mask.unsqueeze(-2)
@@ -319,9 +306,9 @@ class TestSizeDistribution:
     """Verify the size distribution interface on SyntheticCategoricalDataModule.
 
     For fixed-size synthetic data, ``get_size_distribution`` returns a
-    degenerate distribution and ``sample_n_nodes`` returns a constant
-    tensor. These tests confirm both the datamodule integration and the
-    contract that the generative pipeline relies on.
+    degenerate distribution and sampling through that distribution
+    returns a constant tensor. These tests confirm both the datamodule
+    integration and the contract that the generative pipeline relies on.
     """
 
     def test_default_is_degenerate(
@@ -374,21 +361,21 @@ class TestSizeDistribution:
         dist = dm.get_size_distribution("train")
         assert dist == SizeDistribution.fixed(15)
 
-    def test_sample_n_nodes_shape(
+    def test_distribution_sample_shape(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """sample_n_nodes should return a 1-D tensor of the requested size."""
-        result = small_dm.sample_n_nodes(4)
+        """Sampling via SizeDistribution should return a 1-D tensor."""
+        result = small_dm.get_size_distribution("train").sample(4)
         assert result.shape == (4,)
         assert result.dtype == torch.long
 
-    def test_sample_n_nodes_all_equal(
+    def test_distribution_sample_all_equal(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """For fixed-size data, all sampled sizes should equal num_nodes."""
-        result = small_dm.sample_n_nodes(16)
+        """For fixed-size data, sampled sizes should all equal num_nodes."""
+        result = small_dm.get_size_distribution("train").sample(16)
         assert (result == 20).all()
 
     def test_serialization_roundtrip(

@@ -91,9 +91,7 @@ def _run_analyze(config: DictConfig, output_dir: Path) -> dict[str, Any]:
     result = analyzer.analyze()
 
     analysis_dir = output_dir / "analysis"
-    analysis_dir.mkdir(parents=True, exist_ok=True)
-    with open(analysis_dir / "analysis.json", "w") as f:
-        json.dump(asdict(result), f, indent=2)
+    analyzer.save_results(result, analysis_dir)
 
     if subspace_k > 0:
         subspace_results = analyzer.compute_subspace_distances(k=subspace_k)
@@ -162,26 +160,12 @@ def _run_compare(config: DictConfig, output_dir: Path) -> dict[str, Any]:
     comparison_dir = output_dir / "comparison"
     comparison_dir.mkdir(parents=True, exist_ok=True)
     with open(comparison_dir / "comparison.json", "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump([result.to_json_dict() for result in results], f, indent=2)
 
     if compute_cov_evolution:
         evolution = comparator.compute_covariance_evolution(matrix_type)
-        output_data = {
-            "matrix_type": evolution["matrix_type"],
-            "original": asdict(evolution["original"]),
-            "per_noise_level": [
-                {
-                    "noise_level": item["noise_level"],
-                    "covariance": asdict(item["covariance"]),
-                    "frobenius_delta_relative": item["frobenius_delta_relative"],
-                    "trace_delta_relative": item["trace_delta_relative"],
-                    "off_diagonal_delta_relative": item["off_diagonal_delta_relative"],
-                }
-                for item in evolution["per_noise_level"]
-            ],
-        }
         with open(comparison_dir / "covariance_evolution.json", "w") as f:
-            json.dump(output_data, f, indent=2)
+            json.dump(evolution.to_json_dict(), f, indent=2)
 
     return {
         "status": "completed",

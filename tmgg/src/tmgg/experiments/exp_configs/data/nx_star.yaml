@@ -1,10 +1,10 @@
 # @package data
 _target_: tmgg.data.GraphDataModule
-graph_type: nx
+graph_type: star
 graph_config:
-  clsname: nx_star # Star graphs
-  N_arms: [10, 15, 20] # Different star sizes
-  repeat: 100
+  # Legacy "nx_star" preset, expressed through the current graph generator API.
+  num_nodes: 15  # Fifteen leaves gives a 16-node star including the center.
+  num_graphs: 100
 
 # Data module settings
 samples_per_graph: 1000
@@ -13,6 +13,3 @@ num_workers: 4
 pin_memory: true
 train_ratio: 0.6
 val_ratio: 0.2
-noise_levels: [0.01, 0.05, 0.1, 0.2, 0.3]
-noise_type: "digress"
-

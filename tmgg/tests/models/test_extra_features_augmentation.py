@@ -131,3 +131,38 @@ class TestEigenvectorAugmentation:
         ex_X, _, _ = aug(X, E, y, mask)
         assert ex_X.shape == (1, 4, k)
         assert torch.isfinite(ex_X).all()
+
+    def test_single_channel_edge_state_matches_categorical_topology(self) -> None:
+        """Equivalent scalar and categorical edges should give the same features.
+
+        Regression rationale
+        --------------------
+        Single-step denoising lifts graphs through GraphData.from_edge_state(),
+        which stores edges as a single scalar channel. DiGress denoising still
+        uses EigenvectorAugmentation, so the augmenter must derive the same
+        adjacency from both ``E[..., 1]`` binary-topology tensors and
+        ``E[..., 0]`` scalar edge-state tensors.
+        """
+        aug = EigenvectorAugmentation(k=1)
+        X = torch.zeros(1, 5, DX)
+        y = torch.zeros(1, 0)
+        mask = torch.ones(1, 5, dtype=torch.bool)
+
+        adjacency = torch.tensor(
+            [
+                [
+                    [0.0, 1.0, 1.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0, 1.0, 0.0],
+                    [1.0, 0.0, 0.0, 0.0, 1.0],
+                    [0.0, 1.0, 0.0, 0.0, 1.0],
+                    [0.0, 0.0, 1.0, 1.0, 0.0],
+                ]
+            ]
+        )
+        categorical_edges = torch.stack([1.0 - adjacency, adjacency], dim=-1)
+        scalar_edges = adjacency.unsqueeze(-1)
+
+        categorical_X, _, _ = aug(X, categorical_edges, y, mask)
+        scalar_X, _, _ = aug(X, scalar_edges, y, mask)
+
+        assert torch.allclose(categorical_X.abs(), scalar_X.abs(), atol=1e-5)

@@ -25,6 +25,7 @@ import pytest
 import torch
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
+from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from tmgg.training.orchestration.run_experiment import (
@@ -35,6 +36,46 @@ EXP_CONFIG_DIR = (
     Path(__file__).resolve().parents[2] / "src" / "tmgg" / "experiments" / "exp_configs"
 )
 
+MODEL_INSTANTIATION_CASES = [
+    ("base_config_discrete_diffusion_generative", []),
+    (
+        "base_config_discrete_diffusion_generative",
+        ["+models/discrete@model=discrete_small"],
+    ),
+    (
+        "base_config_discrete_diffusion_generative",
+        ["+models/discrete@model=discrete_sbm_eigenvec"],
+    ),
+    (
+        "base_config_discrete_diffusion_generative",
+        ["+models/discrete@model=discrete_sbm_official"],
+    ),
+    ("base_config_gaussian_diffusion", []),
+]
+
+
+def _base_overrides(tmp_path: Path) -> list[str]:
+    """Return Hydra overrides that remove runtime-only dependencies."""
+    return [
+        f"paths.output_dir={tmp_path}",
+        f"paths.results_dir={tmp_path}/results",
+        f"hydra.run.dir={tmp_path}",
+        "~logger",
+    ]
+
+
+def _compose_hydra_config(
+    tmp_path: Path,
+    config_name: str,
+    overrides: list[str] | None = None,
+):
+    """Compose an experiment config with minimal test-time overrides."""
+    with initialize_config_dir(version_base=None, config_dir=str(EXP_CONFIG_DIR)):
+        return compose(
+            config_name=config_name,
+            overrides=_base_overrides(tmp_path) + (overrides or []),
+        )
+
 
 def _compose_config(tmp_path: Path) -> dict[str, Any]:
     """Compose the discrete diffusion config via Hydra and return as dict.
@@ -44,17 +85,10 @@ def _compose_config(tmp_path: Path) -> dict[str, Any]:
     Overrides disable loggers and S3-dependent interpolations that
     require runtime state.
     """
-    overrides = [
-        f"paths.output_dir={tmp_path}",
-        f"paths.results_dir={tmp_path}/results",
-        f"hydra.run.dir={tmp_path}",
-        "~logger",
-    ]
-    with initialize_config_dir(version_base=None, config_dir=str(EXP_CONFIG_DIR)):
-        cfg = compose(
-            config_name="base_config_discrete_diffusion_generative",
-            overrides=overrides,
-        )
+    cfg = _compose_hydra_config(
+        tmp_path=tmp_path,
+        config_name="base_config_discrete_diffusion_generative",
+    )
     result = OmegaConf.to_container(cfg, resolve=False)
     assert isinstance(result, dict)
     return result  # pyright: ignore[reportReturnType]
@@ -113,12 +147,16 @@ class TestConfigLoads:
         assert model_cfg["noise_process"]["_target_"].endswith(
             "CategoricalNoiseProcess"
         )
+        assert model_cfg["noise_process"]["limit_distribution"] == "empirical_marginal"
+        assert "schedule" in model_cfg["noise_process"]
+        assert "noise_schedule" not in model_cfg["noise_process"]
 
     def test_has_sampler(self, cfg: dict[str, Any]) -> None:
-        """Model section must contain sampler targeting CategoricalSampler."""
+        """Sampler config should now be a pure target-only wrapper."""
         model_cfg = cfg["model"]
         assert "sampler" in model_cfg
         assert model_cfg["sampler"]["_target_"].endswith("CategoricalSampler")
+        assert set(model_cfg["sampler"].keys()) == {"_target_"}
 
     def test_has_noise_schedule(self, cfg: dict[str, Any]) -> None:
         """Model section must contain noise_schedule targeting NoiseSchedule."""
@@ -183,6 +221,36 @@ class TestIsTrainingComplete:
         torch.save({"global_step": 100}, ckpt_path)
         assert _is_training_complete(ckpt_path, 100) is True
 
+
+class TestConfigInstantiationChecklist:
+    """Every supported diffusion config should compose and instantiate."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_hydra(self) -> Generator[None, None, None]:
+        """Clear Hydra global state before each test."""
+        GlobalHydra.instance().clear()
+        yield
+        GlobalHydra.instance().clear()
+
+    @pytest.mark.parametrize(
+        ("config_name", "overrides"),
+        MODEL_INSTANTIATION_CASES,
+    )
+    def test_model_instantiates_for_supported_diffusion_configs(
+        self,
+        tmp_path: Path,
+        config_name: str,
+        overrides: list[str],
+    ) -> None:
+        """Checklist configs must compose and instantiate without overrides."""
+        cfg = _compose_hydra_config(
+            tmp_path=tmp_path,
+            config_name=config_name,
+            overrides=overrides,
+        )
+
+        instantiate(cfg.model)
+
     def test_over_complete_checkpoint(self, tmp_path: Path) -> None:
         """Returns True when global_step exceeds max_steps."""
         ckpt_path = tmp_path / "last.ckpt"
@@ -225,14 +293,12 @@ class TestEndToEndTraining:
 
         schedule = NoiseSchedule("cosine_iddpm", timesteps=diffusion_steps)
         noise_process = CategoricalNoiseProcess(
-            noise_schedule=schedule,
+            schedule=schedule,
             x_classes=dx,
             e_classes=de,
+            limit_distribution="uniform",
         )
-        sampler = CategoricalSampler(
-            noise_process=noise_process,
-            noise_schedule=schedule,
-        )
+        sampler = CategoricalSampler()
         evaluator = GraphEvaluator(
             eval_num_samples=4,
             kernel="gaussian",

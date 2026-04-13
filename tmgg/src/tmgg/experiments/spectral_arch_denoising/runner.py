@@ -1,10 +1,10 @@
 """Hydra entry point for spectral denoising experiments.
 
 Run experiments with:
-    python -m tmgg.experiments.spectral_arch_denoising.runner
+    uv run tmgg-spectral-arch
 
 Override configuration with Hydra:
-    python -m tmgg.experiments.spectral_arch_denoising.runner model.k=16 data.num_nodes=100
+    uv run tmgg-spectral-arch model.k=16 data.num_nodes=100
 """
 
 from typing import Any

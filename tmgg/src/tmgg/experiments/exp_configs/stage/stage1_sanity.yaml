@@ -36,4 +36,5 @@ scheduler_config:
 
 # Full spectrum for n=50 graph
 model:
-  k: 50
+  model:
+    k: 50

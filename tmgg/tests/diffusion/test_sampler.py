@@ -9,7 +9,7 @@ Gaussian reverse diffusion for adjacency-based models.
 
 Each test validates:
 - ABC contract (subclass relationship)
-- Construction-time type checking (wrong noise process type raises TypeError)
+- Shared sampler loop across the semantic wrapper classes
 - Correct output types and shapes from ``sample()``
 - Graph invariants: symmetry and valid one-hot encoding
 
@@ -33,10 +33,10 @@ from tmgg.diffusion.noise_process import (
 from tmgg.diffusion.sampler import (
     CategoricalSampler,
     ContinuousSampler,
+    DiffusionState,
     Sampler,
 )
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.diffusion.transitions import DiscreteUniformTransition
 from tmgg.models.base import GraphModel
 from tmgg.utils.noising.noise import GaussianNoise
 
@@ -111,18 +111,18 @@ def categorical_noise_process(
     cosine_schedule_short: NoiseSchedule,
 ) -> CategoricalNoiseProcess:
     return CategoricalNoiseProcess(
-        noise_schedule=cosine_schedule_short,
+        schedule=cosine_schedule_short,
         x_classes=DX,
         e_classes=DE,
-        transition_model=DiscreteUniformTransition(DX, DE, 0),
+        limit_distribution="uniform",
     )
 
 
 @pytest.fixture()
 def continuous_noise_process() -> ContinuousNoiseProcess:
     return ContinuousNoiseProcess(
-        generator=GaussianNoise(),
-        noise_schedule=NoiseSchedule("cosine_iddpm", timesteps=T_STEPS),
+        definition=GaussianNoise(),
+        schedule=NoiseSchedule("cosine_iddpm", timesteps=T_STEPS),
     )
 
 
@@ -134,6 +134,47 @@ def uniform_model() -> UniformCategoricalModel:
 @pytest.fixture()
 def identity_model() -> IdentityContinuousModel:
     return IdentityContinuousModel()
+
+
+# ---------------------------------------------------------------------------
+# DiffusionState validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestDiffusionState:
+    """DiffusionState should validate timestep metadata and batched graph shape."""
+
+    def test_constructs_for_valid_batched_graph(self) -> None:
+        graph = GraphData.from_binary_adjacency(torch.zeros(2, N_NODES, N_NODES))
+        state = DiffusionState(graph=graph, t=3, max_t=T_STEPS)
+        assert state.t == 3
+        assert state.max_t == T_STEPS
+        assert state.graph is graph
+
+    def test_rejects_negative_timestep(self) -> None:
+        graph = GraphData.from_binary_adjacency(torch.zeros(2, N_NODES, N_NODES))
+        with pytest.raises(ValueError, match="0 <= t <= max_t"):
+            DiffusionState(graph=graph, t=-1, max_t=T_STEPS)
+
+    def test_rejects_timestep_above_max(self) -> None:
+        graph = GraphData.from_binary_adjacency(torch.zeros(2, N_NODES, N_NODES))
+        with pytest.raises(ValueError, match="0 <= t <= max_t"):
+            DiffusionState(graph=graph, t=T_STEPS + 1, max_t=T_STEPS)
+
+    def test_rejects_unbatched_graph(self) -> None:
+        graph = GraphData.from_binary_adjacency(torch.zeros(N_NODES, N_NODES))
+        with pytest.raises(ValueError, match="must be batched GraphData"):
+            DiffusionState(graph=graph, t=1, max_t=T_STEPS)
+
+    def test_rejects_mismatched_mask_shape(self) -> None:
+        graph = GraphData(
+            X=torch.zeros(BS, N_NODES, DX),
+            E=torch.zeros(BS, N_NODES, N_NODES, DE),
+            y=torch.zeros(BS, 0),
+            node_mask=torch.ones(BS, N_NODES + 1, dtype=torch.bool),
+        )
+        with pytest.raises(ValueError, match="node_mask shape"):
+            DiffusionState(graph=graph, t=1, max_t=T_STEPS)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +190,9 @@ class TestSamplerABC:
         categorical_noise_process: CategoricalNoiseProcess,
         unified_schedule: NoiseSchedule,
     ) -> None:
-        sampler = CategoricalSampler(categorical_noise_process, unified_schedule)
+        _ = categorical_noise_process
+        _ = unified_schedule
+        sampler = CategoricalSampler()
         assert isinstance(sampler, Sampler)
 
     def test_continuous_sampler_is_sampler(
@@ -157,33 +200,25 @@ class TestSamplerABC:
         continuous_noise_process: ContinuousNoiseProcess,
         unified_schedule: NoiseSchedule,
     ) -> None:
-        sampler = ContinuousSampler(continuous_noise_process, unified_schedule)
+        _ = continuous_noise_process
+        _ = unified_schedule
+        sampler = ContinuousSampler()
         assert isinstance(sampler, Sampler)
 
 
 # ---------------------------------------------------------------------------
-# Type-checking tests
+# Unified-loop tests
 # ---------------------------------------------------------------------------
 
 
-class TestSamplerTypeChecking:
-    """Construction with the wrong noise process type must raise TypeError."""
+class TestUnifiedSamplerAliases:
+    """Categorical and continuous wrappers should share one sampler loop."""
 
-    def test_categorical_sampler_rejects_continuous_process(
-        self,
-        continuous_noise_process: ContinuousNoiseProcess,
-        unified_schedule: NoiseSchedule,
-    ) -> None:
-        with pytest.raises(TypeError, match="CategoricalNoiseProcess"):
-            CategoricalSampler(continuous_noise_process, unified_schedule)  # type: ignore[arg-type]
+    def test_categorical_alias_uses_base_sample_implementation(self) -> None:
+        assert CategoricalSampler.sample is Sampler.sample
 
-    def test_continuous_sampler_rejects_categorical_process(
-        self,
-        categorical_noise_process: CategoricalNoiseProcess,
-        unified_schedule: NoiseSchedule,
-    ) -> None:
-        with pytest.raises(TypeError, match="ContinuousNoiseProcess"):
-            ContinuousSampler(categorical_noise_process, unified_schedule)  # type: ignore[arg-type]
+    def test_continuous_alias_uses_base_sample_implementation(self) -> None:
+        assert ContinuousSampler.sample is Sampler.sample
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +229,50 @@ class TestSamplerTypeChecking:
 class TestCategoricalSamplerSample:
     """Verify CategoricalSampler.sample() output type, shapes, and invariants."""
 
+    def test_uses_noise_process_condition_vector_for_model_input(
+        self,
+        categorical_noise_process: CategoricalNoiseProcess,
+        unified_schedule: NoiseSchedule,
+        uniform_model: UniformCategoricalModel,
+    ) -> None:
+        """Categorical sampling should delegate conditioning semantics.
+
+        Test rationale: Step 1 removes sampler-owned timestep normalization.
+        The sampler should ask the noise process for the model condition
+        vector at each reverse step and forward that exact tensor.
+        """
+        sampler = CategoricalSampler()
+        observed_condition: list[torch.Tensor | None] = []
+
+        def condition_vector(t: Tensor) -> Tensor:
+            return t.float() + 100.0
+
+        original_forward = uniform_model.forward
+
+        def spy_forward(data: GraphData, t: Tensor | None = None) -> GraphData:
+            observed_condition.append(None if t is None else t.detach().clone())
+            return original_forward(data, t=t)
+
+        categorical_noise_process.process_state_condition_vector = condition_vector  # type: ignore[method-assign]
+        uniform_model.forward = spy_forward  # type: ignore[assignment]
+
+        sampler.sample(
+            model=uniform_model,
+            noise_process=categorical_noise_process,
+            num_graphs=BS,
+            num_nodes=N_NODES,
+            device=torch.device("cpu"),
+        )
+
+        expected = [
+            torch.full((BS,), float(step) + 100.0)
+            for step in range(unified_schedule.timesteps, 0, -1)
+        ]
+        assert len(observed_condition) == len(expected)
+        for actual, want in zip(observed_condition, expected, strict=True):
+            assert actual is not None
+            torch.testing.assert_close(actual, want)
+
     def test_returns_list_of_graph_data(
         self,
         categorical_noise_process: CategoricalNoiseProcess,
@@ -201,9 +280,10 @@ class TestCategoricalSamplerSample:
         uniform_model: UniformCategoricalModel,
     ) -> None:
         """sample() returns a list of GraphData with the correct length."""
-        sampler = CategoricalSampler(categorical_noise_process, unified_schedule)
+        sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
+            noise_process=categorical_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -220,9 +300,10 @@ class TestCategoricalSamplerSample:
         uniform_model: UniformCategoricalModel,
     ) -> None:
         """Generated graphs have the expected X and E dimensions."""
-        sampler = CategoricalSampler(categorical_noise_process, unified_schedule)
+        sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
+            noise_process=categorical_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -245,9 +326,10 @@ class TestCategoricalSamplerSample:
         uniform_model: UniformCategoricalModel,
     ) -> None:
         """Generated edge features are symmetric (E[i,j] == E[j,i])."""
-        sampler = CategoricalSampler(categorical_noise_process, unified_schedule)
+        sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
+            noise_process=categorical_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -262,9 +344,10 @@ class TestCategoricalSamplerSample:
         uniform_model: UniformCategoricalModel,
     ) -> None:
         """Node and edge class indices are within valid ranges."""
-        sampler = CategoricalSampler(categorical_noise_process, unified_schedule)
+        sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
+            noise_process=categorical_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -288,10 +371,11 @@ class TestCategoricalSamplerSample:
         uniform_model: UniformCategoricalModel,
     ) -> None:
         """Sampling with a Tensor of per-graph node counts works correctly."""
-        sampler = CategoricalSampler(categorical_noise_process, unified_schedule)
+        sampler = CategoricalSampler()
         num_nodes = torch.tensor([3, 5])
         results = sampler.sample(
             model=uniform_model,
+            noise_process=categorical_noise_process,
             num_graphs=2,
             num_nodes=num_nodes,
             device=torch.device("cpu"),
@@ -312,11 +396,12 @@ class TestCategoricalSamplerSample:
         intermediates; tracking gradients wastes memory with no benefit
         since sampling is always inference-only.
         """
-        sampler = CategoricalSampler(categorical_noise_process, unified_schedule)
+        sampler = CategoricalSampler()
         # Ensure we are NOT inside a no_grad context
         assert torch.is_grad_enabled()
         results = sampler.sample(
             model=uniform_model,
+            noise_process=categorical_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -325,6 +410,38 @@ class TestCategoricalSamplerSample:
             assert not g.X.requires_grad
             assert not g.E.requires_grad
 
+    def test_warm_start_still_works_with_explicit_noise_process(
+        self,
+        categorical_noise_process: CategoricalNoiseProcess,
+        unified_schedule: NoiseSchedule,
+        uniform_model: UniformCategoricalModel,
+    ) -> None:
+        """Warm-start sampling should still work after ownership moves.
+
+        Test rationale: Step 2 removes sampler-owned process state. Passing the
+        process explicitly must not break partial reverse chains that resume
+        from an existing latent graph.
+        """
+        sampler = CategoricalSampler()
+        node_mask = torch.ones(BS, N_NODES, dtype=torch.bool)
+        start_graph = categorical_noise_process.sample_prior(node_mask)
+        start_from = DiffusionState(
+            graph=start_graph,
+            t=unified_schedule.timesteps - 1,
+            max_t=unified_schedule.timesteps,
+        )
+
+        results = sampler.sample(
+            model=uniform_model,
+            noise_process=categorical_noise_process,
+            num_graphs=BS,
+            num_nodes=N_NODES,
+            device=torch.device("cpu"),
+            start_from=start_from,
+        )
+
+        assert len(results) == BS
+
 
 # ---------------------------------------------------------------------------
 # CategoricalSampler with marginal transitions (T-5)
@@ -332,14 +449,11 @@ class TestCategoricalSamplerSample:
 
 
 class TestCategoricalSamplerMarginal:
-    """CategoricalSampler with MarginalUniformTransition instead of uniform.
+    """CategoricalSampler with empirical stationary PMFs instead of uniform.
 
-    Test rationale: all existing CategoricalSampler tests use
-    DiscreteUniformTransition. MarginalUniformTransition produces
-    different transition matrices (rows are the marginal distribution,
-    not 1/K uniform), which affects both the limit distribution used
-    for initial sampling and the posterior computation. These tests
-    verify the sampler handles marginal transitions correctly.
+    Test rationale: all existing categorical sampler tests use the uniform
+    stationary mode. These cases verify that loader-initialised empirical
+    marginals also produce valid reverse sampling behavior.
     """
 
     @pytest.fixture()
@@ -347,17 +461,35 @@ class TestCategoricalSamplerMarginal:
         self,
         cosine_schedule_short: NoiseSchedule,
     ) -> CategoricalNoiseProcess:
-        from tmgg.diffusion.transitions import MarginalUniformTransition
-
-        x_marginals = torch.tensor([0.6, 0.2, 0.2])
-        e_marginals = torch.tensor([0.8, 0.2])
-        tm = MarginalUniformTransition(x_marginals, e_marginals, 0)
-        return CategoricalNoiseProcess(
-            noise_schedule=cosine_schedule_short,
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule_short,
             x_classes=DX,
             e_classes=DE,
-            transition_model=tm,
+            limit_distribution="empirical_marginal",
         )
+        X = torch.tensor(
+            [
+                [
+                    [1.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ]
+        )
+        E = torch.zeros(1, N_NODES, N_NODES, DE)
+        E[..., 0] = 1.0
+        for i, j in [(0, 1), (0, 2), (1, 2)]:
+            E[0, i, j] = torch.tensor([0.0, 1.0])
+            E[0, j, i] = torch.tensor([0.0, 1.0])
+        batch = GraphData(
+            X=X,
+            E=E,
+            y=torch.zeros(1, 0),
+            node_mask=torch.ones(1, N_NODES, dtype=torch.bool),
+        )
+        proc.initialize_from_data([batch])  # type: ignore[arg-type]
+        return proc
 
     def test_returns_valid_graph_data(
         self,
@@ -366,9 +498,10 @@ class TestCategoricalSamplerMarginal:
         uniform_model: UniformCategoricalModel,
     ) -> None:
         """Marginal-transition sampling produces valid GraphData output."""
-        sampler = CategoricalSampler(marginal_noise_process, unified_schedule)
+        sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
+            noise_process=marginal_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -384,10 +517,11 @@ class TestCategoricalSamplerMarginal:
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """Class indices remain in valid ranges with marginal transitions."""
-        sampler = CategoricalSampler(marginal_noise_process, unified_schedule)
+        """Class indices remain in valid ranges with empirical marginals."""
+        sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
+            noise_process=marginal_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -401,10 +535,11 @@ class TestCategoricalSamplerMarginal:
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """Symmetry invariant holds with marginal transitions."""
-        sampler = CategoricalSampler(marginal_noise_process, unified_schedule)
+        """Symmetry invariant holds with empirical marginals."""
+        sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
+            noise_process=marginal_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -421,6 +556,51 @@ class TestCategoricalSamplerMarginal:
 class TestContinuousSamplerSample:
     """Verify ContinuousSampler.sample() output type, shapes, and invariants."""
 
+    def test_uses_noise_process_condition_vector_for_model_input(
+        self,
+        continuous_noise_process: ContinuousNoiseProcess,
+        unified_schedule: NoiseSchedule,
+        identity_model: IdentityContinuousModel,
+    ) -> None:
+        """Continuous sampling should delegate conditioning semantics.
+
+        Test rationale: the continuous sampler previously derived schedule
+        noise levels directly, which diverged from training-time conditioning.
+        This test locks the sampler to the noise-process-owned condition
+        vector instead.
+        """
+        sampler = ContinuousSampler()
+        observed_condition: list[torch.Tensor | None] = []
+
+        def condition_vector(t: Tensor) -> Tensor:
+            return t.float() + 100.0
+
+        original_forward = identity_model.forward
+
+        def spy_forward(data: GraphData, t: Tensor | None = None) -> GraphData:
+            observed_condition.append(None if t is None else t.detach().clone())
+            return original_forward(data, t=t)
+
+        continuous_noise_process.process_state_condition_vector = condition_vector  # type: ignore[method-assign]
+        identity_model.forward = spy_forward  # type: ignore[assignment]
+
+        sampler.sample(
+            model=identity_model,
+            noise_process=continuous_noise_process,
+            num_graphs=BS,
+            num_nodes=N_NODES,
+            device=torch.device("cpu"),
+        )
+
+        expected = [
+            torch.full((BS,), float(step) + 100.0)
+            for step in range(unified_schedule.timesteps, 0, -1)
+        ]
+        assert len(observed_condition) == len(expected)
+        for actual, want in zip(observed_condition, expected, strict=True):
+            assert actual is not None
+            torch.testing.assert_close(actual, want)
+
     def test_returns_list_of_graph_data(
         self,
         continuous_noise_process: ContinuousNoiseProcess,
@@ -428,9 +608,10 @@ class TestContinuousSamplerSample:
         identity_model: IdentityContinuousModel,
     ) -> None:
         """sample() returns a list of GraphData with the correct length."""
-        sampler = ContinuousSampler(continuous_noise_process, unified_schedule)
+        sampler = ContinuousSampler()
         results = sampler.sample(
             model=identity_model,
+            noise_process=continuous_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -447,9 +628,10 @@ class TestContinuousSamplerSample:
         identity_model: IdentityContinuousModel,
     ) -> None:
         """Generated graphs have expected adjacency-based shapes."""
-        sampler = ContinuousSampler(continuous_noise_process, unified_schedule)
+        sampler = ContinuousSampler()
         results = sampler.sample(
             model=identity_model,
+            noise_process=continuous_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
@@ -467,15 +649,16 @@ class TestContinuousSamplerSample:
         identity_model: IdentityContinuousModel,
     ) -> None:
         """Final adjacency values should be binary (0 or 1)."""
-        sampler = ContinuousSampler(continuous_noise_process, unified_schedule)
+        sampler = ContinuousSampler()
         results = sampler.sample(
             model=identity_model,
+            noise_process=continuous_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.to_adjacency()
+            adj = g.to_binary_adjacency()
             unique_vals = torch.unique(adj)
             for v in unique_vals:
                 assert v.item() in (
@@ -490,15 +673,16 @@ class TestContinuousSamplerSample:
         identity_model: IdentityContinuousModel,
     ) -> None:
         """Generated adjacency should be symmetric."""
-        sampler = ContinuousSampler(continuous_noise_process, unified_schedule)
+        sampler = ContinuousSampler()
         results = sampler.sample(
             model=identity_model,
+            noise_process=continuous_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.to_adjacency()
+            adj = g.to_binary_adjacency()
             if adj.dim() == 2:
                 assert torch.equal(adj, adj.T), "Adjacency must be symmetric"
             elif adj.dim() == 3:
@@ -513,15 +697,16 @@ class TestContinuousSamplerSample:
         identity_model: IdentityContinuousModel,
     ) -> None:
         """No self-loops: diagonal of adjacency should be zero."""
-        sampler = ContinuousSampler(continuous_noise_process, unified_schedule)
+        sampler = ContinuousSampler()
         results = sampler.sample(
             model=identity_model,
+            noise_process=continuous_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.to_adjacency()
+            adj = g.to_binary_adjacency()
             if adj.dim() == 2:
                 assert torch.diag(adj).sum() == 0, "Self-loops must be zero"
             elif adj.dim() == 3:
@@ -540,14 +725,42 @@ class TestContinuousSamplerSample:
         intermediates; tracking gradients wastes memory with no benefit
         since sampling is always inference-only.
         """
-        sampler = ContinuousSampler(continuous_noise_process, unified_schedule)
+        sampler = ContinuousSampler()
         assert torch.is_grad_enabled()
         results = sampler.sample(
             model=identity_model,
+            noise_process=continuous_noise_process,
             num_graphs=BS,
             num_nodes=N_NODES,
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.to_adjacency()
+            adj = g.to_binary_adjacency()
             assert not adj.requires_grad
+
+    def test_warm_start_still_works_with_explicit_noise_process(
+        self,
+        continuous_noise_process: ContinuousNoiseProcess,
+        unified_schedule: NoiseSchedule,
+        identity_model: IdentityContinuousModel,
+    ) -> None:
+        """Warm-start sampling should still work after ownership moves."""
+        sampler = ContinuousSampler()
+        node_mask = torch.ones(BS, N_NODES, dtype=torch.bool)
+        start_graph = continuous_noise_process.sample_prior(node_mask)
+        start_from = DiffusionState(
+            graph=start_graph,
+            t=unified_schedule.timesteps - 1,
+            max_t=unified_schedule.timesteps,
+        )
+
+        results = sampler.sample(
+            model=identity_model,
+            noise_process=continuous_noise_process,
+            num_graphs=BS,
+            num_nodes=N_NODES,
+            device=torch.device("cpu"),
+            start_from=start_from,
+        )
+
+        assert len(results) == BS

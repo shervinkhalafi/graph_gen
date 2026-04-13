@@ -1,19 +1,18 @@
 """Tests for SingleStepDenoisingModule.
 
 SingleStepDenoisingModule extends BaseGraphModule for T=1 denoising: sample
-a noise level, corrupt, predict clean in one pass.  These tests verify
+a noise level, corrupt, predict clean in one pass. These tests verify
 instantiation, training_step, forward bridge, per-noise-level evaluation,
-property fallback behaviour, and both loss types.
+the explicit noise-level contract, and both loss types.
 
 The tests use a GNN model instantiated directly, matching production usage.
-Batches are built with
-``GraphData.from_adjacency`` on random symmetric binary matrices.
+Batches are built with ``GraphData.from_binary_adjacency`` on random
+symmetrical binary matrices.
 """
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock, PropertyMock, patch
+from typing import Any, cast
 
 import pytest
 import torch
@@ -54,7 +53,7 @@ def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
         upper = (torch.rand(n, n) > 0.5).float()
         sym = upper.triu(diagonal=1)
         adj[i] = sym + sym.t()
-    return GraphData.from_adjacency(adj)
+    return GraphData.from_binary_adjacency(adj)
 
 
 def _make_module(
@@ -120,6 +119,23 @@ class TestInstantiation:
         """An unrecognised loss_type should raise ValueError immediately."""
         with pytest.raises(ValueError, match="Unknown loss_type"):
             _make_module(loss_type="huber")
+
+    def test_drops_unused_diffusion_hparams(self) -> None:
+        """The denoising module should not retain generative sampler hparams.
+
+        Test rationale
+        --------------
+        Real stage-runner smokes enable a local logger. Lightning then merges
+        module and datamodule hparams for logging metadata. ``num_nodes`` and
+        ``eval_every_n_steps`` belong to multi-step graph generation, not to
+        single-step denoising, so keeping them on the module creates false
+        conflicts with datamodule-owned values.
+        """
+        m = _make_module()
+        assert "num_nodes" not in m.hparams
+        assert "eval_every_n_steps" not in m.hparams
+        assert "num_nodes" not in m.hparams_initial
+        assert "eval_every_n_steps" not in m.hparams_initial
 
 
 # -----------------------------------------------------------------------
@@ -291,7 +307,7 @@ class TestValOrTest:
 
 
 class TestNoiseLevelsProperty:
-    """Verify noise_levels sourcing from constructor and datamodule."""
+    """Verify the explicit noise-level contract on construction."""
 
     def test_explicit_noise_levels(self) -> None:
         """When noise_levels are provided at construction, the property
@@ -301,40 +317,26 @@ class TestNoiseLevelsProperty:
         m = _make_module(noise_levels=levels)
         assert m.noise_levels == levels
 
-    def test_reads_from_datamodule(self) -> None:
-        """When noise_levels is None, the property should read from
-        trainer.datamodule.noise_levels.
-        """
-        m = SingleStepDenoisingModule(
-            model=_make_default_model(),
-            noise_levels=None,
-            seed=42,
+    def test_missing_noise_levels_argument_raises(self) -> None:
+        """Omitting noise_levels should fail at construction time."""
+        kwargs = cast(
+            Any,
+            {
+                "model": _make_default_model(),
+                "seed": 42,
+            },
         )
+        with pytest.raises(TypeError, match="noise_levels"):
+            SingleStepDenoisingModule(**kwargs)
 
-        mock_dm = MagicMock()
-        mock_dm.noise_levels = [0.05, 0.15, 0.25]
-        mock_trainer = MagicMock()
-        mock_trainer.datamodule = mock_dm
-
-        # Attach the mock trainer
-        m._trainer = mock_trainer  # type: ignore[attr-defined]
-        # LightningModule.trainer is a property; patch it
-        with patch.object(
-            type(m), "trainer", new_callable=PropertyMock, return_value=mock_trainer
-        ):
-            assert m.noise_levels == [0.05, 0.15, 0.25]
-
-    def test_no_datamodule_raises(self) -> None:
-        """When noise_levels is None and no trainer is attached, accessing
-        the property should raise RuntimeError.
-        """
-        m = SingleStepDenoisingModule(
-            model=_make_default_model(),
-            noise_levels=None,
-            seed=42,
-        )
-        with pytest.raises(RuntimeError, match="noise_levels"):
-            _ = m.noise_levels
+    def test_none_noise_levels_raises(self) -> None:
+        """Passing ``None`` should fail loudly instead of falling back."""
+        with pytest.raises(ValueError, match="noise_levels"):
+            SingleStepDenoisingModule(
+                model=_make_default_model(),
+                noise_levels=cast(Any, None),
+                seed=42,
+            )
 
 
 # -----------------------------------------------------------------------

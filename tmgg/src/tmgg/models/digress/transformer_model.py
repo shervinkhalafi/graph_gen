@@ -704,13 +704,11 @@ class _GraphTransformer(nn.Module):
         E_to_out: torch.Tensor = E_cat[..., : self.out_dim_E]
         y_to_out: torch.Tensor = y_cat[..., : self.out_dim_y]
 
-        # --- Structural context (from categorical E, before any learned transforms) ---
+        # --- Structural context (from categorical graph topology, before any learned transforms) ---
         needs_adjacency = self._use_gnn_projections or (
             self._use_spectral_projections and self.eigen_layer is not None
         )
-        binary_adj = (
-            GraphData.edge_features_to_adjacency(E_cat) if needs_adjacency else None
-        )
+        binary_adj = data.to_binary_adjacency() if needs_adjacency else None
 
         eigenvectors: torch.Tensor | None = None
         eigenvalues: torch.Tensor | None = None

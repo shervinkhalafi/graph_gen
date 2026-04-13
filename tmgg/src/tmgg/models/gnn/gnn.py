@@ -88,8 +88,8 @@ class GNN(GraphModel):
         Parameters
         ----------
         data
-            Graph features. The adjacency is extracted via
-            ``data.to_adjacency()``.
+            Graph features. The dense edge state is extracted via
+            ``data.to_edge_state()``.
         t
             Diffusion timestep tensor, or None. Currently unused.
 
@@ -98,12 +98,12 @@ class GNN(GraphModel):
         GraphData
             Denoised graph with 2-class edge features.
         """
-        A = data.to_adjacency()
+        A = data.to_edge_state()
         emb_x, emb_y = self._embed(A)
         result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
         if self.symmetrized_output:
             result_adj = (result_adj + result_adj.transpose(1, 2)) / 2
-        return GraphData.from_adjacency(result_adj)
+        return GraphData.from_edge_state(result_adj, node_mask=data.node_mask)
 
     def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute node embeddings without adjacency reconstruction.
@@ -113,7 +113,7 @@ class GNN(GraphModel):
         Parameters
         ----------
         data
-            Graph features. The adjacency is extracted internally.
+            Graph features. The dense edge state is extracted internally.
 
         Returns
         -------
@@ -121,7 +121,7 @@ class GNN(GraphModel):
             Tuple of (X, Y) embeddings, each of shape
             ``(batch, n, feature_dim_out)``.
         """
-        A = data.to_adjacency()
+        A = data.to_edge_state()
         return self._embed(A)
 
     @override

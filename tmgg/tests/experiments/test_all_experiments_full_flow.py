@@ -58,7 +58,7 @@ def denoising_data_module() -> GraphDataModule:
         graph_type="sbm",
         graph_config={"num_nodes": N_NODES, "num_graphs": N_GRAPHS},
         batch_size=BATCH_SIZE,
-        noise_levels=NOISE_LEVELS,
+        num_workers=0,
     )
 
 
@@ -143,10 +143,10 @@ class TestDigressFullFlow:
 
         model = GraphTransformer(
             n_layers=2,
-            input_dims={"X": 2, "E": 2, "y": 0},
+            input_dims={"X": 2, "E": 1, "y": 0},
             hidden_mlp_dims={"X": 16, "E": 8, "y": 16},
             hidden_dims={"dx": 16, "de": 8, "dy": 16, "n_head": 2},
-            output_dims={"X": 0, "E": 2, "y": 0},
+            output_dims={"X": 0, "E": 1, "y": 0},
         )
         module = SingleStepDenoisingModule(
             model=model,
@@ -212,14 +212,9 @@ class TestDiffusionModuleGaussianFullFlow:
 
         schedule = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=5)
         noise_process = ContinuousNoiseProcess(
-            generator=DigressNoise(), noise_schedule=schedule
+            definition=DigressNoise(), schedule=schedule
         )
-        sampler = ContinuousSampler(
-            noise_process=ContinuousNoiseProcess(
-                generator=DigressNoise(), noise_schedule=schedule
-            ),
-            noise_schedule=schedule,
-        )
+        sampler = ContinuousSampler()
         evaluator = GraphEvaluator(eval_num_samples=4, kernel="gaussian", sigma=1.0)
 
         module = DiffusionModule(
@@ -274,14 +269,12 @@ class TestDiscreteGenerativeFullFlow:
 
         schedule = NoiseSchedule("cosine_iddpm", timesteps=diffusion_steps)
         noise_process = CategoricalNoiseProcess(
-            noise_schedule=schedule,
+            schedule=schedule,
             x_classes=dx,
             e_classes=de,
+            limit_distribution="uniform",
         )
-        sampler = CategoricalSampler(
-            noise_process=noise_process,
-            noise_schedule=schedule,
-        )
+        sampler = CategoricalSampler()
         evaluator = GraphEvaluator(
             eval_num_samples=4,
             kernel="gaussian",

@@ -36,7 +36,7 @@ def _batch_to_tensor(batch: Any) -> torch.Tensor:
     Raises ``TypeError`` for anything else so callers fail fast.
     """
     if isinstance(batch, GraphData):
-        return batch.to_adjacency()
+        return batch.to_binary_adjacency()
     if isinstance(batch, torch.Tensor):
         return batch
     raise TypeError(

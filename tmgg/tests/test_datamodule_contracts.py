@@ -13,6 +13,7 @@ module in depth. This file focuses on cross-cutting contract verification.
 
 from __future__ import annotations
 
+import networkx as nx
 import numpy as np
 import pytest
 import torch
@@ -28,6 +29,25 @@ from tmgg.data.data_modules.synthetic_categorical import (
     SyntheticCategoricalDataModule,
 )
 from tmgg.data.datasets.graph_types import GraphData
+
+
+def _graphdata_to_numpy(batch: GraphData, index: int = 0) -> np.ndarray:
+    """Extract one graph from a dense GraphData batch."""
+    num_nodes = int(batch.node_mask[index].sum().item())
+    adj = batch.to_binary_adjacency()[index, :num_nodes, :num_nodes]
+    return adj.cpu().numpy()
+
+
+def _first_train_graph(dm: SingleGraphDataModule) -> np.ndarray:
+    """Read the training graph through the public dataloader boundary."""
+    return _graphdata_to_numpy(next(iter(dm.train_dataloader())))
+
+
+def _first_reference_graph(dm: SingleGraphDataModule, stage: str) -> np.ndarray:
+    """Read one val/test graph through get_reference_graphs()."""
+    graph = dm.get_reference_graphs(stage, max_graphs=1)[0]
+    return np.asarray(nx.to_numpy_array(graph), dtype=np.float32)
+
 
 # ---------------------------------------------------------------------------
 # GraphDataModule lifecycle
@@ -61,16 +81,16 @@ class TestGraphDataModuleContract:
 
         batch = next(iter(dm.train_dataloader()))
         assert isinstance(batch, GraphData)
-        assert batch.to_adjacency().shape == (4, 12, 12)
-        assert batch.to_adjacency().dtype == torch.float32
+        assert batch.to_binary_adjacency().shape == (4, 12, 12)
+        assert batch.to_binary_adjacency().dtype == torch.float32
 
         val_batch = next(iter(dm.val_dataloader()))
         assert isinstance(val_batch, GraphData)
-        assert val_batch.to_adjacency().shape[1:] == (12, 12)
+        assert val_batch.to_binary_adjacency().shape[1:] == (12, 12)
 
         test_batch = next(iter(dm.test_dataloader()))
         assert isinstance(test_batch, GraphData)
-        assert test_batch.to_adjacency().shape[1:] == (12, 12)
+        assert test_batch.to_binary_adjacency().shape[1:] == (12, 12)
 
     def test_sbm_enumerated_lifecycle(self) -> None:
         """SBM with enumerated partitions: different partitions per split.
@@ -110,7 +130,7 @@ class TestGraphDataModuleContract:
         assert len(dm._test_data) == 2 * 4  # pyright: ignore[reportPrivateUsage]
 
         batch = next(iter(dm.train_dataloader()))
-        assert batch.to_adjacency().shape == (4, 20, 20)
+        assert batch.to_binary_adjacency().shape == (4, 20, 20)
 
     def test_er_lifecycle(self) -> None:
         """Erdos-Renyi: synthetic graph generation through SyntheticGraphDataset."""
@@ -126,7 +146,7 @@ class TestGraphDataModuleContract:
 
         batch = next(iter(dm.train_dataloader()))
         assert isinstance(batch, GraphData)
-        assert batch.to_adjacency().shape[1:] == (10, 10)
+        assert batch.to_binary_adjacency().shape[1:] == (10, 10)
 
 
 # ---------------------------------------------------------------------------
@@ -155,14 +175,14 @@ class TestSingleGraphDataModuleContract:
         )
         dm.setup()
 
-        # All splits should return the same graph
-        assert np.array_equal(dm.get_train_graph(), dm.get_val_graph())
-        assert np.array_equal(dm.get_train_graph(), dm.get_test_graph())
+        train_graph = _first_train_graph(dm)
+        assert np.array_equal(train_graph, _first_reference_graph(dm, "val"))
+        assert np.array_equal(train_graph, _first_reference_graph(dm, "test"))
 
         batch = next(iter(dm.train_dataloader()))
         assert isinstance(batch, GraphData)
-        assert batch.to_adjacency().shape == (4, 20, 20)
-        assert batch.to_adjacency().dtype == torch.float32
+        assert batch.to_binary_adjacency().shape == (4, 20, 20)
+        assert batch.to_binary_adjacency().dtype == torch.float32
 
     def test_er_different_graphs_lifecycle(self) -> None:
         """ER with same_graph_all_splits=False: different graphs per split.
@@ -182,10 +202,11 @@ class TestSingleGraphDataModuleContract:
         )
         dm.setup()
 
-        assert not np.array_equal(dm.get_train_graph(), dm.get_val_graph())
+        train_graph = _first_train_graph(dm)
+        assert not np.array_equal(train_graph, _first_reference_graph(dm, "val"))
 
         batch = next(iter(dm.train_dataloader()))
-        assert batch.to_adjacency().shape == (2, 15, 15)
+        assert batch.to_binary_adjacency().shape == (2, 15, 15)
 
     def test_graph_properties(self) -> None:
         """Generated graphs should be symmetric, binary, with zero diagonal."""
@@ -197,7 +218,7 @@ class TestSingleGraphDataModuleContract:
         )
         dm.setup()
 
-        A = dm.get_train_graph()
+        A = _first_train_graph(dm)
         assert A.shape == (20, 20)
         assert np.allclose(A, A.T), "Should be symmetric"
         assert set(np.unique(A)).issubset({0.0, 1.0}), "Should be binary"
@@ -234,18 +255,18 @@ class TestMultiGraphDataModuleContract:
         # Train dataloader
         train_batch = next(iter(dm.train_dataloader()))
         assert isinstance(train_batch, GraphData)
-        assert train_batch.to_adjacency().shape == (4, 16, 16)
-        assert train_batch.to_adjacency().dtype == torch.float32
+        assert train_batch.to_binary_adjacency().shape == (4, 16, 16)
+        assert train_batch.to_binary_adjacency().dtype == torch.float32
 
         # Val dataloader
         val_batch = next(iter(dm.val_dataloader()))
         assert isinstance(val_batch, GraphData)
-        assert val_batch.to_adjacency().shape[1:] == (16, 16)
+        assert val_batch.to_binary_adjacency().shape[1:] == (16, 16)
 
         # Test dataloader
         test_batch = next(iter(dm.test_dataloader()))
         assert isinstance(test_batch, GraphData)
-        assert test_batch.to_adjacency().shape[1:] == (16, 16)
+        assert test_batch.to_binary_adjacency().shape[1:] == (16, 16)
 
     def test_er_lifecycle(self) -> None:
         """ER graphs through the generative pipeline."""
@@ -261,7 +282,7 @@ class TestMultiGraphDataModuleContract:
         dm.setup()
 
         batch = next(iter(dm.train_dataloader()))
-        assert batch.to_adjacency().shape == (4, 12, 12)
+        assert batch.to_binary_adjacency().shape == (4, 12, 12)
 
     def test_split_sizes(self) -> None:
         """Train/val/test split sizes should match ratios."""
@@ -312,17 +333,17 @@ class TestMultiGraphDataModuleContract:
             assert torch.allclose(adj, adj.T)
             assert torch.all(adj.diagonal() == 0)
 
-    def test_get_dataset_info(self) -> None:
-        """get_dataset_info() should return expected metadata."""
+    def test_size_distribution_contract(self) -> None:
+        """Fixed-size multigraph modules expose a degenerate size distribution."""
         dm = MultiGraphDataModule(
             graph_type="sbm",
             num_nodes=16,
             num_graphs=50,
         )
-        info = dm.get_dataset_info()
-        assert info["num_graphs"] == 50
-        assert info["num_nodes"] == 16
-        assert info["graph_type"] == "sbm"
+        dist = dm.get_size_distribution("train")
+        assert dist.is_degenerate
+        assert dist.sizes == (16,)
+        assert dist.max_size == 16
 
     def test_idempotent_setup(self) -> None:
         """Calling setup() twice should not regenerate data."""
@@ -388,11 +409,12 @@ class TestSyntheticCategoricalDataModuleContract:
         assert batch.node_mask.shape == (4, 16)  # (bs, n)
         assert batch.node_mask.dtype == torch.bool
 
-    def test_marginals_contract(self) -> None:
-        """node_marginals and edge_marginals are valid probability vectors.
+    def test_train_batch_contract(self) -> None:
+        """Train batches expose valid one-hot categorical node and edge features.
 
-        Rationale: The discrete diffusion LightningModule reads these
-        during its own setup() to construct transition matrices.
+        Rationale: the diffusion pipeline now learns empirical stationary PMFs
+        from the train loader directly, so the datamodule contract is the batch
+        shape and masking behavior rather than cached marginal vectors.
         """
         dm = SyntheticCategoricalDataModule(
             graph_type="sbm",
@@ -404,28 +426,28 @@ class TestSyntheticCategoricalDataModuleContract:
         )
         dm.setup()
 
-        nm = dm.node_marginals
-        em = dm.edge_marginals
+        batch = next(iter(dm.train_dataloader()))
+        node_sums = batch.X[batch.node_mask].sum(dim=-1)
+        edge_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
+        edge_sums = batch.E[edge_mask].sum(dim=-1)
 
-        assert nm.shape == (2,)
-        assert em.shape == (2,)
-        assert torch.allclose(nm.sum(), torch.tensor(1.0), atol=1e-6)
-        assert torch.allclose(em.sum(), torch.tensor(1.0), atol=1e-6)
-        assert (nm >= 0).all()
-        assert (em >= 0).all()
+        assert batch.X.shape[-1] == 2
+        assert batch.E.shape[-1] == 2
+        assert torch.allclose(node_sums, torch.ones_like(node_sums))
+        assert torch.allclose(edge_sums, torch.ones_like(edge_sums))
 
-    def test_get_dataset_info(self) -> None:
-        """get_dataset_info() should return categorical metadata."""
+    def test_reference_graphs_contract(self) -> None:
+        """Categorical modules expose val graphs through get_reference_graphs()."""
         dm = SyntheticCategoricalDataModule(
             graph_type="sbm",
             num_nodes=16,
             num_graphs=50,
         )
-        info = dm.get_dataset_info()
-        assert info["num_graphs"] == 50
-        assert info["num_nodes"] == 16
-        assert info["num_node_classes"] == 2
-        assert info["num_edge_classes"] == 2
+        dm.setup()
+
+        graphs = dm.get_reference_graphs("val", max_graphs=3)
+        assert len(graphs) == 3
+        assert all(graph.number_of_nodes() == 16 for graph in graphs)
 
     def test_er_lifecycle(self) -> None:
         """Non-SBM graph types should also produce valid categorical data."""
@@ -480,7 +502,7 @@ class TestReproducibility:
 
     def test_categorical_reproducible(self) -> None:
         """Two SyntheticCategoricalDataModule instances with the same seed
-        should produce identical marginals."""
+        should produce identical training graphs."""
 
         def _make_cat_dm() -> SyntheticCategoricalDataModule:
             return SyntheticCategoricalDataModule(
@@ -497,5 +519,7 @@ class TestReproducibility:
         dm2 = _make_cat_dm()
         dm2.setup()
 
-        assert torch.equal(dm1.node_marginals, dm2.node_marginals)
-        assert torch.equal(dm1.edge_marginals, dm2.edge_marginals)
+        assert dm1._train_data is not None and dm2._train_data is not None  # pyright: ignore[reportPrivateUsage]
+        for d1, d2 in zip(dm1._train_data, dm2._train_data, strict=False):  # pyright: ignore[reportPrivateUsage]
+            assert d1.edge_index is not None and d2.edge_index is not None
+            assert torch.equal(d1.edge_index, d2.edge_index)

@@ -13,10 +13,6 @@ import pytest
 import torch
 
 from tmgg.data.datasets.graph_types import GraphData, collapse_to_indices
-from tmgg.diffusion.diffusion_graph_types import (
-    LimitDistribution,
-    TransitionMatrices,
-)
 
 
 def _make_symmetric_E(bs: int, n: int, de: int) -> torch.Tensor:
@@ -205,42 +201,20 @@ class TestCollapseToIndices:
         assert result.E[0, 0, 2] == -1
 
 
-# -- TransitionMatrices ------------------------------------------------------
+# -- Explicit graph boundaries ----------------------------------------------
 
 
-class TestTransitionMatrices:
-    """Basic construction and immutability."""
+class TestExplicitGraphBoundaries:
+    """Explicit topology and edge-state accessors keep their semantics separate."""
 
-    def test_construction(self) -> None:
-        tm = TransitionMatrices(
-            X=torch.eye(3).unsqueeze(0),
-            E=torch.eye(2).unsqueeze(0),
-            y=torch.zeros(1, 0, 0),
-        )
-        assert tm.X.shape == (1, 3, 3)
-        assert tm.E.shape == (1, 2, 2)
+    def test_binary_adjacency_round_trip(self) -> None:
+        """Binary graph boundaries round-trip through the topology accessors."""
+        adj = torch.tensor([[[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]]])
+        data = GraphData.from_binary_adjacency(adj)
+        torch.testing.assert_close(data.to_binary_adjacency(), adj)
 
-    def test_frozen(self) -> None:
-        tm = TransitionMatrices(
-            X=torch.eye(3).unsqueeze(0),
-            E=torch.eye(2).unsqueeze(0),
-            y=torch.zeros(1, 0, 0),
-        )
-        with pytest.raises(AttributeError):
-            tm.X = torch.zeros(1, 3, 3)  # type: ignore[misc]
-
-
-# -- LimitDistribution ------------------------------------------------------
-
-
-class TestLimitDistribution:
-    """Basic construction."""
-
-    def test_construction(self) -> None:
-        ld = LimitDistribution(
-            X=torch.ones(3) / 3,
-            E=torch.ones(2) / 2,
-            y=torch.zeros(0),
-        )
-        assert ld.X.shape == (3,)
-        assert torch.allclose(ld.X.sum(), torch.tensor(1.0))
+    def test_binary_topology_lifts_into_edge_state_space(self) -> None:
+        """Binary-topology graphs expose their edge indicator channel as edge state."""
+        adj = torch.tensor([[[0.0, 1.0, 1.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+        data = GraphData.from_binary_adjacency(adj)
+        torch.testing.assert_close(data.to_edge_state(), adj)

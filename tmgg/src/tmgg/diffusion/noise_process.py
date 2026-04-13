@@ -1,17 +1,16 @@
 """Unified noise process hierarchy for graph diffusion.
 
-Provides ``NoiseProcess`` as the abstract base (``ABC + nn.Module``), with two
-concrete implementations:
+``NoiseProcess`` is the timestep-indexed corruption interface shared by
+continuous and categorical graph diffusion. It exposes three core operations:
 
-- ``ContinuousNoiseProcess`` wraps existing ``NoiseDefinition`` subclasses and
-  operates on adjacency-based graph representations.
-- ``CategoricalNoiseProcess`` wraps a ``CategoricalNoiseDefinition`` (which
-  itself wraps a ``TransitionModel``) and operates on one-hot categorical
-  features via transition matrices.
+- ``sample_prior(node_mask)``
+- ``forward_sample(x_0, t)``
+- ``posterior_sample(z_t, x0_param, t, s)``
 
-Both expose the same ``apply``/``get_posterior`` interface, allowing the
-training loop to be agnostic to the noise type. All subclasses are
-``nn.Module``s so device management propagates automatically via ``.to()``.
+Concrete processes still carry some legacy helpers while later refactor chunks
+remove the remaining transition-model and exact-density compatibility surface.
+All process classes are ``nn.Module`` instances so schedules and any other
+stateful subcomponents follow device placement automatically.
 """
 
 # pyright: reportAttributeAccessIssue=false
@@ -19,153 +18,187 @@ training loop to be agnostic to the noise type. All subclasses are
 
 from __future__ import annotations
 
-import warnings
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Literal
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import functional as F
+from torch.utils.data import DataLoader
 
-from tmgg.data.datasets.graph_types import GraphData
-from tmgg.diffusion.categorical_noise import CategoricalNoiseDefinition
-from tmgg.diffusion.protocols import TransitionModel
+from tmgg.data.datasets.graph_types import GraphData, collapse_to_indices
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.utils.noising.noise import NoiseDefinition
 
 from .diffusion_math import sum_except_batch
 from .diffusion_sampling import (
     compute_posterior_distribution,
-    mask_distributions,
-    posterior_distributions,
+    sample_discrete_feature_noise,
+    sample_discrete_features,
 )
 
 
-class NoiseProcess(ABC, nn.Module):
-    """Abstract base for forward diffusion noise processes.
+def _continuous_edge_state(data: GraphData) -> Tensor:
+    """Return a dense edge-valued tensor for continuous-process math.
 
-    Subclasses implement the forward noising step (``apply``) and the
-    reverse posterior computation (``get_posterior``) for a specific noise
-    parameterisation (continuous or categorical).
-
-    The ``apply`` method accepts either an integer timestep ``t_int`` (which
-    is converted to a noise level via the schedule) or a direct
-    ``noise_level`` keyword argument (which bypasses the schedule). Exactly
-    one must be provided.
-
-    Extends both ``ABC`` and ``nn.Module`` so that submodules (noise
-    schedules, transition models) propagate device and state_dict
-    automatically.
+    Continuous states and clean binary-topology graphs both lift through
+    ``to_edge_state()`` so the forward and reverse process stay in dense
+    edge-state space without binary-topology projections.
     """
+    return data.to_edge_state()
+
+
+def _masked_graph_log_prob(sample: GraphData, probs: GraphData) -> Tensor:
+    """Sum masked categorical log-probabilities per sample.
+
+    ``sample`` is typically a one-hot graph state and ``probs`` carries the
+    corresponding categorical probabilities over the same support.
+    """
+    node_mask = sample.node_mask
+    inv = ~node_mask
+    inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)
+
+    sample_x = sample.X.clone()
+    sample_e = sample.E.clone()
+    prob_x = probs.X.clone()
+    prob_e = probs.E.clone()
+
+    sample_x[inv] = 0.0
+    sample_e[inv_edge] = 0.0
+    prob_x[inv] = 1.0
+    prob_e[inv_edge] = 1.0
+
+    log_prob_x = sum_except_batch(sample_x * prob_x.clamp(min=1e-10).log())
+    log_prob_e = sum_except_batch(sample_e * prob_e.clamp(min=1e-10).log())
+    return log_prob_x + log_prob_e
+
+
+def _normalise_counts_or_uniform(counts: Tensor) -> Tensor:
+    """Return a PMF from counts, falling back to uniform on empty support."""
+    if counts.numel() == 0:
+        return counts
+    total = counts.sum()
+    if total <= 0:
+        return torch.full_like(counts, 1.0 / counts.numel())
+    return counts / total
+
+
+def _mix_with_limit(features: Tensor, alpha: Tensor | float, limit: Tensor) -> Tensor:
+    """Interpolate one-hot features with a stationary categorical PMF."""
+    if isinstance(alpha, int | float):
+        alpha = torch.tensor([alpha], device=features.device, dtype=torch.float32)
+    alpha = alpha.to(device=features.device, dtype=torch.float32)
+    alpha = alpha.view(-1, *([1] * (features.dim() - 1)))
+    limit = limit.to(device=features.device, dtype=torch.float32)
+    limit = limit.view(*([1] * (features.dim() - 1)), limit.numel())
+    return alpha * features.float() + (1.0 - alpha) * limit
+
+
+def _categorical_kernel(identity_weight: Tensor, limit: Tensor) -> Tensor:
+    """Build batched categorical kernels from identity weight and a PMF."""
+    if limit.numel() == 0:
+        bs = int(identity_weight.reshape(-1).shape[0])
+        return limit.new_zeros((bs, 0, 0))
+    identity_weight = identity_weight.to(device=limit.device, dtype=torch.float32)
+    identity_weight = identity_weight.reshape(-1, 1, 1)
+    classes = limit.numel()
+    eye = torch.eye(classes, device=limit.device, dtype=torch.float32).unsqueeze(0)
+    stationary_rows = (
+        limit.to(dtype=torch.float32)
+        .view(1, 1, classes)
+        .expand(identity_weight.shape[0], classes, classes)
+    )
+    return identity_weight * eye + (1.0 - identity_weight) * stationary_rows
+
+
+class NoiseProcess(ABC, nn.Module):
+    """Abstract base for timestep-indexed graph corruption processes."""
 
     def __init__(self) -> None:
         super().__init__()
 
-    def apply(
+    @property
+    @abstractmethod
+    def timesteps(self) -> int:
+        """Number of discrete diffusion steps owned by the process."""
+        ...
+
+    def initialize_from_data(self, train_loader: DataLoader[GraphData]) -> None:
+        """Initialise any data-dependent state from the training loader."""
+        _ = train_loader
+
+    def needs_data_initialization(self) -> bool:
+        """Whether the process requires a dataloader-backed setup phase."""
+        return False
+
+    def is_initialized(self) -> bool:
+        """Whether any required data-dependent state is already available."""
+        return True
+
+    @abstractmethod
+    def process_state_condition_vector(self, t: Tensor) -> Tensor:
+        """Return the model-conditioning vector for process state ``t``."""
+        ...
+
+    def model_output_to_posterior_parameter(self, model_output: GraphData) -> GraphData:
+        """Convert raw model output into the reverse-process parameterisation."""
+        return model_output
+
+    def finalize_sample(self, z_0: GraphData) -> GraphData:
+        """Decode the final latent state into the public sampling output."""
+        return z_0
+
+    @abstractmethod
+    def sample_prior(self, node_mask: Tensor) -> GraphData:
+        """Sample the process prior at timestep ``T``."""
+        ...
+
+    @abstractmethod
+    def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
+        """Sample ``q(z_t | x_0)`` at integer timesteps ``t``."""
+        ...
+
+    @abstractmethod
+    def posterior_sample(
         self,
-        data: GraphData,
-        t_int: Tensor | None = None,
-        *,
-        noise_level: Tensor | float | None = None,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
     ) -> GraphData:
-        """Apply forward diffusion noise.
+        """Sample ``q(z_s | z_t, x_0)`` or its model-parameterised analogue."""
+        ...
 
-        Exactly one of *t_int* or *noise_level* must be provided.
 
-        Parameters
-        ----------
-        data
-            Clean (or partially noised) graph data.
-        t_int
-            Integer timestep indices, shape ``(bs,)``. Converted to a
-            noise level via the schedule before applying noise.
-        noise_level
-            Direct noise level, bypassing the schedule. Interpretation
-            depends on the subclass (e.g. ``1 - alpha_bar`` for
-            continuous, ``alpha_bar`` for categorical).
-
-        Returns
-        -------
-        GraphData
-            Noised graph data with the same tensor shapes as *data*.
-
-        Raises
-        ------
-        ValueError
-            If both or neither of *t_int* and *noise_level* are provided.
-        """
-        if (t_int is None) == (noise_level is None):
-            raise ValueError(
-                "Provide exactly one of t_int or noise_level, "
-                f"got t_int={'provided' if t_int is not None else 'None'}, "
-                f"noise_level={'provided' if noise_level is not None else 'None'}"
-            )
-
-        if t_int is not None:
-            noise_level = self._schedule_to_level(t_int)
-
-        assert noise_level is not None  # narrowed by the guard above
-        return self._apply_noise(data, noise_level)
+class ExactDensityNoiseProcess(NoiseProcess, ABC):
+    """Noise process with tractable forward, posterior, and prior densities."""
 
     @abstractmethod
-    def _schedule_to_level(self, t_int: Tensor) -> Tensor:
-        """Convert integer timesteps to noise levels via the schedule.
-
-        Parameters
-        ----------
-        t_int
-            Integer timestep indices, shape ``(bs,)``.
-
-        Returns
-        -------
-        Tensor
-            Noise level values, shape ``(bs,)``.
-        """
+    def forward_log_prob(
+        self,
+        x_t: GraphData,
+        x_0: GraphData,
+        t: Tensor,
+    ) -> Tensor:
+        """Log-density of the forward process at timestep ``t``."""
         ...
 
     @abstractmethod
-    def _apply_noise(self, data: GraphData, noise_level: Tensor | float) -> GraphData:
-        """Apply noise at the given level (internal dispatch target).
-
-        Parameters
-        ----------
-        data
-            Graph data to noise.
-        noise_level
-            Noise intensity whose interpretation varies by subclass.
-
-        Returns
-        -------
-        GraphData
-            Noised graph data.
-        """
+    def posterior_log_prob(
+        self,
+        x_s: GraphData,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> Tensor:
+        """Log-density of the reverse posterior at timestep pair ``(t, s)``."""
         ...
 
     @abstractmethod
-    def get_posterior(
-        self, z_t: GraphData, z_0: GraphData, t: Tensor, s: Tensor
-    ) -> Any:
-        """Compute the reverse posterior distribution for sampling.
-
-        Parameters
-        ----------
-        z_t
-            Noisy graph at timestep *t*.
-        z_0
-            Clean graph (or predicted clean graph).
-        t
-            Current timestep, shape ``(bs,)``.
-        s
-            Previous timestep, shape ``(bs,)``.
-
-        Returns
-        -------
-        Any
-            Posterior parameters. For continuous noise, a dict with ``mean``
-            and ``std`` keys. For categorical noise, a ``GraphData`` holding
-            posterior probability distributions.
-        """
+    def prior_log_prob(self, x: GraphData) -> Tensor:
+        """Log-density of the prior distribution."""
         ...
 
 
@@ -177,45 +210,85 @@ class ContinuousNoiseProcess(NoiseProcess):
     definition only sees the final noise level; this class handles timestep
     conversion and posterior computation.
 
-    The forward process extracts the adjacency from ``GraphData``, delegates
-    to the wrapped definition's ``add_noise``, and converts back. The timestep
-    ``t`` is an integer index into the noise schedule; the noise process
-    converts it to a noise level via ``get_noise_level()`` before passing
-    to the definition.
+    The forward process operates on dense edge-valued states. Clean discrete
+    graphs are lifted through explicit binary-topology accessors, while
+    in-flight continuous states remain lossless through ``to_edge_state()``.
+    The timestep ``t`` is an integer index into the noise schedule; the noise
+    process converts it to a noise level via ``get_noise_level()`` before
+    passing it to the definition.
 
     Parameters
     ----------
-    generator
+    definition
         An existing ``NoiseDefinition`` instance (GaussianNoise, EdgeFlipNoise,
-        DigressNoise, LogitNoise, etc.).  Not an ``nn.Module`` -- stored as a
-        plain attribute. Also accessible as ``definition`` (preferred name).
-    noise_schedule
+        DigressNoise, LogitNoise, etc.). Not an ``nn.Module``; stored as a
+        plain attribute.
+    schedule
         A ``NoiseSchedule`` used by ``get_posterior`` to look up
         ``alpha_bar`` at integer timesteps.  Registered as an ``nn.Module``
         submodule.
     """
 
-    def __init__(
-        self, generator: NoiseDefinition, noise_schedule: NoiseSchedule
-    ) -> None:
+    def __init__(self, definition: NoiseDefinition, schedule: NoiseSchedule) -> None:
         super().__init__()
-        self.definition = generator
-        self.noise_schedule = noise_schedule  # nn.Module — auto-registered
+        self.definition = definition
+        self.noise_schedule = schedule  # nn.Module — auto-registered
 
     @property
-    def generator(self) -> NoiseDefinition:
-        """Deprecated alias for ``definition``.
+    def timesteps(self) -> int:
+        """Number of discrete diffusion steps owned by the schedule."""
+        return self.noise_schedule.timesteps
 
-        .. deprecated::
-            Use ``definition`` instead.
-        """
-        warnings.warn(
-            "ContinuousNoiseProcess.generator is deprecated, "
-            "use .definition instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.definition
+    def process_state_condition_vector(self, t: Tensor) -> Tensor:
+        """Return the default model-conditioning vector for timestep ``t``."""
+        return t.float() / self.timesteps
+
+    def model_output_to_posterior_parameter(self, model_output: GraphData) -> GraphData:
+        """Continuous reverse diffusion uses the model output directly."""
+        return model_output
+
+    def finalize_sample(self, z_0: GraphData) -> GraphData:
+        """Decode the final dense edge state into a binary graph."""
+        edge_state = z_0.to_edge_state()
+        adj_final = (edge_state > 0.5).float()
+        adj_final = (adj_final + adj_final.transpose(1, 2)).clamp(max=1.0)
+
+        n_max = adj_final.shape[1]
+        diag_idx = torch.arange(n_max, device=adj_final.device)
+        adj_final[:, diag_idx, diag_idx] = 0.0
+
+        mask_2d = z_0.node_mask.unsqueeze(-1) * z_0.node_mask.unsqueeze(-2)
+        adj_final = adj_final * mask_2d.float()
+
+        decoded = GraphData.from_binary_adjacency(adj_final)
+        return GraphData(
+            X=decoded.X,
+            E=decoded.E,
+            y=decoded.y,
+            node_mask=z_0.node_mask,
+        ).mask()
+
+    def sample_prior(self, node_mask: Tensor) -> GraphData:
+        """Sample a symmetric Gaussian prior in dense edge-state space."""
+        if node_mask.dim() == 1:
+            node_mask = node_mask.unsqueeze(0)
+
+        bs, n = node_mask.shape
+        edge_state = torch.randn(bs, n, n, device=node_mask.device)
+        edge_state = torch.triu(edge_state, diagonal=1)
+        edge_state = edge_state + edge_state.transpose(1, 2)
+        mask_2d = node_mask.unsqueeze(-1) & node_mask.unsqueeze(-2)
+        edge_state = edge_state * mask_2d.float()
+        return GraphData.from_edge_state(edge_state, node_mask=node_mask).mask()
+
+    def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
+        """Sample the forward process at timestep ``t``."""
+        noise_level = self._schedule_to_level(t)
+        return self._apply_noise(x_0, noise_level)
+
+    def sample_at_level(self, x_0: GraphData, level: Tensor | float) -> GraphData:
+        """Sample the forward process at an explicit continuous noise level."""
+        return self._apply_noise(x_0, level)
 
     def _schedule_to_level(self, t_int: Tensor) -> Tensor:
         """Convert timestep to noise level via ``1 - alpha_bar(t)``."""
@@ -223,11 +296,11 @@ class ContinuousNoiseProcess(NoiseProcess):
 
     def _apply_noise(self, data: GraphData, noise_level: Tensor | float) -> GraphData:
         """Apply continuous noise via the wrapped definition."""
-        adj = data.to_adjacency()  # (bs, n, n)
-        noisy_adj = self.definition.add_noise(adj, noise_level)
-        return GraphData.from_adjacency(noisy_adj)
+        edge_state = _continuous_edge_state(data)
+        noisy_edge_state = self.definition.add_noise(edge_state, noise_level)
+        return GraphData.from_edge_state(noisy_edge_state, node_mask=data.node_mask)
 
-    def get_posterior(
+    def _posterior_parameters(
         self, z_t: GraphData, z_0: GraphData, t: Tensor, s: Tensor
     ) -> dict[str, Tensor]:
         """Compute the Gaussian posterior ``q(x_{t-1} | x_t, x_0)`` for the
@@ -264,8 +337,8 @@ class ContinuousNoiseProcess(NoiseProcess):
         dict[str, Tensor]
             ``"mean"`` and ``"std"`` tensors of shape ``(bs, n, n)``.
         """
-        adj_t = z_t.to_adjacency()
-        adj_0 = z_0.to_adjacency()
+        adj_t = _continuous_edge_state(z_t)
+        adj_0 = _continuous_edge_state(z_0)
 
         # Cumulative signal-retention factors from the noise schedule.
         alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t).view(-1, 1, 1)
@@ -298,105 +371,221 @@ class ContinuousNoiseProcess(NoiseProcess):
 
         return {"mean": mean, "std": std}
 
+    def posterior_sample(
+        self,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> GraphData:
+        """Sample the Gaussian reverse posterior into edge-state space."""
+        posterior = self._posterior_parameters(z_t, x0_param, t, s)
+        mean = posterior["mean"]
+        std = posterior["std"]
+        noise = torch.randn_like(mean)
+        sample = mean + std * noise
+        if s.dim() == 0:
+            s = s.unsqueeze(0)
+        no_noise_mask = (s <= 0).view(-1, 1, 1)
+        sample = torch.where(no_noise_mask, mean, sample)
+        sample = (sample + sample.transpose(1, 2)) / 2.0
+        return GraphData.from_edge_state(sample, node_mask=z_t.node_mask).mask()
 
-class CategoricalNoiseProcess(NoiseProcess):
-    """Wraps a ``CategoricalNoiseDefinition`` for the ``NoiseProcess`` interface.
 
-    Combines a ``CategoricalNoiseDefinition`` (which handles the transition
-    matrix math) with a ``NoiseSchedule`` (which maps timesteps to alpha_bar
-    values). The transition model is injected into the definition, either at
-    construction or deferred via ``set_transition_model()``.
+class CategoricalNoiseProcess(ExactDensityNoiseProcess):
+    """Scheduled categorical diffusion over one-hot graph states.
 
-    **Why deferred injection:** ``MarginalUniformTransition`` requires
-    empirical class marginals from the dataset, but in Lightning's
-    lifecycle the noise process is created in ``__init__`` -- before the
-    datamodule is attached.  ``DiffusionModule.setup()`` bridges this
-    gap: it reads marginals from the datamodule and injects the
-    transition model via ``set_transition_model()``.  Calling any method
-    that needs the transition model before injection raises
-    ``RuntimeError`` immediately.
+    The process owns only two public configuration choices:
 
-    Parameters
-    ----------
-    noise_schedule
-        A ``NoiseSchedule`` instance that maps timesteps to beta / alpha_bar
-        values.  Registered as an ``nn.Module`` submodule.
-    x_classes
-        Number of node feature classes.
-    e_classes
-        Number of edge feature classes.
-    y_classes
-        Number of global feature classes. Default 0 (unused).
-    transition_model
-        An already-constructed transition model, or ``None`` to defer.
-        If ``None``, ``set_transition_model()`` **must** be called before
-        ``apply``, ``get_posterior``, or any other method that touches the
-        transition model -- otherwise those methods raise ``RuntimeError``.
+    - the timestep schedule
+    - the stationary categorical distribution mode
+
+    ``limit_distribution="uniform"`` uses uniform class PMFs immediately.
+    ``limit_distribution="empirical_marginal"`` defers PMF construction until
+    ``initialize_from_data()`` can count class frequencies from the train
+    loader. No public transition-object hierarchy remains.
     """
+
+    _limit_x: Tensor | None
+    _limit_e: Tensor | None
+    _limit_y: Tensor | None
 
     def __init__(
         self,
-        noise_schedule: NoiseSchedule,
+        schedule: NoiseSchedule,
         x_classes: int,
         e_classes: int,
         y_classes: int = 0,
-        transition_model: TransitionModel | None = None,
+        limit_distribution: Literal["uniform", "empirical_marginal"] = "uniform",
     ) -> None:
         super().__init__()
 
-        self.noise_schedule = noise_schedule  # nn.Module — auto-registered
-        self.definition = CategoricalNoiseDefinition(
-            x_classes=x_classes,
-            e_classes=e_classes,
-            # Don't pass transition_model here; validate via set_transition_model
-        )
+        self.noise_schedule = schedule  # nn.Module — auto-registered
+        self.x_classes = x_classes
+        self.e_classes = e_classes
         self.y_classes = y_classes
+        self.limit_distribution = limit_distribution
+        self.register_buffer("_limit_x", None)
+        self.register_buffer("_limit_e", None)
+        self.register_buffer("_limit_y", None)
 
-        if transition_model is not None:
-            self.set_transition_model(transition_model)
-
-    # -- Delegated properties ------------------------------------------------
+        if limit_distribution == "uniform":
+            self._set_stationary_distribution(
+                x_probs=(
+                    torch.full((x_classes,), 1.0 / x_classes)
+                    if x_classes > 0
+                    else torch.zeros(0)
+                ),
+                e_probs=(
+                    torch.full((e_classes,), 1.0 / e_classes)
+                    if e_classes > 0
+                    else torch.zeros(0)
+                ),
+                y_probs=(
+                    torch.full((y_classes,), 1.0 / y_classes)
+                    if y_classes > 0
+                    else torch.zeros(0)
+                ),
+            )
+        elif limit_distribution != "empirical_marginal":
+            raise ValueError(
+                "limit_distribution must be 'uniform' or 'empirical_marginal', "
+                f"got {limit_distribution!r}"
+            )
 
     @property
-    def _transition_model(self) -> TransitionModel | None:
-        """Access to the underlying transition model (may be None).
+    def timesteps(self) -> int:
+        """Number of discrete diffusion steps owned by the schedule."""
+        return self.noise_schedule.timesteps
 
-        Delegates to ``definition._transition_model``. Prefer the
-        validated ``transition_model`` property for normal use.
-        """
-        return self.definition._transition_model
+    def process_state_condition_vector(self, t: Tensor) -> Tensor:
+        """Return the default model-conditioning vector for timestep ``t``."""
+        return t.float() / self.timesteps
 
-    @property
-    def x_classes(self) -> int:
-        """Number of node feature classes (delegates to definition)."""
-        return self.definition.x_classes
+    def model_output_to_posterior_parameter(self, model_output: GraphData) -> GraphData:
+        """Convert model logits into categorical probabilities."""
+        return GraphData(
+            X=F.softmax(model_output.X, dim=-1),
+            E=F.softmax(model_output.E, dim=-1),
+            y=model_output.y,
+            node_mask=model_output.node_mask,
+        )
 
-    @property
-    def e_classes(self) -> int:
-        """Number of edge feature classes (delegates to definition)."""
-        return self.definition.e_classes
+    def finalize_sample(self, z_0: GraphData) -> GraphData:
+        """Decode the final one-hot state into categorical class indices."""
+        return collapse_to_indices(z_0.mask())
 
-    @property
-    def transition_model(self) -> TransitionModel:
-        """The active transition model (delegates to definition).
+    def initialize_from_data(self, train_loader: DataLoader[GraphData]) -> None:
+        """Initialise empirical stationary marginals from the training loader."""
+        if self.limit_distribution == "uniform" or self._limit_x is not None:
+            return
 
-        Raises ``RuntimeError`` if not yet set.
-        """
-        return self.definition.transition_model
+        x_counts = torch.zeros(self.x_classes, dtype=torch.float64)
+        e_counts = torch.zeros(self.e_classes, dtype=torch.float64)
 
-    def set_transition_model(self, model: TransitionModel) -> None:
-        """Set the transition model after construction.
+        for batch in train_loader:
+            if batch.node_mask.dim() == 1:
+                node_mask = batch.node_mask.unsqueeze(0)
+                X = batch.X.unsqueeze(0)
+                E = batch.E.unsqueeze(0)
+            else:
+                node_mask = batch.node_mask
+                X = batch.X
+                E = batch.E
 
-        Typical use: construct ``MarginalUniformTransition`` in
-        ``DiffusionModule.setup()`` once marginals are available from
-        the datamodule, then inject it here.
+            x_counts += X[node_mask].sum(dim=0).to(torch.float64).cpu()
 
-        Parameters
-        ----------
-        model
-            A fully-configured transition model.
-        """
-        self.definition.set_transition_model(model)
+            _, n = node_mask.shape
+            upper_triangle = torch.triu(
+                torch.ones(n, n, dtype=torch.bool, device=node_mask.device),
+                diagonal=1,
+            ).unsqueeze(0)
+            valid_edges = (
+                node_mask.unsqueeze(1) & node_mask.unsqueeze(2) & upper_triangle
+            )
+            if valid_edges.any():
+                e_counts += E[valid_edges].sum(dim=0).to(torch.float64).cpu()
+
+        x_marginals = _normalise_counts_or_uniform(x_counts).to(torch.float32)
+        e_marginals = _normalise_counts_or_uniform(e_counts).to(torch.float32)
+        self._set_stationary_distribution(
+            x_probs=x_marginals,
+            e_probs=e_marginals,
+            y_probs=(
+                torch.full((self.y_classes,), 1.0 / self.y_classes)
+                if self.y_classes > 0
+                else torch.zeros(0)
+            ),
+        )
+
+    def needs_data_initialization(self) -> bool:
+        """Empirical-marginal mode requires training-data statistics."""
+        return self.limit_distribution == "empirical_marginal"
+
+    def is_initialized(self) -> bool:
+        """Return whether the stationary marginals are already available."""
+        if not self.needs_data_initialization():
+            return True
+        return self._limit_x is not None
+
+    def sample_prior(self, node_mask: Tensor) -> GraphData:
+        """Sample from the categorical limit distribution at timestep ``T``."""
+        x_limit, e_limit, y_limit = self._stationary_distribution()
+        return sample_discrete_feature_noise(x_limit, e_limit, node_mask, y_limit)
+
+    def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
+        """Sample the forward categorical process at timestep ``t``."""
+        alpha_bar = self._schedule_to_level(t)
+        return self._apply_noise(x_0, alpha_bar)
+
+    def _set_stationary_distribution(
+        self,
+        *,
+        x_probs: Tensor,
+        e_probs: Tensor,
+        y_probs: Tensor,
+    ) -> None:
+        """Store stationary class PMFs as registered buffers."""
+        target_device = self.noise_schedule.betas.device
+        x_probs = x_probs.to(device=target_device, dtype=torch.float32)
+        e_probs = e_probs.to(device=target_device, dtype=torch.float32)
+        y_probs = y_probs.to(device=target_device, dtype=torch.float32)
+
+        self._validate_stationary_distribution("x_probs", x_probs, self.x_classes)
+        self._validate_stationary_distribution("e_probs", e_probs, self.e_classes)
+        self._validate_stationary_distribution("y_probs", y_probs, self.y_classes)
+
+        self._limit_x = x_probs
+        self._limit_e = e_probs
+        self._limit_y = y_probs
+
+    @staticmethod
+    def _validate_stationary_distribution(
+        name: str, probs: Tensor, expected_classes: int
+    ) -> None:
+        """Validate a 1-D categorical PMF exactly once at write time."""
+        if probs.dim() != 1 or probs.numel() != expected_classes:
+            raise ValueError(
+                f"{name} must have shape ({expected_classes},), "
+                f"got {tuple(probs.shape)}"
+            )
+        if not torch.isfinite(probs).all():
+            raise ValueError(f"{name} must be finite")
+        if (probs < 0).any():
+            raise ValueError(f"{name} must be non-negative")
+        if probs.numel() > 0 and not torch.isclose(
+            probs.sum(), torch.tensor(1.0, device=probs.device), atol=1e-5
+        ):
+            raise ValueError(f"{name} must sum to 1, got {probs.sum().item():.6f}")
+
+    def _stationary_distribution(self) -> tuple[Tensor, Tensor, Tensor]:
+        """Return stationary PMFs or fail loudly if setup has not run."""
+        if self._limit_x is None or self._limit_e is None or self._limit_y is None:
+            raise RuntimeError(
+                "Stationary categorical distribution not initialised. "
+                "Call initialize_from_data() first."
+            )
+        return self._limit_x, self._limit_e, self._limit_y
 
     # -- NoiseProcess interface ----------------------------------------------
 
@@ -410,16 +599,24 @@ class CategoricalNoiseProcess(NoiseProcess):
         return self.noise_schedule.get_alpha_bar(t_int=t_int)
 
     def _apply_noise(self, data: GraphData, noise_level: Tensor | float) -> GraphData:
-        """Apply categorical forward noise at the given alpha_bar level.
+        """Apply categorical forward noise at the given alpha_bar level."""
+        x_limit, e_limit, _ = self._stationary_distribution()
+        prob_X = _mix_with_limit(data.X, noise_level, x_limit)
+        prob_E = _mix_with_limit(data.E, noise_level, e_limit)
+        sampled = sample_discrete_features(prob_X, prob_E, data.node_mask)
+        return GraphData(
+            X=F.one_hot(sampled.X.long(), num_classes=self.x_classes).float(),
+            E=F.one_hot(sampled.E.long(), num_classes=self.e_classes).float(),
+            y=data.y,
+            node_mask=data.node_mask,
+        ).mask()
 
-        Delegates to ``CategoricalNoiseDefinition.apply_noise()``.
-        """
-        if isinstance(noise_level, int | float):
-            noise_level = torch.tensor([noise_level])
-        return self.definition.apply_noise(data, noise_level)
-
-    def get_posterior(
-        self, z_t: GraphData, z_0: GraphData, t: Tensor, s: Tensor
+    def _posterior_probabilities(
+        self,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
     ) -> GraphData:
         """Compute categorical posterior distributions for the reverse step.
 
@@ -430,8 +627,8 @@ class CategoricalNoiseProcess(NoiseProcess):
         ----------
         z_t
             Noisy one-hot graph at timestep *t*.
-        z_0
-            Clean (or predicted clean) one-hot graph.
+        x0_param
+            Clean graph or model-predicted clean probabilities.
         t
             Current integer timestep, shape ``(bs,)``.
         s
@@ -440,209 +637,89 @@ class CategoricalNoiseProcess(NoiseProcess):
         Returns
         -------
         GraphData
-            Posterior probability distributions. X has shape ``(bs, n, dx)``,
-            E has shape ``(bs, n*n, de)`` (flattened spatial dims from the
-            posterior computation).
+            Posterior probability distributions with the same dense graph
+            extents as ``z_t``.
         """
-        transition = self.transition_model
+        x_limit, e_limit, _ = self._stationary_distribution()
 
         beta_t = self.noise_schedule(t_int=t)  # (bs,)
         alpha_bar_s = self.noise_schedule.get_alpha_bar(t_int=s)
         alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t)
 
-        Qt = transition.get_Qt(beta_t)
-        Qsb = transition.get_Qt_bar(alpha_bar_s)
-        Qtb = transition.get_Qt_bar(alpha_bar_t)
+        q_x = _categorical_kernel(1.0 - beta_t, x_limit)
+        q_e = _categorical_kernel(1.0 - beta_t, e_limit)
+        qsb_x = _categorical_kernel(alpha_bar_s, x_limit)
+        qsb_e = _categorical_kernel(alpha_bar_s, e_limit)
+        qtb_x = _categorical_kernel(alpha_bar_t, x_limit)
+        qtb_e = _categorical_kernel(alpha_bar_t, e_limit)
 
         prob_X = compute_posterior_distribution(
-            M=z_0.X, M_t=z_t.X, Qt_M=Qt.X, Qsb_M=Qsb.X, Qtb_M=Qtb.X
+            M=x0_param.X, M_t=z_t.X, Qt_M=q_x, Qsb_M=qsb_x, Qtb_M=qtb_x
         )
         prob_E = compute_posterior_distribution(
-            M=z_0.E, M_t=z_t.E, Qt_M=Qt.E, Qsb_M=Qsb.E, Qtb_M=Qtb.E
+            M=x0_param.E, M_t=z_t.E, Qt_M=q_e, Qsb_M=qsb_e, Qtb_M=qtb_e
+        )
+        bs, n, de = z_t.E.shape[0], z_t.E.shape[1], z_t.E.shape[-1]
+
+        return GraphData(
+            X=prob_X,
+            E=prob_E.reshape(bs, n, n, de),
+            y=z_t.y,
+            node_mask=z_t.node_mask,
         )
 
-        return GraphData(X=prob_X, E=prob_E, y=z_t.y, node_mask=z_t.node_mask)
-
-    def kl_prior(
-        self, X: Tensor, E: Tensor, node_mask: Tensor
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        """KL divergence between the final noised distribution and the limit.
-
-        Computes ``KL(q(z_T | x_0) || p(z_T))`` for nodes, edges, and
-        global features separately, where ``p(z_T)`` is the stationary
-        distribution of the transition model.
-
-        Parameters
-        ----------
-        X
-            Clean one-hot node features, shape ``(bs, n, dx)``.
-        E
-            Clean one-hot edge features, shape ``(bs, n, n, de)``.
-        node_mask
-            Valid-node mask, shape ``(bs, n)``.
-
-        Returns
-        -------
-        tuple[Tensor, Tensor, Tensor]
-            Scalar KL divergences ``(kl_X, kl_E, kl_y)``, each summed
-            over the batch.
-        """
-        transition = self.transition_model
-        limit_dist = transition.get_limit_dist()
-
-        bs, n, dx = X.shape
-        de = E.shape[-1]
-
-        # Get alpha_bar at the final timestep T
-        T = self.noise_schedule.timesteps
-        t_T = torch.full((bs,), T, device=X.device, dtype=torch.long)
-        alpha_bar_T = self.noise_schedule.get_alpha_bar(t_int=t_T)  # (bs,)
-
-        Qtb_T = transition.get_Qt_bar(alpha_bar_T)
-
-        # q(z_T | x_0) = x_0 @ Qtb_T
-        prob_X = X.float() @ Qtb_T.X  # (bs, n, dx)
-        prob_E_flat = E.float().reshape(bs, n * n, de) @ Qtb_T.E  # (bs, n*n, de)
-
-        # Limit distribution
-        limit_X = limit_dist.X.to(X.device)  # (dx,)
-        limit_E = limit_dist.E.to(X.device)  # (de,)
-
-        # KL(q || p) = sum_k q_k * log(q_k / p_k)
-        # For numerical stability, clamp probabilities
-        eps = 1e-10
-        kl_X = prob_X * torch.log((prob_X + eps) / (limit_X + eps))
-        kl_X = kl_X.sum(dim=-1)  # (bs, n)
-        # Mask invalid nodes
-        kl_X = (kl_X * node_mask.float()).sum()
-
-        kl_E = prob_E_flat * torch.log((prob_E_flat + eps) / (limit_E + eps))
-        kl_E = kl_E.sum(dim=-1)  # (bs, n*n)
-        # Mask invalid edges
-        edge_mask = (node_mask.unsqueeze(1) * node_mask.unsqueeze(2)).reshape(bs, n * n)
-        kl_E = (kl_E * edge_mask.float()).sum()
-
-        kl_y = torch.tensor(0.0, device=X.device)
-
-        return kl_X, kl_E, kl_y
-
-    def compute_Lt(
+    def posterior_sample(
         self,
-        clean: GraphData,
-        pred: GraphData,
-        noisy: GraphData,
-        t_int: Tensor,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> GraphData:
+        """Sample the categorical reverse posterior into one-hot graph states."""
+        posterior = self._posterior_probabilities(z_t, x0_param, t, s)
+        sampled = sample_discrete_features(
+            posterior.X, posterior.E, node_mask=z_t.node_mask
+        )
+        return GraphData(
+            X=F.one_hot(sampled.X.long(), num_classes=self.x_classes).float(),
+            E=F.one_hot(sampled.E.long(), num_classes=self.e_classes).float(),
+            y=z_t.y,
+            node_mask=z_t.node_mask,
+        ).mask()
+
+    def forward_log_prob(
+        self,
+        x_t: GraphData,
+        x_0: GraphData,
+        t: Tensor,
     ) -> Tensor:
-        """Diffusion KL loss term L_t, scaled by T.
+        """Return ``log q(z_t | x_0)`` for sampled categorical graph states."""
+        alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t)
+        x_limit, e_limit, _ = self._stationary_distribution()
+        prob_x = _mix_with_limit(x_0.X, alpha_bar_t, x_limit)
+        prob_e = _mix_with_limit(x_0.E, alpha_bar_t, e_limit)
 
-        Computes KL between the true posterior ``q(z_{t-1} | z_t, x_0)``
-        and the predicted posterior ``q(z_{t-1} | z_t, hat{x}_0)``, then
-        multiplies by the number of timesteps ``T`` so the term is
-        properly weighted in the variational lower bound.
+        probs = GraphData(X=prob_x, E=prob_e, y=x_t.y, node_mask=x_t.node_mask)
+        return _masked_graph_log_prob(x_t, probs)
 
-        Parameters
-        ----------
-        clean
-            Clean one-hot ``GraphData``.
-        pred
-            Model's predicted probabilities (softmaxed).
-        noisy
-            Noised ``GraphData`` at timestep *t*.
-        t_int
-            Integer timesteps, shape ``(bs,)``.
+    def posterior_log_prob(
+        self,
+        x_s: GraphData,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> Tensor:
+        """Return ``log q(z_s | z_t, x0_param)`` for sampled graph states."""
+        posterior = self._posterior_probabilities(z_t, x0_param, t, s)
+        return _masked_graph_log_prob(x_s, posterior)
 
-        Returns
-        -------
-        Tensor
-            Per-sample KL scaled by ``T``, shape ``(bs,)``.
-        """
-        transition = self.transition_model
+    def prior_log_prob(self, x: GraphData) -> Tensor:
+        """Return ``log p(z_T)`` under the stationary categorical prior."""
+        x_limit, e_limit, _ = self._stationary_distribution()
 
-        if (t_int < 1).any():
-            raise ValueError(
-                f"compute_Lt requires t_int >= 1 (needs s = t - 1 >= 0); "
-                f"got min t_int={t_int.min().item()}"
-            )
-        beta_t = self.noise_schedule(t_int=t_int)
-        s_int = t_int - 1
-        alpha_bar_s = self.noise_schedule.get_alpha_bar(t_int=s_int)
-        alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t_int)
+        prob_x = x_limit.to(x.X.device).view(1, 1, -1).expand_as(x.X)
+        prob_e = e_limit.to(x.E.device).view(1, 1, 1, -1).expand_as(x.E)
 
-        Qt = transition.get_Qt(beta_t)
-        Qsb = transition.get_Qt_bar(alpha_bar_s)
-        Qtb = transition.get_Qt_bar(alpha_bar_t)
-
-        bs, n, _ = clean.X.shape
-        node_mask = noisy.node_mask
-
-        # True posterior: q(z_{t-1} | z_t, x_0)
-        prob_true = posterior_distributions(
-            X=clean.X,
-            E=clean.E,
-            y=clean.y,
-            X_t=noisy.X,
-            E_t=noisy.E,
-            y_t=noisy.y,
-            Qt=Qt,
-            Qsb=Qsb,
-            Qtb=Qtb,
-            node_mask=node_mask,
-        )
-        prob_true_E = prob_true.E.reshape((bs, n, n, -1))
-
-        # Predicted posterior: q(z_{t-1} | z_t, hat{x}_0)
-        prob_pred = posterior_distributions(
-            X=pred.X,
-            E=pred.E,
-            y=pred.y,
-            X_t=noisy.X,
-            E_t=noisy.E,
-            y_t=noisy.y,
-            Qt=Qt,
-            Qsb=Qsb,
-            Qtb=Qtb,
-            node_mask=node_mask,
-        )
-        prob_pred_E = prob_pred.E.reshape((bs, n, n, -1))
-
-        # Mask invalid positions to uniform so they don't affect the KL
-        true_X, true_E, pred_X, pred_E = mask_distributions(
-            true_X=prob_true.X,
-            true_E=prob_true_E,
-            pred_X=prob_pred.X,
-            pred_E=prob_pred_E,
-            node_mask=node_mask,
-        )
-
-        kl_x = F.kl_div(
-            input=pred_X.clamp(min=1e-10).log(), target=true_X, reduction="none"
-        )
-        kl_e = F.kl_div(
-            input=pred_E.clamp(min=1e-10).log(), target=true_E, reduction="none"
-        )
-
-        T = self.noise_schedule.timesteps
-        return T * (sum_except_batch(kl_x) + sum_except_batch(kl_e))
-
-    def reconstruction_logp(self, clean: GraphData, pred_probs: GraphData) -> Tensor:
-        """Reconstruction log-probability ``log p(x | z_0)``.
-
-        Computes the cross-entropy between clean one-hot data and the
-        predicted class probabilities at ``t=0``.
-
-        Parameters
-        ----------
-        clean
-            Clean one-hot ``GraphData`` with shapes ``(bs, n, dx)`` for X
-            and ``(bs, n, n, de)`` for E.
-        pred_probs
-            Predicted probability distributions at ``t=0``.
-
-        Returns
-        -------
-        Tensor
-            Per-sample log-probability, shape ``(bs,)``.
-        """
-        loss_X = sum_except_batch(clean.X * pred_probs.X.clamp(min=1e-10).log())
-        loss_E = sum_except_batch(clean.E * pred_probs.E.clamp(min=1e-10).log())
-        return loss_X + loss_E
+        probs = GraphData(X=prob_x, E=prob_e, y=x.y, node_mask=x.node_mask)
+        return _masked_graph_log_prob(x, probs)

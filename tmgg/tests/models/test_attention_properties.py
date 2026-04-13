@@ -208,10 +208,10 @@ class TestMultiLayerAttentionProperties:
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         A = A + torch.randn_like(A) * 0.1
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert isinstance(result, GraphData)
-        assert result.to_adjacency().shape == A.shape
+        assert result.to_edge_state().shape == A.shape
 
         # Check raw edge features for NaN/Inf
         assert not torch.isnan(result.E).any()
@@ -235,7 +235,7 @@ class TestMultiLayerAttentionProperties:
         A = A + torch.randn_like(A) * 0.3
 
         model = MultiLayerAttention(d_model, num_heads, num_layers)
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert isinstance(result, GraphData)
         assert not torch.isnan(result.E).any()

@@ -32,7 +32,7 @@ import torch.nn.functional as F
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.collectors import DiffusionLikelihoodCollector, StepMetricCollector
 from tmgg.diffusion.noise_process import (
-    CategoricalNoiseProcess,
+    ExactDensityNoiseProcess,
     NoiseProcess,
 )
 from tmgg.diffusion.sampler import Sampler
@@ -50,6 +50,47 @@ from tmgg.training.lightning_modules.train_loss_discrete import (
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
 _VALID_LOSS_TYPES = frozenset({"cross_entropy", "mse", "bce_logits"})
+
+
+def _continuous_target_edge_state(data: GraphData) -> torch.Tensor:
+    """Extract the dense target state for continuous losses.
+
+    Continuous predictions are one-channel edge states. Clean binary-topology
+    batches are lifted through ``to_binary_adjacency()`` so the loss compares
+    semantically equivalent dense states instead of relying on ``GraphData.E``
+    channel layout.
+    """
+    if data.E.shape[-1] == 1:
+        return data.to_edge_state()
+    return data.to_binary_adjacency()
+
+
+def _categorical_reconstruction_log_prob(
+    clean: GraphData,
+    pred_probs: GraphData,
+) -> torch.Tensor:
+    """Return masked categorical reconstruction log-probabilities per graph."""
+    node_mask = clean.node_mask
+    inv = ~node_mask
+    inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)
+
+    clean_x = clean.X.clone()
+    clean_e = clean.E.clone()
+    pred_x = pred_probs.X.clone()
+    pred_e = pred_probs.E.clone()
+
+    clean_x[inv] = 0.0
+    clean_e[inv_edge] = 0.0
+    pred_x[inv] = 1.0
+    pred_e[inv_edge] = 1.0
+
+    log_prob_x = (
+        (clean_x * pred_x.clamp(min=1e-10).log()).flatten(start_dim=1).sum(dim=1)
+    )
+    log_prob_e = (
+        (clean_e * pred_e.clamp(min=1e-10).log()).flatten(start_dim=1).sum(dim=1)
+    )
+    return log_prob_x + log_prob_e
 
 
 class DiffusionModule(BaseGraphModule):
@@ -165,8 +206,7 @@ class DiffusionModule(BaseGraphModule):
         else:  # bce_logits
             self.criterion = nn.BCEWithLogitsLoss()
 
-        # VLB accumulators (only used when noise_process is categorical)
-        self._is_categorical: bool = isinstance(noise_process, CategoricalNoiseProcess)
+        # VLB accumulators (only used when the process has exact densities)
         self._vlb_nll: list[torch.Tensor] = []
         self._vlb_kl_prior: list[torch.Tensor] = []
         self._vlb_kl_diffusion: list[torch.Tensor] = []
@@ -177,42 +217,33 @@ class DiffusionModule(BaseGraphModule):
     @property
     def T(self) -> int:
         """Number of diffusion steps."""
-        return self.noise_schedule.timesteps
+        return self.noise_process.timesteps
 
     @override
     def setup(self, stage: str | None = None) -> None:
-        """Deferred initialisation for CategoricalNoiseProcess with marginal transitions.
+        """Initialise process state and size metadata from the datamodule."""
+        dm = self.trainer.datamodule  # pyright: ignore[reportAttributeAccessIssue]
 
-        When the noise process is categorical and has no transition model
-        yet, constructs a ``MarginalUniformTransition`` from the
-        datamodule's empirical marginals and injects it. Idempotent:
-        no-op if the transition model already exists or the noise process
-        is not categorical.
-        """
-        if (
-            self._is_categorical
-            and isinstance(self.noise_process, CategoricalNoiseProcess)
-            and self.noise_process._transition_model is None
+        if self.noise_process.needs_data_initialization():
+            if self.noise_process.is_initialized():
+                pass
+            elif dm is None:
+                raise RuntimeError(
+                    "DataModule required for noise-process initialisation"
+                )
+            else:
+                self.noise_process.initialize_from_data(
+                    dm.train_dataloader()  # pyright: ignore[reportUnknownMemberType]
+                )
+
+        if self._size_distribution is None and isinstance(
+            self.noise_process, ExactDensityNoiseProcess
         ):
-            from tmgg.diffusion.transitions import MarginalUniformTransition
-
-            dm = self.trainer.datamodule  # pyright: ignore[reportAttributeAccessIssue]
             if dm is None:
-                raise RuntimeError("DataModule required for marginal transition setup")
-            x_marginals = dm.node_marginals
-            e_marginals = dm.edge_marginals
-            transition = MarginalUniformTransition(
-                x_marginals=x_marginals,
-                e_marginals=e_marginals,
-                y_classes=self.noise_process.y_classes,
-            )
-            self.noise_process.set_transition_model(transition)
-
-        # Fetch size distribution from the datamodule for VLB log_pN term
-        if self._size_distribution is None:
-            dm = self.trainer.datamodule  # pyright: ignore[reportAttributeAccessIssue]
-            if dm is not None and hasattr(dm, "get_size_distribution"):
-                self._size_distribution = dm.get_size_distribution("train")
+                raise RuntimeError(
+                    "DataModule required for exact-density size distribution"
+                )
+            self._size_distribution = dm.get_size_distribution("train")
 
     @override
     def on_validation_epoch_start(self) -> None:
@@ -255,17 +286,12 @@ class DiffusionModule(BaseGraphModule):
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
 
         # Apply forward noise at the sampled timesteps
-        z_t = self.noise_process.apply(batch, t_int=t_int)
+        z_t = self.noise_process.forward_sample(batch, t_int)
 
-        # Normalised timestep for model conditioning: t_norm = t/T ∈ [1/T, 1].
-        # This is a linear rescaling of the integer index, NOT the noise level
-        # (1 - alpha_bar), which follows the schedule's non-linear curve.
-        # The model learns to map this linear position to the correct
-        # denoising prediction regardless of schedule shape.
-        t_norm = t_int.float() / self.T
+        condition = self.noise_process.process_state_condition_vector(t_int)
 
         # Model predicts clean data
-        pred = self.model(z_t, t=t_norm)
+        pred = self.model(z_t, t=condition)
 
         # Loss against original clean data
         loss = self._compute_loss(pred, batch)
@@ -278,7 +304,7 @@ class DiffusionModule(BaseGraphModule):
 
         For ``cross_entropy``, categorical features are flattened and the
         target one-hot is converted to class indices. For ``mse`` /
-        ``bce_logits``, edge features are compared directly.
+        ``bce_logits``, dense edge states are compared directly.
 
         Parameters
         ----------
@@ -306,8 +332,11 @@ class DiffusionModule(BaseGraphModule):
                 target.node_mask,
             )
         else:
-            # MSE or BCE: compare E directly
-            return self.criterion(pred.E, target.E.float())
+            # MSE or BCE: compare dense edge states without depending on the
+            # internal ``GraphData.E`` channel layout.
+            pred_edge_state = pred.to_edge_state()
+            target_edge_state = _continuous_target_edge_state(target)
+            return self.criterion(pred_edge_state, target_edge_state.float())
 
     def _compute_reconstruction_at_t1(self, batch: GraphData) -> torch.Tensor:
         """Compute reconstruction log-probability at t=1 (DiGress Eq. 14).
@@ -325,9 +354,9 @@ class DiffusionModule(BaseGraphModule):
         torch.Tensor
             Per-graph reconstruction log-probability, shape ``(bs,)``.
         """
-        if not isinstance(self.noise_process, CategoricalNoiseProcess):
+        if not isinstance(self.noise_process, ExactDensityNoiseProcess):
             raise TypeError(
-                f"_compute_reconstruction_at_t1 requires CategoricalNoiseProcess, "
+                f"_compute_reconstruction_at_t1 requires ExactDensityNoiseProcess, "
                 f"got {type(self.noise_process).__name__}"
             )
         bs = batch.X.shape[0]
@@ -335,36 +364,14 @@ class DiffusionModule(BaseGraphModule):
 
         # Apply noise at t=1
         t_int = torch.ones(bs, dtype=torch.long, device=device)
-        z_1 = self.noise_process.apply(batch, t_int=t_int)
+        z_1 = self.noise_process.forward_sample(batch, t_int)
 
         # Model prediction at t=1
-        t_norm = t_int.float() / self.T
-        pred_logits = self.model(z_1, t=t_norm)
+        condition = self.noise_process.process_state_condition_vector(t_int)
+        pred_logits = self.model(z_1, t=condition)
+        pred_probs = self.noise_process.model_output_to_posterior_parameter(pred_logits)
 
-        # Softmax to probabilities
-        pred_probs = GraphData(
-            X=F.softmax(pred_logits.X, dim=-1),
-            E=F.softmax(pred_logits.E, dim=-1),
-            y=pred_logits.y,
-            node_mask=pred_logits.node_mask,
-        )
-
-        # Mask invalid positions so they contribute nothing to the log-prob.
-        # reconstruction_logp computes sum(clean * log(pred)), so we need:
-        #   clean[invalid] = 0  (zero contribution from numerator)
-        #   pred[invalid] = 1   (log(1) = 0, avoids 0 * -inf = NaN)
-        node_mask = batch.node_mask
-        inv = ~node_mask  # (bs, n)
-        inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)  # (bs, n, n)
-        pred_probs.X[inv] = 1.0
-        pred_probs.E[inv_edge] = 1.0
-        batch = GraphData(
-            X=batch.X.clone(), E=batch.E.clone(), y=batch.y, node_mask=node_mask
-        )
-        batch.X[inv] = 0.0
-        batch.E[inv_edge] = 0.0
-
-        return self.noise_process.reconstruction_logp(batch, pred_probs)
+        return _categorical_reconstruction_log_prob(batch, pred_probs)
 
     @torch.no_grad()
     @override
@@ -386,9 +393,9 @@ class DiffusionModule(BaseGraphModule):
 
         # Validation loss at a random timestep
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
-        z_t = self.noise_process.apply(batch, t_int=t_int)
-        t_norm = t_int.float() / self.T
-        pred = self.model(z_t, t=t_norm)
+        z_t = self.noise_process.forward_sample(batch, t_int)
+        condition = self.noise_process.process_state_condition_vector(t_int)
+        pred = self.model(z_t, t=condition)
         loss = self._compute_loss(pred, batch)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
@@ -398,25 +405,24 @@ class DiffusionModule(BaseGraphModule):
         # reference implementation (cvignac/DiGress, src/diffusion_model.py,
         # compute_val_loss). For exact full-chain VLB, see the periodic
         # DiffusionLikelihoodCollector evaluation in on_validation_epoch_end.
-        if self._is_categorical and isinstance(
-            self.noise_process, CategoricalNoiseProcess
-        ):
-            # VLB methods expect probability distributions, not logits.
-            # The model outputs logits (CrossEntropyLoss handles conversion);
-            # apply softmax here for VLB only.
-            pred_probs = GraphData(
-                X=F.softmax(pred.X, dim=-1),
-                E=F.softmax(pred.E, dim=-1),
-                y=pred.y,
-                node_mask=pred.node_mask,
-            )
+        if isinstance(self.noise_process, ExactDensityNoiseProcess):
+            exact_process = self.noise_process
 
-            kl_prior_X, kl_prior_E, _ = self.noise_process.kl_prior(
-                batch.X, batch.E, batch.node_mask
+            x0_param = self.noise_process.model_output_to_posterior_parameter(pred)
+
+            s_int = t_int - 1
+            z_s = exact_process.posterior_sample(z_t, batch, t_int, s_int)
+            log_q_true = exact_process.posterior_log_prob(z_s, z_t, batch, t_int, s_int)
+            log_q_pred = exact_process.posterior_log_prob(
+                z_s, z_t, x0_param, t_int, s_int
             )
-            # kl_prior returns batch-summed scalars; normalise to per-sample
-            kl_prior = (kl_prior_X + kl_prior_E) / bs
-            kl_diffusion = self.noise_process.compute_Lt(batch, pred_probs, z_t, t_int)
+            kl_diffusion = self.T * (log_q_true - log_q_pred)
+
+            t_T = torch.full((bs,), self.T, device=device, dtype=torch.long)
+            z_T = exact_process.forward_sample(batch, t_T)
+            kl_prior = exact_process.forward_log_prob(
+                z_T, batch, t_T
+            ) - exact_process.prior_log_prob(z_T)
             reconstruction = self._compute_reconstruction_at_t1(batch)
 
             # log p(n_G): log-probability of graph size under training distribution
@@ -426,11 +432,12 @@ class DiffusionModule(BaseGraphModule):
                 log_pn = self._size_distribution.log_prob(node_counts).mean()
 
             # NLL = -log_pN + kl_prior + E_t[L_t] - reconstruction_logp
-            # kl_diffusion and reconstruction are (bs,); kl_prior is scalar
-            nll = -log_pn + kl_prior + kl_diffusion.mean() - reconstruction.mean()
+            nll = (
+                -log_pn + kl_prior.mean() + kl_diffusion.mean() - reconstruction.mean()
+            )
 
             self._vlb_nll.append(nll.detach())
-            self._vlb_kl_prior.append(kl_prior.detach())
+            self._vlb_kl_prior.append(kl_prior.mean().detach())
             self._vlb_kl_diffusion.append(kl_diffusion.mean().detach())
             self._vlb_reconstruction.append(reconstruction.mean().detach())
             self._vlb_log_pn.append(log_pn.detach())
@@ -453,8 +460,8 @@ class DiffusionModule(BaseGraphModule):
         Generative evaluation is skipped when ``sampler`` is ``None``
         (e.g. single-step denoising) or no evaluator is attached.
         """
-        # Log VLB metrics for categorical noise
-        if self._is_categorical and self._vlb_nll:
+        # Log VLB metrics for exact-density processes.
+        if self._vlb_nll:
             self.log("val/epoch_NLL", torch.stack(self._vlb_nll).mean(), on_epoch=True)
             self.log(
                 "val/kl_prior", torch.stack(self._vlb_kl_prior).mean(), on_epoch=True
@@ -545,6 +552,7 @@ class DiffusionModule(BaseGraphModule):
 
         graph_data_list = self.sampler.sample(
             model=self.model,
+            noise_process=self.noise_process,
             num_graphs=num_graphs,
             num_nodes=num_nodes_arg,
             device=device,
@@ -553,7 +561,7 @@ class DiffusionModule(BaseGraphModule):
 
         nx_graphs: list[nx.Graph[Any]] = []
         for gd in graph_data_list:
-            adj = gd.to_adjacency()
+            adj = gd.to_binary_adjacency()
             if adj.ndim == 3:
                 adj = adj[0]
             A_np = adj.cpu().numpy()

@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from torch.utils.data import Dataset
 
 from tmgg.data.datasets.synthetic_graphs import (
     SyntheticGraphDataset,
@@ -158,6 +159,21 @@ class TestConfigurationModelGraphs:
 class TestSyntheticGraphDataset:
     """Tests for SyntheticGraphDataset class."""
 
+    def test_dataset_inherits_torch_dataset_protocol(self) -> None:
+        """SyntheticGraphDataset should be a real torch Dataset.
+
+        Rationale
+        ---------
+        The denoising data wrappers expose ``__len__`` and ``__getitem__`` and
+        are passed through generic torch data tooling. Inheriting the Dataset
+        base class makes that contract explicit instead of relying on
+        duck-typing.
+        """
+        dataset = SyntheticGraphDataset("ws", num_nodes=10, num_graphs=3)
+
+        assert issubclass(SyntheticGraphDataset, Dataset)
+        assert isinstance(dataset, Dataset)
+
     def test_watts_strogatz_type(self):
         """Test Watts-Strogatz graph generation via dataset."""
         dataset = SyntheticGraphDataset("watts_strogatz", num_nodes=15, num_graphs=5)
@@ -219,8 +235,15 @@ class TestSyntheticGraphDataset:
         assert tensor.dtype == torch.float32
 
     def test_split_indices_on_adjacencies(self):
-        """Test splitting dataset adjacencies via split_indices."""
-        from tmgg.data._split import split_indices
+        """Test splitting dataset adjacencies via split_indices.
+
+        Rationale
+        ---------
+        The split helper now lives with the datamodule generation helpers that
+        own its only in-repo callers. This test keeps the direct helper
+        contract covered at the new import path.
+        """
+        from tmgg.data.data_modules._split import split_indices
 
         dataset = SyntheticGraphDataset("rg", num_nodes=10, num_graphs=100)
         train_idx, val_idx, test_idx = split_indices(
@@ -235,6 +258,25 @@ class TestSyntheticGraphDataset:
         assert len(val) == 15
         assert len(test) == 15
         assert train.shape[1:] == (10, 10)
+
+
+class TestPyGDatasetWrapper:
+    """Tests for the PyTorch Geometric dataset wrapper surface."""
+
+    def test_wrapper_inherits_torch_dataset_protocol(self) -> None:
+        """PyGDatasetWrapper should advertise the Dataset protocol explicitly.
+
+        Rationale
+        ---------
+        This check is intentionally structural only. It avoids dataset
+        downloads while still locking the wrapper onto the same Dataset
+        surface as the synthetic graph wrapper.
+        """
+        pytest.importorskip("torch_geometric")
+
+        from tmgg.data.datasets.pyg_datasets import PyGDatasetWrapper
+
+        assert issubclass(PyGDatasetWrapper, Dataset)
 
 
 class TestExistingGenerators:

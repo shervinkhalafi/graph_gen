@@ -334,8 +334,8 @@ class NoiseDefinition(ABC):
     ``ContinuousNoiseProcess`` (in ``tmgg.diffusion.noise_process``) wraps a
     ``NoiseDefinition`` with a ``NoiseSchedule`` to handle
     timestep-to-noise-level conversion and posterior computation.
-    ``CategoricalNoiseProcess`` uses a separate ``TransitionModel`` hierarchy
-    instead.
+    ``CategoricalNoiseProcess`` owns its categorical stationary distribution
+    and reverse-process math directly.
     """
 
     @abstractmethod
@@ -373,10 +373,10 @@ class NoiseDefinition(ABC):
     def apply_noise(self, data: Any, noise_level: float | Tensor) -> Any:
         """Apply noise to a ``GraphData`` instance.
 
-        Extracts the adjacency from *data*, applies noise via ``add_noise``,
-        and wraps the result back into ``GraphData``. This is the canonical
-        interface for new code; ``add_noise`` remains for callers that work
-        with raw tensors.
+        Extracts the dense edge state from *data*, applies noise via
+        ``add_noise``, and wraps the result back into ``GraphData``. This is
+        the canonical interface for new code; ``add_noise`` remains for
+        callers that work with raw tensors.
 
         Parameters
         ----------
@@ -392,9 +392,9 @@ class NoiseDefinition(ABC):
         GraphData
             Noised graph data.
         """
-        adj = data.to_adjacency()
-        noisy = self.add_noise(adj, noise_level)
-        return type(data).from_adjacency(noisy)
+        edge_state = data.to_edge_state()
+        noisy = self.add_noise(edge_state, noise_level)
+        return type(data).from_edge_state(noisy, node_mask=data.node_mask)
 
     @property
     @abstractmethod

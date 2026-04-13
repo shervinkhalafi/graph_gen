@@ -179,10 +179,10 @@ class TestIssues4And5NodeVarGNNRedesign:
         model = NodeVarGNN(num_layers=1, num_terms=2, feature_dim=5)
         A = torch.eye(10).unsqueeze(0)
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert isinstance(result, GraphData)
-        assert result.to_adjacency().shape == (1, 10, 10)
+        assert result.to_edge_state().shape == (1, 10, 10)
 
 
 class TestIssue6EigenvaluePowerNormalization:
@@ -200,7 +200,7 @@ class TestIssue6EigenvaluePowerNormalization:
         A = (A + A.transpose(-1, -2)) / 2
         A = A * 10  # Scale up eigenvalues
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert not torch.isnan(result.E).any(), "NaN in filter bank output"
         assert not torch.isinf(result.E).any(), "Inf in filter bank output"
@@ -248,10 +248,10 @@ class TestIssue8SigmoidConsistency:
         A = torch.randn(2, num_nodes, num_nodes)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert isinstance(result, GraphData)
-        logits = result.E[..., 1]
+        logits = result.to_edge_state()
         assert logits.shape == (2, num_nodes, num_nodes)
 
     def test_gnn_symmetric_returns_graph_data(self):
@@ -261,10 +261,10 @@ class TestIssue8SigmoidConsistency:
         )
         A = torch.eye(8).unsqueeze(0)
 
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
 
         assert isinstance(result, GraphData)
-        assert result.to_adjacency().shape == (1, 8, 8)
+        assert result.to_edge_state().shape == (1, 8, 8)
 
 
 class TestIssue9DivisionGuards:
@@ -317,9 +317,9 @@ class TestIssue10ResidualShapeAssertion:
         A = torch.eye(8).unsqueeze(0)
 
         # Should work without error
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
         assert isinstance(result, GraphData)
-        assert result.to_adjacency().shape == (1, 8, 8)
+        assert result.to_edge_state().shape == (1, 8, 8)
 
 
 class TestIssue11ZeroEigenvectorWarning:

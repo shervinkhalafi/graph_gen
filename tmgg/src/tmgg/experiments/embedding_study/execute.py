@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
+import torch
 from omegaconf import DictConfig, OmegaConf
 
 
@@ -137,7 +138,7 @@ def _generate_graphs(
     num_graphs: int,
     num_nodes: int,
     seed: int,
-) -> list:
+) -> list[torch.Tensor]:
     """Generate graphs for the embedding study.
 
     Parameters
@@ -153,16 +154,12 @@ def _generate_graphs(
 
     Returns
     -------
-    list
-        List of adjacency matrices.
+    list[torch.Tensor]
+        Dense square adjacency tensors, one per generated graph.
     """
-    import torch
-
     torch.manual_seed(seed)
 
     if dataset_name == "sbm":
-        import torch
-
         from tmgg.data.datasets.sbm import generate_sbm_batch
 
         batch = generate_sbm_batch(

@@ -16,6 +16,8 @@ Invariants:
     - Training loss decreases over epochs (on average)
 """
 
+from typing import Any, cast
+
 import pytest
 import pytorch_lightning as pl
 import torch
@@ -163,7 +165,7 @@ class TestTrainingPipeline:
         )
 
         # Mock self.log to avoid MisconfigurationException
-        batch = GraphData.from_adjacency(sample_adjacency_matrices)
+        batch = GraphData.from_binary_adjacency(sample_adjacency_matrices)
         with patch.object(module, "log", return_value=None):
             loss = module.training_step(batch, batch_idx=0)
 
@@ -191,7 +193,6 @@ class TestTrainingPipeline:
                 "num_graphs": 10,
             },
             batch_size=4,
-            noise_levels=minimal_config.noise_levels,
         )
 
         # Create trainer with minimal settings
@@ -231,7 +232,6 @@ class TestTrainingPipeline:
                 "num_graphs": 5,
             },
             batch_size=5,
-            noise_levels=[0.1],
         )
 
         # Collect losses
@@ -273,15 +273,26 @@ class TestTrainingPipeline:
 class TestDataModuleIntegration:
     """Tests for data module integration with training."""
 
-    def test_datamodule_accepts_noise_params(self):
-        """Data module accepts noise_levels/noise_type for Hydra compatibility."""
+    def test_datamodule_rejects_legacy_noise_levels_param(self) -> None:
+        """Data module should fail loudly on removed ``noise_levels``."""
         from tmgg.data.data_modules.data_module import GraphDataModule
 
-        # Should not raise — params accepted but not stored
-        data_module = GraphDataModule(
-            graph_type="sbm",
-            graph_config={"num_nodes": 10, "num_graphs": 5},
-            noise_levels=[0.05, 0.1, 0.2],
-            noise_type="digress",
-        )
-        assert data_module is not None
+        legacy_kwargs = cast(Any, {"noise_levels": [0.05, 0.1, 0.2]})
+        with pytest.raises(TypeError, match="noise_levels"):
+            GraphDataModule(
+                graph_type="sbm",
+                graph_config={"num_nodes": 10, "num_graphs": 5},
+                **legacy_kwargs,
+            )
+
+    def test_datamodule_rejects_legacy_noise_type_param(self) -> None:
+        """Data module should fail loudly on removed ``noise_type``."""
+        from tmgg.data.data_modules.data_module import GraphDataModule
+
+        legacy_kwargs = cast(Any, {"noise_type": "digress"})
+        with pytest.raises(TypeError, match="noise_type"):
+            GraphDataModule(
+                graph_type="sbm",
+                graph_config={"num_nodes": 10, "num_graphs": 5},
+                **legacy_kwargs,
+            )

@@ -17,6 +17,9 @@ Key Invariants:
 
 from __future__ import annotations
 
+from typing import Any, cast
+
+import networkx as nx
 import pytest
 import torch
 
@@ -69,6 +72,26 @@ class TestGraphDataModuleInit:
         assert dm.pin_memory is False
         assert dm.train_ratio == 0.8
         assert dm.val_ratio == 0.1
+
+    def test_rejects_legacy_noise_levels_argument(self) -> None:
+        """Legacy ``noise_levels`` should fail at construction."""
+        legacy_kwargs = cast(Any, {"noise_levels": [0.1]})
+        with pytest.raises(TypeError, match="noise_levels"):
+            GraphDataModule(
+                graph_type="sbm",
+                graph_config={"num_nodes": 10, "block_sizes": [5, 5]},
+                **legacy_kwargs,
+            )
+
+    def test_rejects_legacy_noise_type_argument(self) -> None:
+        """Legacy ``noise_type`` should fail at construction."""
+        legacy_kwargs = cast(Any, {"noise_type": "digress"})
+        with pytest.raises(TypeError, match="noise_type"):
+            GraphDataModule(
+                graph_type="sbm",
+                graph_config={"num_nodes": 10, "block_sizes": [5, 5]},
+                **legacy_kwargs,
+            )
 
 
 class TestGraphDataModuleSBM:
@@ -260,7 +283,7 @@ class TestGraphDataModuleDataLoaders:
 
         # Batch is a GraphData with adjacency shape (batch_size, n, n)
         assert isinstance(batch, GraphData)
-        adj = batch.to_adjacency()
+        adj = batch.to_binary_adjacency()
         assert adj.shape[0] == 16
         assert adj.shape[1] == adj.shape[2] == 8
 
@@ -379,11 +402,11 @@ class TestGraphDataModuleUnknownDataset:
             dm.setup()
 
 
-class TestGraphDataModuleSampleAdjacency:
-    """Tests for get_sample_adjacency_matrix method."""
+class TestGraphDataModulePublicContract:
+    """Tests for the remaining public datamodule access surface."""
 
-    def test_get_sample_train(self) -> None:
-        """Should return a sample from train split."""
+    def test_get_reference_graphs_returns_val_graphs(self) -> None:
+        """Validation graphs should be exposed via get_reference_graphs()."""
         dm = GraphDataModule(
             graph_type="sbm",
             graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
@@ -391,17 +414,30 @@ class TestGraphDataModuleSampleAdjacency:
         dm.prepare_data()
         dm.setup()
 
-        sample = dm.get_sample_adjacency_matrix("train")
+        graphs = dm.get_reference_graphs("val", max_graphs=2)
 
-        assert isinstance(sample, torch.Tensor)
-        assert sample.shape == (8, 8)
+        assert len(graphs) == 2
+        assert all(isinstance(graph, nx.Graph) for graph in graphs)
+        assert all(graph.number_of_nodes() == 8 for graph in graphs)
 
-    def test_get_sample_without_setup_raises(self) -> None:
-        """Should raise RuntimeError if setup not called."""
+    def test_get_size_distribution_is_fixed(self) -> None:
+        """GraphDataModule should expose a fixed-size distribution."""
+        dm = GraphDataModule(
+            graph_type="sbm",
+            graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
+        )
+
+        dist = dm.get_size_distribution("train")
+        assert dist.is_degenerate
+        assert dist.sizes == (8,)
+        assert dist.max_size == 8
+
+    def test_reference_graphs_without_setup_raises(self) -> None:
+        """Reference extraction should fail loudly before setup()."""
         dm = GraphDataModule(
             graph_type="sbm",
             graph_config={"num_nodes": 8, "block_sizes": [4, 4]},
         )
 
         with pytest.raises(RuntimeError):
-            dm.get_sample_adjacency_matrix("train")
+            dm.get_reference_graphs("val", max_graphs=1)

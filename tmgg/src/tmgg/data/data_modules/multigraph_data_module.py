@@ -23,17 +23,11 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from torch_geometric.data import Data
 
-from tmgg.data._split import split_indices
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.datasets.sbm import (
-    generate_block_sizes,
-    generate_sbm_adjacency,
-    generate_sbm_batch,  # pyright: ignore[reportAttributeAccessIssue]  # runtime-verified
-)
-from tmgg.data.datasets.synthetic_graphs import SyntheticGraphDataset
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
 from .base_data_module import BaseGraphDataModule
+from .graph_generation import generate_multigraph_split
 
 
 def _adjacencies_to_pyg(adjs: np.ndarray) -> list[Data]:
@@ -159,165 +153,23 @@ class MultiGraphDataModule(BaseGraphDataModule):
     # Graph generation
     # ------------------------------------------------------------------
 
-    def _generate_adjacencies(self) -> np.ndarray:
-        """Generate adjacency matrices according to ``graph_type``.
-
-        For ``"sbm"`` graphs, delegates to ``generate_sbm_batch``.
-        For all other types, delegates to ``SyntheticGraphDataset``.
-
-        Returns
-        -------
-        np.ndarray
-            Array of shape ``(num_graphs, num_nodes, num_nodes)``.
-        """
-        if self.graph_type == "sbm":
-            return generate_sbm_batch(
-                num_graphs=self.num_graphs,
-                num_nodes=self.num_nodes,
-                num_blocks=self.graph_config.get("num_blocks", 2),
-                p_intra=self.graph_config.get("p_intra", 0.7),
-                p_inter=self.graph_config.get("p_inter", 0.1),
-                seed=self.seed,
-            )
-
-        # Filter keys already passed explicitly to avoid duplicate kwargs
-        extra = {
-            k: v
-            for k, v in self.graph_config.items()
-            if k not in {"num_nodes", "num_graphs", "seed"}
-        }
-        dataset = SyntheticGraphDataset(
+    def _generate_and_split(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Generate train, val, and test adjacencies through the shared generator."""
+        return generate_multigraph_split(
             graph_type=self.graph_type,
             num_nodes=self.num_nodes,
             num_graphs=self.num_graphs,
+            graph_config=self.graph_config,
+            train_ratio=self.train_ratio,
+            val_ratio=self.val_ratio,
             seed=self.seed,
-            **extra,
-        )
-        return dataset.get_adjacency_matrices()
-
-    def _generate_and_split(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Generate graphs and split into (train, val, test) adjacency arrays.
-
-        For SBM with ``partition_mode="enumerated"`` in ``graph_config``:
-        enumerates valid block-size partitions, assigns different partitions
-        per split, generates one graph per partition. For everything else:
-        generates all graphs, splits by index ratio.
-
-        Returns
-        -------
-        tuple of np.ndarray
-            ``(train, val, test)`` arrays, each of shape
-            ``(n_split, num_nodes, num_nodes)``.
-        """
-        partition_mode = self.graph_config.get("partition_mode")
-
-        # Auto-detect partition mode for SBM when not explicitly set.
-        # Presence of num_train_partitions triggers enumerated mode (each
-        # partition → one graph, different partitions per split).
-        if (
-            self.graph_type == "sbm"
-            and partition_mode is None
-            and "num_train_partitions" in self.graph_config
-        ):
-            partition_mode = "enumerated"
-
-        if self.graph_type == "sbm" and partition_mode in ("enumerated", "fixed"):
-            return self._generate_sbm_partitioned()
-
-        adjacencies = self._generate_adjacencies()
-        train_idx, val_idx, test_idx = split_indices(
-            len(adjacencies), self.train_ratio, self.val_ratio, self.seed
-        )
-        return adjacencies[train_idx], adjacencies[val_idx], adjacencies[test_idx]
-
-    def _generate_sbm_partitioned(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Generate SBM graphs with partition-aware splitting.
-
-        In ``"fixed"`` mode, uses explicit ``block_sizes`` from config.
-        All splits use the same partition but different random draws.
-
-        In ``"enumerated"`` mode, enumerates all valid partitions via
-        ``generate_block_sizes()``, samples ``num_train_partitions`` for
-        training and ``num_test_partitions`` for testing (non-overlapping).
-        Validation gets a subset of the remaining partitions. Each partition
-        produces one graph.
-
-        Returns
-        -------
-        tuple of np.ndarray
-            ``(train, val, test)`` arrays of shape
-            ``(n_split, num_nodes, num_nodes)``.
-        """
-        rng = np.random.default_rng(self.seed)
-        cfg = self.graph_config
-        p_intra: float = cfg.get("p_intra", 0.7)
-        p_inter: float = cfg.get("p_inter", 0.1)
-        partition_mode = cfg.get("partition_mode", "equal")
-
-        if partition_mode == "fixed":
-            block_sizes = cfg["block_sizes"]
-            # Same partition, different random draws per split
-            train = np.array(
-                [generate_sbm_adjacency(block_sizes, p_intra, p_inter, rng=rng)]
-            )
-            val = np.array(
-                [generate_sbm_adjacency(block_sizes, p_intra, p_inter, rng=rng)]
-            )
-            test = np.array(
-                [generate_sbm_adjacency(block_sizes, p_intra, p_inter, rng=rng)]
-            )
-            return train, val, test
-
-        # Enumerated mode: generate all valid partitions, sample per split
-        all_partitions = generate_block_sizes(
-            cfg.get("num_nodes", self.num_nodes),
-            min_blocks=cfg.get("min_blocks", 2),
-            max_blocks=cfg.get("max_blocks", 4),
-            min_size=cfg.get("min_block_size", 2),
-            max_size=cfg.get("max_block_size", 15),
-        )
-
-        num_train = cfg.get("num_train_partitions", 10)
-        num_test = cfg.get("num_test_partitions", 10)
-        total_needed = num_train + num_test
-
-        if len(all_partitions) < total_needed:
-            raise ValueError(
-                f"Not enough valid SBM partitions ({len(all_partitions)}) for "
-                f"requested train ({num_train}) and test ({num_test}) partitions."
-            )
-
-        # Use python random.Random for partition sampling (needs .sample on list)
-        import random
-
-        py_rng = random.Random(self.seed)
-        train_partitions = py_rng.sample(all_partitions, num_train)
-        remaining = [p for p in all_partitions if p not in train_partitions]
-        num_val = min(5, max(1, len(remaining) // 2))
-        val_partitions = py_rng.sample(remaining, num_val)
-        test_remaining = [p for p in remaining if p not in val_partitions]
-        test_partitions = py_rng.sample(test_remaining, num_test)
-
-        def _gen_from_partitions(
-            partitions: list[list[int]],
-        ) -> np.ndarray:
-            return np.array(
-                [
-                    generate_sbm_adjacency(p, p_intra, p_inter, rng=rng)
-                    for p in partitions
-                ]
-            )
-
-        return (
-            _gen_from_partitions(train_partitions),
-            _gen_from_partitions(val_partitions),
-            _gen_from_partitions(test_partitions),
         )
 
     # ------------------------------------------------------------------
     # Size distribution
     # ------------------------------------------------------------------
 
+    @override
     def get_size_distribution(self, split: str | None = None) -> SizeDistribution:
         """Return the graph size distribution for a split or the whole dataset.
 
@@ -392,24 +244,3 @@ class MultiGraphDataModule(BaseGraphDataModule):
             shuffle=False,
             collate_fn=_collate_pyg_to_graphdata,
         )
-
-    @override
-    def get_dataset_info(self) -> dict[str, Any]:
-        """Return metadata about the dataset.
-
-        Returns
-        -------
-        dict
-            Keys: ``num_graphs``, ``num_nodes``, ``graph_type``.
-        """
-        return {
-            "num_graphs": self.num_graphs,
-            "num_nodes": self.num_nodes,
-            "graph_type": self.graph_type,
-        }
-
-    def get_sample_graph(self) -> Data:
-        """Get a sample graph as a PyG Data object."""
-        if self._train_data is None:
-            raise RuntimeError("DataModule not setup. Call setup() first.")
-        return self._train_data[0]

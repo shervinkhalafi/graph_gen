@@ -326,7 +326,7 @@ class TestGraphTransformerGNN:
     def test_forward_pass_with_gnn(self):
         """Full forward pass works with GNN projections.
 
-        from_adjacency() produces 2-class X and E features, so input_dims
+        from_binary_adjacency() produces 2-class X and E features, so input_dims
         must use {"X": 2, "E": 2}.
         """
         hidden_dims = {
@@ -348,7 +348,7 @@ class TestGraphTransformerGNN:
         )
 
         x = torch.rand(2, 12, 12)  # Adjacency matrix
-        result = model(GraphData.from_adjacency(x))
+        result = model(GraphData.from_binary_adjacency(x))
 
         assert isinstance(result, GraphData)
         assert result.E.shape == (2, 12, 12, 2)
@@ -356,7 +356,7 @@ class TestGraphTransformerGNN:
     def test_forward_pass_with_eigenvectors_and_gnn(self):
         """Forward pass works with both eigenvectors and GNN projections.
 
-        from_adjacency() produces X with 2 features; EigenvectorAugmentation
+        from_binary_adjacency() produces X with 2 features; EigenvectorAugmentation
         adds k=16, so the model auto-adjusts input_dims["X"] = 2 + 16 = 18.
         """
         from tmgg.models.digress.extra_features import EigenvectorAugmentation
@@ -386,7 +386,7 @@ class TestGraphTransformerGNN:
 
         x = torch.rand(2, 20, 20)  # Adjacency matrix
         x = (x + x.transpose(-1, -2)) / 2  # Symmetrize for eigenvector extraction
-        result = model(GraphData.from_adjacency(x))
+        result = model(GraphData.from_binary_adjacency(x))
 
         assert isinstance(result, GraphData)
         assert result.E.shape == (2, 20, 20, 2)
@@ -440,10 +440,10 @@ class TestAdjacencyExtraction:
             return original_q_forward(A, X)
 
         with patch.object(gnn_q, "forward", capturing_forward):
-            _ = model(GraphData.from_adjacency(input_adj))
+            _ = model(GraphData.from_binary_adjacency(input_adj))
 
-        # After from_adjacency, adjacency is extracted via argmax on 2-class E.
-        # from_adjacency zeroes diagonal (sets E[diag, 0]=1), so extracted
+        # After from_binary_adjacency, adjacency is extracted via argmax on 2-class E.
+        # from_binary_adjacency zeroes diagonal (sets E[diag, 0]=1), so extracted
         # adjacency has 0 on diagonal and binary values off-diagonal.
         expected_adj = (input_adj > 0.5).float()
         diag_idx = torch.arange(n)
@@ -484,6 +484,6 @@ class TestAdjacencyExtraction:
         assert model.transformer._use_gnn_projections is True
 
         # Run forward pass (this should work without error)
-        result = model(GraphData.from_adjacency(input_adj))
+        result = model(GraphData.from_binary_adjacency(input_adj))
         assert isinstance(result, GraphData)
         assert result.E.shape == (bs, n, n, 2)

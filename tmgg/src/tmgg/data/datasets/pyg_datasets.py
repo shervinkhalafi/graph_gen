@@ -8,14 +8,17 @@ through padding.
 from pathlib import Path
 
 import numpy as np
+from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
 
-class PyGDatasetWrapper:
-    """Wrapper for PyTorch Geometric datasets that extracts adjacency matrices.
+class PyGDatasetWrapper(Dataset[np.ndarray]):
+    """Torch Dataset wrapper that extracts padded adjacency matrices from PyG.
 
     Handles variable-size graphs by padding to the maximum size in the dataset.
-    Node features are ignored as per experiment design (adjacency-only).
+    Node features are ignored as per experiment design. The wrapper keeps the
+    native PyG ``Data`` objects in ``data_list`` for callers that need them,
+    but its dataset surface is adjacency-only.
 
     Parameters
     ----------

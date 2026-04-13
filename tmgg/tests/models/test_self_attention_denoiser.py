@@ -29,9 +29,23 @@ class TestSelfAttentionDenoiser:
         model = SelfAttentionDenoiser(k=8, d_k=16)
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
         assert isinstance(result, GraphData)
-        assert result.to_adjacency().shape == (2, 20, 20)
+        assert result.to_edge_state().shape == (2, 20, 20)
+
+    def test_forward_avoids_binary_projection(self, monkeypatch):
+        """Spectral denoising should stay in edge-state space."""
+        from tmgg.models.spectral_denoisers import SelfAttentionDenoiser
+
+        def _raise(*_args, **_kwargs):
+            raise AssertionError("binary topology should not be used here")
+
+        monkeypatch.setattr(GraphData, "to_binary_adjacency", _raise)
+
+        model = SelfAttentionDenoiser(k=4, d_k=8)
+        data = GraphData.from_edge_state(torch.randn(1, 10, 10))
+        result = model(data)
+        assert result.to_edge_state().shape == (1, 10, 10)
 
     def test_unbatched_input(self):
         from tmgg.models.spectral_denoisers import SelfAttentionDenoiser
@@ -39,10 +53,10 @@ class TestSelfAttentionDenoiser:
         model = SelfAttentionDenoiser(k=4, d_k=8)
         A = torch.randn(10, 10)
         A = (A + A.T) / 2
-        result = model(GraphData.from_adjacency(A))
+        result = model(GraphData.from_edge_state(A))
         assert isinstance(result, GraphData)
-        # Unbatched: from_adjacency squeezes batch, but model may add it back
-        adj = result.to_adjacency()
+        # Unbatched edge-state input may stay unbatched or be rebatched.
+        adj = result.to_edge_state()
         assert adj.shape[-2:] == (10, 10)
 
     def test_has_value_projection(self):
@@ -67,7 +81,7 @@ class TestSelfAttentionDenoiser:
         )
         A = torch.randn(2, 10, 10)
         A = (A + A.transpose(-1, -2)) / 2
-        data = GraphData.from_adjacency(A)
+        data = GraphData.from_edge_state(A)
         attn = model.get_attention_weights(data)
         assert attn.shape == (2, 10, 10)
 
@@ -89,13 +103,12 @@ class TestSelfAttentionDenoiser:
         model = SelfAttentionDenoiser(k=4, d_k=8)
         A = torch.randn(2, 10, 10)
         A_sym = (A + A.transpose(-1, -2)) / 2
-        data = GraphData.from_adjacency(A_sym)
+        data = GraphData.from_edge_state(A_sym)
         result = model(data)
-        # Use only the edge-probability channel for loss. Summing both channels
-        # gives a constant (E[...,0] + E[...,1] = 1 per position) with zero gradient.
-        loss = result.E[..., 1].sum()
+        loss = result.to_edge_state().sum()
         loss.backward()
-        # Check parameter gradients (not input gradients, since from_adjacency is non-differentiable)
+        # Check parameter gradients (not input gradients, since GraphData wrapping
+        # is not the quantity we are differentiating through here).
         has_grad = any(
             p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters()
         )
@@ -112,5 +125,5 @@ class TestSelfAttentionDenoiser:
         )
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
-        result = model(GraphData.from_adjacency(A))
-        assert result.to_adjacency().shape == (2, 20, 20)
+        result = model(GraphData.from_edge_state(A))
+        assert result.to_edge_state().shape == (2, 20, 20)

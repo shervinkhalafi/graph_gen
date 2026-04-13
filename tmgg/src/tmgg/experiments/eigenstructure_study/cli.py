@@ -191,11 +191,9 @@ def analyze(
 
     result = analyzer.analyze()
 
-    # Save main results
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "analysis.json"
-    with open(output_path, "w") as f:
-        json.dump(asdict(result), f, indent=2)
+    # Keep the main analysis artifact on the analyzer-owned save path so the
+    # CLI and Hydra execution route through one write boundary.
+    output_path = analyzer.save_results(result, output_dir)
 
     # Compute and save subspace distances if requested
     if subspace_k > 0:
@@ -398,34 +396,37 @@ def compare(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "comparison.json"
     with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump([result.to_json_dict() for result in results], f, indent=2)
 
     click.echo(f"Comparison complete. Results: {output_path}")
     click.echo()
     click.echo("Summary (delta metrics):")
     for r in results:
-        eps = r["noise_level"]
+        eps = r.noise_level
         click.echo(f"  eps={eps:.4f}:")
         click.echo(
-            f"    eigengap_delta={r['eigengap_delta_rel_mean']:+.4f} +/- {r['eigengap_delta_rel_std']:.4f}"
+            f"    eigengap_delta={r.eigengap_delta_relative.mean:+.4f} +/- "
+            f"{r.eigengap_delta_relative.std:.4f}"
         )
         click.echo(
-            f"    alg_conn_delta={r['alg_conn_delta_rel_mean']:+.4f} +/- {r['alg_conn_delta_rel_std']:.4f}"
+            f"    alg_conn_delta={r.algebraic_connectivity_delta_relative.mean:+.4f} +/- "
+            f"{r.algebraic_connectivity_delta_relative.std:.4f}"
         )
         click.echo(
-            f"    eigenvalue_drift_adj={r['eigenvalue_drift_adj_mean']:.4f} +/- {r['eigenvalue_drift_adj_std']:.4f}"
+            f"    eigenvalue_drift_adj={r.eigenvalue_drift_adjacency.mean:.4f} +/- "
+            f"{r.eigenvalue_drift_adjacency.std:.4f}"
         )
         click.echo(
-            f"    subspace_distance={r['subspace_distance_mean']:.4f} +/- {r['subspace_distance_std']:.4f}"
+            f"    subspace_distance={r.subspace_distance.mean:.4f} +/- "
+            f"{r.subspace_distance.std:.4f}"
         )
         # Output Procrustes rotation metrics
         click.echo("    Procrustes rotation:")
         for k in procrustes_k_values:
-            angle_key = f"procrustes_angle_k{k}_mean"
-            angle_std_key = f"procrustes_angle_k{k}_std"
-            if angle_key in r:
+            stats = r.procrustes_by_k.get(k)
+            if stats is not None:
                 click.echo(
-                    f"      k={k}: angle={r[angle_key]:.4f}+/-{r[angle_std_key]:.4f} rad"
+                    f"      k={k}: angle={stats.angle.mean:.4f}+/-{stats.angle.std:.4f} rad"
                 )
 
 
@@ -505,41 +506,25 @@ def covariance(
         comparator = NoisedAnalysisComparator(original_dir, noised_dir)
         evolution = comparator.compute_covariance_evolution(matrix_type)
 
-        # Convert dataclasses to dicts for JSON serialization
-        output_data = {
-            "matrix_type": evolution["matrix_type"],
-            "original": asdict(evolution["original"]),
-            "per_noise_level": [
-                {
-                    "noise_level": item["noise_level"],
-                    "covariance": asdict(item["covariance"]),
-                    "frobenius_delta_relative": item["frobenius_delta_relative"],
-                    "trace_delta_relative": item["trace_delta_relative"],
-                    "off_diagonal_delta_relative": item["off_diagonal_delta_relative"],
-                }
-                for item in evolution["per_noise_level"]
-            ],
-        }
-
         output_path = output_dir / "covariance_evolution.json"
         with open(output_path, "w") as f:
-            json.dump(output_data, f, indent=2)
+            json.dump(evolution.to_json_dict(), f, indent=2)
 
         click.echo(f"Covariance evolution saved to: {output_path}")
         click.echo()
         click.echo("Original covariance summary:")
-        orig = evolution["original"]
+        orig = evolution.original
         click.echo(f"  Frobenius norm: {orig.frobenius_norm:.4f}")
         click.echo(f"  Trace (total variance): {orig.trace:.4f}")
         click.echo(f"  Off-diagonal ratio: {orig.off_diagonal_ratio:.4f}")
         click.echo()
         click.echo("Evolution with noise:")
-        for item in evolution["per_noise_level"]:
-            eps = item["noise_level"]
+        for item in evolution.per_noise_level:
+            eps = item.noise_level
             click.echo(
                 f"  eps={eps:.4f}: "
-                f"frob_delta={item['frobenius_delta_relative']:+.4f}, "
-                f"off_diag_delta={item['off_diagonal_delta_relative']:+.4f}"
+                f"frob_delta={item.frobenius_delta_relative:+.4f}, "
+                f"off_diag_delta={item.off_diagonal_delta_relative:+.4f}"
             )
 
     else:

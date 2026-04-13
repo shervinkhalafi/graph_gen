@@ -9,15 +9,13 @@ from typing import Any, override
 
 import numpy as np
 import numpy.typing as npt
-import torch
 from torch.utils.data import DataLoader
 from torch_geometric.data import Data
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.data.datasets.sbm import generate_sbm_batch
-from tmgg.data.datasets.synthetic_graphs import SyntheticGraphDataset
 
 from .base_data_module import BaseGraphDataModule
+from .graph_generation import generate_single_graph
 from .multigraph_data_module import (
     _adjacencies_to_pyg,
     _collate_pyg_to_graphdata,
@@ -73,12 +71,6 @@ class SingleGraphDataModule(BaseGraphDataModule):
     same_graph_all_splits : bool
         If True, val/test use the same graph as training (Stage 1 protocol).
         If False, val/test use different graphs (Stage 2+ protocol).
-    noise_levels : list of float
-        Accepted for Hydra compatibility but not stored — the training
-        module owns noise configuration.
-    noise_type : str
-        Accepted for Hydra compatibility but not stored — the training
-        module owns noise configuration.
 
     Examples
     --------
@@ -122,8 +114,6 @@ class SingleGraphDataModule(BaseGraphDataModule):
         train_seed: int = 42,
         val_test_seed: int = 123,
         same_graph_all_splits: bool = False,
-        noise_levels: list[float] | None = None,
-        noise_type: str = "digress",
     ):
         super().__init__(
             batch_size=batch_size,
@@ -149,87 +139,15 @@ class SingleGraphDataModule(BaseGraphDataModule):
         self._actual_num_nodes = num_nodes
 
     def _generate_graph(self, seed: int) -> npt.NDArray[np.float32]:
-        """Generate a single graph of the specified type.
-
-        For SBM, delegates to ``generate_sbm_batch(num_graphs=1)``.
-        For PyG datasets, uses ``_load_pyg_graph``. For all other types,
-        delegates to ``SyntheticGraphDataset(num_graphs=1)``.
-
-        Parameters
-        ----------
-        seed : int
-            Random seed for generation.
-
-        Returns
-        -------
-        np.ndarray
-            Adjacency matrix of shape ``(n, n)`` with dtype float32.
-        """
-        if self.graph_type == "sbm":
-            return generate_sbm_batch(
-                num_graphs=1,
-                num_nodes=self.num_nodes,
-                num_blocks=self.graph_config.get("num_blocks", 3),
-                p_intra=self.graph_config.get("p_intra", 0.7),
-                p_inter=self.graph_config.get("p_inter", 0.05),
-                seed=seed,
-            )[0]
-
-        if self.graph_type.startswith("pyg_"):
-            return self._load_pyg_graph(seed)
-
-        # All other types: delegate to SyntheticGraphDataset
-        dataset = SyntheticGraphDataset(
+        """Generate one graph through the shared graph generator."""
+        generated = generate_single_graph(
             graph_type=self.graph_type,
             num_nodes=self.num_nodes,
-            num_graphs=1,
+            graph_config=self.graph_config,
             seed=seed,
-            **self.graph_config,
         )
-        return dataset.get_adjacency_matrices()[0]
-
-    def _load_pyg_graph(self, seed: int) -> npt.NDArray[np.float32]:
-        """Load a single graph from a PyTorch Geometric dataset.
-
-        Delegates to ``PyGDatasetWrapper`` for loading and symmetrization,
-        then selects a single graph and trims padding.
-
-        Parameters
-        ----------
-        seed : int
-            Used to deterministically select graph index if not specified.
-
-        Returns
-        -------
-        np.ndarray
-            Adjacency matrix of shape (n, n).
-        """
-        from tmgg.data.datasets.pyg_datasets import PyGDatasetWrapper
-
-        dataset_name = self.graph_type.removeprefix("pyg_")
-        root = self.graph_config.get("root", None)
-
-        dataset = PyGDatasetWrapper(dataset_name=dataset_name, root=root)
-
-        graph_idx: int | None = self.graph_config.get("graph_idx", None)
-        if graph_idx is None:
-            rng = np.random.default_rng(seed)
-            graph_idx = int(rng.integers(0, len(dataset)))
-
-        if graph_idx >= len(dataset):
-            raise ValueError(
-                f"graph_idx {graph_idx} out of range for dataset "
-                f"with {len(dataset)} graphs"
-            )
-
-        A_np = dataset.adjacencies[graph_idx]
-
-        # Trim padding: PyGDatasetWrapper pads to max_n, single-graph needs actual size
-        n = int(dataset.num_nodes[graph_idx])
-        A_np = A_np[:n, :n]
-
-        self._actual_num_nodes = n
-        return A_np
+        self._actual_num_nodes = generated.num_nodes
+        return generated.adjacency
 
     def _adj_to_data(self, adj: npt.NDArray[np.float32]) -> Data:
         """Convert a single adjacency matrix to a PyG Data object.
@@ -245,29 +163,6 @@ class SingleGraphDataModule(BaseGraphDataModule):
             PyG Data object with COO ``edge_index`` and ``num_nodes``.
         """
         return _adjacencies_to_pyg(adj[np.newaxis])[0]
-
-    def _data_to_adj(self, data: Data) -> npt.NDArray[np.float32]:
-        """Reconstruct a dense adjacency matrix from a PyG Data object.
-
-        Parameters
-        ----------
-        data : Data
-            PyG Data object with ``edge_index`` and ``num_nodes``.
-
-        Returns
-        -------
-        np.ndarray
-            Adjacency matrix of shape ``(num_nodes, num_nodes)``, dtype float32.
-        """
-        from torch_geometric.utils import to_dense_adj
-
-        n: int = int(data.num_nodes)  # pyright: ignore[reportArgumentType]
-        if data.edge_index is None:
-            raise ValueError(
-                "Data object has no edge_index — cannot reconstruct adjacency"
-            )
-        adj = to_dense_adj(data.edge_index, max_num_nodes=n)[0]
-        return adj.numpy().astype(np.float32)
 
     @override
     def setup(self, stage: str | None = None) -> None:
@@ -344,76 +239,3 @@ class SingleGraphDataModule(BaseGraphDataModule):
             shuffle=False,
             collate_fn=_collate_pyg_to_graphdata,
         )
-
-    @override
-    def get_dataset_info(self) -> dict[str, Any]:
-        """Return metadata about the dataset."""
-        return {
-            "graph_type": self.graph_type,
-            "num_nodes": self.num_nodes,
-            "same_graph_all_splits": self.same_graph_all_splits,
-        }
-
-    def get_train_graph(self) -> npt.NDArray[np.float32]:
-        """Return the training graph as a dense adjacency matrix.
-
-        Returns
-        -------
-        np.ndarray
-            Training adjacency matrix of shape ``(n, n)``.
-        """
-        if self._train_data is None:
-            raise RuntimeError("Call setup() before accessing graphs")
-        return self._data_to_adj(self._train_data[0])
-
-    def get_val_graph(self) -> npt.NDArray[np.float32]:
-        """Return the validation graph as a dense adjacency matrix.
-
-        Returns
-        -------
-        np.ndarray
-            Validation adjacency matrix of shape ``(n, n)``.
-        """
-        if self._val_data is None:
-            raise RuntimeError("Call setup() before accessing graphs")
-        return self._data_to_adj(self._val_data[0])
-
-    def get_test_graph(self) -> npt.NDArray[np.float32]:
-        """Return the test graph as a dense adjacency matrix.
-
-        Returns
-        -------
-        np.ndarray
-            Test adjacency matrix of shape ``(n, n)``.
-        """
-        if self._test_data is None:
-            raise RuntimeError("Call setup() before accessing graphs")
-        return self._data_to_adj(self._test_data[0])
-
-    def get_sample_adjacency_matrix(self, stage: str = "train") -> torch.Tensor:
-        """Get a sample adjacency matrix for visualization.
-
-        Parameters
-        ----------
-        stage : str
-            Which split to sample from: "train", "val", or "test".
-
-        Returns
-        -------
-        torch.Tensor
-            Adjacency matrix as a float32 tensor of shape ``(n, n)``.
-        """
-        data_list: list[Data] | None
-        if stage == "train":
-            data_list = self._train_data
-        elif stage == "val":
-            data_list = self._val_data
-        elif stage == "test":
-            data_list = self._test_data
-        else:
-            raise ValueError(f"Unknown stage: {stage}")
-
-        if data_list is None:
-            raise RuntimeError(f"Call setup() before accessing {stage} graph")
-
-        return torch.from_numpy(self._data_to_adj(data_list[0]))
