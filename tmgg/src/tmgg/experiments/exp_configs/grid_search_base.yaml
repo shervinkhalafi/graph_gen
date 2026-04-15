@@ -36,10 +36,6 @@ model:
   seed: ${seed}
   learning_rate: ${learning_rate}
 
-# Evaluation settings (step-based, 50 epochs between visualizations)
-evaluation:
-  visualization_interval: ${epochs_to_steps:${data.samples_per_graph},${data.batch_size},50}
-
 # Grid search parameters (to be swept)
 noise_level: 0.1      # Will be overridden
 model_name: "unknown" # Will be set based on model choice

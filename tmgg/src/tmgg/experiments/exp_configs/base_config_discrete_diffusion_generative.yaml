@@ -28,8 +28,8 @@ _cli_cmd: tmgg-discrete-gen
 #   all:         input_dims.X += 6, input_dims.y += 11
 
 # --- Evaluation metrics ---
-# Core three are always computed (degree, clustering, spectre).
-# Add orbit, sbm, planarity, uniqueness, novelty for full benchmarking.
+# Informational only at present. The training loop logs every non-None metric
+# returned by GraphEvaluator; this list is not consumed programmatically.
 eval_metrics: [degree, clustering, spectre]
 
 # --- Data ---

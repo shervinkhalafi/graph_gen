@@ -96,10 +96,10 @@ tensorboard --logdir outputs/
 ### Weights & Biases
 
 ```bash
-uv run tmgg-spectral-arch logger=wandb
+WANDB_API_KEY="your-api-key" uv run tmgg-spectral-arch
 
 # Or with project name
-uv run tmgg-spectral-arch logger=wandb wandb_project="my-project"
+WANDB_API_KEY="your-api-key" uv run tmgg-spectral-arch wandb_project="my-project"
 ```
 
 For analysis tools and exported data, see [`wandb-tools/README.md`](../wandb-tools/README.md).
@@ -380,114 +380,130 @@ _sweep_config:
 
 ## Generative Graph Modeling
 
-The generative pipeline trains diffusion-based models to *generate* new graphs from noise, rather than denoising a corrupted input. It reuses the same denoising architectures but wraps them in a discrete diffusion process with iterative sampling and MMD-based evaluation.
+TMGG currently has two generative training paths:
+
+- `tmgg-gaussian-gen` for continuous diffusion on dense adjacency matrices
+- `tmgg-discrete-gen` for DiGress-style categorical diffusion on node and edge states
+
+These are separate from the denoising experiments such as `tmgg-spectral-arch`
+and `tmgg-digress`, which reconstruct a corrupted input graph.
 
 ### How It Works
 
-Training follows a standard discrete denoising diffusion objective: sample a random timestep, corrupt the clean adjacency matrix according to a noise schedule, and train the model to predict the clean graph. At inference time, the model starts from a random binary symmetric matrix and iteratively denoises it over the full schedule, producing a generated graph. Generated graphs are evaluated against held-out reference graphs using maximum mean discrepancy (MMD) on three graph-theoretic statistics: degree distribution, clustering coefficient distribution, and spectral properties.
+Both generative paths sample a timestep, apply a forward corruption process, and
+train a model to predict the clean graph state. Validation periodically samples
+new graphs and compares them against held-out references with `GraphEvaluator`.
+
+The discrete path additionally logs diffusion likelihood terms such as
+`val/epoch_NLL`, `val/kl_prior`, `val/kl_diffusion`, and `val/gen/full_chain_vlb`.
 
 ### Running Generative Experiments
 
-The generative runner uses its own Hydra config (`base_config_gaussian_diffusion.yaml`) and entry point:
+The continuous and categorical runners have separate base configs and entry points:
 
 ```bash
-# Default configuration (self_attention on SBM, 100 diffusion steps)
+# Continuous diffusion
 uv run tmgg-gaussian-gen
 
-# Override model architecture
-uv run tmgg-gaussian-gen model.model_type=gnn
-
-# Override dataset and graph size
-uv run tmgg-gaussian-gen data.dataset_type=erdos_renyi data.num_nodes=100
-
-# Change noise schedule and diffusion steps
-uv run tmgg-gaussian-gen model.noise_schedule=linear model.num_diffusion_steps=200
+# Discrete DiGress-style diffusion
+uv run tmgg-discrete-gen
 ```
 
-> **Note:** Denoising experiments use version-based output directories
-> (`outputs/<experiment>/version_N/`) which support automatic resumption.
-> Generative experiments use timestamp-based directories
-> (`outputs/generative/YYYY-MM-DD_HH-MM-SS/`) which do not. To resume
-> a generative run, specify the checkpoint path explicitly via
-> `ckpt_path=<path>`.
+Common overrides:
 
-### Supported Architectures
+```bash
+# Continuous: change diffusion horizon
+uv run tmgg-gaussian-gen model.noise_schedule.timesteps=200
 
-All eight denoising architectures are available for generative modeling, enabling direct ablation comparisons:
+# Discrete: use the local upstream-style SBM baseline
+uv run tmgg-discrete-gen +models/discrete@model=discrete_sbm_official
 
-| `model_type` | Architecture | Key Parameters |
-|-------------|-------------|----------------|
-| `linear_pe` | Linear positional encoding | `k`, `max_nodes`, `use_bias` |
-| `filter_bank` | Spectral polynomial filter bank | `k`, `polynomial_degree` |
-| `self_attention` | Query-key attention on eigenvectors | `k`, `d_k` |
-| `self_attention_mlp` | Self-attention with MLP post-processing | `k`, `d_k`, `mlp_hidden_dim`, `mlp_num_layers` |
-| `multilayer_attention` | Stacked transformer blocks | `k`, `d_model`, `num_heads`, `num_layers`, `dropout` |
-| `gnn` | Graph neural network | `num_layers`, `num_terms`, `feature_dim_in`, `feature_dim_out` |
-| `gnn_sym` | Symmetric GNN | `num_layers`, `num_terms`, `feature_dim_in`, `feature_dim_out` |
-| `hybrid` | EigenEmbedding + SelfAttentionDenoiser | `k`, `d_k`, `eigenvalue_reg` |
-| `bilinear` | Legacy query-key bilinear scoring (no softmax/values) | `k`, `d_k` |
+# Generative data overrides use graph_type / graph_config, not dataset_type / dataset_config
+uv run tmgg-discrete-gen data.graph_type=erdos_renyi data.num_nodes=100
+```
 
-**Implementation note:** `model_type: self_attention` now implements correct Vaswani-style attention (softmax normalization over keys, weighted value aggregation). The previous implementation, which computed bilinear query-key scores without softmax or value projections, is preserved as `model_type: bilinear`.
+`tmgg-gaussian-gen` writes under `outputs/generative/...`. `tmgg-discrete-gen`
+uses the standard run-based output path inherited from `_base_infra.yaml`.
 
-### Graph Distributions
+### Continuous Diffusion Defaults
 
-The `MultiGraphDataModule` generates synthetic graph collections for training. Supported distributions:
-
-| `dataset_type` | Description |
-|----------------|-------------|
-| `sbm` | Stochastic block model (configurable `num_blocks`, `p_intra`, `p_inter`) |
-| `regular` | d-regular graphs |
-| `tree` | Random trees |
-| `erdos_renyi` / `er` | Erdos-Renyi random graphs |
-| `watts_strogatz` / `ws` | Small-world graphs |
-| `random_geometric` / `rg` | Geometric proximity graphs |
-| `lfr` | LFR benchmark graphs |
-
-Dataset-specific parameters are passed through `data.dataset_config`. For SBM, the defaults are `num_blocks=2`, `p_intra=0.7`, `p_inter=0.1`.
-
-### Configuration Reference
-
-The base config (`exp_configs/base_config_gaussian_diffusion.yaml`) inherits shared training settings from `base_config_training.yaml` and adds generative-specific sections. Key parameters:
+The continuous base config (`base_config_gaussian_diffusion.yaml`) defaults to:
 
 ```yaml
 model:
-  model_type: self_attention       # Architecture (see table above)
-  num_diffusion_steps: 100         # Number of diffusion timesteps
-  noise_schedule: cosine           # Schedule: linear, cosine, or quadratic
-  noise_type: digress              # Noise model: digress, gaussian, or rotation
-  loss_type: MSE                   # Loss: MSE or BCEWithLogits
-  mmd_kernel: gaussian             # MMD kernel: gaussian (L2) or gaussian_tv (DiGress)
-  mmd_sigma: 1.0                   # Gaussian kernel bandwidth
-  eval_num_samples: 100            # Graphs to generate for MMD evaluation
+  noise_schedule:
+    schedule_type: cosine_iddpm
+    timesteps: 100
+  loss_type: mse
+  evaluator:
+    kernel: gaussian
+    sigma: 1.0
 
 data:
-  dataset_type: sbm                # Graph distribution (see table above)
-  num_nodes: 50                    # Nodes per graph
-  num_graphs: 1000                 # Total graphs to generate
-  batch_size: 32
+  _target_: tmgg.data.data_modules.multigraph_data_module.MultiGraphDataModule
+  graph_type: sbm
+  num_nodes: 50
+  num_graphs: 1000
 ```
 
-**Noise type note:** `noise_type: digress` now implements categorical transition matrices following Vignac et al. (2023), where the forward process interpolates between the identity matrix and a uniform distribution over edge states. The previous implementation, which performed independent edge flips with a fixed probability, is preserved as `noise_type: edge_flip`.
+### Discrete Diffusion Defaults
+
+The discrete base config (`base_config_discrete_diffusion_generative.yaml`) defaults to:
+
+```yaml
+model:
+  noise_schedule:
+    schedule_type: cosine_iddpm
+    timesteps: 500
+  evaluator:
+    eval_num_samples: 128
+  loss_type: cross_entropy
+  lambda_E: 5.0
+
+data:
+  _target_: tmgg.data.data_modules.synthetic_categorical.SyntheticCategoricalDataModule
+  graph_type: sbm
+  num_nodes: 20
+  num_graphs: 2000
+  graph_config:
+    num_blocks: 2
+    p_intra: 0.7
+    p_inter: 0.1
+```
+
+For the local DiGress-style SBM baseline, the checked-in model preset is:
+
+```bash
+uv run tmgg-discrete-gen +models/discrete@model=discrete_sbm_official
+```
+
+That preset gives you the local "official" architecture and optimizer values, but
+it is not a literal copy of the upstream DiGress training setup on its own.
 
 ### Evaluation Metrics
 
-The generative module computes three MMD metrics at the end of each validation epoch, comparing generated graphs against held-out reference graphs:
+Both generative paths evaluate sampled graphs with `GraphEvaluator`. The discrete
+training loop logs every non-`None` evaluator metric under `val/gen/*`.
 
 | Metric | Logged as | Description |
 |--------|-----------|-------------|
-| Degree MMD | `val/degree_mmd` | Divergence between degree distributions |
-| Clustering MMD | `val/clustering_mmd` | Divergence between clustering coefficient distributions |
-| Spectral MMD | `val/spectral_mmd` | Divergence between spectral (eigenvalue) distributions |
+| Degree MMD | `val/gen/degree_mmd` | Divergence between degree distributions |
+| Clustering MMD | `val/gen/clustering_mmd` | Divergence between clustering coefficient distributions |
+| Spectral MMD | `val/gen/spectral_mmd` | Divergence between normalized Laplacian spectra |
+| Orbit MMD | `val/gen/orbit_mmd` | Graphlet-orbit divergence when ORCA is available |
+| SBM Accuracy | `val/gen/sbm_accuracy` | SBM consistency when `graph-tool` is available |
+| Planarity | `val/gen/planarity_accuracy` | Fraction of connected generated graphs that are planar |
+| Uniqueness | `val/gen/uniqueness` | Fraction of non-isomorphic generated graphs |
+| Novelty | `val/gen/novelty` | Only available when the evaluator is constructed with training graphs |
 
-Lower values indicate that generated graphs more closely match the reference distribution. The kernel type (`gaussian` or `gaussian_tv`) and bandwidth (`mmd_sigma`) control the sensitivity of these comparisons.
+Lower MMD values are better. Higher accuracy, uniqueness, and novelty values are better.
 
 ### Example: SBM Generation with Multirun
 
 ```bash
-# Sweep over architectures and diffusion steps
-uv run tmgg-gaussian-gen --multirun \
-  model.model_type=self_attention,filter_bank,gnn \
-  model.num_diffusion_steps=50,100,200 \
+# Sweep over discrete diffusion horizons and seeds
+uv run tmgg-discrete-gen --multirun \
+  model.noise_schedule.timesteps=500,1000 \
   seed=1,2,3
 ```
 

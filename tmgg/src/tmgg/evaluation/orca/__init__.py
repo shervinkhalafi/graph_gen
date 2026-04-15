@@ -28,14 +28,19 @@ _COUNT_START_STR = "orbit counts:"
 
 # Directory containing the C++ source and compiled binary
 _ORCA_DIR = Path(__file__).parent
+_REBUILT_BINARY_PATHS: set[Path] = set()
 
 
 def _get_binary_path() -> Path:
-    """Return path to the ORCA binary, compiling if necessary."""
-    binary = _ORCA_DIR / "orca"
-    if binary.exists() and os.access(binary, os.X_OK):
-        return binary
+    """Return path to the ORCA binary, rebuilding it on first use.
 
+    Modal containers can expose the local source tree under ``/root/tmgg``.
+    If that tree contains a host-built ORCA executable, reusing it can fail
+    with glibc/libstdc++ mismatches. To avoid trusting any preexisting native
+    artifact, the wrapper recompiles ORCA once per process from the bundled
+    source and atomically replaces any existing binary in-place.
+    """
+    binary = _ORCA_DIR / "orca"
     source = _ORCA_DIR / "orca.cpp"
     if not source.exists():
         raise FileNotFoundError(
@@ -43,13 +48,23 @@ def _get_binary_path() -> Path:
             "Expected orca.cpp in the same directory as this module."
         )
 
+    if (
+        binary in _REBUILT_BINARY_PATHS
+        and binary.exists()
+        and os.access(binary, os.X_OK)
+    ):
+        return binary
+
+    build_binary = binary.with_suffix(".tmp")
+
     try:
         subprocess.run(
-            ["g++", "-O2", "-std=c++11", "-o", str(binary), str(source)],
+            ["g++", "-O2", "-std=c++11", "-o", str(build_binary), str(source)],
             check=True,
             capture_output=True,
             text=True,
         )
+        build_binary.replace(binary)
     except FileNotFoundError:
         raise RuntimeError(
             "g++ not found. Install a C++ compiler to use ORCA orbit counting:\n"
@@ -59,7 +74,10 @@ def _get_binary_path() -> Path:
         ) from None
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Failed to compile ORCA binary:\n{e.stderr}") from e
+    finally:
+        build_binary.unlink(missing_ok=True)
 
+    _REBUILT_BINARY_PATHS.add(binary)
     return binary
 
 
@@ -127,10 +145,23 @@ def run_orca(graph: nx.Graph[Any]) -> np.ndarray:
             for u, v in edges:
                 f.write(f"{u} {v}\n")
 
-        output = subprocess.check_output(
-            [str(binary), "node", "4", str(tmp_path), "std"],
-            stderr=subprocess.STDOUT,
-        )
+        cmd = [str(binary), "node", "4", str(tmp_path), "std"]
+        try:
+            output = subprocess.check_output(
+                cmd,
+                stderr=subprocess.STDOUT,
+            )
+        except subprocess.CalledProcessError as e:
+            raw_output = e.output.decode("utf8", errors="replace").strip()
+            input_preview = tmp_path.read_text(encoding="utf8").strip()
+            raise RuntimeError(
+                "ORCA subprocess failed.\n"
+                f"Exit status: {e.returncode}\n"
+                f"Command: {cmd!r}\n"
+                f"Graph summary: nodes={n}, edges={len(edges)}\n"
+                f"ORCA output:\n{raw_output}\n"
+                f"Serialized ORCA input:\n{input_preview}"
+            ) from e
         output_str = output.decode("utf8").strip()
 
         # Parse orbit counts from output

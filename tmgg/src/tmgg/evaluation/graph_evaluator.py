@@ -24,12 +24,14 @@ from __future__ import annotations
 import concurrent.futures
 import importlib.util
 import logging
+import multiprocessing
 import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import networkx as nx
 import numpy as np
+from scipy.stats import chi2
 
 from tmgg.evaluation.mmd_metrics import (
     compute_mmd,
@@ -45,10 +47,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Dependency availability
 # ---------------------------------------------------------------------------
-_GRAPH_TOOL_AVAILABLE = importlib.util.find_spec("graph_tool") is not None
+_GRAPH_TOOL_IMPORT_ERROR: ImportError | None = None
+gt: Any | None = None
+if importlib.util.find_spec("graph_tool") is not None:
+    try:
+        import graph_tool.all as gt  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports]
+    except ImportError as exc:
+        _GRAPH_TOOL_IMPORT_ERROR = exc
+        _GRAPH_TOOL_AVAILABLE = False
+        warnings.warn(
+            "graph-tool import failed during evaluator import; "
+            "sbm_accuracy will be None in GraphEvaluator results.\n"
+            f"Import error: {exc}",
+            stacklevel=2,
+        )
+    else:
+        _GRAPH_TOOL_AVAILABLE = True
+else:
+    _GRAPH_TOOL_AVAILABLE = False
 _ORCA_AVAILABLE = _orca_is_available()
 
-if not _GRAPH_TOOL_AVAILABLE:
+if not _GRAPH_TOOL_AVAILABLE and _GRAPH_TOOL_IMPORT_ERROR is None:
     warnings.warn(
         "graph-tool not installed; sbm_accuracy will be None in GraphEvaluator results.",
         stacklevel=2,
@@ -208,8 +227,8 @@ def _is_sbm_graph(
     float
         ``1.0`` / ``0.0`` when *strict*, raw mean p-value otherwise.
     """
-    import graph_tool.all as gt  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports]
-    from scipy.stats import chi2
+    if gt is None:
+        raise RuntimeError("graph-tool is unavailable; cannot compute SBM accuracy.")
 
     adj = nx.adjacency_matrix(g_nx).toarray()
     idx = adj.nonzero()
@@ -271,7 +290,16 @@ def compute_sbm_accuracy(
     """Fraction of graphs consistent with a stochastic block model.
 
     Evaluates each graph via ``_is_sbm_graph`` (blockmodel inference +
-    Wald test), optionally in parallel using ``ThreadPoolExecutor``.
+    Wald test), optionally in parallel. When ``is_parallel=True`` the
+    per-graph calls run inside a ``ProcessPoolExecutor`` that uses the
+    ``spawn`` start method. A thread-pool backend was tried initially
+    but graph-tool's blockmodel routines are not safe to call
+    concurrently from Python threads: the workers share graph-tool's
+    internal OpenMP/C++ state and abort the process with heap-
+    corruption signals (``vector::_M_fill_insert``, ``malloc()
+    unaligned tcache chunk``). Process isolation avoids the hazard at
+    the cost of interpreter-spawn overhead. See
+    ``docs/reports/2026-04-15-bug-modal-sigabrt.md``.
 
     Parameters
     ----------
@@ -286,7 +314,9 @@ def compute_sbm_accuracy(
     refinement_steps
         Number of MCMC refinement sweeps.
     is_parallel
-        If True, evaluate graphs in parallel using threads.
+        If True, evaluate graphs in a spawn-based
+        ``ProcessPoolExecutor``. If False, evaluate sequentially in
+        the caller's process.
 
     Returns
     -------
@@ -301,23 +331,25 @@ def compute_sbm_accuracy(
     if not graphs:
         return 0.0
 
-    if is_parallel:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            scores = list(
-                executor.map(
-                    _is_sbm_graph,
-                    graphs,
-                    [p_intra] * len(graphs),
-                    [p_inter] * len(graphs),
-                    [strict] * len(graphs),
-                    [refinement_steps] * len(graphs),
-                )
-            )
-        count = sum(scores)
-    else:
+    if not is_parallel:
         count = sum(
             _is_sbm_graph(g, p_intra, p_inter, strict, refinement_steps) for g in graphs
         )
+        return count / len(graphs)
+
+    mp_context = multiprocessing.get_context("spawn")
+    with concurrent.futures.ProcessPoolExecutor(mp_context=mp_context) as executor:
+        scores = list(
+            executor.map(
+                _is_sbm_graph,
+                graphs,
+                [p_intra] * len(graphs),
+                [p_inter] * len(graphs),
+                [strict] * len(graphs),
+                [refinement_steps] * len(graphs),
+            )
+        )
+    count = sum(scores)
 
     return count / len(graphs)
 

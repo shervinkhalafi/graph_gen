@@ -18,12 +18,14 @@ use only networkx and are always testable.
 
 from __future__ import annotations
 
-import importlib.util
+import ast
+from pathlib import Path
 from typing import Any
 
 import networkx as nx
 import pytest
 
+import tmgg.evaluation.graph_evaluator as graph_evaluator_module
 from tmgg.evaluation.graph_evaluator import (
     EvaluationResults,
     GraphEvaluator,
@@ -32,7 +34,7 @@ from tmgg.evaluation.graph_evaluator import (
 # ---------------------------------------------------------------------------
 # Dependency availability checks
 # ---------------------------------------------------------------------------
-_graph_tool_available = importlib.util.find_spec("graph_tool") is not None
+_graph_tool_available = graph_evaluator_module._GRAPH_TOOL_AVAILABLE
 
 _orca_available: bool
 try:
@@ -83,6 +85,30 @@ class TestConstruction:
         ev = GraphEvaluator(eval_num_samples=5, p_intra=0.4, p_inter=0.01)
         assert ev.p_intra == 0.4
         assert ev.p_inter == 0.01
+
+    def test_is_sbm_graph_has_no_lazy_graph_tool_import(self) -> None:
+        """SBM helper should resolve graph-tool at module import time.
+
+        Regression rationale
+        --------------------
+        Importing ``graph_tool`` inside ``_is_sbm_graph`` delays binary/runtime
+        failures until validation-time worker threads. We want those issues to
+        surface when the module imports, not deep inside metric execution.
+        """
+        tree = ast.parse(Path(graph_evaluator_module.__file__).read_text())
+        target = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_is_sbm_graph"
+        )
+
+        lazy_imports = [
+            node
+            for node in ast.walk(target)
+            if isinstance(node, ast.Import | ast.ImportFrom)
+        ]
+
+        assert lazy_imports == []
 
 
 # ---------------------------------------------------------------------------

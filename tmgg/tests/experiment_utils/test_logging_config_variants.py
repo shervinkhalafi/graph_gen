@@ -3,7 +3,8 @@
 These tests cover the config-surface cleanup that moves experiment-specific
 callback and logger policy into named Hydra config groups. They are intended
 to stay fast: configs are composed in-process, callbacks are constructed
-directly, and wandb logger creation is stubbed so no network calls occur.
+directly, and logger creation is stubbed so no network calls or filesystem
+writes escape the test sandbox.
 
 Key invariants
 --------------
@@ -13,7 +14,7 @@ Key invariants
 - ``create_callbacks()`` builds callback objects from top-level
   ``config.callbacks`` and ignores ``trainer.callbacks``.
 - ``create_loggers()`` forwards supported wandb metadata fields that appear
-  in the config variants.
+  in the config variants and instantiates the default CSV mirror logger.
 """
 
 from __future__ import annotations
@@ -103,14 +104,17 @@ class TestLoggerAndCallbackVariants:
         assert "logger" in resolved
         assert "callbacks" in resolved
 
-    def test_base_config_uses_wandb_logger_variant(self, tmp_path: Path) -> None:
-        """Base infra should now compose a wandb-only logger config."""
+    def test_base_config_uses_wandb_and_csv_logger_variant(
+        self, tmp_path: Path
+    ) -> None:
+        """Base infra should compose both W&B and CSV logger configs."""
         cfg = _compose_config(tmp_path, "base_config_spectral_arch")
         logger_cfg = cfg.logger
 
-        assert len(logger_cfg) == 1
+        assert len(logger_cfg) == 2
         assert list(logger_cfg[0].keys()) == ["wandb"]
-        assert "tensorboard" not in logger_cfg[0]
+        assert list(logger_cfg[1].keys()) == ["csv"]
+        assert cfg.logger[1].csv.save_dir == f"{tmp_path}/csv"
 
     def test_grid_search_uses_top_level_variants(self, tmp_path: Path) -> None:
         """Grid search should select logger/callback variants via defaults."""
@@ -123,9 +127,10 @@ class TestLoggerAndCallbackVariants:
         assert cfg.callbacks.checkpoint.filename == (
             "grid_search_4k_params-step={step:06d}-val_loss={val/loss:.4f}"
         )
-        assert len(cfg.logger) == 1
+        assert len(cfg.logger) == 2
         assert list(cfg.logger[0].keys()) == ["wandb"]
-        assert cfg.logger[0].wandb.group == f"unknown_{cfg.data.noise_type}"
+        assert list(cfg.logger[1].keys()) == ["csv"]
+        assert cfg.logger[0].wandb.group == f"unknown_{cfg.noise_type}"
 
     def test_discrete_config_uses_top_level_variants(self, tmp_path: Path) -> None:
         """Discrete diffusion should select NLL callbacks and discrete wandb naming."""
@@ -136,9 +141,39 @@ class TestLoggerAndCallbackVariants:
         assert cfg.callbacks.checkpoint.filename == (
             "model-step={step:06d}-val_nll={val/epoch_NLL:.4f}"
         )
-        assert len(cfg.logger) == 1
+        assert len(cfg.logger) == 2
         assert list(cfg.logger[0].keys()) == ["wandb"]
+        assert list(cfg.logger[1].keys()) == ["csv"]
         assert cfg.logger[0].wandb.name == "discrete_diffusion_T500_n20_sbm"
+
+    @pytest.mark.parametrize(
+        "config_name",
+        [
+            "base_config_discrete_diffusion_generative",
+            "base_config_gaussian_diffusion",
+        ],
+    )
+    def test_generative_configs_wire_live_visualization_defaults(
+        self,
+        tmp_path: Path,
+        config_name: str,
+    ) -> None:
+        """Generative configs should expose live visualization settings.
+
+        Regression rationale
+        --------------------
+        The old ``visualization_interval`` knob was dead config. The new
+        defaults should compose under ``evaluation.visualization`` and be
+        forwarded into ``cfg.model`` for the live DiffusionModule path.
+        """
+        cfg = _compose_config(tmp_path, config_name)
+
+        assert cfg.evaluation.visualization.enabled is True
+        assert cfg.evaluation.visualization.num_samples == 8
+        assert "visualization_interval" not in cfg
+        assert "visualization_interval" not in cfg.evaluation
+        assert cfg.model.visualization.enabled is True
+        assert cfg.model.visualization.num_samples == 8
 
 
 class TestCreateCallbacks:
@@ -179,7 +214,7 @@ class TestCreateCallbacks:
 
 
 class TestCreateLoggers:
-    """Verify wandb logger creation honors the config variant surface."""
+    """Verify logger creation honors the config variant surface."""
 
     def test_grid_wandb_variant_forwards_supported_metadata(
         self,
@@ -203,10 +238,10 @@ class TestCreateLoggers:
 
         loggers = create_loggers(cfg)
 
-        assert len(loggers) == 1
+        assert len(loggers) == 2
         assert len(captured) == 1
         kwargs = captured[0]
-        assert kwargs["group"] == f"unknown_{cfg.data.noise_type}"
+        assert kwargs["group"] == f"unknown_{cfg.noise_type}"
         assert kwargs["notes"] == "Grid search with ~4k params across architectures"
         assert kwargs["offline"] is False
 
@@ -232,6 +267,70 @@ class TestCreateLoggers:
         )
         monkeypatch.setattr("tmgg.training.logging.WandbLogger", DummyWandbLogger)
 
-        create_loggers(cfg)
+        loggers = create_loggers(cfg)
 
         assert captured[0]["name"] == "spectral-test-run"
+        assert len(loggers) == 2
+
+    def test_default_config_instantiates_csv_logger_alongside_wandb(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """The shared default logger policy should create both loggers.
+
+        Regression rationale
+        --------------------
+        Modal runs already write checkpoints and configs to the persistent
+        output volume. Adding CSV by default should mirror metrics locally
+        there as well, without removing the W&B primary logger.
+        """
+        cfg = _compose_config(tmp_path, "base_config_spectral_arch")
+        captured_wandb: list[dict[str, Any]] = []
+        captured_csv: list[dict[str, Any]] = []
+
+        class DummyWandbLogger:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_wandb.append(kwargs)
+
+        class DummyCSVLogger:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_csv.append(kwargs)
+
+        monkeypatch.setattr(
+            "tmgg.training.logging._has_wandb_credentials", lambda: True
+        )
+        monkeypatch.setattr("tmgg.training.logging.WandbLogger", DummyWandbLogger)
+        monkeypatch.setattr("tmgg.training.logging.CSVLogger", DummyCSVLogger)
+
+        loggers = create_loggers(cfg)
+
+        assert len(loggers) == 2
+        assert len(captured_wandb) == 1
+        assert len(captured_csv) == 1
+        assert captured_csv[0]["save_dir"] == f"{tmp_path}/csv"
+        assert captured_csv[0]["name"] == cfg.experiment_name
+
+    def test_default_config_keeps_csv_when_wandb_is_unavailable(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Missing W&B credentials should still leave the CSV mirror active."""
+        cfg = _compose_config(tmp_path, "base_config_spectral_arch")
+        captured_csv: list[dict[str, Any]] = []
+
+        class DummyCSVLogger:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_csv.append(kwargs)
+
+        monkeypatch.setattr(
+            "tmgg.training.logging._has_wandb_credentials", lambda: False
+        )
+        monkeypatch.setattr("tmgg.training.logging.CSVLogger", DummyCSVLogger)
+
+        loggers = create_loggers(cfg)
+
+        assert len(loggers) == 1
+        assert len(captured_csv) == 1
+        assert captured_csv[0]["save_dir"] == f"{tmp_path}/csv"

@@ -21,9 +21,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import matplotlib.pyplot as plt
 import torch.nn as nn
+from pytorch_lightning.loggers import CSVLogger
 
-from tmgg.training.logging import log_parameter_count
+from tmgg.training.logging import log_figure, log_parameter_count
 
 # -----------------------------------------------------------------------
 # TestLogParameterCount
@@ -97,3 +99,34 @@ class TestLogParameterCount:
         model = nn.Linear(3, 2)
         with patch("builtins.print"):
             log_parameter_count(model, "TestModel", None)
+
+
+class TestFigureLogging:
+    """Figure logging should work for logger tag hierarchies."""
+
+    def test_csv_logger_creates_nested_tag_directories(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """CSV figure logging should support slash-separated tags.
+
+        Starting state: a CSV logger and a simple matplotlib figure.
+        Invariant: logging ``val/gen/...`` creates the nested directory path
+        and writes the image without raising.
+        """
+        logger = CSVLogger(save_dir=str(tmp_path), name="figures")
+        fig = plt.figure()
+
+        log_figure(
+            logger,
+            "val/gen/graph_samples",
+            fig,
+            global_step=7,
+        )
+
+        assert (
+            tmp_path
+            / "figures"
+            / "version_0"
+            / "figures"
+            / "val"
+            / "gen"
+            / "graph_samples_step_7.png"
+        ).exists()

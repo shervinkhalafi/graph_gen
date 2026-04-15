@@ -39,3 +39,4 @@ weight_decay: ${weight_decay}
 optimizer_type: ${optimizer_type}
 num_nodes: ${data.num_nodes}
 eval_every_n_steps: 1000
+visualization: ${evaluation.visualization}

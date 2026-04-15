@@ -1,355 +1,269 @@
 # Cloud Execution
 
-TMGG supports cloud execution via Modal, enabling GPU-accelerated experiments without local hardware. This document explains the architecture, setup, and usage.
+TMGG runs on Modal through the `tmgg-modal` CLI and the `tmgg.modal.runner.ModalRunner`.
+This document describes the current execution surface, the required secrets, and the
+paths that still exist in the tree today.
+
+## Current Execution Surface
+
+There are two supported Modal entry points:
+
+- `tmgg-modal run ...` for a single resolved experiment config
+- `tmgg-experiment --multirun hydra/launcher=tmgg_modal ...` for Hydra multiruns
+
+The `tmgg-modal` CLI also exposes:
+
+- `tmgg-modal evaluate` to run checkpoint evaluation on Modal GPUs
+- `tmgg-modal aggregate` to pull evaluation results back from the Modal volume
+
+The old `spawn_single.py`, `launch_sweep.py`, `generate_configs.py`, and
+`stage_definitions/` pipeline no longer exists.
 
 ## Architecture
 
-```
-Experiment Runner
-    │
-    ├── CloudRunner (abstract base)
-    │   ├── LocalRunner (subprocess, built-in)
-    │   └── ModalRunner (cloud GPUs)
-    │
-    ├── ExperimentCoordinator (sweep orchestration)
-    │
-    └── Storage
-        ├── LocalStorage
-        └── S3Storage (Tigris-compatible)
+The current Modal path is:
+
+```text
+local CLI / Hydra
+    |
+    +-- tmgg-modal run
+    |      |
+    |      +-- resolve Hydra config locally
+    |      +-- ModalRunner.run_experiment() or .spawn_experiment()
+    |
+    +-- tmgg-experiment --multirun hydra/launcher=tmgg_modal
+           |
+           +-- TmggLauncher.launch()
+           +-- ModalRunner.run_sweep()
+
+ModalRunner
+    |
+    +-- modal.Function.from_name("tmgg-spectral", "modal_run_cli*")
+    +-- send fully resolved YAML
+
+Modal container
+    |
+    +-- tmgg.modal._functions: modal_run_cli / _fast / _debug
+    +-- write YAML to a temp config directory
+    +-- subprocess.run([cli_cmd, --config-path=..., --config-name=run_config])
 ```
 
-The `ModalRunner` deploys experiments to Modal's serverless infrastructure, which provisions GPUs on demand and scales automatically.
+Important implementation points:
+
+- The deployed Modal app name is `tmgg-spectral`.
+- Runtime lookups go through `modal.Function.from_name(...)`, not direct imports of the decorated functions.
+- The deployed functions are `modal_run_cli`, `modal_run_cli_fast`, and `modal_run_cli_debug`.
+- The Modal image is built from `tmgg.modal._lib.image.create_tmgg_image()` and includes `graph-tool` and ORCA support so generative evaluation metrics can run in the container.
 
 ## Prerequisites
 
 Before using Modal execution, you need:
 
-1. **Modal account**: Sign up at [modal.com](https://modal.com)
-2. **Modal CLI authentication**:
-   ```bash
-   modal token new
-   ```
-3. **Secrets**: Tigris storage credentials and W&B API key (see [Secrets Configuration](#secrets-configuration))
+1. A Modal account.
+2. Modal CLI authentication:
 
-## Secrets Configuration
+```bash
+modal token new
+```
 
-Modal requires two secret groups for TMGG experiments:
+3. Secrets for Tigris storage and W&B.
 
-### Required Secrets
+## Secrets
+
+TMGG expects two Modal secret groups:
 
 | Secret Group | Keys | Purpose |
 |--------------|------|---------|
-| `tigris-credentials` | `TMGG_TIGRIS_BUCKET`, `TMGG_TIGRIS_ACCESS_KEY`, `TMGG_TIGRIS_SECRET_KEY` | Checkpoint and metrics storage |
-| `wandb-credentials` | `WANDB_API_KEY` | Experiment tracking |
+| `tigris-credentials` | `TMGG_TIGRIS_BUCKET`, `TMGG_TIGRIS_ACCESS_KEY`, `TMGG_TIGRIS_SECRET_KEY` | Checkpoints and metrics storage |
+| `wandb-credentials` | `WANDB_API_KEY` | W&B logging |
 
-### Setting Up Secrets
+### Doppler-managed setup
 
-**Option 1: Via Doppler (recommended)**
-
-If you use Doppler for secrets management, mise creates Modal secrets automatically:
+If you use Doppler, the repo task creates or updates both secrets:
 
 ```bash
-mise run modal-secrets
+doppler run -- mise run modal-secrets
 ```
 
-This maps Doppler environment variables to Modal secrets:
-- `TMGG_S3_BUCKET` → `TMGG_TIGRIS_BUCKET`
-- `AWS_ACCESS_KEY_ID` → `TMGG_TIGRIS_ACCESS_KEY`
-- `AWS_SECRET_ACCESS_KEY` → `TMGG_TIGRIS_SECRET_KEY`
-- `WANDB_API_KEY` → `WANDB_API_KEY`
-
-**Option 2: Manual creation**
+### Manual setup
 
 ```bash
-modal secret create tigris-credentials \
+uv run modal secret create tigris-credentials --force \
     TMGG_TIGRIS_BUCKET="your-bucket" \
     TMGG_TIGRIS_ACCESS_KEY="your-key" \
     TMGG_TIGRIS_SECRET_KEY="your-secret"
 
-modal secret create wandb-credentials \
+uv run modal secret create wandb-credentials --force \
     WANDB_API_KEY="your-wandb-key"
 ```
 
 ## Deployment
 
-Deploy the TMGG Modal app before running experiments:
+Deploy the current app before launching runs:
 
 ```bash
-mise run modal-deploy
+doppler run -- mise run modal-deploy
 ```
 
-This command:
-1. Creates/updates Modal secrets from Doppler
-2. Deploys the `tmgg-spectral-arch` app with two functions:
-   - `modal_execute_task` (standard GPU)
-   - `modal_execute_task_fast` (A100 GPU)
+`modal-deploy` first refreshes Modal secrets from the current environment and then runs:
+
+```bash
+uv run modal deploy -m tmgg.modal._functions
+```
 
 For development with hot reload:
 
 ```bash
-mise run modal-serve
-```
-
-## Running Experiments
-
-### Single Experiment
-
-```python
-from tmgg.modal.runner import ModalRunner
-
-runner = ModalRunner()
-result = runner.run_experiment(config, gpu_type="standard")
-```
-
-### Via Hydra CLI
-
-```bash
-uv run tmgg-experiment +stage=stage2_validation run_on_modal=true
-```
-
-### Sweeps
-
-```python
-from tmgg.modal.runner import ModalRunner
-
-runner = ModalRunner()
-results = runner.run_sweep(
-    configs,
-    gpu_type="standard",
-    parallelism=4,
-    timeout_seconds=1800,
-)
+uv run modal serve -m tmgg.modal._functions
 ```
 
 ## GPU Tiers
 
-| Tier | GPU | Default Timeout | Typical Use |
-|------|-----|-----------------|-------------|
-| `debug` | T4 | 10 minutes | Quick tests |
-| `standard` | A10G | 30 minutes | Most experiments |
-| `fast` | A100-40GB | 1 hour | Large models, fast iteration |
-| `multi` | A100-40GB × 2 | 2 hours | DiGress, multi-GPU training |
-| `h100` | H100 | 1 hour | Maximum throughput |
+| Tier | Modal GPU |
+|------|-----------|
+| `debug` | `T4` |
+| `standard` | `A10G` |
+| `fast` | `A100-40GB` |
+| `multi` | `A100-40GB:2` |
+| `h100` | `H100` |
 
-Select a tier via the `gpu_type` parameter:
+The deployed functions all use a 24-hour timeout.
 
-```python
-result = runner.run_experiment(config, gpu_type="fast")
+## Running A Single Experiment
+
+Use `tmgg-modal run` when you want one resolved config launched on Modal:
+
+```bash
+uv run tmgg-modal run tmgg-spectral-arch model.k=16 seed=1 --gpu standard
 ```
 
-## LocalRunner
+Detached execution:
 
-The default runner executes experiments in a subprocess on your local machine:
-
-```python
-from tmgg.runners import LocalRunner
-
-runner = LocalRunner(output_dir="./results")
-result = runner.run_experiment(config)
+```bash
+uv run tmgg-modal run tmgg-spectral-arch model.k=16 seed=1 --gpu fast --detach
 ```
 
-No additional setup required.
+Dry-run config resolution:
 
-## ExperimentCoordinator
-
-The coordinator manages multi-experiment runs with configuration generation and result aggregation:
-
-```python
-from tmgg.runners import ExperimentCoordinator
-
-coordinator = ExperimentCoordinator(
-    backend="modal",
-    base_config_path=Path("exp_configs/"),
-)
-
-result = coordinator.run_stage(
-    stage_config,
-    base_config,
-    parallelism=4,
-    resume=True,
-)
+```bash
+uv run tmgg-modal run tmgg-spectral-arch model.k=16 seed=1 --dry-run
 ```
 
-### Running Sweeps
+The command resolves Hydra locally, computes a config hash, shows the generated
+`run_id`, and then dispatches the resolved YAML to Modal.
 
-The coordinator generates combinations of architectures, datasets, hyperparameters, and seeds:
+## Running Multiruns On Modal
 
-```python
-from tmgg.runners import ExperimentCoordinator, StageConfig
+Use Hydra multirun with the custom launcher:
 
-stage = StageConfig(
-    name="my_sweep",
-    architectures=["models/gnn/standard", "models/attention/multi_layer"],
-    datasets=["data/sbm_default"],
-    hyperparameter_space={
-        "learning_rate": [1e-4, 1e-3],
-        "model.num_layers": [4, 8],
-    },
-    seeds=[1, 2, 3],
-)
-
-coordinator = ExperimentCoordinator(backend="modal")
-result = coordinator.run_stage(stage, base_config, parallelism=8)
+```bash
+uv run tmgg-experiment +stage=stage1_poc --multirun \
+    hydra/launcher=tmgg_modal \
+    seed=1,2,3
 ```
 
-## Result Types
+The launcher:
 
-### ExperimentResult
+- resolves each Hydra job locally
+- patches `paths.output_dir` / `paths.results_dir` onto the Modal volume
+- dispatches the batch through `ModalRunner.run_sweep()`
 
-```python
-@dataclass
-class ExperimentResult:
-    run_id: str
-    config: dict
-    metrics: dict          # {"val_loss": 0.123, "test_loss": 0.145}
-    checkpoint_path: str | None
-    status: str            # "completed", "failed", "timeout"
-    error_message: str | None
-    duration_seconds: float
+For local multiruns, use Hydra's built-in launcher instead:
+
+```bash
+uv run tmgg-experiment +stage=stage1_poc --multirun hydra/launcher=basic seed=1,2,3
 ```
 
-### StageResult
+## W&B Logging
 
-```python
-@dataclass
-class StageResult:
-    stage_name: str
-    experiments: list[ExperimentResult]
-    best_config: dict
-    best_metrics: dict
-    summary: dict
-    started_at: str
-    completed_at: str
+Most training configs in TMGG already default to W&B logging through `_base_infra.yaml`.
+In practice, Modal runs need:
+
+- the `wandb-credentials` Modal secret
+- `allow_no_wandb=false` if you want the run to fail loudly when logging is unavailable
+
+Example:
+
+```bash
+uv run tmgg-modal run tmgg-discrete-gen \
+    +models/discrete@model=discrete_sbm_official \
+    allow_no_wandb=false \
+    wandb_entity=graph_denoise_team \
+    wandb_project=discrete-diffusion \
+    --gpu standard
 ```
 
-The summary contains aggregate statistics:
+## Upstream-style DiGress SBM Run
 
-```python
-result.summary = {
-    "total_experiments": 24,
-    "completed": 22,
-    "failed": 2,
-    "success_rate": 0.917,
-    "mean_duration_seconds": 342.5,
-    "total_duration_seconds": 7535.0,
-}
+The checked-in `discrete_sbm_official.yaml` is a close local baseline, but not a literal
+copy of the upstream DiGress SBM training setup. If you want the upstream DiGress SBM
+training horizon and feature settings, the currently supported Modal launch looks like:
+
+```bash
+uv run tmgg-modal run tmgg-discrete-gen \
+    +models/discrete@model=discrete_sbm_official \
+    learning_rate=0.0002 \
+    weight_decay=1e-12 \
+    amsgrad=true \
+    data.num_graphs=200 \
+    data.train_ratio=0.64 \
+    data.val_ratio=0.16 \
+    trainer.max_steps=550000 \
+    trainer.val_check_interval=1100 \
+    model.eval_every_n_steps=1100 \
+    model.noise_schedule.timesteps=1000 \
+    data.batch_size=12 \
+    data.graph_config.p_intra=1.0 \
+    data.graph_config.p_inter=0.0 \
+    +model.model.extra_features._target_=tmgg.models.digress.extra_features.ExtraFeatures \
+    +model.model.extra_features.extra_features_type=all \
+    +model.model.extra_features.max_n_nodes=20 \
+    +model.evaluator.p_intra=1.0 \
+    +model.evaluator.p_inter=0.0 \
+    allow_no_wandb=false \
+    --gpu standard \
+    --detach
 ```
 
-## Resuming Interrupted Sweeps
+This reproduces the upstream optimizer, diffusion-step count, and validation cadence in
+terms of steps, using a 200-graph synthetic split that approximates the upstream SBM
+train/val/test counts. It still uses TMGG's current synthetic categorical SBM datamodule
+rather than the original upstream SPECTRE SBM dataset.
 
-The coordinator tracks completed experiments and skips them on resume:
+## Evaluation and Aggregation
 
-```python
-result = coordinator.run_stage(
-    stage_config,
-    base_config,
-    resume=True,
-)
+Run checkpoint evaluation on Modal:
+
+```bash
+uv run tmgg-modal evaluate -r some_run_id --gpu debug
 ```
 
-## Config serialization for remote execution
+Aggregate evaluation results from the Modal volume into a local parquet file:
 
-A generated config must survive serialization, network transit, and reconstruction inside a Modal container before it can drive an experiment. Understanding this pipeline is essential for debugging Modal execution failures, since errors can originate at any stage.
-
-### Data flow
-
+```bash
+uv run tmgg-modal aggregate --output results/mmd_results.parquet --cache-dir results/mmd_cache
 ```
-config_builder.build()
-  │  DictConfig with ${...} interpolations
-  ▼
-prepare_config_for_remote()          ← strips paths, logger, resolves interpolations
-  │  plain dict (JSON-safe)
-  ▼
-JSON file on disk  ─── or ───  ModalRunner wraps directly
-  │                                │
-  ▼                                ▼
-spawn_single / launch_sweep     runner._prepare_task()
-  │  reads JSON, builds dict       │  calls prepare_config_for_remote(),
-  │                                │  wraps into TaskInput
-  ▼                                ▼
-task_dict sent to Modal via .spawn() / .remote()
-  │
-  ▼
-modal_execute_task(task_dict)        ← Modal container entry point
-  │  reconstructs TaskInput(**task_dict)
-  ▼
-execute_task(task, get_storage)      ← resolves paths, rebuilds OmegaConf, runs experiment
-  │
-  ▼
-run_experiment(config) → TaskOutput
-```
-
-Two invocation paths converge at the Modal function boundary. The **programmatic path** (`ModalRunner`) calls `prepare_config_for_remote()` directly, then wraps the result into a `TaskInput`. The **CLI path** (`spawn_single`, `launch_sweep`) reads a pre-serialized JSON file and builds the `task_dict` manually. Both produce the same `dict[str, Any]` that Modal transmits to the container.
-
-### `prepare_config_for_remote()`
-
-Defined in `src/tmgg/experiments/_shared_utils/task.py`. Transforms a live `DictConfig` into a JSON-safe dict by handling three categories of values that cannot survive serialization:
-
-1. **Paths** (`paths.output_dir`, `paths.results_dir`) are set to `None`. These reference `${hydra:runtime.output_dir}`, which only resolves during a Hydra run. The worker sets them from `TMGG_OUTPUT_BASE` and the run ID.
-
-2. **Logger config** is removed entirely. It contains `${oc.env:WANDB_API_KEY}` and similar interpolations that require environment variables unavailable at serialization time. Before removal, W&B settings (entity, project, tags, log_model) are extracted into a `_wandb_config` dict that travels with the config. The worker's `create_loggers()` reconstructs loggers from this dict plus the container's environment.
-
-3. **All remaining interpolations** are resolved via `OmegaConf.to_container(resolve=True)`. If any interpolation is unresolvable, this raises `ValueError` immediately rather than letting a broken config reach the worker.
-
-### `TaskInput` and `TaskOutput`
-
-These dataclasses (in `task.py`) define the serialization contract between caller and worker.
-
-**`TaskInput`** contains everything the worker needs:
-- `config: dict` — the serialized config (output of `prepare_config_for_remote()`)
-- `run_id: str` — unique identifier for this experiment
-- `gpu_tier: str` — which GPU tier was requested (informational inside the container)
-- `timeout_seconds: int` — maximum wall-clock time
-- `additional_tags: list[str]` — extra W&B tags merged at execution time
-
-**`TaskOutput`** is returned to the caller:
-- `run_id`, `status` (`completed` / `failed` / `timeout`), `metrics: dict`
-- `checkpoint_uri` — remote URI on Tigris, if a checkpoint was uploaded
-- `error_message` — populated only on failure
-- `started_at`, `completed_at` — ISO timestamps; `duration_seconds` — wall-clock time
-
-Both are transmitted as plain dicts (via `dataclasses.asdict`), not as pickled objects.
-
-### Worker-side reconstruction (`execute_task`)
-
-`execute_task()` runs inside the Modal container. It reverses the serialization steps:
-
-1. **Path resolution.** Reads `TMGG_OUTPUT_BASE` from the environment (defaults to `/data/outputs` on Modal volumes, `./outputs` locally) and constructs `{base}/{run_id}/` for output and `{base}/{run_id}/results/` for results.
-
-2. **Config reconstruction.** Wraps the plain dict back into an `OmegaConf` `DictConfig`, injects the resolved paths, and merges `additional_tags` into `_wandb_config.tags`.
-
-3. **Confirmation tracking.** Writes `confirmation.json` to the output directory at start, completion, and failure. This provides a storage-independent audit trail on the Modal volume, useful when W&B or Tigris uploads fail.
-
-4. **Experiment execution.** Calls `run_experiment(config)`, which handles the full training/testing/evaluation loop. On success, uploads the best checkpoint and final metrics to Tigris via the storage backend.
-
-5. **Error propagation.** On failure, records the error in both Tigris and the volume confirmation file, then re-raises the exception. There is no graceful fallback.
 
 ## Troubleshooting
 
-### "Modal app not deployed"
+### "Modal app is not deployed"
 
-Run `mise run modal-deploy` to deploy the app.
+Redeploy:
 
-### "Function not hydrated"
-
-The deployment check uses `modal.Function.from_name()` to verify deployment. Ensure the app name matches (`tmgg-spectral-arch`).
-
-### SyntaxError in Modal container
-
-The Modal image uses Python 3.12. Ensure your code doesn't use features beyond 3.12.
-
-### Image build timeout
-
-Large dependencies (PyTorch, etc.) are installed via `uv_pip_install` for faster builds. If builds still timeout, check Modal's status page.
-
-### Secrets not found
-
-Verify secrets exist:
 ```bash
-modal secret list
+doppler run -- mise run modal-deploy
 ```
 
-Recreate if needed:
+### "W&B logger configured but WANDB_API_KEY is not set"
+
+Refresh the Modal secret or inject the key through Doppler:
+
 ```bash
-mise run modal-secrets
+doppler run -- mise run modal-secrets
 ```
+
+### Missing `sbm_accuracy` or `orbit_mmd`
+
+Local dry-runs may warn if `graph-tool` or ORCA are unavailable on your machine. The Modal
+image is built to include those dependencies, so the warning matters primarily for local
+execution and local `--dry-run` checks.

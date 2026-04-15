@@ -29,3 +29,6 @@ logs/
 eigenstructure_results/
 eigenstructure_results_full/
 .env
+
+# ORCA is compiled in-place from source; never keep the native binary in git.
+src/tmgg/evaluation/orca/orca

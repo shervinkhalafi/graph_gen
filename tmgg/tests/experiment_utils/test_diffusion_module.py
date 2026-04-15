@@ -381,9 +381,35 @@ class TestOnValidationEpochEnd:
         # Should not raise — skips generation because global_step % 5 != 0
         module.on_validation_epoch_end()
 
+    def test_skips_at_global_step_zero(self) -> None:
+        """Regression: the generative evaluator must not run on an
+        untrained model. ``on_validation_epoch_end`` fires during
+        Lightning's initial sanity check with ``global_step == 0``, and
+        any modulo gate like ``0 % N == 0`` lets the untrained-model
+        eval path run by default. Metrics computed on random-init
+        samples are meaningless, and the per-metric C++ paths (graph-
+        tool SBM, ORCA subprocess) are unnecessary work at that point.
+
+        See ``docs/reports/2026-04-15-bug-modal-sigabrt.md``.
+        """
+        evaluator = GraphEvaluator(eval_num_samples=4)
+        module = _make_module(evaluator=evaluator, eval_every_n_steps=1)
+
+        mock_dm = MagicMock()
+        mock_trainer = MagicMock()
+        mock_trainer.global_step = 0
+        mock_trainer.datamodule = mock_dm
+        module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
+
+        with patch.object(module, "generate_graphs") as mock_gen:
+            module.on_validation_epoch_end()
+
+        mock_dm.get_reference_graphs.assert_not_called()
+        mock_gen.assert_not_called()
+
     def test_calls_get_reference_graphs_on_datamodule(self) -> None:
-        """At epoch end, on_validation_epoch_end should call
-        get_reference_graphs on the datamodule to obtain refs.
+        """At epoch end past step 0, on_validation_epoch_end should
+        call get_reference_graphs on the datamodule to obtain refs.
         """
         import networkx as nx
 
@@ -394,7 +420,7 @@ class TestOnValidationEpochEnd:
         mock_dm.get_reference_graphs.return_value = [nx.path_graph(5) for _ in range(4)]
 
         mock_trainer = MagicMock()
-        mock_trainer.global_step = 0
+        mock_trainer.global_step = 1  # past the step-0 untrained-model guard
         mock_trainer.datamodule = mock_dm
         module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -417,7 +443,7 @@ class TestOnValidationEpochEnd:
         mock_dm.get_reference_graphs.return_value = []  # no refs
 
         mock_trainer = MagicMock()
-        mock_trainer.global_step = 0
+        mock_trainer.global_step = 1  # past the step-0 untrained-model guard
         mock_trainer.datamodule = mock_dm
         module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -425,6 +451,115 @@ class TestOnValidationEpochEnd:
         with patch.object(module, "generate_graphs") as mock_gen:
             module.on_validation_epoch_end()
         mock_gen.assert_not_called()
+
+    def test_logs_validation_figures_when_generative_eval_runs(self) -> None:
+        """Validation should log figures from the same refs/generated graphs.
+
+        Regression rationale
+        --------------------
+        The default generative path should emit visual diagnostics whenever it
+        already emits generative evaluation metrics. Figure logging must reuse
+        the already-sampled graphs instead of triggering a third generation
+        pass just for visualization.
+        """
+        import networkx as nx
+
+        evaluator = GraphEvaluator(eval_num_samples=4)
+        module = _make_module(
+            evaluator=evaluator,
+            eval_every_n_steps=1,
+            visualization={"enabled": True, "num_samples": 8},
+        )
+
+        refs = [nx.path_graph(5) for _ in range(4)]
+        generated = [nx.cycle_graph(5) for _ in range(4)]
+        figures = {
+            "val/gen/graph_samples": MagicMock(),
+            "val/gen/adjacency_samples": MagicMock(),
+        }
+
+        mock_dm = MagicMock()
+        mock_dm.get_reference_graphs.return_value = refs
+
+        mock_trainer = MagicMock()
+        mock_trainer.global_step = 1  # past the step-0 untrained-model guard
+        mock_trainer.datamodule = mock_dm
+        mock_trainer.loggers = []
+        module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
+
+        with (
+            patch.object(
+                module,
+                "generate_graphs",
+                side_effect=[generated, [nx.path_graph(5) for _ in range(4)]],
+            ) as mock_generate,
+            patch.object(
+                module.evaluator,
+                "evaluate",
+                return_value=MagicMock(
+                    to_dict=MagicMock(
+                        return_value={
+                            "degree_mmd": 0.1,
+                            "clustering_mmd": 0.2,
+                            "spectral_mmd": 0.3,
+                            "orbit_mmd": None,
+                            "sbm_accuracy": None,
+                            "planarity_accuracy": 1.0,
+                            "uniqueness": 1.0,
+                            "novelty": None,
+                        }
+                    )
+                ),
+            ),
+            patch(
+                "tmgg.training.lightning_modules.diffusion_module.build_validation_visualizations",
+                return_value=figures,
+            ) as mock_build,
+            patch(
+                "tmgg.training.lightning_modules.diffusion_module.log_figures"
+            ) as mock_log_figures,
+        ):
+            module.on_validation_epoch_end()
+
+        mock_build.assert_called_once_with(
+            refs=refs,
+            generated=generated,
+            num_samples=8,
+        )
+        mock_log_figures.assert_called_once_with(
+            mock_trainer.loggers,
+            figures,
+            global_step=1,
+        )
+        assert mock_generate.call_count == 2
+
+    def test_skips_validation_figure_logging_when_not_eval_step(self) -> None:
+        """Figure logging should respect the same eval_every_n_steps gate."""
+        evaluator = GraphEvaluator(eval_num_samples=4)
+        module = _make_module(
+            evaluator=evaluator,
+            eval_every_n_steps=5,
+            visualization={"enabled": True, "num_samples": 8},
+        )
+
+        mock_trainer = MagicMock()
+        mock_trainer.global_step = 2
+        mock_trainer.datamodule = MagicMock()
+        mock_trainer.loggers = []
+        module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
+
+        with (
+            patch(
+                "tmgg.training.lightning_modules.diffusion_module.build_validation_visualizations"
+            ) as mock_build,
+            patch(
+                "tmgg.training.lightning_modules.diffusion_module.log_figures"
+            ) as mock_log_figures,
+        ):
+            module.on_validation_epoch_end()
+
+        mock_build.assert_not_called()
+        mock_log_figures.assert_not_called()
 
 
 class TestTestStep:

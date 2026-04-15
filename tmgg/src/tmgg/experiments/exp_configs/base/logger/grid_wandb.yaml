@@ -12,3 +12,8 @@ logger:
       log_model: false  # Don't upload models to save space
       offline: false  # Set to true for offline mode
       notes: "Grid search with ~4k params across architectures"
+  - csv:
+      save_dir: ${paths.output_dir}/csv
+      name: ${experiment_name}
+      version: null
+      flush_logs_every_n_steps: 100

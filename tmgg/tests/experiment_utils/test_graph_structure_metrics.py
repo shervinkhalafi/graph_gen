@@ -16,6 +16,9 @@ on systems without g++.
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import networkx as nx
 import numpy as np
 import pytest
@@ -139,6 +142,86 @@ class TestNovelty:
 class TestOrbitMMD:
     """Orbit MMD metric using ORCA orbit counts."""
 
+    def test_get_binary_path_rebuilds_preexisting_binary(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Wrapper should rebuild ORCA instead of trusting a preexisting ELF.
+
+        Regression rationale
+        --------------------
+        Modal can expose the source tree under ``/root/tmgg``. If that tree
+        contains a host-built ORCA executable, blindly reusing it can fail with
+        glibc/libstdc++ mismatches inside the container. The wrapper should
+        rebuild the binary on first use in a process without making the target
+        path temporarily disappear for concurrent readers.
+        """
+        import tmgg.evaluation.orca as orca_mod
+
+        orca_dir = tmp_path / "orca"
+        orca_dir.mkdir()
+        (orca_dir / "orca.cpp").write_text("// fake source\n")
+        stale_binary = orca_dir / "orca"
+        stale_binary.write_text("stale")
+
+        commands: list[list[str]] = []
+
+        def _fake_run(
+            cmd: list[str],
+            check: bool,
+            capture_output: bool,
+            text: bool,
+        ) -> None:
+            assert check is True
+            assert capture_output is True
+            assert text is True
+            assert cmd[:4] == ["g++", "-O2", "-std=c++11", "-o"]
+            assert Path(cmd[4]) != stale_binary
+            Path(cmd[4]).write_text("rebuilt")
+            commands.append(cmd)
+
+        monkeypatch.setattr(orca_mod, "_ORCA_DIR", orca_dir)
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+
+        binary = orca_mod._get_binary_path()
+
+        assert binary == stale_binary
+        assert len(commands) == 1
+        assert stale_binary.read_text() == "rebuilt"
+
+    def test_run_orca_forwards_subprocess_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wrapper should surface ORCA stderr/stdout when the subprocess fails.
+
+        Regression rationale
+        --------------------
+        Modal failures currently surface only as ``CalledProcessError`` with an
+        exit status, which hides the actual ORCA diagnostic (for example
+        duplicate edges or self-loops in the serialized graph). The wrapper
+        should forward that diagnostic in a ``RuntimeError`` message.
+        """
+        import tmgg.evaluation.orca as orca_mod
+
+        G = nx.path_graph(3)
+
+        monkeypatch.setattr(orca_mod, "_get_binary_path", lambda: Path("/fake/orca"))
+
+        def _raise_called_process_error(*args: object, **kwargs: object) -> bytes:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=["/fake/orca", "node", "4", "/tmp/orca_input_fake.txt", "std"],
+                output=b"Input file contains duplicate undirected edges.\n",
+            )
+
+        monkeypatch.setattr(
+            orca_mod.subprocess, "check_output", _raise_called_process_error
+        )
+
+        with pytest.raises(RuntimeError, match="duplicate undirected edges"):
+            orca_mod.run_orca(G)
+
     @pytest.mark.skipif(
         not _can_compile_orca(),
         reason="g++ not available for ORCA compilation",
@@ -224,3 +307,80 @@ class TestSBMAccuracy:
         acc = compute_sbm_accuracy(graphs, p_intra=0.3, p_inter=0.005)
         # ER graphs lack block structure
         assert acc <= 0.6
+
+    def test_parallel_executor_is_process_pool_not_thread_pool(self) -> None:
+        """Regression: concurrent graph-tool calls from a Python
+        ``ThreadPoolExecutor`` abort the process with ``vector::_M_fill_insert``
+        or ``malloc()`` heap-corruption aborts. ``compute_sbm_accuracy`` must
+        dispatch its parallel work through a ``ProcessPoolExecutor`` with the
+        ``spawn`` start method so each graph-tool call is isolated in a fresh
+        interpreter.
+
+        See ``docs/reports/2026-04-15-bug-modal-sigabrt.md``.
+
+        We substitute fake executor classes for
+        ``concurrent.futures.ProcessPoolExecutor`` and
+        ``concurrent.futures.ThreadPoolExecutor`` inside the graph_evaluator
+        module and assert the process one is instantiated, the thread one is
+        not. The fake returns precomputed scores so the call succeeds without
+        ever launching a real worker or touching graph-tool.
+        """
+        from collections.abc import Callable
+        from typing import Any
+        from unittest.mock import patch
+
+        from tmgg.evaluation import graph_evaluator as ge_mod
+
+        dummy_graphs = [nx.empty_graph(5) for _ in range(3)]
+
+        class _FakeExecutor:
+            instantiations: int = 0
+
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                type(self).instantiations += 1
+
+            def __enter__(self) -> _FakeExecutor:
+                return self
+
+            def __exit__(self, *_args: Any) -> None:
+                return None
+
+            def map(
+                self,
+                _fn: Callable[..., Any],
+                *iterables: Any,
+            ) -> list[float]:
+                n = len(list(iterables[0]))
+                return [0.0] * n
+
+        class FakeProcessPool(_FakeExecutor):
+            instantiations = 0
+
+        class FakeThreadPool(_FakeExecutor):
+            instantiations = 0
+
+        with (
+            patch.object(
+                ge_mod.concurrent.futures, "ProcessPoolExecutor", FakeProcessPool
+            ),
+            patch.object(
+                ge_mod.concurrent.futures, "ThreadPoolExecutor", FakeThreadPool
+            ),
+        ):
+            ge_mod.compute_sbm_accuracy(
+                dummy_graphs,
+                p_intra=0.3,
+                p_inter=0.005,
+                refinement_steps=0,
+                is_parallel=True,
+            )
+
+        assert FakeProcessPool.instantiations == 1, (
+            "compute_sbm_accuracy must use ProcessPoolExecutor to avoid "
+            "graph-tool thread-unsafety (see 2026-04-15-bug-modal-sigabrt.md)"
+        )
+        assert FakeThreadPool.instantiations == 0, (
+            "compute_sbm_accuracy regressed to ThreadPoolExecutor — this "
+            "will abort the process on Modal when graph-tool runs. "
+            "See docs/reports/2026-04-15-bug-modal-sigabrt.md"
+        )

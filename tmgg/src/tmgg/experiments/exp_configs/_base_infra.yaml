@@ -38,9 +38,6 @@ scheduler_config:
   warmup_fraction: 0.02    # 2% of training (~1-2 epochs typical)
   decay_fraction: 0.8      # LR reaches 0 at 80% of training
 
-# Visualization settings (step-based)
-visualization_interval: 5000  # steps between logging visualizations
-
 # Spectral delta logging (eigenstructure tracking during training)
 # Always logs eigengap delta, algebraic connectivity delta,
 # eigenvalue drift, and subspace distance for noisy→clean and denoised→clean.
@@ -64,9 +61,11 @@ allow_no_wandb: true
 # Set automatically by stage runners; null when running experiments directly
 stage: null
 
-# Evaluation settings (step-based)
+# Evaluation settings shared by generative experiment paths.
 evaluation:
-  visualization_interval: ${visualization_interval}
+  visualization:
+    enabled: true
+    num_samples: 8
 
 # Paths configuration
 # - Local execution: Hydra resolves ${hydra:runtime.output_dir} automatically

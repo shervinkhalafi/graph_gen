@@ -9,6 +9,14 @@ uv run pytest tests/ -x --ignore=tests/modal/test_eigenstructure_modal.py -m "no
 ```
 - the semantic groupings are modeltype,dataset,asymetric, noiselevels,input embeddings, ablations across the digress components + the hyperparmater settings. the only averaging we allow is across seeds,across hyperparmaters we pick the best (but also report the distribution) and we group by these high level research question comparisons
 
+## Debugging Modal runs
+
+When a run on Modal (`tmgg-spectral`) crashes, follow `docs/debugging-modal.md`.
+Key point: `modal app logs` streams live only — there is no historical
+log retrieval from the CLI. Reproduce under a live stream (`DETACH=0` on
+the launch wrapper, tee'd to a file) or attach `modal app logs tmgg-spectral`
+in parallel immediately after launch.
+
 ## W&B Data Exports
 
 Exported W&B data lives in `wandb_export/`. Check existing exports before re-exporting to avoid redundant API calls.

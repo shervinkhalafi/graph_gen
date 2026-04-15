@@ -18,7 +18,7 @@ Need a different model or a custom configuration? Start with the **Get started**
 - [Experiments](experiments.md) — stage-based workflows, outputs, and logging
 - [Data](data.md) — datasets, noise types, and data modules
 - [Models](models.md) — available architectures and parameters
-- [Cloud execution](cloud.md) — local vs Modal runners and storage backends
+- [Cloud execution](cloud.md) — current Modal CLI, launcher, secrets, and deployment flow
 - [Architecture](architecture.md) — system design and module layout
 - [Extending](extending.md) — add new models, datasets, or backends
 
@@ -28,6 +28,6 @@ Need a different model or a custom configuration? Start with the **Get started**
 - `tmgg-digress` — DiGress transformer
 - `tmgg-gnn` — GNN-based denoising
 - `tmgg-gnn-transformer` — hybrid GNN + transformer model
-- `python -m tmgg.experiments.gaussian_diffusion_generative.runner` — diffusion-based graph generation (see [Experiments: Generative](experiments.md#generative-graph-modeling))
+- `tmgg-gaussian-gen` / `tmgg-discrete-gen` — generative diffusion experiments
 
 The first four entry points run *denoising* experiments that reconstruct corrupted graphs. The generative runner trains a full diffusion model to *generate* novel graphs from noise, evaluated via MMD metrics. If you're unsure, start with `tmgg-spectral-arch` and explore overrides in the Configuration guide.

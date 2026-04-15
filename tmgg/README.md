@@ -30,8 +30,8 @@ uv run tmgg-gnn trainer.max_steps=50000
 # Spectral denoising with specific eigenvector count
 uv run tmgg-spectral-arch model.k=50
 
-# Run with Weights & Biases logging
-uv run tmgg-spectral-arch logger=wandb
+# Run with Weights & Biases logging (enabled by default when WANDB_API_KEY is set)
+WANDB_API_KEY="your-api-key" uv run tmgg-spectral-arch
 ```
 
 Note: Training is configured in **steps**, not epochs (see [Configuration](docs/configuration.md)).
@@ -97,11 +97,11 @@ modal secret create tigris-credentials \
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `WANDB_API_KEY` | No | — | Weights & Biases API key. Required only when using `logger=wandb`. |
+| `WANDB_API_KEY` | No | — | Weights & Biases API key. Needed when W&B logging is enabled; most training configs enable it by default. |
 
 ```bash
 export WANDB_API_KEY="your-api-key"
-uv run tmgg-spectral-arch logger=wandb
+uv run tmgg-spectral-arch
 ```
 
 ## CLI Commands
@@ -138,7 +138,10 @@ uv run tmgg-spectral-arch --multirun model.k=8,16,32
 
 ### W&B Project Naming
 
-Each CLI command logs to a specific W&B project (when `logger=wandb`). The project name is set in the corresponding base config and can be overridden with `wandb_project=...`.
+Each CLI command logs to a specific W&B project when W&B logging is enabled. Most
+training configs inherit the default W&B logger from `_base_infra.yaml`; the
+project name is set in the corresponding base config and can be overridden with
+`wandb_project=...`.
 
 | CLI Commands | W&B Project | Base Config |
 |-------------|-------------|-------------|
@@ -147,7 +150,8 @@ Each CLI command logs to a specific W&B project (when `logger=wandb`). The proje
 | `tmgg-discrete-gen`, `tmgg-discrete-eval` | `discrete-diffusion` | `base_config_discrete_diffusion_generative.yaml` |
 | `tmgg-grid-search` | `tmgg-grid-search-4k` | `grid_search_base.yaml` |
 
-The shared `base_config_training.yaml` defaults to `base-config`, which individual configs override.
+The shared `_base_infra.yaml` composes the common trainer, logger, callbacks, and
+path settings that experiment-specific base configs build on top of.
 
 ## Experiment Analysis
 

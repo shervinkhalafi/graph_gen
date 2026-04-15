@@ -40,6 +40,9 @@ from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.evaluation.graph_evaluator import (
     GraphEvaluator,
 )
+from tmgg.evaluation.visualization import (
+    build_validation_visualizations,
+)
 from tmgg.models.base import GraphModel
 from tmgg.training.lightning_modules.base_graph_module import (
     BaseGraphModule,
@@ -47,9 +50,40 @@ from tmgg.training.lightning_modules.base_graph_module import (
 from tmgg.training.lightning_modules.train_loss_discrete import (
     TrainLossDiscrete,
 )
+from tmgg.training.logging import log_figures
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
 _VALID_LOSS_TYPES = frozenset({"cross_entropy", "mse", "bce_logits"})
+_DEFAULT_VISUALIZATION = {"enabled": True, "num_samples": 8}
+
+
+def _normalize_visualization_config(
+    visualization: dict[str, Any] | None,
+) -> dict[str, bool | int]:
+    """Validate and normalize validation-visualization settings."""
+    merged = dict(_DEFAULT_VISUALIZATION)
+    if visualization is not None:
+        merged.update(visualization)
+
+    enabled = merged["enabled"]
+    num_samples = merged["num_samples"]
+
+    if not isinstance(enabled, bool):
+        raise TypeError(
+            "Visualization config field 'enabled' must be a bool, "
+            f"got {type(enabled).__name__}."
+        )
+    if not isinstance(num_samples, int):
+        raise TypeError(
+            "Visualization config field 'num_samples' must be an int, "
+            f"got {type(num_samples).__name__}."
+        )
+    if num_samples <= 0 or num_samples % 2 != 0:
+        raise ValueError(
+            "Visualization config field 'num_samples' must be a positive even integer."
+        )
+
+    return {"enabled": enabled, "num_samples": num_samples}
 
 
 def _continuous_target_edge_state(data: GraphData) -> torch.Tensor:
@@ -145,6 +179,10 @@ class DiffusionModule(BaseGraphModule):
         Generative evaluation runs when ``global_step`` is a multiple of
         this value. Decouples evaluation frequency from batch size and
         dataset size.
+    visualization : dict[str, Any] | None
+        Validation-visualization settings. ``enabled`` toggles figure
+        logging, and ``num_samples`` sets the total number of plotted
+        reference/generated graphs across both distributions.
     """
 
     def __init__(
@@ -167,6 +205,7 @@ class DiffusionModule(BaseGraphModule):
         lambda_E: float = 5.0,
         num_nodes: int = 20,
         eval_every_n_steps: int = 5000,
+        visualization: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             model=model,
@@ -195,6 +234,9 @@ class DiffusionModule(BaseGraphModule):
 
         self.num_nodes: int = num_nodes
         self.eval_every_n_steps: int = eval_every_n_steps
+        self.visualization: dict[str, bool | int] = _normalize_visualization_config(
+            visualization
+        )
 
         self.criterion: nn.Module
         self._train_loss_discrete: TrainLossDiscrete | None = None
@@ -486,6 +528,15 @@ class DiffusionModule(BaseGraphModule):
         if self.evaluator is None or self.sampler is None:
             return
 
+        # Skip generative evaluation on an untrained model. ``global_step == 0``
+        # covers Lightning's initial sanity-check pass (where ``global_step``
+        # is 0 and the model is fresh) and any other pre-training invocation.
+        # Without this guard the ``eval_every_n_steps`` modulo gate passes
+        # trivially (``0 % N == 0``), causing us to sample from a random-init
+        # model and log meaningless metrics.
+        if self.global_step == 0:
+            return
+
         if self.global_step % self.eval_every_n_steps != 0:
             return
 
@@ -502,6 +553,17 @@ class DiffusionModule(BaseGraphModule):
             for key, value in results.to_dict().items():
                 if value is not None:
                     self.log(f"val/gen/{key}", value, on_epoch=True)
+            if self.visualization["enabled"]:
+                figures = build_validation_visualizations(
+                    refs=refs,
+                    generated=generated_graphs,
+                    num_samples=int(self.visualization["num_samples"]),
+                )
+                log_figures(
+                    self.trainer.loggers,  # pyright: ignore[reportAttributeAccessIssue]
+                    figures,
+                    global_step=self.global_step,
+                )
 
         # Full-chain VLB via DiffusionLikelihoodCollector.
         # Runs the complete reverse chain on a subset of reference graphs

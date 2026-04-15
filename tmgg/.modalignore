@@ -40,6 +40,8 @@ cache/
 .naider/
 .aider*
 .claude/
+.codex/
+.local-storage/
 
 # Results and data (large directories)
 configs/
@@ -54,9 +56,18 @@ eigenstructure_results_full/
 # Review/docs artifacts
 2025-*/
 docs/
+docs/reports/
+docs/superpowers/
 scripts/
 tests/
 rationales/
+
+# Local helper scripts that should not invalidate Modal packaging
+DEBUG-run-*.zsh
+run-*.zsh
+sync_wb/
+tensorboard-tools/
+wandb-tools/
 
 # Misc
 .DS_Store

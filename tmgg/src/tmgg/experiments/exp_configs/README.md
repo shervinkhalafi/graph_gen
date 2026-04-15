@@ -35,37 +35,42 @@ tmgg-experiment +stage=stage1_poc --multirun \
 
 Configuration is composed in the following order (later overrides earlier):
 
-1. `base_config_training.yaml` - Shared training infrastructure (optimizer, scheduler, noise, paths)
-2. `base_config_*.yaml` - Experiment-type settings (model defaults, wandb project)
-3. `stage/*.yaml` - Stage-specific overrides (via +stage=...)
-4. `models/**/*.yaml` - Model architecture (via model=...)
-5. `data/*.yaml` - Dataset configuration (via data=...)
-6. CLI overrides - Highest precedence
+1. `_base_infra.yaml` - shared trainer, logger, callbacks, and path settings
+2. `base_config_*.yaml` - experiment-type defaults (for example denoising vs generative)
+3. Defaults-listed config groups inside the base config - model, callbacks, logger, and sometimes data
+4. `stage/*.yaml` - stage-specific overrides (via `tmgg-experiment +stage=...`)
+5. CLI overrides - highest precedence
+
+One important current nuance: some base configs define their `data:` block inline
+instead of through a Hydra defaults entry. In those cases, `data=...` will fail
+because there is no existing defaults-list slot to override. Appending `+data=...`
+adds a packaged config under `data`, which can replace fields including `_target_`.
 
 ## Directory Structure
 
 ```
 exp_configs/
-├── base_config_training.yaml    # Shared training settings (optimizer, scheduler, noise, paths)
-├── base_config_spectral_arch.yaml  # Spectral architecture denoising (inherits from training)
-├── base_config_gnn.yaml            # GNN denoising (inherits from training)
-├── base_config_gnn_transformer.yaml # GNN+Transformer denoising (inherits from training)
-├── base_config_digress.yaml        # DiGress denoising (inherits from training)
-├── base_config_gaussian_diffusion.yaml         # Gaussian diffusion generation (inherits from training)
-├── base_config_discrete_diffusion_generative.yaml # Categorical diffusion generation (inherits from training)
-├── base_dataloader.yaml         # Shared dataloader settings
+├── _base_infra.yaml             # Shared trainer/logger/callback/path defaults
+├── base_config_denoising.yaml   # Shared denoising base
+├── base_config_spectral_arch.yaml
+├── base_config_gnn.yaml
+├── base_config_gnn_transformer.yaml
+├── base_config_digress.yaml
+├── base_config_gaussian_diffusion.yaml
+├── base_config_discrete_diffusion_generative.yaml
 ├── data/                        # Dataset configurations
-│   ├── single_graph_base.yaml   # Base for single-graph datasets
-│   ├── er_single_graph.yaml     # Erdos-Renyi
-│   ├── sbm_single_graph.yaml    # Stochastic Block Model
-│   └── pyg_*_single_graph.yaml  # PyG benchmark datasets
+│   ├── base_dataloader.yaml     # Shared GraphDataModule defaults
+│   ├── single_graph_base.yaml   # Base for single-graph denoising datasets
+│   ├── sbm_default.yaml         # Enumerated SBM denoising preset
+│   ├── sbm_single_graph.yaml    # Single-graph SBM denoising preset
+│   └── sbm_digress.yaml         # Batch-size override for DiGress-style SBM data
 ├── models/                      # Model architectures
 │   ├── spectral/                # Spectral denoising models
 │   │   ├── linear_pe.yaml
 │   │   ├── filter_bank.yaml
 │   │   └── self_attention.yaml
-│   └── digress/                 # DiGress baselines
-│       └── digress_sbm_small.yaml
+│   ├── digress/                 # DiGress denoising variants
+│   └── discrete/                # Discrete diffusion model configs
 ├── stage/                       # Stage-specific configs
 │   ├── stage1_poc.yaml          # Proof of concept
 │   ├── stage1_sanity.yaml       # Sanity check
@@ -75,17 +80,20 @@ exp_configs/
         └── tmgg_modal.yaml      # Modal cloud execution
 ```
 
-## Optimizer Settings
+## Shared Training Defaults
 
-All experiments use AdamW with these defaults:
+`_base_infra.yaml` currently provides these shared top-level defaults:
 
 ```yaml
-optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1e-2
-  weight_decay: 1e-12
-  amsgrad: true
+learning_rate: 1e-3
+weight_decay: 1e-4
+optimizer_type: adamw
+amsgrad: false
 ```
+
+Experiment-specific model configs can and do override these. For example,
+`models/discrete/discrete_sbm_official.yaml` sets the DiGress-style optimizer
+values inside the instantiated `DiffusionModule`.
 
 ## Available Stages
 
@@ -119,7 +127,18 @@ tmgg-experiment +stage=stage2_validation cross_graph=true
 
 ## Data Configurations
 
-All single-graph configs inherit from `data/single_graph_base.yaml`:
+Most `data/*.yaml` presets are written for the denoising path and inherit from
+`data/base_dataloader.yaml`, which sets `_target_: tmgg.data.GraphDataModule`.
+The discrete generative base config instead defines its own inline
+`SyntheticCategoricalDataModule`.
+
+That means:
+
+- `data=...` works only when the base config already exposes a `data` defaults slot
+- `+data=...` appends a packaged `@package data` config and may replace the datamodule target
+- appending a denoising preset onto a generative config can therefore swap in the wrong datamodule
+
+Common denoising-oriented presets:
 
 | Config | Description |
 |--------|-------------|
@@ -167,11 +186,13 @@ tmgg-experiment +stage=stage1_poc --multirun hydra/launcher=basic \
 
 ### W&B Logging
 
-W&B logging is required by default. To degrade a missing `WANDB_API_KEY`
-to a warning and continue without W&B logging, pass `allow_no_wandb=true`:
+Most training configs default to the W&B logger through `_base_infra.yaml`.
+The current shared default is `allow_no_wandb=true`, which degrades missing
+credentials to a warning. Set `allow_no_wandb=false` when you want runs to
+fail loudly if W&B logging is unavailable:
 
 ```bash
-tmgg-experiment +stage=stage1_poc allow_no_wandb=true
+tmgg-experiment +stage=stage1_poc allow_no_wandb=false
 ```
 
 ## Common Overrides

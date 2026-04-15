@@ -32,6 +32,7 @@ run = """
 LOGDIR="/tmp/tmgg-modal-logs"
 LOGFILE="$LOGDIR/modal-deploy-$(date +%Y%m%d-%H%M%S).log"
 mkdir -p "$LOGDIR"
+rm -f src/tmgg/evaluation/orca/orca
 echo "Logging to $LOGFILE"
 MODAL_LOGLEVEL=DEBUG uv run modal deploy -m tmgg.modal._functions 2>&1 | tee "$LOGFILE"
 """

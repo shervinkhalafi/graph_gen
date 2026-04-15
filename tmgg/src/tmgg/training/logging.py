@@ -207,6 +207,7 @@ def log_figure(
 
             # Save figure
             save_path = save_dir / filename
+            save_path.parent.mkdir(parents=True, exist_ok=True)
             loguru.info(f"Saving figure to {save_path=}")
             figure.savefig(save_path, dpi=300, bbox_inches="tight")
     # Close figure to prevent memory leaks
