@@ -29,6 +29,8 @@ from collections import defaultdict
 from collections.abc import MutableMapping
 from typing import Any, cast, override
 
+import matplotlib.figure
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import torch
@@ -43,6 +45,7 @@ from tmgg.models.base import GraphModel
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
+from tmgg.training.logging import log_figure
 from tmgg.utils.noising.noise import NoiseDefinition, create_noise_definition
 
 
@@ -88,6 +91,11 @@ class SingleStepDenoisingModule(DiffusionModule):
         Random seed for deterministic noise level sampling.
     spectral_k : int
         Number of top eigenvectors for spectral delta metrics.
+    log_validation_adjacency_images : bool
+        When ``True``, log side-by-side adjacency heatmaps for the original,
+        noisy, and denoised validation graphs during ``on_validation_epoch_end``.
+    num_validation_adjacency_images : int
+        Number of reference validation graphs to visualize per noise level.
     evaluator : GraphEvaluator | None
         When provided, distributional metrics (MMD, uniqueness, etc.) are
         computed per noise level at validation/test epoch end. Reference
@@ -115,11 +123,17 @@ class SingleStepDenoisingModule(DiffusionModule):
         seed: int | None = None,
         # Logging options
         spectral_k: int = 4,
+        log_validation_adjacency_images: bool = False,
+        num_validation_adjacency_images: int = 4,
         # Distributional evaluation
         evaluator: GraphEvaluator | None = None,
     ) -> None:
         if not noise_levels:
             raise ValueError("noise_levels must be a non-empty list of floats.")
+        if num_validation_adjacency_images <= 0:
+            raise ValueError(
+                "num_validation_adjacency_images must be a positive integer."
+            )
 
         # Build the noise definition and wrap it in a ContinuousNoiseProcess
         noise_generator: NoiseDefinition = create_noise_definition(
@@ -158,6 +172,8 @@ class SingleStepDenoisingModule(DiffusionModule):
 
         # Spectral delta logging
         self.spectral_k: int = spectral_k
+        self.log_validation_adjacency_images: bool = log_validation_adjacency_images
+        self.num_validation_adjacency_images: int = num_validation_adjacency_images
 
         # Seeded RNG for noise level sampling (avoids global numpy state)
         self._noise_rng: np.random.Generator = np.random.default_rng(seed)
@@ -448,6 +464,43 @@ class SingleStepDenoisingModule(DiffusionModule):
                     on_epoch=True,
                 )
 
+    def _build_validation_adjacency_figure(
+        self,
+        *,
+        eps: float,
+        ref_graphs: list[nx.Graph[Any]],
+        clean_adjs: torch.Tensor,
+        noisy_adjs: torch.Tensor,
+        denoised_adjs: torch.Tensor,
+    ) -> matplotlib.figure.Figure:
+        """Build a validation figure with original/noisy/denoised adjacency heatmaps."""
+        num_graphs = min(self.num_validation_adjacency_images, len(ref_graphs))
+        fig, axes = plt.subplots(
+            num_graphs, 3, figsize=(9.0, 3.0 * num_graphs), squeeze=False
+        )
+        column_titles = ("Original", f"Noisy (eps={eps:.3g})", "Denoised")
+
+        for col, title in enumerate(column_titles):
+            axes[0, col].set_title(title)
+
+        for row in range(num_graphs):
+            num_nodes = ref_graphs[row].number_of_nodes()
+            matrices = (
+                clean_adjs[row, :num_nodes, :num_nodes],
+                noisy_adjs[row, :num_nodes, :num_nodes],
+                denoised_adjs[row, :num_nodes, :num_nodes],
+            )
+            for col, matrix in enumerate(matrices):
+                axis = axes[row, col]
+                axis.imshow(matrix.detach().cpu().numpy(), cmap="viridis", vmin=0, vmax=1)
+                axis.set_xticks([])
+                axis.set_yticks([])
+                if col == 0:
+                    axis.set_ylabel(f"graph {row}\nn={num_nodes}")
+
+        fig.tight_layout()
+        return fig
+
     @override
     def on_validation_epoch_end(self) -> None:
         """Evaluate distributional metrics per noise level at epoch end.
@@ -457,13 +510,12 @@ class SingleStepDenoisingModule(DiffusionModule):
         predictions, and evaluates via the GraphEvaluator. Logs per-noise-level
         and noise-level-averaged distributional metrics.
         """
-        if self.evaluator is None:
+        if self.evaluator is None and not self.log_validation_adjacency_images:
             return
 
         dm = self.trainer.datamodule  # pyright: ignore[reportAttributeAccessIssue]
-        ref_graphs: list[nx.Graph[Any]] = dm.get_reference_graphs(
-            "val", self.evaluator.eval_num_samples
-        )
+        num_reference_graphs = self.evaluator.eval_num_samples if self.evaluator else 2
+        ref_graphs: list[nx.Graph[Any]] = dm.get_reference_graphs("val", num_reference_graphs)
         if len(ref_graphs) < 2:
             return
 
@@ -490,6 +542,21 @@ class SingleStepDenoisingModule(DiffusionModule):
                 predictions = (output > 0).float()
                 predictions = self._zero_diagonal(predictions)
 
+                if self.log_validation_adjacency_images:
+                    figure = self._build_validation_adjacency_figure(
+                        eps=eps,
+                        ref_graphs=ref_graphs,
+                        clean_adjs=ref_adjs,
+                        noisy_adjs=noisy_gd.to_edge_state(),
+                        denoised_adjs=predictions,
+                    )
+                    log_figure(
+                        self.trainer.loggers,  # pyright: ignore[reportAttributeAccessIssue]
+                        f"val_{eps}/adjacency_examples",
+                        figure,
+                        global_step=self.global_step,
+                    )
+
                 # Convert predictions to NetworkX graphs
                 denoised_graphs: list[nx.Graph[Any]] = []
                 for i in range(len(ref_graphs)):
@@ -497,9 +564,10 @@ class SingleStepDenoisingModule(DiffusionModule):
                     A_np = predictions[i, :ng, :ng].cpu().numpy()
                     denoised_graphs.append(nx.from_numpy_array(A_np))
 
-                results = self.evaluator.evaluate(
-                    refs=ref_graphs, generated=denoised_graphs
-                )
+                if self.evaluator is None:
+                    continue
+
+                results = self.evaluator.evaluate(refs=ref_graphs, generated=denoised_graphs)
                 if results is None:
                     continue
 
