@@ -218,69 +218,13 @@ print("[host-diag] model:", _run(["bash", "-lc", "grep -m1 'model name' /proc/cp
 flags = _run(["bash", "-lc", "grep -m1 '^flags' /proc/cpuinfo | cut -d: -f2"]).split()
 interesting = sorted(f for f in flags if f in {"avx","avx2","avx512f","avx512dq","avx512cd","avx512bw","avx512vl","fma","fma4","bmi1","bmi2","adx","sse4_1","sse4_2","sha_ni"})
 print("[host-diag] cpu-isa:", " ".join(interesting) or "<none>", flush=True)
-has_avx512 = any(f.startswith("avx512") for f in flags)
-print("[host-diag] has_avx512:", has_avx512, flush=True)
 print("[host-diag] libc:", _run(["bash", "-lc", "ldd --version 2>&1 | head -1"]), flush=True)
 print("[host-diag] libstdc++:", _run(["bash", "-lc", "find /opt/conda /usr/lib -name 'libstdc++.so.6*' 2>/dev/null | head -3"]), flush=True)
-
-# ----- AVX-512 localisation scan -------------------------------------------
-# Only run on hosts that LACK AVX-512: on those we'd SIGILL anyway if we
-# tried ``import graph_tool``, so the scan below is the only way to learn
-# which compiled library (``graph_tool`` core, ``boost_python``, ``libgomp``,
-# etc.) is the actual offender. On AVX-512 hosts the scan is skipped to
-# save cold-start time.
-#
-# Detection heuristic: search the disassembly for references to ``zmm``
-# registers. ZMM registers (512-bit) only exist under AVX-512 encoding;
-# any hit proves the .so contains at least one AVX-512 instruction.
-import os.path as _op
-CANDIDATE_GLOBS = [
-    "/opt/conda/lib/python3.*/site-packages/graph_tool/**/*.so",
-    "/opt/conda/lib/libboost_python*.so*",
-    "/opt/conda/lib/libboost_*.so*",
-    "/opt/conda/lib/libgomp.so*",
-    "/opt/conda/lib/libstdc++.so*",
-]
-
-if not has_avx512:
-    print("[host-diag-avx512] host lacks AVX-512 — scanning candidate .so files for offenders", flush=True)
-    import glob as _glob
-    candidates: list[str] = []
-    for pat in CANDIDATE_GLOBS:
-        candidates.extend(_glob.glob(pat, recursive=True))
-    # De-duplicate while preserving order; skip symlinks so a path is counted once.
-    seen: set[str] = set()
-    unique: list[str] = []
-    for c in candidates:
-        real = _op.realpath(c)
-        if real in seen or not _op.isfile(real):
-            continue
-        seen.add(real)
-        unique.append(real)
-    print(f"[host-diag-avx512] scanning {len(unique)} .so files", flush=True)
-    offenders: list[str] = []
-    for so in unique[:80]:  # hard cap
-        # objdump -d is expensive; pipe through rg with --count so we stream
-        # instead of materialising the whole disassembly. 15s per .so bound.
-        cmd = f"objdump -d --no-show-raw-insn {so} 2>/dev/null | rg -c 'zmm[0-9]+' || echo 0"
-        n_str = _run(["bash", "-lc", cmd])
-        try:
-            n = int(n_str.splitlines()[-1]) if n_str else 0
-        except (ValueError, IndexError):
-            n = -1
-        if n > 0:
-            offenders.append(f"{_op.basename(so)}={n}")
-    if offenders:
-        print(f"[host-diag-avx512] OFFENDING .so files (name=zmm_ref_count): {', '.join(offenders)}", flush=True)
-    else:
-        print("[host-diag-avx512] no .so files contain zmm references (unexpected — SIGILL cause is elsewhere)", flush=True)
-else:
-    print("[host-diag-avx512] host has AVX-512; skipping .so scan", flush=True)
-
 try:
     import graph_tool  # noqa: F401  -- just read __file__, don't trigger the SIGILL path
     print("[host-diag] graph_tool.__file__:", graph_tool.__file__, flush=True)
     # Find the compiled core .so and readelf the NEEDED / RUNPATH entries.
+    import os.path as _op
     gt_dir = _op.dirname(graph_tool.__file__)
     core = _run(["bash", "-lc", f"find {gt_dir} -name 'libgraph_tool*.so' -o -name '_core*.so' 2>/dev/null | head -3"])
     print("[host-diag] graph_tool core .so candidates:", core or "<none>", flush=True)
@@ -357,16 +301,11 @@ def _run_host_diagnostics(log_path: Path | None = None) -> None:
 
     print("=== host-diag start ===", flush=True)
     _append_preflight(log_path, "=== host-diag start ===")
-    # 180s cap: most hosts finish in <2s; on a non-AVX-512 host we also run
-    # an objdump scan over ~30 graph_tool + boost .so files (~5-30s total).
-    # The cap exists to keep a pathological host from hanging the preflight
-    # forever; individual shell calls inside the snippet have their own 5s
-    # timeout.
     result = subprocess.run(
         [sys.executable, "-c", _HOST_DIAGNOSTICS_SNIPPET],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=30,
     )
     if result.stdout:
         trailer = "" if result.stdout.endswith("\n") else "\n"
