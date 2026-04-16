@@ -57,7 +57,6 @@ from tmgg.data.data_modules.synthetic_categorical import (
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.sampler import CategoricalSampler
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.diffusion.transitions import DiscreteUniformTransition
 from tmgg.evaluation.graph_evaluator import (
     GraphEvaluator,
 )
@@ -100,6 +99,14 @@ class ValidationConfig:
     hidden_mlp_dims: dict[str, int] | None = None
     hidden_dims: dict[str, int] | None = None
     diffusion_steps: int = 1000
+    # ``transition_type`` used to select between the legacy
+    # ``DiscreteUniformTransition`` and ``MarginalTransition`` classes. The
+    # transitions module was removed in 301f1345; ``CategoricalNoiseProcess``
+    # now exposes the same knob through ``limit_distribution``
+    # (``"uniform"`` or ``"empirical_marginal"``). The mapping is:
+    # ``"uniform"`` -> ``"uniform"``, anything else (``"marginal"``) ->
+    # ``"empirical_marginal"``. The CLI flag is kept for compatibility and
+    # has no other side effects.
     transition_type: str = "marginal"
 
     # Data
@@ -246,25 +253,26 @@ def run_validation(cfg: ValidationConfig) -> ValidationResult:
     )
 
     schedule = NoiseSchedule("cosine_iddpm", timesteps=cfg.diffusion_steps)
-    tm = (
-        DiscreteUniformTransition(dx, de, 0)
-        if cfg.transition_type == "uniform"
-        else None
+    limit_distribution = (
+        "uniform" if cfg.transition_type == "uniform" else "empirical_marginal"
     )
     noise_process = CategoricalNoiseProcess(
-        noise_schedule=schedule,
+        schedule=schedule,
         x_classes=dx,
         e_classes=de,
-        transition_model=tm,
+        limit_distribution=limit_distribution,
     )
-    sampler = CategoricalSampler(
-        noise_process=noise_process,
-        noise_schedule=schedule,
-    )
+    # ``CategoricalSampler`` is a semantic alias for the unified ``Sampler``
+    # with a default (argument-free) constructor. The sampler is wired to
+    # the noise process at ``sample()`` time by the ``DiffusionModule``.
+    sampler = CategoricalSampler()
+    # Skip orbit/sbm/planarity/uniqueness/novelty to keep the quick smoke
+    # test fast and self-contained.
     evaluator = GraphEvaluator(
         eval_num_samples=cfg.eval_num_samples,
         kernel="gaussian_tv",
         sigma=1.0,
+        skip_metrics={"orbit", "sbm", "planarity", "uniqueness", "novelty"},
     )
 
     from tmgg.models.digress.transformer_model import GraphTransformer
@@ -337,7 +345,7 @@ def run_validation(cfg: ValidationConfig) -> ValidationResult:
 
     ref_graphs: list[nx.Graph[Any]] = []
     for batch in dm.val_dataloader():
-        adj_batch = batch.E.argmax(dim=-1)
+        adj_batch = batch.binarised_adjacency()
         node_mask = batch.node_mask
         for i in range(adj_batch.size(0)):
             n = int(node_mask[i].sum().item())
