@@ -200,6 +200,71 @@ def _format_return_code(return_code: int) -> str:
     return f"{return_code} ({signame})"
 
 
+_HOST_DIAGNOSTICS_SNIPPET = r"""
+# Host diagnostics printed before every native-module preflight. Dumps
+# the CPU model + flags, kernel version, and (for graph_tool) the
+# loaded .so path. Small, bounded, and always executed so that a SIGILL
+# next time has actionable context.
+import os, platform, subprocess
+def _run(cmd):
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True, timeout=5)
+        return out.strip()
+    except Exception as e:
+        return f"<err: {e}>"
+print("[host-diag] kernel:", platform.uname().release, flush=True)
+print("[host-diag] model:", _run(["bash", "-lc", "grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs"]), flush=True)
+flags = _run(["bash", "-lc", "grep -m1 '^flags' /proc/cpuinfo | cut -d: -f2"]).split()
+interesting = sorted(f for f in flags if f in {"avx","avx2","avx512f","avx512dq","avx512cd","avx512bw","avx512vl","fma","fma4","bmi1","bmi2","adx","sse4_1","sse4_2","sha_ni"})
+print("[host-diag] cpu-isa:", " ".join(interesting) or "<none>", flush=True)
+print("[host-diag] libc:", _run(["bash", "-lc", "ldd --version 2>&1 | head -1"]), flush=True)
+print("[host-diag] libstdc++:", _run(["bash", "-lc", "find /opt/conda /usr/lib -name 'libstdc++.so.6*' 2>/dev/null | head -3"]), flush=True)
+try:
+    import graph_tool  # noqa: F401  -- just read __file__, don't trigger the SIGILL path
+    print("[host-diag] graph_tool.__file__:", graph_tool.__file__, flush=True)
+    # Find the compiled core .so and readelf the NEEDED / RUNPATH entries.
+    import os.path as _op
+    gt_dir = _op.dirname(graph_tool.__file__)
+    core = _run(["bash", "-lc", f"find {gt_dir} -name 'libgraph_tool*.so' -o -name '_core*.so' 2>/dev/null | head -3"])
+    print("[host-diag] graph_tool core .so candidates:", core or "<none>", flush=True)
+    first_so = core.splitlines()[0] if core and not core.startswith("<err") else ""
+    if first_so:
+        print("[host-diag] readelf -d tail:", _run(["bash", "-lc", f"readelf -d {first_so} 2>/dev/null | grep -E 'NEEDED|RUNPATH|RPATH' | head -15"]), flush=True)
+except Exception as e:
+    print(f"[host-diag] graph_tool pre-import metadata failed: {e}", flush=True)
+"""
+
+
+def _run_host_diagnostics() -> None:
+    """Print host CPU + library diagnostics before the import preflight.
+
+    Runs once per container. The output lets us distinguish, on the next
+    ``graph_tool`` SIGILL, whether the fault tracks to a CPU-ISA mismatch
+    (distinct ``[host-diag] cpu-isa`` across failing vs healthy hosts) or
+    to a library / image inconsistency (distinct ``libstdc++`` paths or
+    ``readelf`` dependencies).
+    """
+    import subprocess
+    import sys
+
+    print("=== host-diag start ===", flush=True)
+    result = subprocess.run(
+        [sys.executable, "-c", _HOST_DIAGNOSTICS_SNIPPET],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.stdout:
+        print(
+            result.stdout, end="" if result.stdout.endswith("\n") else "\n", flush=True
+        )
+    if result.stderr:
+        print(
+            result.stderr, end="" if result.stderr.endswith("\n") else "\n", flush=True
+        )
+    print("=== host-diag end ===", flush=True)
+
+
 def _run_import_preflight() -> None:
     """Probe native imports in isolated subprocesses before launching the CLI.
 
@@ -209,6 +274,8 @@ def _run_import_preflight() -> None:
     """
     import subprocess
     import sys
+
+    _run_host_diagnostics()
 
     for module_name, import_stmt in IMPORT_PREFLIGHTS:
         print(f"Preflight import check: {module_name}", flush=True)
