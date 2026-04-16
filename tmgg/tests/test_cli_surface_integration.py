@@ -98,7 +98,7 @@ def _tiny_discrete_training_overrides(output_dir: Path) -> list[str]:
             "data.num_nodes=12",
             "model.noise_schedule.timesteps=10",
             "model.evaluator.eval_num_samples=4",
-            "+models/discrete@model=discrete_small",
+            "models/discrete@model=discrete_small",
             "model.model.n_layers=2",
             "model.model.hidden_dims.dx=64",
             "model.model.hidden_dims.de=16",

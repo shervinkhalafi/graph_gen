@@ -416,7 +416,7 @@ Common overrides:
 uv run tmgg-gaussian-gen model.noise_schedule.timesteps=200
 
 # Discrete: use the local upstream-style SBM baseline
-uv run tmgg-discrete-gen +models/discrete@model=discrete_sbm_official
+uv run tmgg-discrete-gen models/discrete@model=discrete_sbm_official
 
 # Generative data overrides use graph_type / graph_config, not dataset_type / dataset_config
 uv run tmgg-discrete-gen data.graph_type=erdos_renyi data.num_nodes=100
@@ -474,7 +474,7 @@ data:
 For the local DiGress-style SBM baseline, the checked-in model preset is:
 
 ```bash
-uv run tmgg-discrete-gen +models/discrete@model=discrete_sbm_official
+uv run tmgg-discrete-gen models/discrete@model=discrete_sbm_official
 ```
 
 That preset gives you the local "official" architecture and optimizer values, but

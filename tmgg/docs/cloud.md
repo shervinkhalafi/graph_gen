@@ -186,7 +186,7 @@ Example:
 
 ```bash
 uv run tmgg-modal run tmgg-discrete-gen \
-    +models/discrete@model=discrete_sbm_official \
+    models/discrete@model=discrete_sbm_official \
     allow_no_wandb=false \
     wandb_entity=graph_denoise_team \
     wandb_project=discrete-diffusion \
@@ -201,7 +201,7 @@ training horizon and feature settings, the currently supported Modal launch look
 
 ```bash
 uv run tmgg-modal run tmgg-discrete-gen \
-    +models/discrete@model=discrete_sbm_official \
+    models/discrete@model=discrete_sbm_official \
     learning_rate=0.0002 \
     weight_decay=1e-12 \
     amsgrad=true \

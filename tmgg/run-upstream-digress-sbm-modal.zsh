@@ -43,7 +43,7 @@ cmd=(
   tmgg-modal
   run
   tmgg-discrete-gen
-  +models/discrete@model=discrete_sbm_official
+  models/discrete@model=discrete_sbm_official
   +data=spectre_sbm
   # The base config carries inline synthetic-only keys (``graph_type``,
   # ``num_nodes``, ``num_graphs``, ``train_ratio``, ``val_ratio``,

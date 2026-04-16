@@ -40,15 +40,15 @@ MODEL_INSTANTIATION_CASES = [
     ("base_config_discrete_diffusion_generative", []),
     (
         "base_config_discrete_diffusion_generative",
-        ["+models/discrete@model=discrete_small"],
+        ["models/discrete@model=discrete_small"],
     ),
     (
         "base_config_discrete_diffusion_generative",
-        ["+models/discrete@model=discrete_sbm_eigenvec"],
+        ["models/discrete@model=discrete_sbm_eigenvec"],
     ),
     (
         "base_config_discrete_diffusion_generative",
-        ["+models/discrete@model=discrete_sbm_official"],
+        ["models/discrete@model=discrete_sbm_official"],
     ),
     ("base_config_gaussian_diffusion", []),
 ]

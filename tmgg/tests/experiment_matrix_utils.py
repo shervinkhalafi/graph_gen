@@ -508,19 +508,19 @@ MODEL_COVERAGE_CASES = [
     ModelCoverageCase(
         "discrete/discrete_small",
         "base_config_discrete_diffusion_generative",
-        ("+models/discrete@model=discrete_small",) + SMALL_DISCRETE_MODEL,
+        ("models/discrete@model=discrete_small",) + SMALL_DISCRETE_MODEL,
     ),
     ModelCoverageCase(
         "discrete/discrete_sbm_eigenvec",
         "base_config_discrete_diffusion_generative",
-        ("+models/discrete@model=discrete_sbm_eigenvec",)
+        ("models/discrete@model=discrete_sbm_eigenvec",)
         + SMALL_DISCRETE_MODEL
         + ("model.model.extra_features.k=4",),
     ),
     ModelCoverageCase(
         "discrete/discrete_sbm_official",
         "base_config_discrete_diffusion_generative",
-        ("+models/discrete@model=discrete_sbm_official",) + SMALL_DISCRETE_MODEL,
+        ("models/discrete@model=discrete_sbm_official",) + SMALL_DISCRETE_MODEL,
     ),
 ]
 

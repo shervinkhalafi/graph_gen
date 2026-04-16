@@ -163,20 +163,20 @@ EXPERIMENT_RUNNERS = [
         "discrete-small",
         "tmgg-discrete-gen",
         "generative",
-        ("+models/discrete@model=discrete_small",) + _tiny_discrete_overrides(),
+        ("models/discrete@model=discrete_small",) + _tiny_discrete_overrides(),
     ),
     RunnerSmokeCase(
         "discrete-eigenvec",
         "tmgg-discrete-gen",
         "generative",
-        ("+models/discrete@model=discrete_sbm_eigenvec",)
+        ("models/discrete@model=discrete_sbm_eigenvec",)
         + _tiny_discrete_overrides(with_eigenvectors=True),
     ),
     RunnerSmokeCase(
         "discrete-official",
         "tmgg-discrete-gen",
         "generative",
-        ("+models/discrete@model=discrete_sbm_official",) + _tiny_discrete_overrides(),
+        ("models/discrete@model=discrete_sbm_official",) + _tiny_discrete_overrides(),
     ),
 ]
 

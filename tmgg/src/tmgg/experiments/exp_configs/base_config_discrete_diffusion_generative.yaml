@@ -4,14 +4,22 @@
 # skipping the denoising task config (task/denoising.yaml).
 #
 # The model architecture comes from a model config in models/discrete/.
-# Override the default with: tmgg-discrete-gen +models/discrete@model=discrete_sbm_official
+# The ``/models/discrete@model`` defaults entry uses the group/option
+# split form so an override fully replaces the default tree instead of
+# deep-merging on top. This matters for panel yamls where the new
+# architecture has a different kwargs signature than
+# ``discrete_default``'s GraphTransformer (``n_layers``, ``input_dims``
+# etc. would otherwise bleed through and crash ``hydra.utils.instantiate``).
 #
-# Run with: tmgg-discrete-gen
+# Usage (pick one architecture per run):
+#   tmgg-discrete-gen models/discrete@model=discrete_sbm_official
+#   tmgg-discrete-gen models/discrete@model=baselines/linear
+#
 # Override: tmgg-discrete-gen model.noise_schedule.timesteps=50 data.num_nodes=20
 
 defaults:
   - _base_infra
-  - models/discrete/discrete_default@model
+  - /models/discrete@model: discrete_default
   - override /base/logger: discrete_wandb
   - override /base/callbacks: discrete_nll
   - _self_
