@@ -68,7 +68,7 @@ def clean_data() -> GraphData:
 
     y = torch.zeros(BS, 0)
     node_mask = torch.ones(BS, N, dtype=torch.bool)
-    return GraphData(X=X, E=E, y=y, node_mask=node_mask)
+    return GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
 
 
 # ---------------------------------------------------------------------------

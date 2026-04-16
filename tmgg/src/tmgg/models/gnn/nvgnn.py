@@ -7,7 +7,7 @@ from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.layers.eigen_embedding import TruncatedEigenEmbedding
 from tmgg.models.layers.nvgcn_layer import NodeVarGraphConvolutionLayer
 
-from ..base import GraphModel
+from ..base import EdgeSource, GraphModel, read_edge_scalar, write_edge_scalar
 
 
 class NodeVarGNN(GraphModel):
@@ -20,6 +20,11 @@ class NodeVarGNN(GraphModel):
         feature_dim: int = 10,
         eigenvalue_reg: float = 0.0,
         symmetrized_output: bool = True,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         """Initialize Node-variant GNN.
 
@@ -36,6 +41,15 @@ class NodeVarGNN(GraphModel):
         symmetrized_output
             If True (default), symmetrize the reconstructed adjacency
             via ``(A + A.T) / 2`` after the dot product.
+        edge_source
+            Per-spec input read selector (``"feat"`` reads ``E_feat``,
+            ``"class"`` reads ``E_class``). Default ``"feat"`` matches
+            the historical denoising path.
+        output_dims_x_class, output_dims_x_feat, output_dims_e_class, output_dims_e_feat
+            Per-field output widths required by the Wave 7 architecture
+            contract. Default ``output_dims_e_feat=1`` puts the prediction
+            in ``E_feat``; set ``output_dims_e_class=2`` to instead emit a
+            two-channel ``E_class``.
         """
         super().__init__()
 
@@ -44,6 +58,14 @@ class NodeVarGNN(GraphModel):
         self.feature_dim = feature_dim
         self.eigenvalue_reg = eigenvalue_reg
         self.symmetrized_output = symmetrized_output
+        self.edge_source: EdgeSource = edge_source
+        self.output_dims_x_class = output_dims_x_class
+        self.output_dims_x_feat = output_dims_x_feat
+        self.output_dims_e_class = output_dims_e_class
+        self.output_dims_e_feat = output_dims_e_feat
+        self._output_target: EdgeSource = (
+            "class" if output_dims_e_class is not None else "feat"
+        )
 
         self.embedding_layer = TruncatedEigenEmbedding(
             target_dim=feature_dim, eigenvalue_reg=eigenvalue_reg
@@ -62,20 +84,11 @@ class NodeVarGNN(GraphModel):
     def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
         """Compute denoised graph from input graph data.
 
-        Parameters
-        ----------
-        data
-            Graph features. The dense edge state is extracted via
-            ``data.to_edge_state()``.
-        t
-            Diffusion timestep tensor, or None. Currently unused.
-
-        Returns
-        -------
-        GraphData
-            Denoised graph with 2-class edge features.
+        Reads the dense scalar adjacency through ``read_edge_scalar``
+        (respects ``self.edge_source``) and writes the prediction to the
+        configured split edge field via ``write_edge_scalar``.
         """
-        x = data.to_edge_state()
+        x = read_edge_scalar(data, self.edge_source)
         z = self.embedding_layer(x)
 
         for layer in self.layers:
@@ -85,7 +98,13 @@ class NodeVarGNN(GraphModel):
         result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
         if self.symmetrized_output:
             result_adj = (result_adj + result_adj.transpose(1, 2)) / 2
-        return GraphData.from_edge_state(result_adj, node_mask=data.node_mask)
+        out = write_edge_scalar(
+            data, edge_scalar=result_adj, target=self._output_target
+        )
+        if t is not None:
+            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
+            out = out.replace(y=new_y)
+        return out
 
     @override
     def get_config(self) -> dict[str, Any]:
@@ -96,4 +115,9 @@ class NodeVarGNN(GraphModel):
             "feature_dim": self.feature_dim,
             "eigenvalue_reg": self.eigenvalue_reg,
             "symmetrized_output": self.symmetrized_output,
+            "edge_source": self.edge_source,
+            "output_dims_x_class": self.output_dims_x_class,
+            "output_dims_x_feat": self.output_dims_x_feat,
+            "output_dims_e_class": self.output_dims_e_class,
+            "output_dims_e_feat": self.output_dims_e_feat,
         }

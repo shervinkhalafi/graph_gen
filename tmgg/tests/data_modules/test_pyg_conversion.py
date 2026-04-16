@@ -26,6 +26,7 @@ import pytest
 import torch
 from torch_geometric.data import Batch, Data
 
+from tests._helpers.graph_builders import binary_graphdata
 from tmgg.data.datasets.graph_types import GraphData
 
 # ---------------------------------------------------------------------------
@@ -61,8 +62,10 @@ class TestFromPygBatch:
         batch = Batch.from_data_list([triangle])
         gd = GraphData.from_pyg_batch(batch)
 
-        assert gd.X.shape == (1, 3, 2)
-        assert gd.E.shape == (1, 3, 3, 2)
+        # Wave 9.3: structure-only datasets emit X_class=None.
+        assert gd.X_class is None
+        assert gd.E_class is not None
+        assert gd.E_class.shape == (1, 3, 3, 2)
         assert gd.y.shape == (1, 0)
         assert gd.node_mask.shape == (1, 3)
         assert gd.node_mask.all(), "All three nodes should be real."
@@ -73,7 +76,8 @@ class TestFromPygBatch:
         batch = Batch.from_data_list([triangle])
         gd = GraphData.from_pyg_batch(batch)
 
-        adj_recovered = gd.E[0, :, :, 1]
+        assert gd.E_class is not None
+        adj_recovered = gd.E_class[0, :, :, 1]
         expected = torch.tensor([[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
         assert torch.allclose(
             adj_recovered, expected
@@ -86,8 +90,9 @@ class TestFromPygBatch:
         batch = Batch.from_data_list([triangle, square])
         gd = GraphData.from_pyg_batch(batch)
 
-        assert gd.X.shape == (2, 4, 2)
-        assert gd.E.shape == (2, 4, 4, 2)
+        assert gd.X_class is None
+        assert gd.E_class is not None
+        assert gd.E_class.shape == (2, 4, 4, 2)
         assert gd.node_mask.shape == (2, 4)
 
         # Triangle graph: first 3 real, 4th padded
@@ -110,8 +115,11 @@ class TestFromPygBatch:
         assert not gd.node_mask[0, 3]
 
         # Padded rows/cols of E for first graph should be zero in edge channel
-        assert gd.E[0, 3, :, 1].sum() == 0.0, "Padded row should have no edges."
-        assert gd.E[0, :, 3, 1].sum() == 0.0, "Padded column should have no edges."
+        assert gd.E_class is not None
+        assert gd.E_class[0, 3, :, 1].sum() == 0.0, "Padded row should have no edges."
+        assert (
+            gd.E_class[0, :, 3, 1].sum() == 0.0
+        ), "Padded column should have no edges."
 
     def test_adjacency_round_trip(self) -> None:
         """from_pyg_batch → to_binary_adjacency recovers original adjacency."""
@@ -119,7 +127,7 @@ class TestFromPygBatch:
         batch = Batch.from_data_list([triangle])
         gd = GraphData.from_pyg_batch(batch)
 
-        adj = gd.to_binary_adjacency()
+        adj = gd.binarised_adjacency()
         expected = torch.tensor([[[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]])
         assert torch.allclose(
             adj, expected
@@ -139,9 +147,9 @@ class TestToPyg:
         gd = GraphData.from_pyg_batch(batch)
 
         # Squeeze to unbatched: node_mask shape (3,)
+        assert gd.E_class is not None
         gd_single = GraphData(
-            X=gd.X.squeeze(0),
-            E=gd.E.squeeze(0),
+            E_class=gd.E_class.squeeze(0),
             y=gd.y.squeeze(0),
             node_mask=gd.node_mask.squeeze(0),
         )
@@ -153,7 +161,7 @@ class TestToPyg:
         assert data.edge_index.shape == (2, 6)
 
     def test_batch_size_1_accepted(self) -> None:
-        """to_pyg accepts batch-size-1 GraphData (squeezes batch dim)."""
+        """to_pyg accepts batch-size-1 GraphData(squeezes batch dim)."""
         triangle = _make_triangle_graph()
         batch = Batch.from_data_list([triangle])
         gd = GraphData.from_pyg_batch(batch)
@@ -176,8 +184,8 @@ class TestToPyg:
         """adjacency → GraphData → Data → Batch → GraphData → adjacency."""
         adj_original = torch.tensor([[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
 
-        # adjacency → GraphData (unbatched)
-        gd_from_adj = GraphData.from_binary_adjacency(adj_original)
+        # adjacency → GraphData(unbatched)
+        gd_from_adj = binary_graphdata(adj_original)
 
         # GraphData → PyG Data
         data = gd_from_adj.to_pyg()
@@ -187,7 +195,7 @@ class TestToPyg:
         gd_recovered = GraphData.from_pyg_batch(batch)
 
         # GraphData → adjacency (batched, shape (1, 3, 3))
-        adj_recovered = gd_recovered.to_binary_adjacency().squeeze(0)
+        adj_recovered = gd_recovered.binarised_adjacency().squeeze(0)
 
         assert torch.allclose(adj_recovered, adj_original), (
             f"Full round-trip failed.\nOriginal:\n{adj_original}\n"

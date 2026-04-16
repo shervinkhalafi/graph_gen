@@ -283,7 +283,7 @@ class TestGraphDataModuleDataLoaders:
 
         # Batch is a GraphData with adjacency shape (batch_size, n, n)
         assert isinstance(batch, GraphData)
-        adj = batch.to_binary_adjacency()
+        adj = batch.binarised_adjacency()
         assert adj.shape[0] == 16
         assert adj.shape[1] == adj.shape[2] == 8
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from tests._helpers.graph_builders import binary_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData, collapse_to_indices
 
 
@@ -39,7 +40,7 @@ class TestGraphDataMask:
         y = torch.zeros(bs, 0)
         node_mask = torch.ones(bs, n)
 
-        data = GraphData(X=X, E=E, y=y, node_mask=node_mask)
+        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
         result = data.mask()
         assert result is not data  # frozen — returns new instance
 
@@ -52,7 +53,7 @@ class TestGraphDataMask:
         node_mask = torch.ones(bs, n)
         node_mask[:, -1] = 0
 
-        data = GraphData(X=X, E=E, y=y, node_mask=node_mask)
+        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
         result = data.mask()
         assert result is not data
 
@@ -66,7 +67,7 @@ class TestGraphDataMask:
         y = torch.zeros(bs, 0)
         node_mask = torch.ones(bs, n)
 
-        data = GraphData(X=X, E=E, y=y, node_mask=node_mask)
+        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
         with pytest.raises(AssertionError, match="symmetric"):
             data.mask()
 
@@ -81,10 +82,12 @@ class TestGraphDataMask:
         node_mask = torch.ones(bs, n)
         node_mask[0, 2] = 0  # mask out node 2
 
-        result = GraphData(X=X, E=E, y=y, node_mask=node_mask).mask()
-        assert result.X[0, 2].abs().sum() == 0
-        assert result.E[0, 2, :, :].abs().sum() == 0
-        assert result.E[0, :, 2, :].abs().sum() == 0
+        result = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E).mask()
+        assert result.X_class is not None
+        assert result.E_class is not None
+        assert result.X_class[0, 2].abs().sum() == 0
+        assert result.E_class[0, 2, :, :].abs().sum() == 0
+        assert result.E_class[0, :, 2, :].abs().sum() == 0
 
 
 # -- GraphData.mask_zero_diag() ---------------------------------------------
@@ -101,10 +104,13 @@ class TestGraphDataMaskZeroDiag:
         y = torch.zeros(bs, 0)
         node_mask = torch.ones(bs, n, dtype=torch.bool)
 
-        result = GraphData(X=X, E=E, y=y, node_mask=node_mask).mask_zero_diag()
+        result = GraphData(
+            y=y, node_mask=node_mask, X_class=X, E_class=E
+        ).mask_zero_diag()
+        assert result.E_class is not None
         for b in range(bs):
             for i in range(n):
-                assert result.E[b, i, i].abs().sum() == 0
+                assert result.E_class[b, i, i].abs().sum() == 0
 
     def test_masked_positions_zeroed(self) -> None:
         """Masked node features are zeroed."""
@@ -115,8 +121,11 @@ class TestGraphDataMaskZeroDiag:
         node_mask = torch.ones(bs, n, dtype=torch.bool)
         node_mask[0, 3] = False
 
-        result = GraphData(X=X, E=E, y=y, node_mask=node_mask).mask_zero_diag()
-        assert result.X[0, 3].abs().sum() == 0
+        result = GraphData(
+            y=y, node_mask=node_mask, X_class=X, E_class=E
+        ).mask_zero_diag()
+        assert result.X_class is not None
+        assert result.X_class[0, 3].abs().sum() == 0
 
 
 # -- GraphData.type_as() ----------------------------------------------------
@@ -126,17 +135,21 @@ class TestGraphDataTypeAs:
     """Verify type_as returns a new instance with correct dtype."""
 
     def test_dtype_changes(self) -> None:
+        X = torch.randn(1, 3, 2)
+        E = torch.randn(1, 3, 3, 2)
         data = GraphData(
-            X=torch.randn(1, 3, 2),
-            E=torch.randn(1, 3, 3, 2),
             y=torch.zeros(1, 0),
             node_mask=torch.ones(1, 3, dtype=torch.bool),
+            X_class=X,
+            E_class=E,
         )
         target = torch.zeros(1, dtype=torch.float64)
         result = data.type_as(target)
         assert result is not data
-        assert result.X.dtype == torch.float64
-        assert result.E.dtype == torch.float64
+        assert result.X_class is not None
+        assert result.E_class is not None
+        assert result.X_class.dtype == torch.float64
+        assert result.E_class.dtype == torch.float64
         assert result.y.dtype == torch.float64
 
 
@@ -147,14 +160,16 @@ class TestGraphDataFrozen:
     """Frozen dataclass prevents field assignment."""
 
     def test_cannot_assign_X(self) -> None:
+        X = torch.randn(1, 3, 2)
+        E = torch.randn(1, 3, 3, 2)
         data = GraphData(
-            X=torch.randn(1, 3, 2),
-            E=torch.randn(1, 3, 3, 2),
             y=torch.zeros(1, 0),
             node_mask=torch.ones(1, 3, dtype=torch.bool),
+            X_class=X,
+            E_class=E,
         )
         with pytest.raises(AttributeError):
-            data.X = torch.zeros(1, 3, 2)  # type: ignore[misc]
+            data.X_class = torch.zeros(1, 3, 2)  # type: ignore[misc]
 
 
 # -- collapse_to_indices() --------------------------------------------------
@@ -178,11 +193,14 @@ class TestCollapseToIndices:
         y = torch.zeros(bs, 0)
         node_mask = torch.ones(bs, n)
 
-        result = collapse_to_indices(GraphData(X=X, E=E, y=y, node_mask=node_mask))
-        assert result.X[0, 0] == 2
-        assert result.X[0, 1] == 0
-        assert result.X[0, 2] == 3
-        assert result.E[0, 0, 1] == 1
+        E_idx, X_idx = collapse_to_indices(
+            GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+        )
+        assert X_idx is not None
+        assert X_idx[0, 0] == 2
+        assert X_idx[0, 1] == 0
+        assert X_idx[0, 2] == 3
+        assert E_idx[0, 0, 1] == 1
 
     def test_masked_positions_are_negative_one(self) -> None:
         """Masked nodes and edges get sentinel value -1."""
@@ -195,10 +213,13 @@ class TestCollapseToIndices:
         node_mask = torch.ones(bs, n)
         node_mask[0, 2] = 0
 
-        result = collapse_to_indices(GraphData(X=X, E=E, y=y, node_mask=node_mask))
-        assert result.X[0, 2] == -1
-        assert result.E[0, 2, 0] == -1
-        assert result.E[0, 0, 2] == -1
+        E_idx, X_idx = collapse_to_indices(
+            GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+        )
+        assert X_idx is not None
+        assert X_idx[0, 2] == -1
+        assert E_idx[0, 2, 0] == -1
+        assert E_idx[0, 0, 2] == -1
 
 
 # -- Explicit graph boundaries ----------------------------------------------
@@ -210,11 +231,11 @@ class TestExplicitGraphBoundaries:
     def test_binary_adjacency_round_trip(self) -> None:
         """Binary graph boundaries round-trip through the topology accessors."""
         adj = torch.tensor([[[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]]])
-        data = GraphData.from_binary_adjacency(adj)
-        torch.testing.assert_close(data.to_binary_adjacency(), adj)
+        data = binary_graphdata(adj)
+        torch.testing.assert_close(data.binarised_adjacency(), adj)
 
     def test_binary_topology_lifts_into_edge_state_space(self) -> None:
         """Binary-topology graphs expose their edge indicator channel as edge state."""
         adj = torch.tensor([[[0.0, 1.0, 1.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
-        data = GraphData.from_binary_adjacency(adj)
-        torch.testing.assert_close(data.to_edge_state(), adj)
+        data = binary_graphdata(adj)
+        torch.testing.assert_close(legacy_edge_scalar(data), adj)

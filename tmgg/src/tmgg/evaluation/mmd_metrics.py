@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from itertools import combinations
 from typing import Any, Literal, cast
 
 import networkx as nx
@@ -397,10 +396,16 @@ def compute_mmd(
     sigma: float = 1.0,
     distance_scaling: float = 1.0,
 ) -> float:
-    """Compute unbiased MMD estimator between two sets of histograms.
+    """Compute the **biased V-statistic** MMD between two sample sets.
 
-    Uses the unbiased estimator: E[k(x,x')] + E[k(y,y')] - 2*E[k(x,y)]
-    where x, x' are drawn from samples1, and y, y' from samples2.
+    Uses the biased estimator
+    ``MMD^2 = (1/n^2) sum_{i,j} k(x_i,x_j) + (1/m^2) sum_{i,j} k(y_i,y_j)
+              - (2/(n*m)) sum_{i,j} k(x_i,y_j)``
+    where ``i==j`` terms are *included* in the within-set sums. This
+    matches upstream DiGress's MMD implementation
+    (``src/analysis/dist_helper.py::compute_mmd``); using the unbiased
+    U-statistic instead would shift our reported numbers by O(1/n) and
+    make them not directly comparable to published DiGress results.
 
     Parameters
     ----------
@@ -422,7 +427,7 @@ def compute_mmd(
     Returns
     -------
     float
-        MMD value (non-negative).
+        Biased MMD value (non-negative).
     """
     if len(samples1) < 2 or len(samples2) < 2:
         return float("inf")
@@ -434,16 +439,17 @@ def compute_mmd(
             return gaussian_emd_kernel(x, y, sigma, distance_scaling)
         return gaussian_tv_kernel(x, y, sigma)
 
-    # Compute kernel expectations
-    # k11: E[k(x, x')] for x, x' in samples1
-    k11_values = [kernel_fn(x, y) for x, y in combinations(samples1, 2)]
+    # V-statistic: enumerate all ``n^2`` ordered pairs including ``i==j``.
+    # ``k(x_i, x_i) = 1`` for all stationary kernels we use, so the
+    # diagonal contributes ``n / n^2 = 1/n`` per within-set sum — the
+    # exact bias absorbed by the V- vs. U-statistic distinction.
+    k11_values = [kernel_fn(x, y) for x in samples1 for y in samples1]
     k11 = float(np.mean(k11_values)) if k11_values else 0.0
 
-    # k22: E[k(y, y')] for y, y' in samples2
-    k22_values = [kernel_fn(x, y) for x, y in combinations(samples2, 2)]
+    k22_values = [kernel_fn(x, y) for x in samples2 for y in samples2]
     k22 = float(np.mean(k22_values)) if k22_values else 0.0
 
-    # k12: E[k(x, y)] for x in samples1, y in samples2
+    # Cross-set sum is identical between U- and V-statistics; left as-is.
     k12_values = [kernel_fn(x, y) for x in samples1 for y in samples2]
     k12 = float(np.mean(k12_values)) if k12_values else 0.0
 
@@ -456,6 +462,10 @@ def compute_mmd_metrics(
     kernel: Literal["gaussian", "gaussian_tv", "gaussian_emd"] = "gaussian_tv",
     sigma: float = 1.0,
     max_workers: int | None = None,
+    *,
+    degree_sigma: float | None = None,
+    clustering_sigma: float | None = None,
+    spectral_sigma: float | None = None,
 ) -> MMDResults:
     """Compute MMD metrics between reference and generated graph distributions.
 
@@ -470,31 +480,42 @@ def compute_mmd_metrics(
         (TV-based, DiGress default), or ``"gaussian_emd"`` (Earth
         Mover's Distance via POT).
     sigma
-        Bandwidth for kernel.
+        Fallback bandwidth applied when a per-metric override is ``None``.
     max_workers
         Maximum number of parallel workers for statistics computation.
+    degree_sigma, clustering_sigma, spectral_sigma
+        Per-metric kernel bandwidths. When ``None`` each falls back to
+        ``sigma``. Upstream DiGress uses ``clustering_sigma=0.1`` while
+        leaving the others at 1.0; this matches the upstream
+        ``dist_helper.gaussian_tv`` call sites.
 
     Returns
     -------
     MMDResults
         MMD values for each graph statistic.
     """
-    # Compute statistics for both sets
     ref_stats = compute_graph_statistics(ref_graphs, max_workers)
     gen_stats = compute_graph_statistics(gen_graphs, max_workers)
 
-    # Compute MMD for each statistic.
-    # Upstream DiGress uses sigma=1.0/10 and distance_scaling=bins for
-    # clustering with EMD; the default sigma=1.0 works for TV/L2.
-    degree_mmd = compute_mmd(ref_stats.degree, gen_stats.degree, kernel, sigma)
+    degree_s = sigma if degree_sigma is None else degree_sigma
+    clustering_s = sigma if clustering_sigma is None else clustering_sigma
+    spectral_s = sigma if spectral_sigma is None else spectral_sigma
+
+    # ``gaussian_emd`` requires distance_scaling proportional to the
+    # number of bins for the clustering histogram; keep that here so the
+    # EMD path is still correct when a caller opts into it. TV/L2 do not
+    # use ``distance_scaling``.
+    degree_mmd = compute_mmd(ref_stats.degree, gen_stats.degree, kernel, degree_s)
     clustering_mmd = compute_mmd(
         ref_stats.clustering,
         gen_stats.clustering,
         kernel,
-        sigma=sigma if kernel != "gaussian_emd" else 1.0 / 10,
+        sigma=clustering_s,
         distance_scaling=100.0 if kernel == "gaussian_emd" else 1.0,
     )
-    spectral_mmd = compute_mmd(ref_stats.spectral, gen_stats.spectral, kernel, sigma)
+    spectral_mmd = compute_mmd(
+        ref_stats.spectral, gen_stats.spectral, kernel, spectral_s
+    )
 
     return MMDResults(
         degree_mmd=degree_mmd,

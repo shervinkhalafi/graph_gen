@@ -24,6 +24,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 
 import tmgg  # noqa: F401 - registers OmegaConf resolvers
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData
 
 
@@ -182,12 +183,12 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         assert isinstance(
             result, GraphData
         ), f"GNN should return GraphData, got {type(result)}"
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
     def test_gnn_symmetric_returns_graph_data(self) -> None:
         """Verify GNNSymmetric returns GraphData."""
@@ -199,12 +200,12 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         assert isinstance(
             result, GraphData
         ), f"GNNSymmetric should return GraphData, got {type(result)}"
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
     def test_nodevar_gnn_returns_graph_data(self) -> None:
         """Verify NodeVarGNN returns GraphData."""
@@ -216,12 +217,12 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         assert isinstance(
             result, GraphData
         ), f"NodeVarGNN should return GraphData, got {type(result)}"
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
 
 @pytest.mark.integration

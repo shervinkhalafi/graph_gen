@@ -18,6 +18,14 @@ model:
     X: 0
     E: 1
     y: 0
+  # Wave 7/8 architecture contract: split-field output dims. This denoising
+  # DiGress config keeps the historical ``output_dims`` class widths
+  # (X_class=0, E_class=1); the continuous _feat fields are null and
+  # ``edge_source`` is not used by GraphTransformer.
+  output_dims_x_class: 0
+  output_dims_x_feat: null
+  output_dims_e_class: 1
+  output_dims_e_feat: null
   extra_features:
     _target_: tmgg.models.digress.extra_features.EigenvectorAugmentation
     k: 50

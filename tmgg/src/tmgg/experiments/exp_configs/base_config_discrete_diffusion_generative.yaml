@@ -48,6 +48,12 @@ data:
     num_blocks: 2
     p_intra: 0.7
     p_inter: 0.1
+  # Evaluator pulls SBM parameters from this block via Hydra
+  # interpolation (see ``models/discrete/discrete_sbm_official.yaml``).
+  # Tracks ``graph_config`` automatically.
+  eval_meta:
+    p_intra: ${data.graph_config.p_intra}
+    p_inter: ${data.graph_config.p_inter}
 
 # --- Output directories ---
 

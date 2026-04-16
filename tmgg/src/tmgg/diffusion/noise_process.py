@@ -19,6 +19,7 @@ stateful subcomponents follow device placement automatically.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Literal
 
 import torch
@@ -27,13 +28,18 @@ from torch import Tensor
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
-from tmgg.data.datasets.graph_types import GraphData, collapse_to_indices
+from tmgg.data.datasets.graph_data_fields import (
+    GRAPHDATA_LOSS_KIND,
+    FieldName,
+)
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.utils.noising.noise import NoiseDefinition
 
 from .diffusion_math import sum_except_batch
 from .diffusion_sampling import (
     compute_posterior_distribution,
+    compute_posterior_distribution_per_x0,
     sample_discrete_feature_noise,
     sample_discrete_features,
 )
@@ -42,27 +48,31 @@ from .diffusion_sampling import (
 def _continuous_edge_state(data: GraphData) -> Tensor:
     """Return a dense edge-valued tensor for continuous-process math.
 
-    Continuous states and clean binary-topology graphs both lift through
-    ``to_edge_state()`` so the forward and reverse process stay in dense
-    edge-state space without binary-topology projections.
+    Continuous states read from ``E_feat``; clean binary-topology
+    graphs lift through ``to_edge_scalar(source="class")`` so the
+    forward and reverse process stay in dense edge-state space without
+    binary-topology projections.
     """
-    return data.to_edge_state()
+    if data.E_feat is not None:
+        return data.to_edge_scalar(source="feat")
+    return data.to_edge_scalar(source="class")
 
 
 def _masked_graph_log_prob(sample: GraphData, probs: GraphData) -> Tensor:
     """Sum masked categorical log-probabilities per sample.
 
-    ``sample`` is typically a one-hot graph state and ``probs`` carries the
-    corresponding categorical probabilities over the same support.
+    ``sample`` is typically a one-hot graph state and ``probs`` carries
+    the corresponding categorical probabilities over the same support.
+    Reads ``X_class`` / ``E_class`` directly.
     """
     node_mask = sample.node_mask
     inv = ~node_mask
     inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)
 
-    sample_x = sample.X.clone()
-    sample_e = sample.E.clone()
-    prob_x = probs.X.clone()
-    prob_e = probs.E.clone()
+    sample_x = _read_categorical_x(sample).clone()
+    sample_e = _read_categorical_e(sample).clone()
+    prob_x = _read_categorical_x(probs).clone()
+    prob_e = _read_categorical_e(probs).clone()
 
     sample_x[inv] = 0.0
     sample_e[inv_edge] = 0.0
@@ -82,6 +92,107 @@ def _normalise_counts_or_uniform(counts: Tensor) -> Tensor:
     if total <= 0:
         return torch.full_like(counts, 1.0 / counts.numel())
     return counts / total
+
+
+def _gaussian_log_prob_sum(x: Tensor, mean: Tensor, var: Tensor) -> Tensor:
+    """Sum the per-element Gaussian log-density of ``x ~ N(mean, var)``.
+
+    Preserves the batch axis and sums every remaining dimension; the
+    caller typically composes this across declared fields for a
+    per-sample log-likelihood.
+    """
+    var_c = var.clamp(min=1e-12)
+    log_prob = -0.5 * (
+        ((x - mean) ** 2) / var_c
+        + var_c.log()
+        + torch.log(torch.tensor(2.0 * torch.pi))
+    )
+    return sum_except_batch(log_prob)
+
+
+def _read_feature_field(data: GraphData, field: FieldName) -> Tensor:
+    """Read a continuous ``X_feat`` / ``E_feat`` field.
+
+    For ``"E_feat"`` we return ``data.E_feat`` when present and
+    otherwise lift ``E_class`` into a single-channel edge-scalar view
+    so binary-topology batches carried through the categorical path
+    stay usable by Gaussian processes declared on ``E_feat``. For
+    ``"X_feat"`` the split field MUST be populated; there is no
+    canonical lift from ``X_class``.
+    """
+    if field == "E_feat":
+        if data.E_feat is not None:
+            return data.E_feat
+        if data.E_class is None:
+            raise ValueError(
+                "_read_feature_field('E_feat'): both E_feat and E_class are "
+                "None; cannot derive a continuous edge view."
+            )
+        return data.to_edge_scalar(source="class").unsqueeze(-1)
+    if field == "X_feat":
+        if data.X_feat is None:
+            raise ValueError(
+                "_read_feature_field('X_feat'): X_feat is not populated; "
+                "continuous node features have no legacy fallback."
+            )
+        return data.X_feat
+    raise ValueError(f"_read_feature_field does not support field {field!r}.")
+
+
+def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> GraphData:
+    """Return ``data`` with the given Gaussian fields written.
+
+    Writes each declared split field (``X_feat`` / ``E_feat``) onto a
+    copy of ``data``. Non-Gaussian fields pass through unchanged.
+    """
+    replace_kwargs: dict[str, Tensor] = {}
+    for field, value in updates.items():
+        if field == "E_feat":
+            replace_kwargs["E_feat"] = value
+        elif field == "X_feat":
+            replace_kwargs["X_feat"] = value
+        else:
+            raise ValueError(f"_gaussian_graphdata: unsupported field {field!r}.")
+    return data.replace(**replace_kwargs)
+
+
+def _read_categorical_x(data: GraphData) -> Tensor:
+    """Read ``X_class`` or synthesise a degenerate ``[no-node, node]`` one-hot.
+
+    Per ``docs/specs/2026-04-15-unified-graph-features-spec.md §"Removed
+    fields"`` (architecture-internal concern): structure-only datasets
+    emit ``X_class=None`` and architectures that need a per-node feature
+    derive one from ``node_mask``. ``CategoricalNoiseProcess`` is part
+    of the DiGress-family architecture, so it synthesises the
+    degenerate two-channel encoding internally rather than forcing the
+    data pipeline to carry it.
+    """
+    if data.X_class is None:
+        node_ind = data.node_mask.float()
+        return torch.stack([1.0 - node_ind, node_ind], dim=-1)
+    return data.X_class
+
+
+def _read_categorical_e(data: GraphData) -> Tensor:
+    """Read ``E_class`` or raise if unpopulated."""
+    if data.E_class is None:
+        raise ValueError(
+            "_read_categorical_e: data.E_class is None; categorical edge "
+            "features must be populated."
+        )
+    return data.E_class
+
+
+def _categorical_graphdata(
+    x: Tensor, e: Tensor, *, y: Tensor, node_mask: Tensor
+) -> GraphData:
+    """Assemble a categorical ``GraphData`` from node/edge class tensors."""
+    return GraphData(
+        y=y,
+        node_mask=node_mask,
+        X_class=x,
+        E_class=e,
+    )
 
 
 def _mix_with_limit(features: Tensor, alpha: Tensor | float, limit: Tensor) -> Tensor:
@@ -113,7 +224,18 @@ def _categorical_kernel(identity_weight: Tensor, limit: Tensor) -> Tensor:
 
 
 class NoiseProcess(ABC, nn.Module):
-    """Abstract base for timestep-indexed graph corruption processes."""
+    """Abstract base for timestep-indexed graph corruption processes.
+
+    Subclasses declare the set of ``GraphData`` fields they noise via the
+    class-level ``fields`` attribute; see
+    ``docs/specs/2026-04-15-unified-graph-features-spec.md §6``.
+    """
+
+    #: Declared set of GraphData fields the process reads and writes. Every
+    #: concrete subclass MUST set this to a non-empty subset of
+    #: ``FIELD_NAMES``. ``CompositeNoiseProcess`` computes the union of its
+    #: children's field sets.
+    fields: frozenset[FieldName]
 
     def __init__(self) -> None:
         super().__init__()
@@ -170,6 +292,28 @@ class NoiseProcess(ABC, nn.Module):
         """Sample ``q(z_s | z_t, x_0)`` or its model-parameterised analogue."""
         ...
 
+    def posterior_sample_from_model_output(
+        self,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> GraphData:
+        """Reverse-sampler entry point used by :class:`Sampler.sample`.
+
+        Template method: the default implementation routes straight to
+        :meth:`posterior_sample`, which covers every continuous and
+        mixed-composition process. :class:`CategoricalNoiseProcess`
+        overrides this hook to substitute the upstream-DiGress
+        per-class-marginalised posterior
+        (:meth:`CategoricalNoiseProcess.posterior_sample_marginalised`)
+        so the sampler stays composition-agnostic. The sampler never
+        branches on ``isinstance`` checks; every subclass is
+        responsible for returning a fresh ``GraphData`` with the
+        declared fields updated and non-declared fields preserved.
+        """
+        return self.posterior_sample(z_t, x0_param, t, s)
+
 
 class ExactDensityNoiseProcess(NoiseProcess, ABC):
     """Noise process with tractable forward, posterior, and prior densities."""
@@ -202,37 +346,70 @@ class ExactDensityNoiseProcess(NoiseProcess, ABC):
         ...
 
 
-class ContinuousNoiseProcess(NoiseProcess):
-    """Wraps a ``NoiseDefinition`` to produce the ``NoiseProcess`` interface.
+_GAUSSIAN_ALLOWED_FIELDS: frozenset[FieldName] = frozenset({"X_feat", "E_feat"})
 
-    Wraps a NoiseDefinition (from tmgg.utils.noising) with a NoiseSchedule to
-    bridge stateless noise functions into the diffusion training loop. The
-    definition only sees the final noise level; this class handles timestep
-    conversion and posterior computation.
 
-    The forward process operates on dense edge-valued states. Clean discrete
-    graphs are lifted through explicit binary-topology accessors, while
-    in-flight continuous states remain lossless through ``to_edge_state()``.
-    The timestep ``t`` is an integer index into the noise schedule; the noise
-    process converts it to a noise level via ``get_noise_level()`` before
-    passing it to the definition.
+class GaussianNoiseProcess(ExactDensityNoiseProcess):
+    """Per-field DDPM Gaussian diffusion on continuous graph features.
+
+    Applies the reference Gaussian forward process ``z_t = sqrt(alpha_bar_t) *
+    x_0 + sqrt(1 - alpha_bar_t) * eps`` to each field in :attr:`fields`.
+    Edge-field outputs are symmetrised and zero-diagonalised. Non-declared
+    fields pass through unchanged on the returned ``GraphData``.
+
+    The wrapped ``NoiseDefinition`` is retained for the Wave 2 transition:
+    :meth:`sample_at_level` and :meth:`sample_prior` still delegate to it
+    so single-step denoising flows and the reverse sampler see unchanged
+    semantics until Wave 5 rewrites those call sites.
 
     Parameters
     ----------
     definition
-        An existing ``NoiseDefinition`` instance (GaussianNoise, EdgeFlipNoise,
-        DigressNoise, LogitNoise, etc.). Not an ``nn.Module``; stored as a
-        plain attribute.
+        Existing ``NoiseDefinition`` instance. Used by
+        :meth:`sample_at_level` (single-step denoising) and preserved for
+        backward compatibility; :meth:`forward_sample`, :meth:`posterior_sample`
+        and the log-prob methods implement pure DDPM regardless.
     schedule
-        A ``NoiseSchedule`` used by ``get_posterior`` to look up
-        ``alpha_bar`` at integer timesteps.  Registered as an ``nn.Module``
-        submodule.
+        ``NoiseSchedule`` owning ``alpha_bar`` at every integer timestep.
+    fields
+        Optional override of the declared field set. ``None`` keeps the
+        default ``frozenset({"E_feat"})``; the override must be a
+        non-empty subset of ``{"X_feat", "E_feat"}``.
+
+    Notes
+    -----
+    Follows the DDPM parametrisation of Ho et al., NeurIPS 2020
+    (arXiv:2006.11239), applied independently per declared field. See
+    ``docs/specs/2026-04-15-unified-graph-features-spec.md §6``.
     """
 
-    def __init__(self, definition: NoiseDefinition, schedule: NoiseSchedule) -> None:
+    #: Default Gaussian-process fields: single-channel edge weights. Joint
+    #: X_feat + E_feat diffusion is opt-in via the constructor kwarg.
+    fields: frozenset[FieldName] = frozenset({"E_feat"})
+
+    def __init__(
+        self,
+        definition: NoiseDefinition,
+        schedule: NoiseSchedule,
+        *,
+        fields: frozenset[FieldName] | None = None,
+    ) -> None:
         super().__init__()
         self.definition = definition
         self.noise_schedule = schedule  # nn.Module — auto-registered
+        if fields is not None:
+            if len(fields) == 0:
+                raise ValueError(
+                    "GaussianNoiseProcess.fields must be non-empty; " f"got {fields!r}."
+                )
+            if not fields.issubset(_GAUSSIAN_ALLOWED_FIELDS):
+                raise ValueError(
+                    "GaussianNoiseProcess.fields must be a subset of "
+                    f"{set(_GAUSSIAN_ALLOWED_FIELDS)!r}; got {set(fields)!r}."
+                )
+            # Instance-level override: shadows the class-level default while
+            # leaving the declared type stable.
+            self.fields = fields
 
     @property
     def timesteps(self) -> int:
@@ -249,7 +426,7 @@ class ContinuousNoiseProcess(NoiseProcess):
 
     def finalize_sample(self, z_0: GraphData) -> GraphData:
         """Decode the final dense edge state into a binary graph."""
-        edge_state = z_0.to_edge_state()
+        edge_state = z_0.to_edge_scalar(source="feat")
         adj_final = (edge_state > 0.5).float()
         adj_final = (adj_final + adj_final.transpose(1, 2)).clamp(max=1.0)
 
@@ -260,13 +437,10 @@ class ContinuousNoiseProcess(NoiseProcess):
         mask_2d = z_0.node_mask.unsqueeze(-1) * z_0.node_mask.unsqueeze(-2)
         adj_final = adj_final * mask_2d.float()
 
-        decoded = GraphData.from_binary_adjacency(adj_final)
-        return GraphData(
-            X=decoded.X,
-            E=decoded.E,
-            y=decoded.y,
-            node_mask=z_0.node_mask,
-        ).mask()
+        decoded = GraphData.from_edge_scalar(
+            adj_final, node_mask=z_0.node_mask, target="E_class"
+        )
+        return decoded.mask()
 
     def sample_prior(self, node_mask: Tensor) -> GraphData:
         """Sample a symmetric Gaussian prior in dense edge-state space."""
@@ -279,15 +453,34 @@ class ContinuousNoiseProcess(NoiseProcess):
         edge_state = edge_state + edge_state.transpose(1, 2)
         mask_2d = node_mask.unsqueeze(-1) & node_mask.unsqueeze(-2)
         edge_state = edge_state * mask_2d.float()
-        return GraphData.from_edge_state(edge_state, node_mask=node_mask).mask()
+        return GraphData.from_structure_only(node_mask, edge_state).mask()
 
     def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
-        """Sample the forward process at timestep ``t``."""
-        noise_level = self._schedule_to_level(t)
-        return self._apply_noise(x_0, noise_level)
+        """Sample ``q(z_t | x_0) = N(sqrt(alpha_bar_t) x_0, (1 - alpha_bar_t) I)``.
+
+        For every field in :attr:`fields` draws fresh ``eps ~ N(0, I)``
+        with the same shape and writes ``sqrt(alpha_bar_t) * x_0 +
+        sqrt(1 - alpha_bar_t) * eps``. Edge-field outputs are
+        symmetrised via ``(E + E.transpose(-2, -3)) / 2`` and
+        diagonal-zeroed; non-declared fields pass through untouched.
+        """
+        alpha_bar = self.noise_schedule.get_alpha_bar(t_int=t)
+        updates: dict[FieldName, Tensor] = {}
+        for field in self.fields:
+            x_val = _read_feature_field(x_0, field)
+            sqrt_ab = self._broadcast_alpha(alpha_bar, x_val)
+            noise = torch.randn_like(x_val)
+            noised = torch.sqrt(sqrt_ab) * x_val + torch.sqrt(1.0 - sqrt_ab) * noise
+            updates[field] = self._finalise_field(field, noised, x_0.node_mask)
+        return _gaussian_graphdata(x_0, updates).mask()
 
     def sample_at_level(self, x_0: GraphData, level: Tensor | float) -> GraphData:
-        """Sample the forward process at an explicit continuous noise level."""
+        """Sample the forward process at an explicit continuous noise level.
+
+        Retained for single-step denoising experiments that operate
+        outside the DDPM schedule. Uses the wrapped ``NoiseDefinition``;
+        the ``fields`` attribute is not consulted here.
+        """
         return self._apply_noise(x_0, level)
 
     def _schedule_to_level(self, t_int: Tensor) -> Tensor:
@@ -295,10 +488,71 @@ class ContinuousNoiseProcess(NoiseProcess):
         return self.noise_schedule.get_noise_level(t_int)
 
     def _apply_noise(self, data: GraphData, noise_level: Tensor | float) -> GraphData:
-        """Apply continuous noise via the wrapped definition."""
+        """Apply continuous noise via the wrapped definition (legacy path)."""
         edge_state = _continuous_edge_state(data)
         noisy_edge_state = self.definition.add_noise(edge_state, noise_level)
-        return GraphData.from_edge_state(noisy_edge_state, node_mask=data.node_mask)
+        return GraphData.from_structure_only(data.node_mask, noisy_edge_state)
+
+    @staticmethod
+    def _broadcast_alpha(alpha_bar: Tensor, like: Tensor) -> Tensor:
+        """Broadcast a per-sample scalar schedule value to ``like``'s shape."""
+        flat = alpha_bar.reshape(-1)
+        return flat.view(-1, *([1] * (like.dim() - 1))).to(
+            device=like.device, dtype=like.dtype
+        )
+
+    @staticmethod
+    def _finalise_field(field: FieldName, value: Tensor, node_mask: Tensor) -> Tensor:
+        """Apply edge symmetry + diagonal zeroing to ``E_feat`` outputs."""
+        _ = node_mask  # masking is handled by ``GraphData.mask()`` downstream.
+        if field == "E_feat":
+            symmetrised = 0.5 * (value + value.transpose(-2, -3))
+            n = symmetrised.shape[-2]
+            diag_idx = torch.arange(n, device=symmetrised.device)
+            symmetrised[..., diag_idx, diag_idx, :] = 0.0
+            return symmetrised
+        return value
+
+    def _field_posterior_parameters(
+        self,
+        field: FieldName,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> dict[str, Tensor]:
+        """Compute DDPM posterior mean and std for a single declared field.
+
+        Returns tensors with the same shape as the underlying field value.
+        """
+        x0_val = _read_feature_field(x0_param, field)
+        zt_val = _read_feature_field(z_t, field)
+
+        alpha_bar_t = self._broadcast_alpha(
+            self.noise_schedule.get_alpha_bar(t_int=t), x0_val
+        )
+        alpha_bar_s = self._broadcast_alpha(
+            self.noise_schedule.get_alpha_bar(t_int=s), x0_val
+        )
+        beta_t = 1.0 - alpha_bar_t / alpha_bar_s.clamp(min=1e-8)
+        one_minus_alpha_bar_t = (1.0 - alpha_bar_t).clamp(min=1e-8)
+
+        coeff_x0 = torch.sqrt(alpha_bar_s) * beta_t / one_minus_alpha_bar_t
+        coeff_xt = (
+            torch.sqrt(1.0 - beta_t) * (1.0 - alpha_bar_s) / one_minus_alpha_bar_t
+        )
+        mean = coeff_x0 * x0_val + coeff_xt * zt_val
+
+        raw_var = beta_t * (1.0 - alpha_bar_s) / one_minus_alpha_bar_t
+        if (raw_var < -1e-6).any():
+            raise RuntimeError(
+                "Negative posterior variance detected "
+                f"(min={raw_var.min().item():.6f}); the noise schedule is "
+                "non-monotonic between the requested timesteps."
+            )
+        var = raw_var.clamp(min=1e-8)
+        std = torch.sqrt(var).expand_as(mean)
+        return {"mean": mean, "std": std}
 
     def _posterior_parameters(
         self, z_t: GraphData, z_0: GraphData, t: Tensor, s: Tensor
@@ -378,18 +632,88 @@ class ContinuousNoiseProcess(NoiseProcess):
         t: Tensor,
         s: Tensor,
     ) -> GraphData:
-        """Sample the Gaussian reverse posterior into edge-state space."""
-        posterior = self._posterior_parameters(z_t, x0_param, t, s)
-        mean = posterior["mean"]
-        std = posterior["std"]
-        noise = torch.randn_like(mean)
-        sample = mean + std * noise
+        """Sample ``q(z_s | z_t, x_0)`` under the DDPM closed-form posterior.
+
+        Per declared field draws ``sample = mean + std * eps`` with
+        ``eps ~ N(0, I)``; falls back to the mean when ``s <= 0`` so the
+        final reverse step is deterministic. Edge-field outputs are
+        symmetrised and diagonal-zeroed.
+        """
         if s.dim() == 0:
             s = s.unsqueeze(0)
-        no_noise_mask = (s <= 0).view(-1, 1, 1)
-        sample = torch.where(no_noise_mask, mean, sample)
-        sample = (sample + sample.transpose(1, 2)) / 2.0
-        return GraphData.from_edge_state(sample, node_mask=z_t.node_mask).mask()
+        updates: dict[FieldName, Tensor] = {}
+        for field in self.fields:
+            params = self._field_posterior_parameters(field, z_t, x0_param, t, s)
+            mean = params["mean"]
+            std = params["std"]
+            noise = torch.randn_like(mean)
+            sample = mean + std * noise
+            no_noise_mask = (s <= 0).view(-1, *([1] * (mean.dim() - 1)))
+            sample = torch.where(no_noise_mask, mean, sample)
+            updates[field] = self._finalise_field(field, sample, z_t.node_mask)
+        return _gaussian_graphdata(z_t, updates).mask()
+
+    def forward_log_prob(
+        self,
+        x_t: GraphData,
+        x_0: GraphData,
+        t: Tensor,
+    ) -> Tensor:
+        """Return ``log q(z_t | x_0)`` summed per-sample across declared fields.
+
+        Evaluates the Gaussian forward marginal density
+        ``N(z_t; sqrt(alpha_bar_t) x_0, (1 - alpha_bar_t) I)`` at
+        ``x_t``.
+        """
+        alpha_bar = self.noise_schedule.get_alpha_bar(t_int=t)
+        total: Tensor | None = None
+        for field in self.fields:
+            x0_val = _read_feature_field(x_0, field)
+            xt_val = _read_feature_field(x_t, field)
+            ab = self._broadcast_alpha(alpha_bar, x0_val)
+            mean = torch.sqrt(ab) * x0_val
+            var = (1.0 - ab).clamp(min=1e-8).expand_as(mean)
+            contrib = _gaussian_log_prob_sum(xt_val, mean, var)
+            total = contrib if total is None else total + contrib
+        if total is None:  # pragma: no cover - fields is non-empty by invariant
+            raise RuntimeError("GaussianNoiseProcess.fields is empty.")
+        return total
+
+    def posterior_log_prob(
+        self,
+        x_s: GraphData,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> Tensor:
+        """Return ``log q(z_s | z_t, x_0)`` summed across declared fields."""
+        if s.dim() == 0:
+            s = s.unsqueeze(0)
+        total: Tensor | None = None
+        for field in self.fields:
+            params = self._field_posterior_parameters(field, z_t, x0_param, t, s)
+            xs_val = _read_feature_field(x_s, field)
+            mean = params["mean"]
+            var = params["std"].pow(2)
+            contrib = _gaussian_log_prob_sum(xs_val, mean, var)
+            total = contrib if total is None else total + contrib
+        if total is None:  # pragma: no cover - fields is non-empty by invariant
+            raise RuntimeError("GaussianNoiseProcess.fields is empty.")
+        return total
+
+    def prior_log_prob(self, x: GraphData) -> Tensor:
+        """Return ``log N(0, I)`` per-sample summed across declared fields."""
+        total: Tensor | None = None
+        for field in self.fields:
+            x_val = _read_feature_field(x, field)
+            mean = torch.zeros_like(x_val)
+            var = torch.ones_like(x_val)
+            contrib = _gaussian_log_prob_sum(x_val, mean, var)
+            total = contrib if total is None else total + contrib
+        if total is None:  # pragma: no cover - fields is non-empty by invariant
+            raise RuntimeError("GaussianNoiseProcess.fields is empty.")
+        return total
 
 
 class CategoricalNoiseProcess(ExactDensityNoiseProcess):
@@ -405,6 +729,10 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
     ``initialize_from_data()`` can count class frequencies from the train
     loader. No public transition-object hierarchy remains.
     """
+
+    #: Categorical diffusion always acts jointly on the node-class and
+    #: edge-class streams of a DiGress-style batch.
+    fields: frozenset[FieldName] = frozenset({"X_class", "E_class"})
 
     _limit_x: Tensor | None
     _limit_e: Tensor | None
@@ -464,16 +792,24 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
 
     def model_output_to_posterior_parameter(self, model_output: GraphData) -> GraphData:
         """Convert model logits into categorical probabilities."""
-        return GraphData(
-            X=F.softmax(model_output.X, dim=-1),
-            E=F.softmax(model_output.E, dim=-1),
+        x_logits = _read_categorical_x(model_output)
+        e_logits = _read_categorical_e(model_output)
+        return _categorical_graphdata(
+            F.softmax(x_logits, dim=-1),
+            F.softmax(e_logits, dim=-1),
             y=model_output.y,
             node_mask=model_output.node_mask,
         )
 
     def finalize_sample(self, z_0: GraphData) -> GraphData:
-        """Decode the final one-hot state into categorical class indices."""
-        return collapse_to_indices(z_0.mask())
+        """Decode the final one-hot state and return it as a categorical graph.
+
+        The returned ``GraphData`` keeps the one-hot ``X_class`` /
+        ``E_class`` tensors so downstream consumers (notably the
+        evaluator binarisation helpers) can read them directly. Any
+        continuous feature fields pass through unchanged.
+        """
+        return z_0.mask()
 
     def initialize_from_data(self, train_loader: DataLoader[GraphData]) -> None:
         """Initialise empirical stationary marginals from the training loader."""
@@ -484,16 +820,18 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         e_counts = torch.zeros(self.e_classes, dtype=torch.float64)
 
         for batch in train_loader:
+            x_class = _read_categorical_x(batch)
+            e_class = _read_categorical_e(batch)
             if batch.node_mask.dim() == 1:
                 node_mask = batch.node_mask.unsqueeze(0)
-                X = batch.X.unsqueeze(0)
-                E = batch.E.unsqueeze(0)
+                x_batched = x_class.unsqueeze(0)
+                e_batched = e_class.unsqueeze(0)
             else:
                 node_mask = batch.node_mask
-                X = batch.X
-                E = batch.E
+                x_batched = x_class
+                e_batched = e_class
 
-            x_counts += X[node_mask].sum(dim=0).to(torch.float64).cpu()
+            x_counts += x_batched[node_mask].sum(dim=0).to(torch.float64).cpu()
 
             _, n = node_mask.shape
             upper_triangle = torch.triu(
@@ -504,7 +842,7 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
                 node_mask.unsqueeze(1) & node_mask.unsqueeze(2) & upper_triangle
             )
             if valid_edges.any():
-                e_counts += E[valid_edges].sum(dim=0).to(torch.float64).cpu()
+                e_counts += e_batched[valid_edges].sum(dim=0).to(torch.float64).cpu()
 
         x_marginals = _normalise_counts_or_uniform(x_counts).to(torch.float32)
         e_marginals = _normalise_counts_or_uniform(e_counts).to(torch.float32)
@@ -599,16 +937,23 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         return self.noise_schedule.get_alpha_bar(t_int=t_int)
 
     def _apply_noise(self, data: GraphData, noise_level: Tensor | float) -> GraphData:
-        """Apply categorical forward noise at the given alpha_bar level."""
+        """Apply categorical forward noise at the given alpha_bar level.
+
+        Non-declared continuous fields (``X_feat`` / ``E_feat``) survive
+        the call unchanged so composition with a Gaussian process on
+        disjoint fields (Wave 2.4) does not drop their payload.
+        """
         x_limit, e_limit, _ = self._stationary_distribution()
-        prob_X = _mix_with_limit(data.X, noise_level, x_limit)
-        prob_E = _mix_with_limit(data.E, noise_level, e_limit)
-        sampled = sample_discrete_features(prob_X, prob_E, data.node_mask)
-        return GraphData(
-            X=F.one_hot(sampled.X.long(), num_classes=self.x_classes).float(),
-            E=F.one_hot(sampled.E.long(), num_classes=self.e_classes).float(),
-            y=data.y,
-            node_mask=data.node_mask,
+        x_class = _read_categorical_x(data)
+        e_class = _read_categorical_e(data)
+        prob_X = _mix_with_limit(x_class, noise_level, x_limit)
+        prob_E = _mix_with_limit(e_class, noise_level, e_limit)
+        x_idx, e_idx = sample_discrete_features(prob_X, prob_E, data.node_mask)
+        x_one_hot = F.one_hot(x_idx.long(), num_classes=self.x_classes).float()
+        e_one_hot = F.one_hot(e_idx.long(), num_classes=self.e_classes).float()
+        return data.replace(
+            X_class=x_one_hot,
+            E_class=e_one_hot,
         ).mask()
 
     def _posterior_probabilities(
@@ -653,17 +998,21 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         qtb_x = _categorical_kernel(alpha_bar_t, x_limit)
         qtb_e = _categorical_kernel(alpha_bar_t, e_limit)
 
+        x0_x = _read_categorical_x(x0_param)
+        x0_e = _read_categorical_e(x0_param)
+        zt_x = _read_categorical_x(z_t)
+        zt_e = _read_categorical_e(z_t)
         prob_X = compute_posterior_distribution(
-            M=x0_param.X, M_t=z_t.X, Qt_M=q_x, Qsb_M=qsb_x, Qtb_M=qtb_x
+            M=x0_x, M_t=zt_x, Qt_M=q_x, Qsb_M=qsb_x, Qtb_M=qtb_x, field="X_class"
         )
         prob_E = compute_posterior_distribution(
-            M=x0_param.E, M_t=z_t.E, Qt_M=q_e, Qsb_M=qsb_e, Qtb_M=qtb_e
+            M=x0_e, M_t=zt_e, Qt_M=q_e, Qsb_M=qsb_e, Qtb_M=qtb_e, field="E_class"
         )
-        bs, n, de = z_t.E.shape[0], z_t.E.shape[1], z_t.E.shape[-1]
+        bs, n, de = zt_e.shape[0], zt_e.shape[1], zt_e.shape[-1]
 
-        return GraphData(
-            X=prob_X,
-            E=prob_E.reshape(bs, n, n, de),
+        return _categorical_graphdata(
+            prob_X,
+            prob_E.reshape(bs, n, n, de),
             y=z_t.y,
             node_mask=z_t.node_mask,
         )
@@ -675,17 +1024,149 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         t: Tensor,
         s: Tensor,
     ) -> GraphData:
-        """Sample the categorical reverse posterior into one-hot graph states."""
+        """Sample the categorical reverse posterior into one-hot graph states.
+
+        Uses the **direct** parameterisation: passes ``x0_param`` straight
+        into the Bayes-rule posterior. Correct when ``x0_param`` is a
+        true one-hot (training-time validation MC). For sampling from a
+        soft prediction over ``x_0`` classes, use
+        :meth:`posterior_sample_marginalised` to integrate over ``x_0``.
+
+        Non-declared fields on ``z_t`` pass through unchanged so
+        composition with a Gaussian process on disjoint fields (Wave
+        2.4) preserves their payload.
+        """
         posterior = self._posterior_probabilities(z_t, x0_param, t, s)
-        sampled = sample_discrete_features(
-            posterior.X, posterior.E, node_mask=z_t.node_mask
+        x_idx, e_idx = sample_discrete_features(
+            _read_categorical_x(posterior),
+            _read_categorical_e(posterior),
+            node_mask=z_t.node_mask,
         )
-        return GraphData(
-            X=F.one_hot(sampled.X.long(), num_classes=self.x_classes).float(),
-            E=F.one_hot(sampled.E.long(), num_classes=self.e_classes).float(),
+        x_one_hot = F.one_hot(x_idx.long(), num_classes=self.x_classes).float()
+        e_one_hot = F.one_hot(e_idx.long(), num_classes=self.e_classes).float()
+        return z_t.replace(
+            X_class=x_one_hot,
+            E_class=e_one_hot,
+        ).mask()
+
+    def _posterior_probabilities_marginalised(
+        self,
+        z_t: GraphData,
+        x0_probs: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> GraphData:
+        """Marginalise the categorical reverse posterior over ``x_0`` classes.
+
+        For each position computes
+        ``p(z_s = k | z_t) = sum_c p(z_s = k | z_t, x_0 = c) * p(x_0 = c | z_t)``
+        where the per-class posterior comes from
+        :func:`compute_posterior_distribution_per_x0` and the prediction
+        ``p(x_0 = c | z_t)`` comes from ``x0_probs`` (model-output
+        softmax). Mirrors upstream DiGress's
+        ``compute_batched_over0_posterior_distribution`` followed by a
+        contraction over the predicted ``x_0`` distribution.
+
+        Returns posterior probability tensors over ``z_s`` with the same
+        graph extents as ``z_t``.
+        """
+        x_limit, e_limit, _ = self._stationary_distribution()
+
+        beta_t = self.noise_schedule(t_int=t)
+        alpha_bar_s = self.noise_schedule.get_alpha_bar(t_int=s)
+        alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t)
+
+        q_x = _categorical_kernel(1.0 - beta_t, x_limit)
+        q_e = _categorical_kernel(1.0 - beta_t, e_limit)
+        qsb_x = _categorical_kernel(alpha_bar_s, x_limit)
+        qsb_e = _categorical_kernel(alpha_bar_s, e_limit)
+        qtb_x = _categorical_kernel(alpha_bar_t, x_limit)
+        qtb_e = _categorical_kernel(alpha_bar_t, e_limit)
+
+        zt_x = _read_categorical_x(z_t)
+        zt_e = _read_categorical_e(z_t)
+        x0_x = _read_categorical_x(x0_probs)
+        x0_e = _read_categorical_e(x0_probs)
+
+        # Per-x0 posteriors: shape (bs, N, d_x0, d_z_s).
+        per_x0_X = compute_posterior_distribution_per_x0(
+            M_t=zt_x, Qt_M=q_x, Qsb_M=qsb_x, Qtb_M=qtb_x, field="X_class"
+        )
+        per_x0_E = compute_posterior_distribution_per_x0(
+            M_t=zt_e, Qt_M=q_e, Qsb_M=qsb_e, Qtb_M=qtb_e, field="E_class"
+        )
+
+        # Contract over the x_0 axis weighted by the model's prediction.
+        # x0_x is (bs, n, d_x0); flatten to (bs, N, d_x0) to align with the
+        # per-x0 posterior tensor.
+        pred_X_flat = x0_x.flatten(start_dim=1, end_dim=-2).to(torch.float32)
+        pred_E_flat = x0_e.flatten(start_dim=1, end_dim=-2).to(torch.float32)
+        prob_X = (per_x0_X * pred_X_flat.unsqueeze(-1)).sum(dim=2)  # (bs, n, d_z_s)
+        prob_E_flat = (per_x0_E * pred_E_flat.unsqueeze(-1)).sum(
+            dim=2
+        )  # (bs, n*n, d_z_s)
+
+        bs, n, _, de = zt_e.shape
+        prob_E = prob_E_flat.reshape(bs, n, n, de)
+
+        return _categorical_graphdata(
+            prob_X,
+            prob_E,
             y=z_t.y,
             node_mask=z_t.node_mask,
+        )
+
+    def posterior_sample_marginalised(
+        self,
+        z_t: GraphData,
+        x0_probs: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> GraphData:
+        """Sample ``z_s`` from the per-class-marginalised reverse posterior.
+
+        This is the upstream DiGress sampling path: the model emits a
+        distribution over ``x_0`` classes, and the reverse step samples
+        from ``sum_{c} p(z_s | z_t, x_0 = c) * p(x_0 = c | z_t)``
+        rather than from ``p(z_s | z_t, x_0 = soft prediction)``. The
+        two agree when the prediction is one-hot (converged model);
+        early in training the marginalised form has no bias from the
+        soft-x0-into-Bayes shortcut.
+
+        Non-declared fields on ``z_t`` pass through unchanged so
+        composition with a Gaussian process on disjoint fields (Wave
+        2.4) preserves their payload.
+        """
+        posterior = self._posterior_probabilities_marginalised(z_t, x0_probs, t, s)
+        x_idx, e_idx = sample_discrete_features(
+            _read_categorical_x(posterior),
+            _read_categorical_e(posterior),
+            node_mask=z_t.node_mask,
+        )
+        x_one_hot = F.one_hot(x_idx.long(), num_classes=self.x_classes).float()
+        e_one_hot = F.one_hot(e_idx.long(), num_classes=self.e_classes).float()
+        return z_t.replace(
+            X_class=x_one_hot,
+            E_class=e_one_hot,
         ).mask()
+
+    def posterior_sample_from_model_output(
+        self,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> GraphData:
+        """Route the reverse-sampler hook to the marginalised posterior.
+
+        Categorical diffusion samples from the per-class marginalised
+        reverse posterior — ``sum_c p(z_s | z_t, x_0 = c) *
+        p(x_0 = c | z_t)`` — to match upstream DiGress. The soft-x0
+        Bayes shortcut (calling :meth:`posterior_sample` directly on
+        the prediction) is a biased estimator early in training, so
+        the reverse-sampler hook routes here instead.
+        """
+        return self.posterior_sample_marginalised(z_t, x0_param, t, s)
 
     def forward_log_prob(
         self,
@@ -694,13 +1175,63 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         t: Tensor,
     ) -> Tensor:
         """Return ``log q(z_t | x_0)`` for sampled categorical graph states."""
+        probs = self.forward_pmf(x_0, t, node_mask_template=x_t)
+        return _masked_graph_log_prob(x_t, probs)
+
+    def forward_pmf(
+        self,
+        x_0: GraphData,
+        t: Tensor,
+        *,
+        node_mask_template: GraphData | None = None,
+    ) -> GraphData:
+        """Return the categorical forward marginal PMF ``q(z_t = . | x_0)``.
+
+        Useful for analytic-KL VLB estimators: provides the per-position
+        PMF without sampling. ``node_mask_template`` lets callers attach
+        a mask that may differ from ``x_0.node_mask`` (e.g. when probing
+        a freshly drawn ``z_t`` whose mask matches the original batch).
+
+        Returns
+        -------
+        GraphData
+            ``X``, ``E`` carry per-position categorical PMFs;
+            ``node_mask`` mirrors the template (or ``x_0`` when no
+            template is supplied).
+        """
         alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t)
         x_limit, e_limit, _ = self._stationary_distribution()
-        prob_x = _mix_with_limit(x_0.X, alpha_bar_t, x_limit)
-        prob_e = _mix_with_limit(x_0.E, alpha_bar_t, e_limit)
+        prob_x = _mix_with_limit(_read_categorical_x(x_0), alpha_bar_t, x_limit)
+        prob_e = _mix_with_limit(_read_categorical_e(x_0), alpha_bar_t, e_limit)
+        template = node_mask_template if node_mask_template is not None else x_0
+        return _categorical_graphdata(
+            prob_x, prob_e, y=template.y, node_mask=template.node_mask
+        )
 
-        probs = GraphData(X=prob_x, E=prob_e, y=x_t.y, node_mask=x_t.node_mask)
-        return _masked_graph_log_prob(x_t, probs)
+    def prior_pmf(self, node_mask: Tensor) -> GraphData:
+        """Return the stationary categorical prior PMF tiled to ``node_mask``.
+
+        Mirrors :meth:`prior_log_prob` but exposes the PMF directly so a
+        caller can compute the analytic ``KL(q(z_T|x_0) || prior)``
+        without going through a sampled state.
+        """
+        x_limit, e_limit, _ = self._stationary_distribution()
+        bs, n = node_mask.shape
+        prob_x = (
+            x_limit.to(node_mask.device).view(1, 1, -1).expand(bs, n, -1).contiguous()
+        )
+        prob_e = (
+            e_limit.to(node_mask.device)
+            .view(1, 1, 1, -1)
+            .expand(bs, n, n, -1)
+            .contiguous()
+        )
+        return _categorical_graphdata(
+            prob_x,
+            prob_e,
+            y=torch.zeros(bs, 0, device=node_mask.device),
+            node_mask=node_mask,
+        )
 
     def posterior_log_prob(
         self,
@@ -718,8 +1249,274 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         """Return ``log p(z_T)`` under the stationary categorical prior."""
         x_limit, e_limit, _ = self._stationary_distribution()
 
-        prob_x = x_limit.to(x.X.device).view(1, 1, -1).expand_as(x.X)
-        prob_e = e_limit.to(x.E.device).view(1, 1, 1, -1).expand_as(x.E)
+        x_class = _read_categorical_x(x)
+        e_class = _read_categorical_e(x)
+        prob_x = x_limit.to(x_class.device).view(1, 1, -1).expand_as(x_class)
+        prob_e = e_limit.to(e_class.device).view(1, 1, 1, -1).expand_as(e_class)
 
-        probs = GraphData(X=prob_x, E=prob_e, y=x.y, node_mask=x.node_mask)
+        probs = _categorical_graphdata(prob_x, prob_e, y=x.y, node_mask=x.node_mask)
         return _masked_graph_log_prob(x, probs)
+
+
+class CompositeNoiseProcess(NoiseProcess):
+    """Compose several ``NoiseProcess`` instances with disjoint ``fields``.
+
+    Every sub-process owns a strict subset of the declared ``FieldName``
+    space; the composite enforces disjointness at construction time and
+    forwards ``forward_sample`` / ``posterior_sample`` to each sub-process
+    in list order. Disjoint fields make the order irrelevant for
+    per-field semantics; the list order only fixes the concatenation
+    order of ``process_state_condition_vector``.
+
+    The composite is not an :class:`ExactDensityNoiseProcess` because a
+    mixture of categorical and Gaussian log-densities does not share a
+    common support; density methods delegate only when every sub-process
+    is :class:`ExactDensityNoiseProcess` and raise
+    :class:`NotImplementedError` otherwise.
+
+    Parameters
+    ----------
+    processes
+        Ordered sequence of concrete noise processes. Must be non-empty
+        and have pairwise-disjoint ``fields``.
+
+    Raises
+    ------
+    ValueError
+        When ``processes`` is empty, when any sub-process has an empty
+        ``fields`` set, or when two or more sub-processes claim the same
+        field.
+    """
+
+    def __init__(self, processes: Sequence[NoiseProcess]) -> None:
+        super().__init__()
+        if len(processes) == 0:
+            raise ValueError("CompositeNoiseProcess requires at least one sub-process.")
+
+        self._check_disjoint_fields(processes)
+
+        # ``nn.ModuleList`` keeps every sub-process on the composite's
+        # device and surfaces them in the ``state_dict``; the parallel
+        # Python list preserves ordering for iteration in a form
+        # pyright can narrow without module-list indexing gymnastics.
+        self.processes = nn.ModuleList(processes)
+        self._process_list: list[NoiseProcess] = list(processes)
+        self.fields = frozenset[FieldName]().union(*(p.fields for p in processes))
+
+    @staticmethod
+    def _check_disjoint_fields(processes: Sequence[NoiseProcess]) -> None:
+        """Raise if any field is claimed by more than one sub-process."""
+        seen: dict[FieldName, int] = {}
+        conflicts: dict[FieldName, list[int]] = {}
+        for idx, proc in enumerate(processes):
+            if len(proc.fields) == 0:
+                raise ValueError(
+                    f"CompositeNoiseProcess sub-process at index {idx} "
+                    f"({type(proc).__name__}) declares an empty fields set."
+                )
+            for field in proc.fields:
+                if field in seen:
+                    conflicts.setdefault(field, [seen[field]]).append(idx)
+                else:
+                    seen[field] = idx
+        if conflicts:
+            # Stable report order: sort by field name so tests can match
+            # on the rendered string reliably.
+            parts = [
+                f"{field!r} (sub-processes {sorted(indices)})"
+                for field, indices in sorted(conflicts.items())
+            ]
+            raise ValueError(
+                "CompositeNoiseProcess sub-processes have overlapping fields: "
+                + ", ".join(parts)
+            )
+
+    @property
+    def timesteps(self) -> int:
+        """Return the shared timestep count across sub-processes.
+
+        Every sub-process must expose the same integer schedule length;
+        this method raises if the sub-processes disagree so the caller
+        cannot silently mix incompatible schedules.
+        """
+        steps = {p.timesteps for p in self._process_list}
+        if len(steps) > 1:
+            raise RuntimeError(
+                "CompositeNoiseProcess requires every sub-process to share the "
+                f"same timestep count; got {sorted(steps)}."
+            )
+        return next(iter(steps))
+
+    def initialize_from_data(self, train_loader: DataLoader[GraphData]) -> None:
+        """Fan out the loader-backed initialisation hook to every sub-process."""
+        for proc in self._process_list:
+            proc.initialize_from_data(train_loader)
+
+    def needs_data_initialization(self) -> bool:
+        """Return True when any sub-process needs a dataloader-backed setup."""
+        return any(p.needs_data_initialization() for p in self._process_list)
+
+    def is_initialized(self) -> bool:
+        """Return True only when every sub-process reports itself initialised."""
+        return all(p.is_initialized() for p in self._process_list)
+
+    def process_state_condition_vector(self, t: Tensor) -> Tensor:
+        """Concatenate per-process condition vectors along the feature axis.
+
+        The sub-processes already return per-sample conditioning (shape
+        ``(bs,)`` or ``(bs, d)``); this method unsqueezes scalar
+        vectors to ``(bs, 1)`` before concatenating so the composite
+        always returns a 2-D conditioning tensor.
+        """
+        pieces: list[Tensor] = []
+        for proc in self._process_list:
+            piece = proc.process_state_condition_vector(t)
+            if piece.dim() == 1:
+                piece = piece.unsqueeze(-1)
+            pieces.append(piece)
+        return torch.cat(pieces, dim=-1)
+
+    def sample_prior(self, node_mask: Tensor) -> GraphData:
+        """Compose priors by threading each sub-process's output through the next.
+
+        Every sub-process returns a fully formed ``GraphData``; because
+        the ``fields`` sets are disjoint, iterating in list order with
+        each output feeding the next produces a single ``GraphData``
+        carrying every declared field's prior sample without collisions.
+        """
+        data: GraphData | None = None
+        for proc in self._process_list:
+            if data is None:
+                data = proc.sample_prior(node_mask)
+            else:
+                # Re-seed the sub-process on the current state: most
+                # sample_prior implementations ignore the incoming
+                # ``node_mask`` arg and build their output from scratch,
+                # so we need a composition primitive. A fresh prior
+                # draw for a disjoint field set followed by a merge
+                # via ``replace`` keeps the contract local to each
+                # sub-process without introducing a new API surface.
+                piece = proc.sample_prior(node_mask)
+                kwargs: dict[str, Tensor | None] = {}
+                for field in proc.fields:
+                    kwargs[field] = getattr(piece, field)
+                data = data.replace(**kwargs)
+        assert data is not None  # non-empty processes enforced at __init__
+        return data
+
+    def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
+        """Apply each sub-process in list order and thread the output forward."""
+        data = x_0
+        for proc in self._process_list:
+            data = proc.forward_sample(data, t)
+        return data
+
+    def posterior_sample(
+        self,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> GraphData:
+        """Apply each sub-process's posterior sampler in list order."""
+        data = z_t
+        for proc in self._process_list:
+            data = proc.posterior_sample(data, x0_param, t, s)
+        return data
+
+    def posterior_sample_from_model_output(
+        self,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> GraphData:
+        """Iterate sub-processes in list order, threading the running state.
+
+        Each sub-process consumes the current ``z_t`` and returns a
+        ``GraphData`` carrying its declared-field updates (with the
+        non-declared fields preserved). Because the composite enforces
+        disjoint field sets at construction time, the iteration order
+        has no effect on per-field semantics; list order only matters
+        for shared RNG draws and for the concatenation order of
+        :meth:`process_state_condition_vector`.
+        """
+        data = z_t
+        for proc in self._process_list:
+            data = proc.posterior_sample_from_model_output(data, x0_param, t, s)
+        return data
+
+    def loss_for(self, field: FieldName) -> Literal["ce", "mse"]:
+        """Return the loss kind attached to ``field`` via ``GRAPHDATA_LOSS_KIND``.
+
+        Raises
+        ------
+        KeyError
+            When ``field`` is not declared by any sub-process, so the
+            caller does not silently ask for a loss on an un-noised
+            field.
+        """
+        if field not in self.fields:
+            raise KeyError(
+                f"Field {field!r} is not declared by any sub-process of "
+                f"CompositeNoiseProcess (declared: {sorted(self.fields)})."
+            )
+        return GRAPHDATA_LOSS_KIND[field]
+
+    def _ensure_exact_density(self) -> list[ExactDensityNoiseProcess]:
+        """Return the sub-process list as ``ExactDensityNoiseProcess`` or raise."""
+        exact: list[ExactDensityNoiseProcess] = []
+        for proc in self._process_list:
+            if not isinstance(proc, ExactDensityNoiseProcess):
+                raise NotImplementedError(
+                    "CompositeNoiseProcess density methods require every "
+                    "sub-process to be ExactDensityNoiseProcess; got "
+                    f"{type(proc).__name__} which does not provide tractable "
+                    "densities."
+                )
+            exact.append(proc)
+        return exact
+
+    def forward_log_prob(
+        self,
+        x_t: GraphData,
+        x_0: GraphData,
+        t: Tensor,
+    ) -> Tensor:
+        """Sum per-sample forward log-densities across sub-processes."""
+        exact = self._ensure_exact_density()
+        total = exact[0].forward_log_prob(x_t, x_0, t)
+        for proc in exact[1:]:
+            total = total + proc.forward_log_prob(x_t, x_0, t)
+        return total
+
+    def posterior_log_prob(
+        self,
+        x_s: GraphData,
+        z_t: GraphData,
+        x0_param: GraphData,
+        t: Tensor,
+        s: Tensor,
+    ) -> Tensor:
+        """Sum per-sample posterior log-densities across sub-processes."""
+        exact = self._ensure_exact_density()
+        total = exact[0].posterior_log_prob(x_s, z_t, x0_param, t, s)
+        for proc in exact[1:]:
+            total = total + proc.posterior_log_prob(x_s, z_t, x0_param, t, s)
+        return total
+
+    def prior_log_prob(self, x: GraphData) -> Tensor:
+        """Sum per-sample prior log-densities across sub-processes."""
+        exact = self._ensure_exact_density()
+        total = exact[0].prior_log_prob(x)
+        for proc in exact[1:]:
+            total = total + proc.prior_log_prob(x)
+        return total
+
+
+# ---------------------------------------------------------------------------
+# Deprecated alias (Wave 2.1): retained for intra-branch continuity until every
+# call-site is migrated to ``GaussianNoiseProcess``. Scheduled for removal when
+# the refactor branch is squash-merged per the spec's clean-break stance.
+# ---------------------------------------------------------------------------
+ContinuousNoiseProcess = GaussianNoiseProcess

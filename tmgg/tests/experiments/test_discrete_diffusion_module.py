@@ -185,21 +185,31 @@ class TestForward:
     ) -> None:
         """Forward output has correct shapes.
 
-        Starting state: noisy batch from noise process.
-        Invariant: pred.X and pred.E match batch dimensions.
+        Starting state: noisy batch from noise process (structure-only, so
+        ``X_class`` is ``None`` and the architecture synthesises a
+        degenerate one internally per Wave 9.3).
+        Invariant: ``pred.X_class`` and ``pred.E_class`` match the expected
+        node/edge extents derived from ``node_mask``.
         """
         _attach_trainer_and_setup(lightning_module, datamodule)
 
         batch: GraphData = next(iter(datamodule.train_dataloader()))
+        assert batch.X_class is None  # Wave 9.3 structure-only data
+        assert batch.E_class is not None
 
         lightning_module.eval()
-        t_int = torch.randint(1, _T + 1, (batch.X.shape[0],))
+        bs, n = batch.node_mask.shape
+        t_int = torch.randint(1, _T + 1, (bs,))
         z_t = lightning_module.noise_process.forward_sample(batch, t_int)
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
-        assert pred.X.shape == batch.X.shape  # pyright: ignore[reportUnknownMemberType]
-        assert pred.E.shape == batch.E.shape  # pyright: ignore[reportUnknownMemberType]
+        # The GraphTransformer synthesises the degenerate X_class internally
+        # with dx_class=2 so its output carries X_class of shape (bs, n, 2).
+        assert pred.X_class is not None  # pyright: ignore[reportUnknownMemberType]
+        assert pred.X_class.shape == (bs, n, 2)  # pyright: ignore[reportUnknownMemberType]
+        assert pred.E_class is not None  # pyright: ignore[reportUnknownMemberType]
+        assert pred.E_class.shape == batch.E_class.shape  # pyright: ignore[reportUnknownMemberType]
 
 
 class TestTraining:
@@ -218,9 +228,10 @@ class TestTraining:
         _attach_trainer_and_setup(lightning_module, datamodule)
 
         batch: GraphData = next(iter(datamodule.train_dataloader()))
+        assert batch.X_class is None
 
         lightning_module.train()
-        bs = batch.X.shape[0]
+        bs = batch.node_mask.shape[0]
         t_int = torch.randint(1, _T + 1, (bs,))
         z_t = lightning_module.noise_process.forward_sample(batch, t_int)
         t_norm = t_int.float() / _T
@@ -338,7 +349,7 @@ class TestDiGressAlignment:
         batch = next(iter(datamodule.train_dataloader()))
 
         # Get model prediction
-        t_int = torch.randint(1, _T + 1, (batch.X.shape[0],))
+        t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
         z_t = lightning_module.noise_process.forward_sample(batch, t_int)
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -352,9 +363,17 @@ class TestDiGressAlignment:
         )
 
         tld = TrainLossDiscrete(lambda_E=5.0)
-        pred_X = torch.nn.functional.softmax(pred.X, dim=-1).clone()  # pyright: ignore[reportUnknownMemberType]
-        pred_E = torch.nn.functional.softmax(pred.E, dim=-1).clone()  # pyright: ignore[reportUnknownMemberType]
-        loss_direct = tld(pred_X, pred_E, batch.X, batch.E, batch.node_mask)
+        pred_X = torch.nn.functional.softmax(pred.X_class, dim=-1).clone()  # pyright: ignore[reportUnknownMemberType]
+        pred_E = torch.nn.functional.softmax(pred.E_class, dim=-1).clone()  # pyright: ignore[reportUnknownMemberType]
+        # Wave 9.3: structure-only batches carry X_class=None; synthesise the
+        # degenerate "[no-node, node]" one-hot from node_mask for the direct
+        # TrainLossDiscrete comparison.
+        if batch.X_class is None:
+            node_ind = batch.node_mask.float()
+            true_X = torch.stack([1.0 - node_ind, node_ind], dim=-1)
+        else:
+            true_X = batch.X_class
+        loss_direct = tld(pred_X, pred_E, true_X, batch.E_class, batch.node_mask)
 
         assert torch.allclose(loss_module, loss_direct, atol=1e-6)  # pyright: ignore[reportUnknownMemberType]
 
@@ -371,17 +390,19 @@ class TestDiGressAlignment:
         _attach_trainer_and_setup(lightning_module, datamodule)
         batch = next(iter(datamodule.train_dataloader()))
 
-        # Create a batch with some padding: zero out last 2 nodes' masks
+        # Create a batch with some padding: zero out last 2 nodes' masks.
+        # Wave 9.3: structure-only batches carry X_class=None; propagate that
+        # through to exercise the synthesis path inside the loss module.
         batch_padded = GraphData(
-            X=batch.X.clone(),
-            E=batch.E.clone(),
             y=batch.y,
             node_mask=batch.node_mask.clone(),
+            X_class=batch.X_class.clone() if batch.X_class is not None else None,
+            E_class=batch.E_class.clone() if batch.E_class is not None else None,
         )
         batch_padded.node_mask[:, -2:] = 0  # Mark last 2 nodes as padding
 
         # Get predictions
-        t_int = torch.randint(1, _T + 1, (batch.X.shape[0],))
+        t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
         z_t = lightning_module.noise_process.forward_sample(batch_padded, t_int)
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -390,19 +411,22 @@ class TestDiGressAlignment:
 
         # Corrupt padding positions in prediction — should NOT affect loss
         pred_corrupted = GraphData(
-            X=pred.X.clone(),  # pyright: ignore[reportUnknownMemberType]
-            E=pred.E.clone(),  # pyright: ignore[reportUnknownMemberType]
+            # pyright: ignore[reportUnknownMemberType]
+            # pyright: ignore[reportUnknownMemberType]
             y=pred.y,  # pyright: ignore[reportUnknownMemberType]
             node_mask=pred.node_mask,  # pyright: ignore[reportUnknownMemberType]
+            X_class=pred.X_class.clone(),  # pyright: ignore[reportUnknownMemberType]
+            E_class=pred.E_class.clone(),  # pyright: ignore[reportUnknownMemberType]
         )
-        pred_corrupted.X[:, -2:, :] = (
-            torch.randn_like(pred_corrupted.X[:, -2:, :]) * 100
+        assert pred_corrupted.X_class is not None and pred_corrupted.E_class is not None
+        pred_corrupted.X_class[:, -2:, :] = (
+            torch.randn_like(pred_corrupted.X_class[:, -2:, :]) * 100
         )
-        pred_corrupted.E[:, -2:, :, :] = (
-            torch.randn_like(pred_corrupted.E[:, -2:, :, :]) * 100
+        pred_corrupted.E_class[:, -2:, :, :] = (
+            torch.randn_like(pred_corrupted.E_class[:, -2:, :, :]) * 100
         )
-        pred_corrupted.E[:, :, -2:, :] = (
-            torch.randn_like(pred_corrupted.E[:, :, -2:, :]) * 100
+        pred_corrupted.E_class[:, :, -2:, :] = (
+            torch.randn_like(pred_corrupted.E_class[:, :, -2:, :]) * 100
         )
 
         loss2 = lightning_module._compute_loss(pred_corrupted, batch_padded)  # pyright: ignore[reportUnknownVariableType]
@@ -468,7 +492,7 @@ class TestDiGressAlignment:
         mod_high.setup("fit")
 
         batch = next(iter(datamodule.train_dataloader()))
-        t_int = torch.randint(1, _T + 1, (batch.X.shape[0],))
+        t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
         z_t = noise_process.forward_sample(batch, t_int)
         t_norm = t_int.float() / _T
         pred = mod_low.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -486,18 +510,25 @@ class TestDiGressAlignment:
         lightning_module: DiffusionModule,
         datamodule: SyntheticCategoricalDataModule,
     ) -> None:
-        """_compute_reconstruction_at_t1 returns finite per-graph log-probabilities.
+        """``_compute_reconstruction`` returns finite per-graph log-probs.
 
         Starting state: set-up module, one clean batch.
-        Invariant: output is a finite tensor of shape (bs,).
+        Invariant: output is a finite tensor of shape ``(bs,)``.
+        Renamed from ``_compute_reconstruction_at_t1`` when the method
+        was aligned with upstream's per-class-marginalised posterior at
+        ``(t=1, s=0)`` — see
+        ``docs/reports/2026-04-15-upstream-digress-parity-audit.md``
+        section 6.
         """
         _attach_trainer_and_setup(lightning_module, datamodule)
         batch = next(iter(datamodule.train_dataloader()))
 
-        recon = lightning_module._compute_reconstruction_at_t1(batch)
+        recon = lightning_module._compute_reconstruction(batch)  # pyright: ignore[reportPrivateUsage]
 
         assert isinstance(recon, torch.Tensor)
-        assert recon.shape == (batch.X.shape[0],), f"Expected (bs,), got {recon.shape}"
+        assert recon.shape == (
+            batch.node_mask.shape[0],
+        ), f"Expected (bs,), got {recon.shape}"
         assert torch.isfinite(recon).all(), f"Non-finite reconstruction values: {recon}"
 
     def test_log_pN_degenerate_is_zero(

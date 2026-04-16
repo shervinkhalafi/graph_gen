@@ -20,10 +20,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.models.spectral_denoisers.base_spectral import (
-    EmbeddingSource,
-    SpectralDenoiser,
-)
+
+from ..base import EdgeSource
+from .base_spectral import EmbeddingSource, SpectralDenoiser
 
 
 class SelfAttentionDenoiser(SpectralDenoiser):
@@ -67,6 +66,11 @@ class SelfAttentionDenoiser(SpectralDenoiser):
         pearl_hidden_dim: int = 64,
         pearl_input_samples: int = 32,
         pearl_max_nodes: int = 200,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         super().__init__(
             k=k,
@@ -75,6 +79,11 @@ class SelfAttentionDenoiser(SpectralDenoiser):
             pearl_hidden_dim=pearl_hidden_dim,
             pearl_input_samples=pearl_input_samples,
             pearl_max_nodes=pearl_max_nodes,
+            edge_source=edge_source,
+            output_dims_x_class=output_dims_x_class,
+            output_dims_x_feat=output_dims_x_feat,
+            output_dims_e_class=output_dims_e_class,
+            output_dims_e_feat=output_dims_e_feat,
         )
         self.d_k = d_k
         self.d_out = d_out if d_out is not None else d_k

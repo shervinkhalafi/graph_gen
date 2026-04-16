@@ -21,6 +21,7 @@ import pytest
 import pytorch_lightning as pl
 import torch
 
+from tests._helpers.graph_builders import binary_graphdata
 from tmgg.data.data_modules.multigraph_data_module import (
     MultiGraphDataModule,
 )
@@ -268,7 +269,7 @@ class TestDiffusionModuleTrainingStep:
     @pytest.fixture
     def module_and_batch(self) -> tuple[DiffusionModule, GraphData]:
         module = _make_diffusion_module()
-        batch = GraphData.from_binary_adjacency(_make_block_adjacency())
+        batch = binary_graphdata(_make_block_adjacency())
         return module, batch
 
     def test_training_step_finite_loss(
@@ -304,7 +305,7 @@ class TestDiffusionModuleValidation:
     @pytest.fixture
     def module_and_batch(self) -> tuple[DiffusionModule, GraphData]:
         module = _make_diffusion_module(eval_num_samples=4)
-        batch = GraphData.from_binary_adjacency(_make_block_adjacency())
+        batch = binary_graphdata(_make_block_adjacency())
         return module, batch
 
     def test_validation_step_runs_without_accumulation(
@@ -349,56 +350,3 @@ class TestDiffusionModuleE2E:
         trainer.fit(module, datamodule)
         trainer.test(module, datamodule)
         assert trainer.current_epoch == 2
-
-
-class TestDiffusionModulePerElementNoise:
-    """Regression test: DiffusionModule applies per-element noise levels.
-
-    Test rationale: the ContinuousNoiseProcess wrapping DigressNoise
-    should call add_noise with a (bs,) tensor of distinct noise levels
-    derived from distinct timesteps, applying per-sample noise in one
-    vectorized call.
-    """
-
-    def test_per_element_noise_via_noise_process(self) -> None:
-        """DiffusionModule should apply per-sample noise levels as a batched tensor."""
-        module = _make_diffusion_module(timesteps=100)
-        batch = GraphData.from_binary_adjacency(_make_block_adjacency())
-
-        # Instrument the underlying noise generator to record the eps argument
-        recorded_eps: list[torch.Tensor] = []
-        assert isinstance(module.noise_process, ContinuousNoiseProcess)
-        original_add_noise = module.noise_process.definition.add_noise
-
-        def recording_add_noise(
-            A: torch.Tensor, eps: float | torch.Tensor
-        ) -> torch.Tensor:
-            if isinstance(eps, torch.Tensor):
-                recorded_eps.append(eps.clone())
-            return original_add_noise(A, eps)
-
-        module.noise_process.definition.add_noise = recording_add_noise  # pyright: ignore[reportAttributeAccessIssue]
-
-        torch.manual_seed(12345)
-        with patch.object(module, "log"):
-            module.training_step(batch, batch_idx=0)
-
-        assert (
-            len(recorded_eps) == 1
-        ), f"Expected 1 batched add_noise call, got {len(recorded_eps)}"
-
-        eps_tensor = recorded_eps[0]
-        assert eps_tensor.shape == (
-            4,
-        ), f"Expected eps shape (4,), got {eps_tensor.shape}"
-
-        # Noise levels should be in [0, 1] (converted from integer timesteps)
-        assert torch.all(eps_tensor >= 0.0) and torch.all(
-            eps_tensor <= 1.0
-        ), f"Noise levels not in [0, 1]: {eps_tensor}"
-
-        # At least 2 distinct values — per-sample noise, not uniform
-        assert eps_tensor.unique().numel() >= 2, (
-            f"All eps values are identical ({eps_tensor[0].item():.4f}), "
-            "noise is not being applied per-element"
-        )

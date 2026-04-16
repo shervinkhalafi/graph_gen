@@ -23,7 +23,7 @@ import pytorch_lightning as pl
 import torch
 from omegaconf import OmegaConf
 
-from tmgg.data.datasets.graph_types import GraphData
+from tests._helpers.graph_builders import binary_graphdata
 from tmgg.models.spectral_denoisers import GraphFilterBank, LinearPE
 from tmgg.models.spectral_denoisers.bilinear import (
     BilinearDenoiserWithMLP,
@@ -165,7 +165,7 @@ class TestTrainingPipeline:
         )
 
         # Mock self.log to avoid MisconfigurationException
-        batch = GraphData.from_binary_adjacency(sample_adjacency_matrices)
+        batch = binary_graphdata(sample_adjacency_matrices)
         with patch.object(module, "log", return_value=None):
             loss = module.training_step(batch, batch_idx=0)
 

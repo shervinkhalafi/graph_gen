@@ -137,7 +137,7 @@ class TestEigenvectorAugmentation:
 
         Regression rationale
         --------------------
-        Single-step denoising lifts graphs through GraphData.from_edge_state(),
+        Single-step denoising lifts graphs through edge_scalar_graphdata(),
         which stores edges as a single scalar channel. DiGress denoising still
         uses EigenvectorAugmentation, so the augmenter must derive the same
         adjacency from both ``E[..., 1]`` binary-topology tensors and

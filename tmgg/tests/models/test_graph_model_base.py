@@ -11,7 +11,7 @@ These tests verify:
 2. A concrete subclass that implements ``forward`` and ``get_config`` works.
 3. ``parameter_count()`` is inherited from BaseModel and functions correctly.
 4. ``forward`` accepts both with-timestep and without-timestep calls.
-5. ``GraphData.from_binary_adjacency()`` round-trips correctly through a trivial model.
+5. ``binary_graphdata()`` round-trips correctly through a trivial model.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import pytest
 import torch
 from torch import Tensor
 
+from tests._helpers.graph_builders import binary_graphdata
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.base import BaseModel, GraphModel, get_parameter_count_int
 
@@ -125,7 +126,7 @@ class TestConcreteGraphModel:
         adj[0, 1, 0] = 1.0
         adj[1, 0, 2] = 1.0
         adj[1, 2, 0] = 1.0
-        return GraphData.from_binary_adjacency(adj)
+        return binary_graphdata(adj)
 
     def test_forward_without_timestep(
         self, model: IdentityGraphModel, batched_data: GraphData
@@ -133,8 +134,10 @@ class TestConcreteGraphModel:
         """forward(data) works when t is None (unconditional)."""
         result = model(batched_data)
         assert isinstance(result, GraphData)
-        assert torch.equal(result.X, batched_data.X)
-        assert torch.equal(result.E, batched_data.E)
+        assert result.X_class is not None and batched_data.X_class is not None
+        assert result.E_class is not None and batched_data.E_class is not None
+        assert torch.equal(result.X_class, batched_data.X_class)
+        assert torch.equal(result.E_class, batched_data.E_class)
 
     def test_forward_with_timestep(
         self, model: IdentityGraphModel, batched_data: GraphData
@@ -143,7 +146,8 @@ class TestConcreteGraphModel:
         t = torch.tensor([0.5, 0.8])
         result = model(batched_data, t=t)
         assert isinstance(result, GraphData)
-        assert torch.equal(result.X, batched_data.X)
+        assert result.X_class is not None and batched_data.X_class is not None
+        assert torch.equal(result.X_class, batched_data.X_class)
 
     def test_forward_with_none_timestep_explicit(
         self, model: IdentityGraphModel, batched_data: GraphData
@@ -151,8 +155,14 @@ class TestConcreteGraphModel:
         """Explicitly passing t=None produces the same result as omitting it."""
         result_omitted = model(batched_data)
         result_explicit = model(batched_data, t=None)
-        assert torch.equal(result_omitted.X, result_explicit.X)
-        assert torch.equal(result_omitted.E, result_explicit.E)
+        assert (
+            result_omitted.X_class is not None and result_explicit.X_class is not None
+        )
+        assert (
+            result_omitted.E_class is not None and result_explicit.E_class is not None
+        )
+        assert torch.equal(result_omitted.X_class, result_explicit.X_class)
+        assert torch.equal(result_omitted.E_class, result_explicit.E_class)
 
     def test_get_config(self, model: IdentityGraphModel) -> None:
         """get_config returns the expected hyperparameter dict."""
@@ -176,7 +186,8 @@ class TestConcreteGraphModel:
         adj = torch.zeros(3, 3)
         adj[0, 1] = 1.0
         adj[1, 0] = 1.0
-        data = GraphData.from_binary_adjacency(adj)
+        data = binary_graphdata(adj)
         result = model(data)
         assert isinstance(result, GraphData)
-        assert torch.equal(result.E, data.E)
+        assert result.E_class is not None and data.E_class is not None
+        assert torch.equal(result.E_class, data.E_class)

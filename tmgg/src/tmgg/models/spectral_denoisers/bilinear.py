@@ -21,10 +21,9 @@ import torch.nn as nn
 
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.layers.mha_layer import MultiHeadSelfAttention
-from tmgg.models.spectral_denoisers.base_spectral import (
-    EmbeddingSource,
-    SpectralDenoiser,
-)
+
+from ..base import EdgeSource
+from .base_spectral import EmbeddingSource, SpectralDenoiser
 
 
 class BilinearDenoiser(SpectralDenoiser):
@@ -79,6 +78,11 @@ class BilinearDenoiser(SpectralDenoiser):
         pearl_hidden_dim: int = 64,
         pearl_input_samples: int = 32,
         pearl_max_nodes: int = 200,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         super().__init__(
             k=k,
@@ -87,6 +91,11 @@ class BilinearDenoiser(SpectralDenoiser):
             pearl_hidden_dim=pearl_hidden_dim,
             pearl_input_samples=pearl_input_samples,
             pearl_max_nodes=pearl_max_nodes,
+            edge_source=edge_source,
+            output_dims_x_class=output_dims_x_class,
+            output_dims_x_feat=output_dims_x_feat,
+            output_dims_e_class=output_dims_e_class,
+            output_dims_e_feat=output_dims_e_feat,
         )
         self.d_k = d_k
         self.scale = d_k**-0.5  # 1/√d_k
@@ -211,8 +220,20 @@ class BilinearDenoiserWithMLP(SpectralDenoiser):
         d_k: int = 64,
         mlp_hidden_dim: int = 128,
         mlp_num_layers: int = 2,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
-        super().__init__(k=k)
+        super().__init__(
+            k=k,
+            edge_source=edge_source,
+            output_dims_x_class=output_dims_x_class,
+            output_dims_x_feat=output_dims_x_feat,
+            output_dims_e_class=output_dims_e_class,
+            output_dims_e_feat=output_dims_e_feat,
+        )
         self.d_k = d_k
         self.mlp_hidden_dim = mlp_hidden_dim
         self.mlp_num_layers = mlp_num_layers
@@ -429,13 +450,25 @@ class MultiLayerBilinearDenoiser(SpectralDenoiser):
         use_mlp: bool = True,
         mlp_hidden_dim: int | None = None,
         dropout: float = 0.0,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         if d_model % num_heads != 0:
             raise ValueError(
                 f"d_model ({d_model}) must be divisible by num_heads ({num_heads})"
             )
 
-        super().__init__(k=k)
+        super().__init__(
+            k=k,
+            edge_source=edge_source,
+            output_dims_x_class=output_dims_x_class,
+            output_dims_x_feat=output_dims_x_feat,
+            output_dims_e_class=output_dims_e_class,
+            output_dims_e_feat=output_dims_e_feat,
+        )
         self.d_model = d_model
         self.num_heads = num_heads
         self.num_layers = num_layers
@@ -549,7 +582,7 @@ class MultiLayerBilinearDenoiser(SpectralDenoiser):
         ----------
         data
             Graph features. The dense edge state is extracted via
-            ``data.to_edge_state()``.
+            :func:`read_edge_scalar` using the configured ``edge_source``.
 
         Returns
         -------

@@ -40,7 +40,7 @@ class TestGraphDataMask:
         y = torch.zeros(bs, 0)
         node_mask = torch.ones(bs, n)
 
-        data = GraphData(X=X, E=E, y=y, node_mask=node_mask)
+        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
         result = data.mask()
         assert result is not data
 
@@ -59,7 +59,7 @@ class TestGraphDataMask:
         node_mask = torch.ones(bs, n)
         node_mask[:, -1] = 0
 
-        data = GraphData(X=X, E=E, y=y, node_mask=node_mask)
+        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
         result = data.mask()
         assert result is not data
 
@@ -78,7 +78,7 @@ class TestGraphDataMask:
         y = torch.zeros(bs, 0)
         node_mask = torch.ones(bs, n)
 
-        data = GraphData(X=X, E=E, y=y, node_mask=node_mask)
+        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
         with pytest.raises(AssertionError, match="symmetric"):
             data.mask()
 
@@ -97,8 +97,8 @@ class TestGraphDataMask:
         y = torch.zeros(bs, 0)
         node_mask = torch.ones(bs, n)
 
-        data = GraphData(X=X, E=E, y=y, node_mask=node_mask)
-        result = collapse_to_indices(data)
-        assert result is not data
-        assert result.X.shape == (bs, n)
-        assert result.E.shape == (bs, n, n)
+        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+        E_idx, X_idx = collapse_to_indices(data)
+        assert X_idx is not None
+        assert X_idx.shape == (bs, n)
+        assert E_idx.shape == (bs, n, n)

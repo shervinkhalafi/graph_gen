@@ -18,6 +18,13 @@ model:
   mlp_hidden_dim: null  # defaults to 4 * d_model
   # Regularization
   dropout: 0.0
+  # Wave 7/8 architecture contract: split-field output dims and edge_source selector.
+  # Denoising default: read E_feat, write E_feat with a single scalar channel.
+  edge_source: feat
+  output_dims_x_class: null
+  output_dims_x_feat: null
+  output_dims_e_class: null
+  output_dims_e_feat: 1
 
 # Optimizer settings
 learning_rate: ${learning_rate}

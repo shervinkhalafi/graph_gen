@@ -141,7 +141,12 @@ class TestCategoricalStationaryPmfs:
         E[1, 0, 1] = torch.tensor([0.0, 1.0])
         E[1, 1, 0] = torch.tensor([0.0, 1.0])
         node_mask = torch.tensor([[True, True, False], [True, True, True]])
-        batch = GraphData(X=X, E=E, y=torch.zeros(2, 0), node_mask=node_mask)
+        batch = GraphData(
+            y=torch.zeros(2, 0),
+            node_mask=node_mask,
+            X_class=X,
+            E_class=E,
+        )
 
         proc.initialize_from_data([batch])  # type: ignore[arg-type]
 

@@ -137,18 +137,20 @@ class TestDataloaders:
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """A training batch should be a GraphData with correct shapes:
-        X (bs, n, 2), E (bs, n, n, 2), y (bs, 0), node_mask (bs, n).
+        """A training batch should be a structure-only GraphData with correct shapes.
+
+        Wave 9.3: ``X_class`` is ``None``; ``E_class`` has shape
+        ``(bs, n, n, 2)`` and ``node_mask`` has shape ``(bs, n)``.
         """
         batch: GraphData = next(iter(small_dm.train_dataloader()))
-        bs = batch.X.shape[0]
-        n = small_dm.num_nodes
+        assert batch.X_class is None
+        assert batch.E_class is not None
+        bs, n = batch.node_mask.shape
 
         assert isinstance(batch, GraphData)
-        assert batch.X.shape == (bs, n, 2)
-        assert batch.E.shape == (bs, n, n, 2)
+        assert n == small_dm.num_nodes
+        assert batch.E_class.shape == (bs, n, n, 2)
         assert batch.y.shape == (bs, 0)
-        assert batch.node_mask.shape == (bs, n)
         assert batch.node_mask.dtype == torch.bool
 
     def test_val_batch_no_error(
@@ -171,10 +173,11 @@ class TestDataloaders:
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Collated output should have dx=2 node classes and de=2 edge classes."""
+        """Collated output should have de=2 edge classes (X_class=None per Wave 9.3)."""
         batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.X.shape[-1] == 2  # dx
-        assert batch.E.shape[-1] == 2  # de
+        assert batch.X_class is None
+        assert batch.E_class is not None
+        assert batch.E_class.shape[-1] == 2  # de
 
 
 # -- TestCategoricalBatches -------------------------------------------------
@@ -183,30 +186,28 @@ class TestDataloaders:
 class TestCategoricalBatches:
     """Verify the categorical batch contract exposed by the datamodule."""
 
-    def test_node_features_have_expected_class_dim(
-        self,
-        small_dm: SyntheticCategoricalDataModule,
-    ) -> None:
-        """Node features should expose the binary categorical basis."""
-        batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.X.shape[-1] == 2
-
     def test_edge_features_have_expected_class_dim(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
         """Edge features should expose the binary categorical basis."""
         batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.E.shape[-1] == 2
+        assert batch.E_class is not None
+        assert batch.E_class.shape[-1] == 2
 
-    def test_node_features_are_one_hot_on_real_nodes(
+    def test_node_features_are_absent_for_structure_only_datasets(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Real-node categorical features should sum to one."""
+        """Wave 9.3: synthetic structure-only batches carry X_class=None.
+
+        The spec forbids datasets emitting a degenerate node-present /
+        node-absent one-hot since it just re-encodes ``node_mask``; any
+        architecture needing a per-node feature synthesises it
+        internally.
+        """
         batch: GraphData = next(iter(small_dm.train_dataloader()))
-        node_sums = batch.X[batch.node_mask].sum(dim=-1)
-        assert torch.allclose(node_sums, torch.ones_like(node_sums))
+        assert batch.X_class is None
 
     def test_edge_features_are_one_hot_on_real_edges(
         self,
@@ -214,21 +215,26 @@ class TestCategoricalBatches:
     ) -> None:
         """Real-edge categorical features should sum to one."""
         batch: GraphData = next(iter(small_dm.train_dataloader()))
+        assert batch.E_class is not None
         edge_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
-        edge_sums = batch.E[edge_mask].sum(dim=-1)
+        edge_sums = batch.E_class[edge_mask].sum(dim=-1)
         assert torch.allclose(edge_sums, torch.ones_like(edge_sums))
 
-    def test_real_nodes_use_present_node_class(
+    def test_node_presence_tracked_by_node_mask(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Synthetic graphs should mark every real node with the present-node class."""
+        """Wave 9.3: ``node_mask`` is the single source of truth for node presence.
+
+        The previous contract was that ``X_class[..., 1]`` marks every real
+        node with the present-node class. Since structure-only datasets
+        now emit ``X_class=None`` we instead verify ``node_mask`` carries
+        the same information — every synthesised graph has at least one
+        real node.
+        """
         batch: GraphData = next(iter(small_dm.train_dataloader()))
-        present_class = batch.X[..., 1]
-        assert torch.allclose(
-            present_class[batch.node_mask],
-            torch.ones_like(present_class[batch.node_mask]),
-        )
+        assert batch.X_class is None
+        assert batch.node_mask.any(dim=-1).all()
 
 
 # -- TestReferenceGraphs ----------------------------------------------------
@@ -279,10 +285,11 @@ class TestRoundTrip:
         g = GraphData.from_pyg_batch(batch)
 
         # Reconstruct adjacency via GraphData.to_binary_adjacency
-        recovered_adj = g.to_binary_adjacency()
+        recovered_adj = g.binarised_adjacency()
 
         # Build original adjacency from the one-hot E
-        original_adj = g.E[..., 1]  # class 1 = edge
+        assert g.E_class is not None
+        original_adj = g.E_class[..., 1]  # class 1 = edge
 
         assert torch.allclose(recovered_adj, original_adj)
 
@@ -292,9 +299,10 @@ class TestRoundTrip:
     ) -> None:
         """Collated batch edge argmax should recover E[..., 1] at real positions."""
         batch: GraphData = next(iter(small_dm.train_dataloader()))
-        recovered = batch.to_binary_adjacency()
+        recovered = batch.binarised_adjacency()
 
-        expected = batch.E[..., 1]
+        assert batch.E_class is not None
+        expected = batch.E_class[..., 1]
         mask_2d = batch.node_mask.unsqueeze(-1) & batch.node_mask.unsqueeze(-2)
         assert torch.allclose(recovered * mask_2d.float(), expected * mask_2d.float())
 

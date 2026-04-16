@@ -16,6 +16,7 @@ from .noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
     ExactDensityNoiseProcess,
+    GaussianNoiseProcess,
     NoiseProcess,
 )
 from .sampler import (
@@ -31,9 +32,10 @@ __all__ = [
     "CategoricalSampler",
     "ContinuousNoiseProcess",
     "ContinuousSampler",
-    "DiffusionState",
     "DiffusionLikelihoodCollector",
+    "DiffusionState",
     "ExactDensityNoiseProcess",
+    "GaussianNoiseProcess",
     "NoiseProcess",
     "NoiseSchedule",
     "Sampler",

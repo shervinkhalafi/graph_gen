@@ -1,0 +1,16 @@
+# Discrete-panel variant of the Self-Attention spectral denoiser.
+#
+# Binds the SelfAttentionDenoiser to the DiGress-compatible categorical
+# edge contract: reads ``E_class`` and writes a two-channel one-hot
+# ``E_class`` output. Used for the DiGress-architecture comparison panel
+# described in docs/specs/2026-04-15-unified-graph-features-spec.md;
+# not wired to any launcher in this commit.
+
+defaults:
+  - /models/spectral/self_attention@_here_
+  - _self_
+
+model:
+  edge_source: class
+  output_dims_e_class: 2
+  output_dims_e_feat: null

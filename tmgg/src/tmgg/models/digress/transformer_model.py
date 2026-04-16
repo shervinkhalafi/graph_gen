@@ -684,15 +684,25 @@ class _GraphTransformer(nn.Module):
         Parameters
         ----------
         data
-            Batched graph features with categorical edge encoding (channel 0
-            is "no-edge", channel 1+ are edge classes).
+            Batched graph features with categorical edge encoding
+            (channel 0 is "no-edge", channel 1+ are edge classes).
+            Reads ``X_class`` and ``E_class`` directly.
 
         Returns
         -------
         GraphData
-            Transformed features with residual connections.
+            Transformed features written to ``X_class`` / ``E_class``.
         """
-        X_cat, E_cat, y_cat, node_mask = data.X, data.E, data.y, data.node_mask
+        if data.X_class is None or data.E_class is None:
+            raise ValueError(
+                "_GraphTransformer.forward requires X_class and E_class to "
+                "be populated; got X_class="
+                f"{'None' if data.X_class is None else 'Tensor'}, E_class="
+                f"{'None' if data.E_class is None else 'Tensor'}."
+            )
+        X_cat = data.X_class
+        E_cat = data.E_class
+        y_cat, node_mask = data.y, data.node_mask
         bs, n = X_cat.shape[0], X_cat.shape[1]
 
         diag_mask = torch.eye(n, device=E_cat.device)
@@ -708,7 +718,7 @@ class _GraphTransformer(nn.Module):
         needs_adjacency = self._use_gnn_projections or (
             self._use_spectral_projections and self.eigen_layer is not None
         )
-        binary_adj = data.to_binary_adjacency() if needs_adjacency else None
+        binary_adj = data.binarised_adjacency() if needs_adjacency else None
 
         eigenvectors: torch.Tensor | None = None
         eigenvalues: torch.Tensor | None = None
@@ -737,19 +747,22 @@ class _GraphTransformer(nn.Module):
         E_hidden = self.mlp_in_E(E_cat)
         E_hidden = (E_hidden + E_hidden.transpose(1, 2)) / 2
         hidden = GraphData(
-            X=self.mlp_in_X(X_cat),
-            E=E_hidden,
             y=self.mlp_in_y(y_cat),
             node_mask=node_mask,
+            X_class=self.mlp_in_X(X_cat),
+            E_class=E_hidden,
         ).mask_zero_diag()
-        X, E, y = hidden.X, hidden.E, hidden.y
+        assert hidden.X_class is not None and hidden.E_class is not None
+        X_hid: torch.Tensor = hidden.X_class
+        E_hid: torch.Tensor = hidden.E_class
+        y_hid: torch.Tensor = hidden.y
 
         for layer in self.tf_layers:
-            X, E, y = layer(X, E, y, node_mask, structure)
+            X_hid, E_hid, y_hid = layer(X_hid, E_hid, y_hid, node_mask, structure)
 
-        X_out: torch.Tensor = self.mlp_out_X(X)
-        E_out: torch.Tensor = self.mlp_out_E(E)
-        y_out: torch.Tensor = self.mlp_out_y(y)
+        X_out: torch.Tensor = self.mlp_out_X(X_hid)
+        E_out: torch.Tensor = self.mlp_out_E(E_hid)
+        y_out: torch.Tensor = self.mlp_out_y(y_hid)
 
         X_final = X_out + X_to_out
         E_final = (E_out + E_to_out) * diag_mask
@@ -758,7 +771,10 @@ class _GraphTransformer(nn.Module):
         E_symmetric = 1 / 2 * (E_final + torch.transpose(E_final, 1, 2))
 
         return GraphData(
-            X=X_final, E=E_symmetric, y=y_final, node_mask=node_mask
+            y=y_final,
+            node_mask=node_mask,
+            X_class=X_final,
+            E_class=E_symmetric,
         ).mask_zero_diag()
 
 
@@ -819,6 +835,10 @@ class GraphTransformer(GraphModel):
         extra_features: ExtraFeaturesProvider | None = None,
         use_timestep: bool = False,
         projection_config: dict[str, bool | int] | None = None,
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = None,
     ) -> None:
         super().__init__()
         self.n_layers = n_layers
@@ -826,6 +846,19 @@ class GraphTransformer(GraphModel):
         self.hidden_mlp_dims = hidden_mlp_dims
         self.hidden_dims = hidden_dims
         self.output_dims = output_dims
+
+        # Per-spec architecture contract: every architecture exposes per-field
+        # output dims. ``GraphTransformer`` is categorical by construction, so
+        # the X/E class widths default to ``output_dims["X"]`` / ``["E"]`` and
+        # the continuous _feat outputs default to ``None`` (unused).
+        self.output_dims_x_class = (
+            output_dims_x_class if output_dims_x_class is not None else output_dims["X"]
+        )
+        self.output_dims_x_feat = output_dims_x_feat
+        self.output_dims_e_class = (
+            output_dims_e_class if output_dims_e_class is not None else output_dims["E"]
+        )
+        self.output_dims_e_feat = output_dims_e_feat
 
         self.extra_features = extra_features
         self._use_timestep = use_timestep
@@ -855,14 +888,23 @@ class GraphTransformer(GraphModel):
         """Forward pass through the graph transformer.
 
         When ``extra_features`` is set, calls it to produce additional
-        feature tensors that are concatenated with X, E, y before the
-        inner transformer. When ``use_timestep`` is True and ``t`` is
-        provided, appends it to y.
+        feature tensors that are concatenated with X_class, E_class, y
+        before the inner transformer. When ``use_timestep`` is True and
+        ``t`` is provided, appends it to y.
+
+        When ``data.X_class`` is ``None`` (structure-only graph — see
+        the spec's "architecture-internal concern" clause) the
+        transformer synthesises a degenerate two-channel X from
+        ``node_mask`` so the downstream MLPs still have a per-node
+        input. The synthesis is private to this architecture; the
+        pipeline never sees the degenerate tensor.
 
         Parameters
         ----------
         data
-            Batched graph features (X, E, y, node_mask).
+            Batched graph features. ``X_class`` may be ``None`` (the
+            architecture synthesises one from ``node_mask``); ``E_class``
+            must be populated.
         t
             Normalised diffusion timestep, shape ``(bs,)``. Appended to
             ``y`` when ``use_timestep=True``.
@@ -872,7 +914,31 @@ class GraphTransformer(GraphModel):
         GraphData
             Predicted features with output dimensions.
         """
-        X, E, y, node_mask = data.X, data.E, data.y, data.node_mask
+        # GraphTransformer is categorical-by-default but also serves as a
+        # DiGress-style single-step denoiser over continuous edge states;
+        # in the latter case the caller feeds E_feat only. We accept
+        # either E_class (preferred) or E_feat as the edge input; the
+        # downstream MLPs learn an input-width embedding regardless.
+        if data.E_class is not None:
+            E = data.E_class
+        elif data.E_feat is not None:
+            E = data.E_feat
+        else:
+            raise ValueError(
+                "GraphTransformer.forward requires either E_class or E_feat "
+                "to be populated; got both None."
+            )
+        y, node_mask = data.y, data.node_mask
+
+        if data.X_class is not None:
+            X = data.X_class
+        else:
+            # Structure-only graph: synthesise a degenerate
+            # "node-absent / node-present" one-hot from node_mask.
+            node_ind = node_mask.float()
+            X = torch.stack([1.0 - node_ind, node_ind], dim=-1).to(
+                device=E.device, dtype=E.dtype
+            )
 
         if self.extra_features is not None:
             extra_X, extra_E, extra_y = self.extra_features(X, E, y, node_mask)
@@ -883,7 +949,12 @@ class GraphTransformer(GraphModel):
         if self._use_timestep and t is not None:
             y = torch.cat([y, t.unsqueeze(-1)], dim=-1)
 
-        augmented = GraphData(X=X, E=E, y=y, node_mask=node_mask)
+        augmented = GraphData(
+            y=y,
+            node_mask=node_mask,
+            X_class=X,
+            E_class=E,
+        )
         return self.transformer(augmented)
 
     @override

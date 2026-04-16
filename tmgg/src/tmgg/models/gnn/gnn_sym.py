@@ -6,6 +6,7 @@ import torch
 
 from tmgg.data.datasets.graph_types import GraphData
 
+from ..base import EdgeSource, read_edge_scalar, write_edge_scalar
 from .gnn import GNN
 
 
@@ -26,6 +27,11 @@ class GNNSymmetric(GNN):
         feature_dim_in: int = 10,
         feature_dim_out: int = 10,
         eigenvalue_reg: float = 0.0,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         super().__init__(
             num_layers=num_layers,
@@ -33,6 +39,11 @@ class GNNSymmetric(GNN):
             feature_dim_in=feature_dim_in,
             feature_dim_out=feature_dim_out,
             eigenvalue_reg=eigenvalue_reg,
+            edge_source=edge_source,
+            output_dims_x_class=output_dims_x_class,
+            output_dims_x_feat=output_dims_x_feat,
+            output_dims_e_class=output_dims_e_class,
+            output_dims_e_feat=output_dims_e_feat,
         )
         # Symmetric: only one output projection needed
         del self.out_y
@@ -41,20 +52,11 @@ class GNNSymmetric(GNN):
     def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
         """Compute denoised graph via symmetric reconstruction X @ X.T.
 
-        Parameters
-        ----------
-        data
-            Graph features. The dense edge state is extracted via
-            ``data.to_edge_state()``.
-        t
-            Diffusion timestep tensor, or None. Currently unused.
-
-        Returns
-        -------
-        GraphData
-            Denoised graph with 2-class edge features.
+        Reads the dense scalar adjacency through ``read_edge_scalar`` (which
+        respects ``self.edge_source``) and writes the prediction to the
+        configured split edge field via ``write_edge_scalar``.
         """
-        A = data.to_edge_state()
+        A = read_edge_scalar(data, self.edge_source)
         z = self.embedding_layer(A)
 
         for layer in self.layers:
@@ -62,7 +64,13 @@ class GNNSymmetric(GNN):
 
         emb = self.out_x(z)
         result_adj = torch.bmm(emb, emb.transpose(1, 2))
-        return GraphData.from_edge_state(result_adj, node_mask=data.node_mask)
+        out = write_edge_scalar(
+            data, edge_scalar=result_adj, target=self._output_target
+        )
+        if t is not None:
+            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
+            out = out.replace(y=new_y)
+        return out
 
     @override
     def get_config(self) -> dict[str, Any]:
@@ -73,4 +81,9 @@ class GNNSymmetric(GNN):
             "feature_dim_in": self.feature_dim_in,
             "feature_dim_out": self.feature_dim_out,
             "eigenvalue_reg": self.eigenvalue_reg,
+            "edge_source": self.edge_source,
+            "output_dims_x_class": self.output_dims_x_class,
+            "output_dims_x_feat": self.output_dims_x_feat,
+            "output_dims_e_class": self.output_dims_e_class,
+            "output_dims_e_feat": self.output_dims_e_feat,
         }

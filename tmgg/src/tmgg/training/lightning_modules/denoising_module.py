@@ -35,8 +35,9 @@ import networkx as nx
 import numpy as np
 import torch
 
+from tmgg.data.datasets.graph_data_fields import FieldName
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.diffusion.noise_process import ContinuousNoiseProcess
+from tmgg.diffusion.noise_process import GaussianNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.evaluation.graph_evaluator import (
     GraphEvaluator,
@@ -47,6 +48,23 @@ from tmgg.training.lightning_modules.diffusion_module import (
 )
 from tmgg.training.logging import log_figure
 from tmgg.utils.noising.noise import NoiseDefinition, create_noise_definition
+
+#: Denoising-module-specific default per-field weights. Wave 5.2 threads the
+#: parent ``DiffusionModule.lambda_per_field`` into the single-step loss, but
+#: the DiGress ``lambda_E = 5.0`` convention belongs to the multi-step
+#: diffusion VLB, not to the single-shot denoising setting. Unit weight keeps
+#: the historical loss magnitude (pre-Wave-5.2 logs) unchanged so training
+#: curves and baselines remain comparable.
+_DENOISING_DEFAULT_LAMBDA_PER_FIELD: dict[str, float] = {
+    "X_class": 1.0,
+    "E_class": 1.0,
+    "X_feat": 1.0,
+    "E_feat": 1.0,
+}
+
+#: The single-step denoising path is pinned to Gaussian scalar-edge diffusion;
+#: any other field set would require a different forward/criterion bridge.
+_DENOISING_SUPPORTED_FIELDS: frozenset[FieldName] = frozenset({"E_feat"})
 
 
 class SingleStepDenoisingModule(DiffusionModule):
@@ -135,7 +153,7 @@ class SingleStepDenoisingModule(DiffusionModule):
                 "num_validation_adjacency_images must be a positive integer."
             )
 
-        # Build the noise definition and wrap it in a ContinuousNoiseProcess
+        # Build the noise definition and wrap it in a GaussianNoiseProcess
         noise_generator: NoiseDefinition = create_noise_definition(
             noise_type=noise_type, rotation_k=rotation_k, seed=seed
         )
@@ -143,7 +161,7 @@ class SingleStepDenoisingModule(DiffusionModule):
         # but NoiseSchedule is a required DiffusionModule dependency.
         noise_schedule = NoiseSchedule("linear_ddpm", timesteps=1)
 
-        noise_process = ContinuousNoiseProcess(noise_generator, noise_schedule)
+        noise_process = GaussianNoiseProcess(noise_generator, noise_schedule)
 
         super().__init__(
             model=model,
@@ -158,8 +176,25 @@ class SingleStepDenoisingModule(DiffusionModule):
             noise_schedule=noise_schedule,
             evaluator=evaluator,
             loss_type=loss_type,
+            lambda_E=1.0,
+            lambda_per_field=_DENOISING_DEFAULT_LAMBDA_PER_FIELD,
         )
         self._drop_unused_diffusion_hparams()
+
+        # Wave 5.2 invariant: the single-step denoising loss iterates
+        # ``self.noise_process.fields`` and dispatches the per-field
+        # tensor through ``self.criterion``. The current forward bridge
+        # is scalar-edge-only, so only ``{"E_feat"}`` is supported.
+        # Fail loudly if a future caller wires in a different field set;
+        # there is no silent fallback on this path.
+        if noise_process.fields != _DENOISING_SUPPORTED_FIELDS:
+            raise ValueError(
+                "SingleStepDenoisingModule requires a GaussianNoiseProcess "
+                f"with fields == {sorted(_DENOISING_SUPPORTED_FIELDS)!r}; "
+                f"got {sorted(noise_process.fields)!r}. Supporting additional "
+                "fields requires a per-field forward / criterion bridge that "
+                "does not yet exist on this module."
+            )
 
         # Denoising-specific state
         self.noise_type: str = noise_type
@@ -233,9 +268,17 @@ class SingleStepDenoisingModule(DiffusionModule):
         torch.Tensor
             Edge logits, shape ``(B, N, N)``.
         """
-        data = GraphData.from_edge_state(x)
+        if x.dim() == 2:
+            node_mask = torch.ones(x.shape[0], dtype=torch.bool, device=x.device)
+        else:
+            node_mask = torch.ones(
+                x.shape[0], x.shape[1], dtype=torch.bool, device=x.device
+            )
+        data = GraphData.from_structure_only(node_mask, x)
         result: GraphData = self.model(data, t=t)  # pyright: ignore[reportUnknownVariableType]
-        return result.to_edge_state()
+        return result.to_edge_scalar(
+            source="feat" if result.E_feat is not None else "class"
+        )
 
     # ------------------------------------------------------------------
     # Training
@@ -245,9 +288,14 @@ class SingleStepDenoisingModule(DiffusionModule):
     def training_step(self, batch: GraphData, batch_idx: int) -> torch.Tensor:
         """Execute a single-step denoising training iteration.
 
-        Samples a random noise level, corrupts the clean graph in edge-state
-        form, runs the model forward, and computes loss against the clean
-        binary target.
+        Samples a random noise level, corrupts the clean graph, and
+        iterates over ``self.noise_process.fields`` computing a per-field
+        weighted loss through ``self.criterion``. For the current
+        scalar-edge configuration the set collapses to ``{"E_feat"}`` so
+        the loop runs exactly once, but the iteration keeps the path
+        symmetric with :class:`DiffusionModule` and preserves the Wave 5
+        invariant that every per-field module reads targets through
+        ``noise_process.fields``.
 
         Parameters
         ----------
@@ -261,21 +309,21 @@ class SingleStepDenoisingModule(DiffusionModule):
         torch.Tensor
             Scalar loss with gradient.
         """
-        adj = batch.to_binary_adjacency()
-        clean_state = GraphData.from_edge_state(adj, node_mask=batch.node_mask)
+        adj = batch.binarised_adjacency()
+        clean_state = GraphData.from_structure_only(batch.node_mask, adj)
 
         # Sample noise level randomly from training noise levels
         eps: float = float(self._noise_rng.choice(self.noise_levels))
 
         # Apply noise via unified NoiseProcess interface
-        noisy_gd = cast(ContinuousNoiseProcess, self.noise_process).sample_at_level(
+        noisy_gd = cast(GaussianNoiseProcess, self.noise_process).sample_at_level(
             clean_state, eps
         )
 
         # Forward pass: returns edge-state logits via GraphData bridge
-        output: torch.Tensor = self.forward(noisy_gd.to_edge_state())
+        output: torch.Tensor = self.forward(noisy_gd.to_edge_scalar(source="feat"))
 
-        loss: torch.Tensor = self.criterion(output, adj)
+        loss: torch.Tensor = self._per_field_edge_loss(output, adj)
 
         # Training accuracy: threshold logits at 0, zero diagonal, compare
         with torch.no_grad():
@@ -290,6 +338,47 @@ class SingleStepDenoisingModule(DiffusionModule):
         self.log("train/noise_level", eps, on_step=False, on_epoch=True)
 
         return loss
+
+    def _per_field_edge_loss(
+        self, output: torch.Tensor, target: torch.Tensor
+    ) -> torch.Tensor:
+        """Per-field single-step denoising loss on the scalar-edge view.
+
+        The constructor pins ``self.noise_process.fields`` to
+        ``{"E_feat"}``, so the per-field iteration collapses to a single
+        call to ``self.criterion(output, target)`` scaled by
+        ``self.lambda_per_field["E_feat"]``. Wiring the loss through
+        ``noise_process.fields`` and ``lambda_per_field`` keeps the
+        module consistent with :class:`DiffusionModule`: the same
+        weighting dict controls training loss for both the multi-step
+        and single-step paths, so config-level field semantics stay
+        aligned. Every additional field would require extending the
+        scalar-edge forward bridge before it can carry a meaningful
+        loss, which is why the invariant check in ``__init__`` is
+        strict.
+        """
+        # Materialise the field list so the iteration order is stable
+        # for test assertions; the set is a one-element frozenset today
+        # and sorted() here keeps any future composition deterministic.
+        fields = sorted(self.noise_process.fields)
+        total: torch.Tensor | None = None
+        for field in fields:
+            weight = self.lambda_per_field[field]
+            # ``E_feat`` is the only supported field; the scalar edge
+            # view already feeds both ``output`` and ``target`` so the
+            # per-field read is implicit in the caller. Future fields
+            # will require routing a different (pred, target) pair
+            # here; the invariant at ``__init__`` blocks that path
+            # until the extension lands.
+            term = self.criterion(output, target)
+            contribution = weight * term
+            total = contribution if total is None else total + contribution
+        if total is None:  # pragma: no cover - invariant enforced at __init__
+            raise RuntimeError(
+                "SingleStepDenoisingModule._per_field_edge_loss: "
+                "noise_process.fields is empty, cannot compute a loss."
+            )
+        return total
 
     # ------------------------------------------------------------------
     # Validation / Test
@@ -311,8 +400,8 @@ class SingleStepDenoisingModule(DiffusionModule):
         dict[str, torch.Tensor]
             Noise-level-averaged loss and metrics.
         """
-        adj = batch.to_binary_adjacency()
-        clean_state = GraphData.from_edge_state(adj, node_mask=batch.node_mask)
+        adj = batch.binarised_adjacency()
+        clean_state = GraphData.from_structure_only(batch.node_mask, adj)
         target = adj
 
         mode_loss_sum = torch.tensor(0.0, device=adj.device)
@@ -322,12 +411,12 @@ class SingleStepDenoisingModule(DiffusionModule):
         N: int = len(self.eval_noise_levels)
 
         for eps in self.eval_noise_levels:
-            noisy_gd = cast(ContinuousNoiseProcess, self.noise_process).sample_at_level(
+            noisy_gd = cast(GaussianNoiseProcess, self.noise_process).sample_at_level(
                 clean_state, eps
             )
-            batch_noisy: torch.Tensor = noisy_gd.to_edge_state()
+            batch_noisy: torch.Tensor = noisy_gd.to_edge_scalar(source="feat")
             output: torch.Tensor = self.forward(batch_noisy)
-            mode_loss: torch.Tensor = self.criterion(output, target)
+            mode_loss: torch.Tensor = self._per_field_edge_loss(output, target)
 
             # Predictions: threshold logits at 0, zero diagonal
             predictions: torch.Tensor = (output > 0).float()
@@ -531,14 +620,17 @@ class SingleStepDenoisingModule(DiffusionModule):
 
         all_results: dict[float, dict[str, float | None]] = {}
 
-        ref_gd = GraphData.from_edge_state(ref_adjs)
+        ref_node_mask = torch.ones(
+            ref_adjs.shape[0], ref_adjs.shape[1], dtype=torch.bool, device=device
+        )
+        ref_gd = GraphData.from_structure_only(ref_node_mask, ref_adjs)
 
         with torch.no_grad():
             for eps in self.eval_noise_levels:
                 noisy_gd = cast(
-                    ContinuousNoiseProcess, self.noise_process
+                    GaussianNoiseProcess, self.noise_process
                 ).sample_at_level(ref_gd, eps)
-                output = self.forward(noisy_gd.to_edge_state())
+                output = self.forward(noisy_gd.to_edge_scalar(source="feat"))
                 predictions = (output > 0).float()
                 predictions = self._zero_diagonal(predictions)
 

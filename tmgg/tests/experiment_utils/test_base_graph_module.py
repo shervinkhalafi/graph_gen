@@ -174,14 +174,16 @@ class TestTransferBatchToDevice:
         We verify that all constituent tensors land on the target device.
         """
         module = _make_module()
-        batch = GraphData.from_edge_state(torch.randn(2, 5, 5))
+        batch = GraphData.from_structure_only(
+            torch.ones(2, 5, dtype=torch.bool), torch.randn(2, 5, 5)
+        )
         device = torch.device("cpu")
 
         result = module.transfer_batch_to_device(batch, device, dataloader_idx=0)
 
         assert isinstance(result, GraphData)
-        assert result.X.device == device
-        assert result.E.device == device
+        assert result.E_feat is not None
+        assert result.E_feat.device == device
         assert result.y.device == device
         assert result.node_mask.device == device
 
@@ -221,6 +223,62 @@ class TestOnFitStart:
                 module.get_model_name(),
                 module.logger,
             )
+
+
+class TestOnBeforeOptimizerStep:
+    """Tests for the gradient/param-norm diagnostics hook."""
+
+    def test_logs_expected_diagnostic_keys(self) -> None:
+        """The hook should emit ``train/diagnostics/grad_norm_l2``,
+        ``grad_norm_preclip_max``, and ``param_norm_l2`` when at least
+        one parameter has a non-None gradient.
+
+        The numerical correctness of the norms is implicitly covered by
+        the tensor ops themselves; this test locks in the **interface**:
+        the three keys must appear and the values must be finite so
+        future refactors cannot silently drop a diagnostic.
+        """
+        module = _make_module()
+        # Populate gradients on every parameter so the hook sees them.
+        for p in module.parameters():
+            p.grad = torch.ones_like(p)
+
+        with patch.object(module, "log_dict") as mock_log_dict:
+            module.on_before_optimizer_step(optimizer=MagicMock())
+
+        assert mock_log_dict.call_count == 1
+        logged = mock_log_dict.call_args.args[0]
+        assert set(logged.keys()) == {
+            "train/diagnostics/grad_norm_l2",
+            "train/diagnostics/grad_norm_preclip_max",
+            "train/diagnostics/param_norm_l2",
+        }
+        for key, value in logged.items():
+            # Lightning accepts tensors or floats; we produce tensors.
+            val = value.item() if isinstance(value, torch.Tensor) else value
+            assert val >= 0.0, f"{key} must be non-negative, got {val}"
+            import math
+
+            assert math.isfinite(val), f"{key} must be finite, got {val}"
+
+        kwargs = mock_log_dict.call_args.kwargs
+        assert kwargs["on_step"] is True
+        assert kwargs["on_epoch"] is False
+        assert kwargs["prog_bar"] is False
+
+    def test_noop_when_no_gradients(self) -> None:
+        """Before backward runs, parameter ``.grad`` is ``None`` on every
+        parameter. The hook must not emit log entries in that case — a
+        spurious zero-norm log would mislead dashboards.
+        """
+        module = _make_module()
+        for p in module.parameters():
+            p.grad = None
+
+        with patch.object(module, "log_dict") as mock_log_dict:
+            module.on_before_optimizer_step(optimizer=MagicMock())
+
+        mock_log_dict.assert_not_called()
 
 
 class TestGetModelName:

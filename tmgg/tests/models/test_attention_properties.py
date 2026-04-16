@@ -8,6 +8,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.layers import MultiHeadSelfAttention
@@ -208,14 +209,16 @@ class TestMultiLayerAttentionProperties:
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         A = A + torch.randn_like(A) * 0.1
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == A.shape
+        assert legacy_edge_scalar(result).shape == A.shape
 
         # Check raw edge features for NaN/Inf
-        assert not torch.isnan(result.E).any()
-        assert not torch.isinf(result.E).any()
+        out_e = result.E_feat if result.E_feat is not None else result.E_class
+        assert out_e is not None
+        assert not torch.isnan(out_e).any()
+        assert not torch.isinf(out_e).any()
 
     @given(
         num_nodes=st.integers(min_value=4, max_value=12),
@@ -235,11 +238,13 @@ class TestMultiLayerAttentionProperties:
         A = A + torch.randn_like(A) * 0.3
 
         model = MultiLayerAttention(d_model, num_heads, num_layers)
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         assert isinstance(result, GraphData)
-        assert not torch.isnan(result.E).any()
-        assert not torch.isinf(result.E).any()
+        out_e = result.E_feat if result.E_feat is not None else result.E_class
+        assert out_e is not None
+        assert not torch.isnan(out_e).any()
+        assert not torch.isinf(out_e).any()
 
     @given(
         num_nodes=st.integers(min_value=4, max_value=12),
@@ -251,7 +256,7 @@ class TestMultiLayerAttentionProperties:
     ) -> None:
         """Test that masks are correctly propagated through apply_attention().
 
-        Since forward() takes GraphData (no mask parameter), mask propagation
+        Since forward() takes GraphData(no mask parameter), mask propagation
         is tested via apply_attention() which provides raw tensor access.
         """
         d_model = num_nodes

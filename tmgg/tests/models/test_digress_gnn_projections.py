@@ -17,6 +17,7 @@ Key invariants:
 import pytest
 import torch
 
+from tests._helpers.graph_builders import binary_graphdata
 from tmgg.data.datasets.graph_types import GraphData, GraphStructure
 from tmgg.models.digress.transformer_model import (
     GraphTransformer,
@@ -348,10 +349,11 @@ class TestGraphTransformerGNN:
         )
 
         x = torch.rand(2, 12, 12)  # Adjacency matrix
-        result = model(GraphData.from_binary_adjacency(x))
+        result = model(binary_graphdata(x))
 
         assert isinstance(result, GraphData)
-        assert result.E.shape == (2, 12, 12, 2)
+        assert result.E_class is not None
+        assert result.E_class.shape == (2, 12, 12, 2)
 
     def test_forward_pass_with_eigenvectors_and_gnn(self):
         """Forward pass works with both eigenvectors and GNN projections.
@@ -386,10 +388,11 @@ class TestGraphTransformerGNN:
 
         x = torch.rand(2, 20, 20)  # Adjacency matrix
         x = (x + x.transpose(-1, -2)) / 2  # Symmetrize for eigenvector extraction
-        result = model(GraphData.from_binary_adjacency(x))
+        result = model(binary_graphdata(x))
 
         assert isinstance(result, GraphData)
-        assert result.E.shape == (2, 20, 20, 2)
+        assert result.E_class is not None
+        assert result.E_class.shape == (2, 20, 20, 2)
 
 
 class TestAdjacencyExtraction:
@@ -440,7 +443,7 @@ class TestAdjacencyExtraction:
             return original_q_forward(A, X)
 
         with patch.object(gnn_q, "forward", capturing_forward):
-            _ = model(GraphData.from_binary_adjacency(input_adj))
+            _ = model(binary_graphdata(input_adj))
 
         # After from_binary_adjacency, adjacency is extracted via argmax on 2-class E.
         # from_binary_adjacency zeroes diagonal (sets E[diag, 0]=1), so extracted
@@ -484,6 +487,7 @@ class TestAdjacencyExtraction:
         assert model.transformer._use_gnn_projections is True
 
         # Run forward pass (this should work without error)
-        result = model(GraphData.from_binary_adjacency(input_adj))
+        result = model(binary_graphdata(input_adj))
         assert isinstance(result, GraphData)
-        assert result.E.shape == (bs, n, n, 2)
+        assert result.E_class is not None
+        assert result.E_class.shape == (bs, n, n, 2)

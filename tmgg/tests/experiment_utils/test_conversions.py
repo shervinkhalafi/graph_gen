@@ -10,6 +10,11 @@ and the padding semantics in ``GraphData.collate()``.
 
 import pytest
 import torch
+from tests._helpers.graph_builders import (
+    binary_graphdata,
+    edge_scalar_graphdata,
+    legacy_edge_scalar,
+)
 
 from tmgg.data.datasets.graph_types import GraphData
 
@@ -34,45 +39,52 @@ class TestBinaryAdjacencyHelpers:
 
     def test_output_shapes(self, binary_adjacency: torch.Tensor) -> None:
         """All fields have the expected shapes."""
-        g = GraphData.from_binary_adjacency(binary_adjacency)
-        assert g.X.shape == (BS, N, 2)
-        assert g.E.shape == (BS, N, N, 2)
+        g = binary_graphdata(binary_adjacency)
+        assert g.X_class is not None
+        assert g.E_class is not None
+        assert g.X_class.shape == (BS, N, 2)
+        assert g.E_class.shape == (BS, N, N, 2)
         assert g.y.shape == (BS, 0)
         assert g.node_mask.shape == (BS, N)
 
     def test_nodes_are_one_hot(self, binary_adjacency: torch.Tensor) -> None:
         """All node features should be [0, 1] (real node)."""
-        g = GraphData.from_binary_adjacency(binary_adjacency)
-        assert (g.X[:, :, 0] == 0).all()
-        assert (g.X[:, :, 1] == 1).all()
+        g = binary_graphdata(binary_adjacency)
+        assert g.X_class is not None
+        assert (g.X_class[:, :, 0] == 0).all()
+        assert (g.X_class[:, :, 1] == 1).all()
 
     def test_edges_are_one_hot(self, binary_adjacency: torch.Tensor) -> None:
         """Edge features should sum to 1 along the last dim (one-hot)."""
-        g = GraphData.from_binary_adjacency(binary_adjacency)
-        sums = g.E.sum(dim=-1)
+        g = binary_graphdata(binary_adjacency)
+        assert g.E_class is not None
+        sums = g.E_class.sum(dim=-1)
         assert torch.allclose(sums, torch.ones_like(sums))
 
     def test_diagonal_is_no_edge(self, binary_adjacency: torch.Tensor) -> None:
         """Diagonal entries should be [1, 0] (no self-loops)."""
-        g = GraphData.from_binary_adjacency(binary_adjacency)
+        g = binary_graphdata(binary_adjacency)
+        assert g.E_class is not None
         diag_idx = torch.arange(N)
-        assert (g.E[:, diag_idx, diag_idx, 0] == 1).all()
-        assert (g.E[:, diag_idx, diag_idx, 1] == 0).all()
+        assert (g.E_class[:, diag_idx, diag_idx, 0] == 1).all()
+        assert (g.E_class[:, diag_idx, diag_idx, 1] == 0).all()
 
     def test_all_nodes_valid(self, binary_adjacency: torch.Tensor) -> None:
         """node_mask should be all True (no padding at this stage)."""
-        g = GraphData.from_binary_adjacency(binary_adjacency)
+        g = binary_graphdata(binary_adjacency)
         assert g.node_mask.all()
 
     def test_single_graph(self) -> None:
         """Unbatched (n, n) input should return unbatched outputs."""
         A = torch.eye(4)
         A[0, 1] = A[1, 0] = 1.0
-        g = GraphData.from_binary_adjacency(A)
-        assert g.X.dim() == 2
-        assert g.X.shape == (4, 2)
-        assert g.E.dim() == 3
-        assert g.E.shape == (4, 4, 2)
+        g = binary_graphdata(A)
+        assert g.X_class is not None
+        assert g.E_class is not None
+        assert g.X_class.dim() == 2
+        assert g.X_class.shape == (4, 2)
+        assert g.E_class.dim() == 3
+        assert g.E_class.shape == (4, 4, 2)
         assert g.node_mask.dim() == 1
 
 
@@ -81,8 +93,8 @@ class TestToBinaryAdjacency:
 
     def test_round_trip(self, binary_adjacency: torch.Tensor) -> None:
         """Binary topology should round-trip exactly."""
-        g = GraphData.from_binary_adjacency(binary_adjacency)
-        A_recovered = g.to_binary_adjacency()
+        g = binary_graphdata(binary_adjacency)
+        A_recovered = g.binarised_adjacency()
         # The diagonal is always zeroed (no self-loops)
         A_no_diag = binary_adjacency.clone()
         diag_idx = torch.arange(N)
@@ -94,8 +106,8 @@ class TestToBinaryAdjacency:
         A = torch.zeros(5, 5)
         A[0, 1] = A[1, 0] = 1.0
         A[2, 3] = A[3, 2] = 1.0
-        g = GraphData.from_binary_adjacency(A)
-        A_recovered = g.to_binary_adjacency()
+        g = binary_graphdata(A)
+        A_recovered = g.binarised_adjacency()
         assert torch.allclose(A_recovered, A)
 
     def test_masking_zeros_invalid_edges(self) -> None:
@@ -105,20 +117,20 @@ class TestToBinaryAdjacency:
         node_mask = torch.ones(2, 4, dtype=torch.bool)
         node_mask[:, 3] = False  # mask last node
         g = GraphData(
-            X=torch.zeros(2, 4, 2),
-            E=E,
+            X_class=torch.zeros(2, 4, 2),
+            E_class=E,
             y=torch.zeros(2, 0),
             node_mask=node_mask,
         )
-        A = g.to_binary_adjacency()
+        A = g.binarised_adjacency()
         # Last row/col should be zero
         assert (A[:, 3, :] == 0).all()
         assert (A[:, :, 3] == 0).all()
 
     def test_symmetry_preservation(self, binary_adjacency: torch.Tensor) -> None:
         """Recovered adjacency should be symmetric if input edges were."""
-        g = GraphData.from_binary_adjacency(binary_adjacency)
-        A = g.to_binary_adjacency()
+        g = binary_graphdata(binary_adjacency)
+        A = g.binarised_adjacency()
         assert torch.allclose(A, A.transpose(1, 2))
 
 
@@ -136,8 +148,8 @@ class TestEdgeStateHelpers:
                 ]
             ]
         )
-        g = GraphData.from_binary_adjacency(adjacency)
-        torch.testing.assert_close(g.to_edge_state(), adjacency)
+        g = binary_graphdata(adjacency)
+        torch.testing.assert_close(legacy_edge_scalar(g), adjacency)
 
     def test_round_trip_preserves_values(self) -> None:
         """Edge state should round-trip without binary projection."""
@@ -155,19 +167,23 @@ class TestEdgeStateHelpers:
                 ],
             ]
         )
-        g = GraphData.from_edge_state(edge_state)
-        recovered = g.to_edge_state()
+        g = edge_scalar_graphdata(edge_state)
+        recovered = legacy_edge_scalar(g)
         torch.testing.assert_close(recovered, edge_state)
 
     def test_round_trip_preserves_node_mask(self) -> None:
-        """Explicit masks should be preserved in edge-state graphs."""
+        """Explicit masks survive construction, and to_edge_scalar applies them."""
         edge_state = torch.randn(2, 4, 4)
         node_mask = torch.tensor(
             [[True, True, False, False], [True, True, True, False]]
         )
-        g = GraphData.from_edge_state(edge_state, node_mask=node_mask)
+        g = GraphData.from_structure_only(node_mask, edge_state)
         assert torch.equal(g.node_mask, node_mask)
-        torch.testing.assert_close(g.to_edge_state(), edge_state)
+        # to_edge_scalar(source='feat') returns the stored edge state
+        # masked by the outer product of node_mask.
+        mask_2d = node_mask.unsqueeze(-1) & node_mask.unsqueeze(-2)
+        expected = edge_state * mask_2d.to(edge_state.dtype)
+        torch.testing.assert_close(g.to_edge_scalar(source="feat"), expected)
 
 
 class TestCollate:
@@ -176,8 +192,8 @@ class TestCollate:
     def _make_graph(self, n: int, dy: int = 0) -> GraphData:
         """Create a simple GraphData with n nodes."""
         return GraphData(
-            X=torch.ones(n, 2),
-            E=torch.ones(n, n, 2),
+            X_class=torch.ones(n, 2),
+            E_class=torch.ones(n, n, 2),
             y=torch.zeros(dy),
             node_mask=torch.ones(n, dtype=torch.bool),
         )
@@ -187,8 +203,10 @@ class TestCollate:
         g1 = self._make_graph(3)
         g2 = self._make_graph(5)
         batch = GraphData.collate([g1, g2])
-        assert batch.X.shape == (2, 5, 2)
-        assert batch.E.shape == (2, 5, 5, 2)
+        assert batch.X_class is not None
+        assert batch.E_class is not None
+        assert batch.X_class.shape == (2, 5, 2)
+        assert batch.E_class.shape == (2, 5, 5, 2)
         assert batch.node_mask.shape == (2, 5)
 
     def test_node_mask_correctness(self) -> None:
@@ -205,18 +223,20 @@ class TestCollate:
         g1 = self._make_graph(2)
         g2 = self._make_graph(4)
         batch = GraphData.collate([g1, g2])
+        assert batch.X_class is not None
         # For graph 0, positions 2 and 3 should have class 0 = 1
-        assert batch.X[0, 2, 0] == 1.0
-        assert batch.X[0, 3, 0] == 1.0
+        assert batch.X_class[0, 2, 0] == 1.0
+        assert batch.X_class[0, 3, 0] == 1.0
 
     def test_padded_edges_have_no_edge_class(self) -> None:
         """Padded edge positions should be set to class 0 (no-edge)."""
         g1 = self._make_graph(2)
         g2 = self._make_graph(4)
         batch = GraphData.collate([g1, g2])
+        assert batch.E_class is not None
         # For graph 0, row 2 (padded) should have E[0, 2, :, 0] = 1
-        assert (batch.E[0, 2, :, 0] == 1.0).all()
-        assert (batch.E[0, :, 2, 0] == 1.0).all()
+        assert (batch.E_class[0, 2, :, 0] == 1.0).all()
+        assert (batch.E_class[0, :, 2, 0] == 1.0).all()
 
     def test_real_data_preserved(self) -> None:
         """Real graph data should be preserved after padding."""
@@ -227,31 +247,33 @@ class TestCollate:
         E1[0, 0, 0] = 1.0
         E1[1, 1, 0] = 1.0
         g1 = GraphData(
-            X=X1,
-            E=E1,
+            X_class=X1,
+            E_class=E1,
             y=torch.zeros(0),
             node_mask=torch.ones(2, dtype=torch.bool),
         )
         g2 = self._make_graph(3)
 
         batch = GraphData.collate([g1, g2])
+        assert batch.X_class is not None
+        assert batch.E_class is not None
         # Graph 0's real data should be intact
-        assert torch.allclose(batch.X[0, :2], X1)
-        assert torch.allclose(batch.E[0, :2, :2], E1)
+        assert torch.allclose(batch.X_class[0, :2], X1)
+        assert torch.allclose(batch.E_class[0, :2, :2], E1)
 
     def test_global_features_preserved(self) -> None:
         """Global features y should be copied correctly."""
         y1 = torch.tensor([1.0, 2.0])
         y2 = torch.tensor([3.0, 4.0])
         g1 = GraphData(
-            X=torch.ones(2, 2),
-            E=torch.ones(2, 2, 2),
+            X_class=torch.ones(2, 2),
+            E_class=torch.ones(2, 2, 2),
             y=y1,
             node_mask=torch.ones(2, dtype=torch.bool),
         )
         g2 = GraphData(
-            X=torch.ones(3, 2),
-            E=torch.ones(3, 3, 2),
+            X_class=torch.ones(3, 2),
+            E_class=torch.ones(3, 3, 2),
             y=y2,
             node_mask=torch.ones(3, dtype=torch.bool),
         )

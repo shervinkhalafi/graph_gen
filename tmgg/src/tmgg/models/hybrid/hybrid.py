@@ -8,7 +8,13 @@ import torch.nn as nn
 from tmgg.data.datasets.graph_types import GraphData
 
 from ..attention import MultiLayerAttention
-from ..base import BaseModel, EmbeddingProvider, GraphModel
+from ..base import (
+    BaseModel,
+    EdgeSource,
+    EmbeddingProvider,
+    GraphModel,
+    write_edge_scalar,
+)
 from ..gnn import GNN
 
 
@@ -26,6 +32,10 @@ class SequentialDenoisingModel(GraphModel):
         self,
         embedding_model: EmbeddingProvider,
         denoising_model: nn.Module | None = None,
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ) -> None:
         """Initialize the sequential denoising model.
 
@@ -38,6 +48,13 @@ class SequentialDenoisingModel(GraphModel):
             Optional model for denoising concatenated embeddings. If it is a
             ``MultiLayerAttention``, the raw ``apply_attention()`` path is
             used; otherwise it is called directly on the feature tensor.
+        output_dims_x_class, output_dims_x_feat, output_dims_e_class, output_dims_e_feat
+            Per-field output widths required by the Wave 7 architecture
+            contract. The hybrid model delegates input reads to its
+            embedding provider (whose ``edge_source`` drives the scalar
+            adjacency read) and writes the final prediction to the
+            configured split edge field. Default ``output_dims_e_feat=1``
+            preserves the historical denoising path.
         """
         super().__init__()
         if not isinstance(embedding_model, EmbeddingProvider):
@@ -48,23 +65,23 @@ class SequentialDenoisingModel(GraphModel):
             )
         self.embedding_model = embedding_model  # pyright: ignore[reportIncompatibleVariableOverride]
         self.denoising_model = denoising_model
+        self.output_dims_x_class = output_dims_x_class
+        self.output_dims_x_feat = output_dims_x_feat
+        self.output_dims_e_class = output_dims_e_class
+        self.output_dims_e_feat = output_dims_e_feat
+        self._output_target: EdgeSource = (
+            "class" if output_dims_e_class is not None else "feat"
+        )
 
     @override
     def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
         """Combine GNN embedding and transformer denoising.
 
-        Parameters
-        ----------
-        data
-            Graph features. The dense edge state is extracted via
-            ``data.to_edge_state()`` and passed to the embedding model.
-        t
-            Diffusion timestep tensor, or None. Currently unused.
-
-        Returns
-        -------
-        GraphData
-            Denoised graph with 2-class edge features.
+        The embedding provider is responsible for reading the dense edge
+        tensor (its own ``edge_source`` config drives that choice). The
+        hybrid body stacks the provider's embeddings, optionally denoises
+        them, and reconstructs an adjacency scalar; the scalar is written
+        to the configured split edge field via ``write_edge_scalar``.
         """
         # Generate embeddings via the EmbeddingProvider protocol
         X, Y = self.embedding_model.embeddings(data)
@@ -95,7 +112,11 @@ class SequentialDenoisingModel(GraphModel):
 
         # Reconstruct adjacency matrix
         A_recon = torch.bmm(X_pred, Y_pred.transpose(1, 2))
-        return GraphData.from_edge_state(A_recon, node_mask=data.node_mask)
+        out = write_edge_scalar(data, edge_scalar=A_recon, target=self._output_target)
+        if t is not None:
+            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
+            out = out.replace(y=new_y)
+        return out
 
     @override
     def get_config(self) -> dict[str, object]:
@@ -115,7 +136,14 @@ class SequentialDenoisingModel(GraphModel):
 
 
 def create_sequential_model(
-    gnn_config: dict[str, Any], transformer_config: dict[str, Any] | None = None
+    gnn_config: dict[str, Any],
+    transformer_config: dict[str, Any] | None = None,
+    *,
+    edge_source: EdgeSource = "feat",
+    output_dims_x_class: int | None = None,
+    output_dims_x_feat: int | None = None,
+    output_dims_e_class: int | None = None,
+    output_dims_e_feat: int | None = 1,
 ) -> SequentialDenoisingModel:
     """Create a sequential denoising model from GNN + optional attention config.
 
@@ -125,6 +153,17 @@ def create_sequential_model(
         Configuration for the GNN embedding model.
     transformer_config
         Optional configuration for the attention denoising model.
+    edge_source
+        Per-spec input read selector applied to the inner GNN embedding
+        provider. ``"feat"`` (default) reads from ``E_feat``; ``"class"``
+        reads from ``E_class`` for the DiGress-architecture comparison
+        panel.
+    output_dims_x_class, output_dims_x_feat, output_dims_e_class, output_dims_e_feat
+        Per-field output widths forwarded to
+        :class:`SequentialDenoisingModel`. The hybrid writes its final
+        adjacency scalar to the split edge field chosen by the class/feat
+        split; defaults reproduce the historical denoising path
+        (``output_dims_e_feat=1``).
 
     Returns
     -------
@@ -138,6 +177,7 @@ def create_sequential_model(
         feature_dim_in=gnn_config.get("feature_dim_in", 20),
         feature_dim_out=gnn_config.get("feature_dim_out", 5),
         eigenvalue_reg=gnn_config.get("eigenvalue_reg", 0.0),
+        edge_source=edge_source,
     )
 
     # Create transformer denoising model if config provided
@@ -156,4 +196,11 @@ def create_sequential_model(
             bias=transformer_config.get("bias", True),
         )
 
-    return SequentialDenoisingModel(embedding_model, denoising_model)
+    return SequentialDenoisingModel(
+        embedding_model,
+        denoising_model,
+        output_dims_x_class=output_dims_x_class,
+        output_dims_x_feat=output_dims_x_feat,
+        output_dims_e_class=output_dims_e_class,
+        output_dims_e_feat=output_dims_e_feat,
+    )

@@ -78,4 +78,7 @@ def test_legacy_networkx_presets_setup_successfully(
 
     train_loader = data_module.train_dataloader()
     batch = next(iter(train_loader))
-    assert batch.X.shape[0] == 1
+    # Wave 9.3: structure-only networkx presets emit X_class=None; node_mask
+    # is the authoritative source for batch size and node counts.
+    assert batch.X_class is None
+    assert batch.node_mask.shape[0] == 1

@@ -34,8 +34,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data import generate_sbm_adjacency
-from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
@@ -171,14 +171,16 @@ class TestLevel1ConstantNoiseMemorization:
         model = model_class(**kwargs)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
-        data_noisy = GraphData.from_edge_state(A_noisy)
+        data_noisy = edge_scalar_graphdata(A_noisy)
 
         # Train on the SAME A_noisy every step (5000 steps for convergence).
         # BCE on edge-channel logit preserves the gradient scale these tests
         # were calibrated for.
         for _ in range(5000):
             result = model(data_noisy)
-            loss = F.binary_cross_entropy_with_logits(result.to_edge_state(), A_clean)
+            loss = F.binary_cross_entropy_with_logits(
+                legacy_edge_scalar(result), A_clean
+            )
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -186,10 +188,10 @@ class TestLevel1ConstantNoiseMemorization:
         # Evaluate on the same A_noisy
         with torch.no_grad():
             result = model(data_noisy)
-            predictions = (torch.sigmoid(result.to_edge_state()) > 0.5).float()
+            predictions = (torch.sigmoid(legacy_edge_scalar(result)) > 0.5).float()
             accuracy = (predictions == A_clean).float().mean().item()
 
-            edge_logits = result.to_edge_state()
+            edge_logits = legacy_edge_scalar(result)
             logit_mean = edge_logits.mean().item()
             logit_std = edge_logits.std().item()
 
@@ -280,8 +282,10 @@ class TestLevel2FreshNoiseGeneralization:
         # Train with FRESH noise each step
         for _ in range(2000):
             A_noisy = add_edge_flip_noise(A_clean, p=0.1)
-            result = model(GraphData.from_edge_state(A_noisy))
-            loss = F.binary_cross_entropy_with_logits(result.to_edge_state(), A_clean)
+            result = model(edge_scalar_graphdata(A_noisy))
+            loss = F.binary_cross_entropy_with_logits(
+                legacy_edge_scalar(result), A_clean
+            )
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -291,11 +295,11 @@ class TestLevel2FreshNoiseGeneralization:
         A_noisy_eval = add_edge_flip_noise(A_clean, p=0.1)
 
         with torch.no_grad():
-            result = model(GraphData.from_edge_state(A_noisy_eval))
-            predictions = (torch.sigmoid(result.to_edge_state()) > 0.5).float()
+            result = model(edge_scalar_graphdata(A_noisy_eval))
+            predictions = (torch.sigmoid(legacy_edge_scalar(result)) > 0.5).float()
             accuracy = (predictions == A_clean).float().mean().item()
 
-            edge_logits = result.to_edge_state()
+            edge_logits = legacy_edge_scalar(result)
             logit_mean = edge_logits.mean().item()
             logit_std = edge_logits.std().item()
 
@@ -343,11 +347,13 @@ class TestSingleStepLearning:
         model = model_class(**kwargs)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-        data_noisy = GraphData.from_edge_state(A_noisy)
+        data_noisy = edge_scalar_graphdata(A_noisy)
 
         # Initial forward pass
         result_1 = model(data_noisy)
-        loss_1 = F.binary_cross_entropy_with_logits(result_1.to_edge_state(), A_clean)
+        loss_1 = F.binary_cross_entropy_with_logits(
+            legacy_edge_scalar(result_1), A_clean
+        )
 
         # Optimization step
         loss_1.backward()
@@ -356,7 +362,9 @@ class TestSingleStepLearning:
 
         # Second forward pass
         result_2 = model(data_noisy)
-        loss_2 = F.binary_cross_entropy_with_logits(result_2.to_edge_state(), A_clean)
+        loss_2 = F.binary_cross_entropy_with_logits(
+            legacy_edge_scalar(result_2), A_clean
+        )
 
         # Loss should decrease (or at least not increase significantly)
         assert loss_2 <= loss_1 + 0.01, (
@@ -391,12 +399,14 @@ class TestLossDecreasesCurve:
         model = model_class(**kwargs)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-        data_noisy = GraphData.from_edge_state(A_noisy)
+        data_noisy = edge_scalar_graphdata(A_noisy)
 
         losses = []
         for _ in range(100):
             result = model(data_noisy)
-            loss = F.binary_cross_entropy_with_logits(result.to_edge_state(), A_clean)
+            loss = F.binary_cross_entropy_with_logits(
+                legacy_edge_scalar(result), A_clean
+            )
             losses.append(loss.item())
 
             loss.backward()

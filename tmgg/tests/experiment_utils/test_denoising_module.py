@@ -17,6 +17,7 @@ from typing import Any, cast
 import pytest
 import torch
 import torch.nn as nn
+from tests._helpers.graph_builders import binary_graphdata
 
 from tmgg.data.datasets.graph_types import GraphData
 
@@ -53,7 +54,7 @@ def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
         upper = (torch.rand(n, n) > 0.5).float()
         sym = upper.triu(diagonal=1)
         adj[i] = sym + sym.t()
-    return GraphData.from_binary_adjacency(adj)
+    return binary_graphdata(adj)
 
 
 def _make_module(
@@ -366,3 +367,111 @@ class TestEvalNoiseLevelsFallback:
             eval_noise_levels=None,
         )
         assert m.eval_noise_levels == [0.1, 0.3, 0.5]
+
+
+# -----------------------------------------------------------------------
+# 7. Wave 5.2 per-field loss iteration
+# -----------------------------------------------------------------------
+
+
+class TestPerFieldLossIteration:
+    """Verify the Wave 5.2 rewrite threads the loss through ``noise_process.fields``.
+
+    Test rationale
+    --------------
+    The pre-Wave-5.2 loss called ``self.criterion(output, adj)`` directly.
+    Wave 5.2 inserts a ``_per_field_edge_loss`` helper that iterates
+    ``self.noise_process.fields`` and multiplies by
+    ``self.lambda_per_field[field]`` so downstream composition with the
+    unified GraphData refactor stays explicit. Invariant: for a default
+    denoising module (``E_feat`` Gaussian noise, ``lambda_per_field[E_feat]
+    = 1.0``), the per-field loss equals the raw criterion call. Scaling
+    the ``E_feat`` weight must then scale the training loss linearly.
+    """
+
+    def test_default_fields_is_single_E_feat(self) -> None:
+        """The denoising module pins ``noise_process.fields`` to ``{'E_feat'}``.
+
+        Supporting additional fields requires a per-field forward
+        bridge that does not yet exist on this module; the constructor
+        raises when a caller tries to wire a non-conforming field set.
+        """
+        m = _make_module()
+        assert m.noise_process.fields == frozenset({"E_feat"})
+
+    def test_denoising_default_lambda_per_field_is_unit(self) -> None:
+        """Denoising overrides the DiGress ``lambda_E = 5.0`` default.
+
+        Single-step denoising has no multi-step VLB structure; the
+        ``lambda_E = 5.0`` convention belongs to generative diffusion.
+        The denoising module overrides ``lambda_per_field`` in
+        ``__init__`` so the historical loss magnitude (unit weight on
+        every field) stays unchanged.
+        """
+        m = _make_module()
+        assert m.lambda_per_field["E_feat"] == 1.0
+        assert m.lambda_per_field["E_class"] == 1.0
+
+    def test_per_field_loss_equals_raw_criterion_when_unit_weight(self) -> None:
+        """Per-field loss reduces to ``self.criterion(...)`` under unit weight.
+
+        The default denoising configuration keeps every field weight at
+        1.0. The per-field loop collapses to a single criterion call so
+        the returned scalar must match the legacy direct call byte-for-byte.
+        """
+        m = _make_module()
+        batch = _make_batch()
+        adj = batch.binarised_adjacency()
+
+        # Fake prediction with finite logits; use the same tensor on
+        # both sides so the call is deterministic.
+        output = torch.randn_like(adj)
+        direct = m.criterion(output, adj)
+        looped = m._per_field_edge_loss(output, adj)  # pyright: ignore[reportPrivateUsage]
+        assert torch.allclose(direct, looped, atol=1e-6)
+
+    def test_per_field_loss_scales_with_lambda_per_field(self) -> None:
+        """Doubling ``lambda_per_field['E_feat']`` doubles the per-field loss.
+
+        The Wave 5.2 helper multiplies each per-field term by its
+        weight. With a single declared field, scaling the weight by 2
+        must scale the scalar loss by 2 exactly.
+        """
+        m = _make_module()
+        batch = _make_batch()
+        adj = batch.binarised_adjacency()
+        output = torch.randn_like(adj)
+
+        base = m._per_field_edge_loss(output, adj)  # pyright: ignore[reportPrivateUsage]
+        m.lambda_per_field["E_feat"] = 2.0
+        doubled = m._per_field_edge_loss(output, adj)  # pyright: ignore[reportPrivateUsage]
+        assert torch.allclose(doubled, 2.0 * base, atol=1e-6)
+
+    def test_construction_rejects_unsupported_fields(self) -> None:
+        """Feeding a non-E_feat GaussianNoiseProcess must fail at construction.
+
+        The module builds its own ``GaussianNoiseProcess`` internally,
+        so the invariant check is the only guardrail. Here we patch the
+        module constructor to inject a process with an unexpected
+        field set and assert the error fires loudly.
+        """
+        from unittest.mock import patch
+
+        from tmgg.diffusion.noise_process import GaussianNoiseProcess
+        from tmgg.diffusion.schedule import NoiseSchedule
+        from tmgg.utils.noising.noise import GaussianNoise
+
+        bad_process = GaussianNoiseProcess(
+            GaussianNoise(),
+            schedule=NoiseSchedule("linear_ddpm", timesteps=1),
+            fields=frozenset({"X_feat", "E_feat"}),
+        )
+
+        with (
+            patch(
+                "tmgg.training.lightning_modules.denoising_module.GaussianNoiseProcess",
+                return_value=bad_process,
+            ),
+            pytest.raises(ValueError, match="E_feat"),
+        ):
+            _make_module()

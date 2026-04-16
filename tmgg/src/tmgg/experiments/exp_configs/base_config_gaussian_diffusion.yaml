@@ -20,7 +20,7 @@ model:
     k: 8
     d_k: 64
   noise_process:
-    _target_: tmgg.diffusion.noise_process.ContinuousNoiseProcess
+    _target_: tmgg.diffusion.noise_process.GaussianNoiseProcess
     definition:
       _target_: tmgg.utils.noising.noise.DigressNoise
     schedule: ${model.noise_schedule}

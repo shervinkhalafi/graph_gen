@@ -9,7 +9,7 @@ from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.layers.eigen_embedding import TruncatedEigenEmbedding
 from tmgg.models.layers.gcn import GraphConvolutionLayer
 
-from ..base import GraphModel
+from ..base import EdgeSource, GraphModel, read_edge_scalar, write_edge_scalar
 
 
 class GNN(GraphModel):
@@ -29,6 +29,11 @@ class GNN(GraphModel):
         feature_dim_out: int = 10,
         eigenvalue_reg: float = 0.0,
         symmetrized_output: bool = True,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         """Initialize GNN.
 
@@ -47,6 +52,17 @@ class GNN(GraphModel):
         symmetrized_output
             If True (default), symmetrize the reconstructed adjacency
             via ``(A + A.T) / 2`` after the dot product.
+        edge_source
+            Per-spec input read selector. ``"feat"`` (default) reads from
+            ``E_feat`` to match the historical denoising path; ``"class"``
+            reads from ``E_class`` for the DiGress-architecture comparison
+            panel.
+        output_dims_x_class, output_dims_x_feat, output_dims_e_class, output_dims_e_feat
+            Per-field output widths required by the Wave 7 architecture
+            contract. The GNN is a scalar adjacency denoiser and predicts
+            only one edge field; the default ``output_dims_e_feat=1`` puts
+            the prediction in ``E_feat``. Set ``output_dims_e_class=2`` to
+            instead emit a two-channel ``E_class`` (one-hot ``[1-adj, adj]``).
         """
         super().__init__()
 
@@ -56,6 +72,14 @@ class GNN(GraphModel):
         self.feature_dim_out = feature_dim_out
         self.eigenvalue_reg = eigenvalue_reg
         self.symmetrized_output = symmetrized_output
+        self.edge_source: EdgeSource = edge_source
+        self.output_dims_x_class = output_dims_x_class
+        self.output_dims_x_feat = output_dims_x_feat
+        self.output_dims_e_class = output_dims_e_class
+        self.output_dims_e_feat = output_dims_e_feat
+        self._output_target: EdgeSource = (
+            "class" if output_dims_e_class is not None else "feat"
+        )
 
         self.embedding_layer = TruncatedEigenEmbedding(
             target_dim=feature_dim_in, eigenvalue_reg=eigenvalue_reg
@@ -88,22 +112,34 @@ class GNN(GraphModel):
         Parameters
         ----------
         data
-            Graph features. The dense edge state is extracted via
-            ``data.to_edge_state()``.
+            Graph features. The dense scalar adjacency is read from the
+            split field selected by ``self.edge_source`` (``"feat"`` →
+            ``E_feat``, ``"class"`` → ``E_class``) via
+            :meth:`GraphData.to_edge_scalar`.
         t
-            Diffusion timestep tensor, or None. Currently unused.
+            Diffusion timestep tensor, or None. Concatenated to ``data.y``
+            via the standard two-line pattern; the GNN body itself does
+            not currently consume ``y``.
 
         Returns
         -------
         GraphData
-            Denoised graph with 2-class edge features.
+            Denoised graph with the prediction in the configured edge
+            field (default ``E_feat``) plus the legacy ``E`` for the
+            transition.
         """
-        A = data.to_edge_state()
+        A = read_edge_scalar(data, self.edge_source)
         emb_x, emb_y = self._embed(A)
         result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
         if self.symmetrized_output:
             result_adj = (result_adj + result_adj.transpose(1, 2)) / 2
-        return GraphData.from_edge_state(result_adj, node_mask=data.node_mask)
+        out = write_edge_scalar(
+            data, edge_scalar=result_adj, target=self._output_target
+        )
+        if t is not None:
+            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
+            out = out.replace(y=new_y)
+        return out
 
     def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute node embeddings without adjacency reconstruction.
@@ -113,7 +149,9 @@ class GNN(GraphModel):
         Parameters
         ----------
         data
-            Graph features. The dense edge state is extracted internally.
+            Graph features. The dense scalar adjacency is read via the
+            ``edge_source`` selector (matching the selector used by
+            ``forward``).
 
         Returns
         -------
@@ -121,7 +159,7 @@ class GNN(GraphModel):
             Tuple of (X, Y) embeddings, each of shape
             ``(batch, n, feature_dim_out)``.
         """
-        A = data.to_edge_state()
+        A = read_edge_scalar(data, self.edge_source)
         return self._embed(A)
 
     @override
@@ -134,4 +172,9 @@ class GNN(GraphModel):
             "feature_dim_out": self.feature_dim_out,
             "eigenvalue_reg": self.eigenvalue_reg,
             "symmetrized_output": self.symmetrized_output,
+            "edge_source": self.edge_source,
+            "output_dims_x_class": self.output_dims_x_class,
+            "output_dims_x_feat": self.output_dims_x_feat,
+            "output_dims_e_class": self.output_dims_e_class,
+            "output_dims_e_feat": self.output_dims_e_feat,
         }

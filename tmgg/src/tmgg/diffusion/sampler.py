@@ -17,10 +17,29 @@ from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.collectors import StepMetricCollector
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
-    ContinuousNoiseProcess,
+    CompositeNoiseProcess,
+    GaussianNoiseProcess,
     NoiseProcess,
 )
 from tmgg.models.base import GraphModel
+
+
+class _BufferingCollector:
+    """One-shot collector that captures the last ``record`` call's metrics.
+
+    Used by :meth:`Sampler._record_step_metrics` to fan out across the
+    sub-processes of a :class:`CompositeNoiseProcess`: each sub-process
+    writes into a fresh buffering collector and the outer method sums
+    the contributions into a single record on the real collector.
+    """
+
+    def __init__(self) -> None:
+        self.last: dict[str, float] = {}
+
+    def record(self, t: int, s: int, metrics: dict[str, float]) -> None:
+        """Overwrite the buffer with the latest metrics payload."""
+        _ = t, s
+        self.last = dict(metrics)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,27 +73,21 @@ class DiffusionState:
             )
 
         graph = self.graph
-        if graph.X.dim() != 3 or graph.E.dim() != 4 or graph.y.dim() != 2:
-            raise ValueError(
-                "DiffusionState.graph must be batched GraphData with X (bs, n, dx), "
-                "E (bs, n, n, de), and y (bs, dy)"
-            )
+        # node_mask is mandatory and fixes batch shape; downstream
+        # finalisers trim per-graph from it. Populated split fields are
+        # validated against that shape by ``GraphData.__post_init__`` so
+        # we only need to assert the batch axis here.
         if graph.node_mask.dim() != 2:
             raise ValueError(
                 "DiffusionState.graph.node_mask must have shape (bs, n), "
                 f"got {tuple(graph.node_mask.shape)}"
             )
 
-        bs, n = graph.node_mask.shape
-        if graph.X.shape[:2] != (bs, n):
+        bs, _ = graph.node_mask.shape
+        if graph.y.dim() != 2:
             raise ValueError(
-                "DiffusionState.graph.X must align with node_mask shape (bs, n), "
-                f"got X shape {tuple(graph.X.shape)} and node_mask shape {tuple(graph.node_mask.shape)}"
-            )
-        if graph.E.shape[:3] != (bs, n, n):
-            raise ValueError(
-                "DiffusionState.graph.E must align with node_mask shape (bs, n, n), "
-                f"got E shape {tuple(graph.E.shape)} and node_mask shape {tuple(graph.node_mask.shape)}"
+                "DiffusionState.graph.y must be batched (bs, dy), "
+                f"got shape {tuple(graph.y.shape)}"
             )
         if graph.y.shape[0] != bs:
             raise ValueError(
@@ -105,15 +118,34 @@ class Sampler:
 
     @staticmethod
     def _trim_batched_graphs(final: GraphData, n_nodes: Tensor) -> list[GraphData]:
-        """Split a batched final state into per-graph ``GraphData`` objects."""
+        """Split a batched final state into per-graph ``GraphData`` objects.
+
+        Preserves every populated split field (``X_class`` / ``X_feat``
+        / ``E_class`` / ``E_feat``) from ``final`` so downstream
+        consumers (notably the evaluator binarisation helpers) can read
+        split-field data when available.
+        """
         results: list[GraphData] = []
         for i, n_tensor in enumerate(n_nodes, start=0):
             n = int(n_tensor.item())
-            x = final.X[i, :n].cpu()
-            e = final.E[i, :n, :n].cpu()
             y = final.y[i].cpu()
             node_mask = final.node_mask[i, :n].cpu()
-            results.append(GraphData(X=x, E=e, y=y, node_mask=node_mask))
+            x_class = final.X_class[i, :n].cpu() if final.X_class is not None else None
+            x_feat = final.X_feat[i, :n].cpu() if final.X_feat is not None else None
+            e_class = (
+                final.E_class[i, :n, :n].cpu() if final.E_class is not None else None
+            )
+            e_feat = final.E_feat[i, :n, :n].cpu() if final.E_feat is not None else None
+            results.append(
+                GraphData(
+                    y=y,
+                    node_mask=node_mask,
+                    X_class=x_class,
+                    X_feat=x_feat,
+                    E_class=e_class,
+                    E_feat=e_feat,
+                )
+            )
         return results
 
     @staticmethod
@@ -125,23 +157,53 @@ class Sampler:
         t: Tensor,
         s: Tensor,
     ) -> None:
-        """Record per-step diagnostics for likelihood collectors."""
+        """Record per-step diagnostics for likelihood collectors.
+
+        Composite processes fan out to every sub-process and sum the
+        per-step contributions into a single collector record. The
+        least-surprise choice is to report a joint ``{"kl": ...}`` that
+        adds the sub-process contributions under the assumption of
+        disjoint fields (the composite's construction-time invariant).
+        Unknown leaf processes still raise ``TypeError`` so a future
+        non-categorical/non-Gaussian leaf cannot silently drop its
+        diagnostic contribution.
+        """
         t_int = int(t[0].item())
         s_int = int(s[0].item())
+
+        if isinstance(noise_process, CompositeNoiseProcess):
+            merged: dict[str, float] = {}
+            for sub in noise_process._process_list:  # noqa: SLF001
+                sub_collector = _BufferingCollector()
+                Sampler._record_step_metrics(
+                    sub_collector, sub, z_t, posterior_param, t, s
+                )
+                for key, value in sub_collector.last.items():
+                    merged[key] = merged.get(key, 0.0) + value
+            if merged:
+                collector.record(t_int, s_int, merged)
+            return
 
         if isinstance(noise_process, CategoricalNoiseProcess):
             posterior_probs = noise_process._posterior_probabilities(
                 z_t, posterior_param, t, s
             )
+            x_probs = posterior_probs.X_class
+            e_probs = posterior_probs.E_class
+            if x_probs is None or e_probs is None:
+                raise RuntimeError(
+                    "CategoricalNoiseProcess._posterior_probabilities must "
+                    "populate X_class and E_class; got None."
+                )
             node_mask = z_t.node_mask
             ent_x = -torch.sum(
-                posterior_probs.X * torch.log(posterior_probs.X.clamp(min=1e-30)),
+                x_probs * torch.log(x_probs.clamp(min=1e-30)),
                 dim=-1,
             )
             ent_x = (ent_x * node_mask.float()).sum() / node_mask.sum().clamp(min=1)
 
             ent_e = -torch.sum(
-                posterior_probs.E * torch.log(posterior_probs.E.clamp(min=1e-30)),
+                e_probs * torch.log(e_probs.clamp(min=1e-30)),
                 dim=-1,
             )
             edge_mask = (node_mask.unsqueeze(1) & node_mask.unsqueeze(2)).float()
@@ -158,7 +220,7 @@ class Sampler:
             )
             return
 
-        if isinstance(noise_process, ContinuousNoiseProcess):
+        if isinstance(noise_process, GaussianNoiseProcess):
             posterior = noise_process._posterior_parameters(z_t, posterior_param, t, s)
             mean = posterior["mean"]
             std = posterior["std"]
@@ -261,7 +323,16 @@ class Sampler:
                     s_tensor,
                 )
 
-            z_t = noise_process.posterior_sample(
+            # Delegate per-field reverse sampling to the noise process.
+            # ``posterior_sample_from_model_output`` is a template-method
+            # hook: the default path on ``NoiseProcess`` routes to
+            # ``posterior_sample``, ``CategoricalNoiseProcess`` overrides
+            # to the per-class marginalised form (matching upstream
+            # DiGress' ``sum_c p(z_s | z_t, x_0=c) p(x_0=c | z_t)``),
+            # and ``CompositeNoiseProcess`` iterates sub-processes in
+            # list order. The loop now carries no ``isinstance``
+            # dispatch on the process type.
+            z_t = noise_process.posterior_sample_from_model_output(
                 z_t, posterior_param, t_tensor, s_tensor
             )
 

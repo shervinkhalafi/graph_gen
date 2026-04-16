@@ -138,6 +138,55 @@ class BaseGraphModule(pl.LightningModule, ABC):
         """Log parameter count at training start."""
         _log_parameter_count(self.model, self.get_model_name(), self.logger)  # pyright: ignore[reportUnknownArgumentType]
 
+    @override
+    def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+        """Log gradient and parameter L2 norms before gradient clipping.
+
+        Fires after backward and before ``optimizer.step()`` each training
+        step, so the reported ``grad_norm_l2`` is the **pre-clip** value
+        (the post-clip norm is bounded by ``trainer.gradient_clip_val``
+        and carries no diagnostic signal). The cost is negligible — one
+        pass over parameters, the same pass Lightning already performs
+        for gradient clipping when ``gradient_clip_val`` is set.
+
+        Diagnostics:
+
+        - ``train/diagnostics/grad_norm_l2`` — total pre-clip L2 norm of
+          all parameter gradients. Stuck near zero signals
+          vanishing/dead gradients; stuck at or above
+          ``gradient_clip_val`` signals every step is being clipped and
+          the effective LR is lower than ``learning_rate``.
+        - ``train/diagnostics/grad_norm_preclip_max`` — largest
+          single-parameter gradient L2. Catches one-tensor explosions
+          that a global norm can mask.
+        - ``train/diagnostics/param_norm_l2`` — total L2 norm of all
+          parameters. Slow-moving; confirms the optimizer is actually
+          updating weights between steps.
+        """
+        grad_sq_sum = torch.tensor(0.0, device=self.device)
+        grad_max = torch.tensor(0.0, device=self.device)
+        param_sq_sum = torch.tensor(0.0, device=self.device)
+        has_any_grad = False
+        for p in self.parameters():
+            if p.grad is not None:
+                has_any_grad = True
+                gn = p.grad.detach().norm(2)
+                grad_sq_sum = grad_sq_sum + gn.pow(2)
+                grad_max = torch.maximum(grad_max, gn)
+            param_sq_sum = param_sq_sum + p.detach().norm(2).pow(2)
+        if not has_any_grad:
+            return
+        self.log_dict(
+            {
+                "train/diagnostics/grad_norm_l2": grad_sq_sum.sqrt(),
+                "train/diagnostics/grad_norm_preclip_max": grad_max,
+                "train/diagnostics/param_norm_l2": param_sq_sum.sqrt(),
+            },
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+        )
+
     def get_model_name(self) -> str:
         """Return ``model_name`` from hyperparameters.
 

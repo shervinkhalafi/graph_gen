@@ -18,6 +18,7 @@ Key invariants:
 import pytest
 import torch
 
+from tests._helpers.graph_builders import binary_graphdata
 from tmgg.data.datasets.graph_types import GraphData, GraphStructure
 from tmgg.models.digress.transformer_model import (
     GraphTransformer,
@@ -330,10 +331,11 @@ class TestGraphTransformerSpectral:
         # Forward pass with adjacency matrix
         x = torch.rand(2, 20, 20)
         x = (x + x.transpose(-1, -2)) / 2  # Symmetrize for eigendecomposition
-        result = model(GraphData.from_binary_adjacency(x))
+        result = model(binary_graphdata(x))
 
         assert isinstance(result, GraphData)
-        assert result.E.shape == (2, 20, 20, 2)
+        assert result.E_class is not None
+        assert result.E_class.shape == (2, 20, 20, 2)
 
     def test_eigenvector_extraction_for_spectral(self):
         """Eigenvectors are computed when spectral projections are used."""
@@ -362,10 +364,11 @@ class TestGraphTransformerSpectral:
         # Forward pass should work
         x = torch.rand(2, 20, 20)
         x = (x + x.transpose(-1, -2)) / 2
-        result = model(GraphData.from_binary_adjacency(x))
+        result = model(binary_graphdata(x))
 
         assert isinstance(result, GraphData)
-        assert result.E.shape == (2, 20, 20, 2)
+        assert result.E_class is not None
+        assert result.E_class.shape == (2, 20, 20, 2)
 
     def test_gradient_flow_full_model(self):
         """Gradients flow through spectral projections in full model."""
@@ -391,10 +394,11 @@ class TestGraphTransformerSpectral:
         x = torch.rand(2, 12, 12)
         x = (x + x.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_binary_adjacency(x))
+        result = model(binary_graphdata(x))
+        assert result.E_class is not None
         # Use only edge-probability channel: both channels of 2-class encoding
         # sum to 1.0 per position, so E.sum() is constant with zero gradient.
-        loss = result.E[..., 1].sum()
+        loss = result.E_class[..., 1].sum()
         loss.backward()
 
         # Verify gradients flow to spectral projection parameters
@@ -440,12 +444,13 @@ class TestGraphTransformerSpectral:
             adj[0, i, i + 1] = 1.0
             adj[0, i + 1, i] = 1.0
 
-        gd = GraphData.from_binary_adjacency(adj)
+        gd = binary_graphdata(adj)
 
         # Verify encoding: channel 0 is no-edge, channel 1 is edge
-        assert gd.E[0, 0, 1, 1] == 1.0, "Edge (0,1) should have class 1"
-        assert gd.E[0, 0, 1, 0] == 0.0, "Edge (0,1) should NOT have class 0"
-        assert gd.E[0, 0, 2, 0] == 1.0, "Non-edge (0,2) should have class 0"
+        assert gd.E_class is not None
+        assert gd.E_class[0, 0, 1, 1] == 1.0, "Edge (0,1) should have class 1"
+        assert gd.E_class[0, 0, 1, 0] == 0.0, "Edge (0,1) should NOT have class 0"
+        assert gd.E_class[0, 0, 2, 0] == 1.0, "Non-edge (0,2) should have class 0"
 
         # Hook into the eigen_layer to capture the adjacency it receives
         captured = {}

@@ -12,10 +12,8 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from tmgg.models.spectral_denoisers.base_spectral import (
-    EmbeddingSource,
-    SpectralDenoiser,
-)
+from ..base import EdgeSource
+from .base_spectral import EmbeddingSource, SpectralDenoiser
 
 
 class GraphFilterBank(SpectralDenoiser):
@@ -94,6 +92,11 @@ class GraphFilterBank(SpectralDenoiser):
         pearl_hidden_dim: int = 64,
         pearl_input_samples: int = 32,
         pearl_max_nodes: int = 200,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         super().__init__(
             k=k,
@@ -102,6 +105,11 @@ class GraphFilterBank(SpectralDenoiser):
             pearl_hidden_dim=pearl_hidden_dim,
             pearl_input_samples=pearl_input_samples,
             pearl_max_nodes=pearl_max_nodes,
+            edge_source=edge_source,
+            output_dims_x_class=output_dims_x_class,
+            output_dims_x_feat=output_dims_x_feat,
+            output_dims_e_class=output_dims_e_class,
+            output_dims_e_feat=output_dims_e_feat,
         )
         self.polynomial_degree = polynomial_degree
         self.asymmetric = asymmetric

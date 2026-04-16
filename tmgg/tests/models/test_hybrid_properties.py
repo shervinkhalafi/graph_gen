@@ -10,6 +10,7 @@ from hypothesis import given, note, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.gnn import GNN
@@ -138,7 +139,7 @@ class MockEmbeddingModel(nn.Module):
 
     def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute embeddings from graph data."""
-        A = data.to_edge_state()
+        A = legacy_edge_scalar(data)
         batch_size, num_nodes, _ = A.shape
         # Use input A to maintain gradient connection
         A_sum = A.sum(dim=-1, keepdim=True)  # (batch_size, num_nodes, 1)
@@ -154,7 +155,7 @@ class MockEmbeddingModel(nn.Module):
         """Compute adjacency from graph data."""
         X, Y = self.embeddings(data)
         A_recon = torch.bmm(X, Y.transpose(1, 2))
-        return GraphData.from_edge_state(A_recon, node_mask=data.node_mask)
+        return edge_scalar_graphdata(A_recon, node_mask=data.node_mask)
 
     def get_config(self) -> dict[str, int]:
         return {"feature_dim": self.feature_dim}
@@ -200,15 +201,17 @@ class TestSequentialDenoisingModelProperties:
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         # Check shape preservation
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == A.shape
+        assert legacy_edge_scalar(result).shape == A.shape
 
         # Check no NaN/Inf in edge features
-        assert not torch.isnan(result.E).any()
-        assert not torch.isinf(result.E).any()
+        out_e = result.E_feat if result.E_feat is not None else result.E_class
+        assert out_e is not None
+        assert not torch.isnan(out_e).any()
+        assert not torch.isinf(out_e).any()
 
     @given(
         A=batch_adjacency_matrices(min_nodes=3, max_nodes=10),
@@ -225,9 +228,9 @@ class TestSequentialDenoisingModelProperties:
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == A.shape
+        assert legacy_edge_scalar(result).shape == A.shape
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=8))
     @settings(max_examples=15, deadline=2000)
@@ -235,7 +238,7 @@ class TestSequentialDenoisingModelProperties:
         """Test that residual connection in denoising doesn't degrade quality."""
         feature_dim = 5
         embedding_model = MockEmbeddingModel(feature_dim)
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
 
         # Model without denoising
         model_no_denoise = SequentialDenoisingModel(embedding_model, None)
@@ -247,8 +250,8 @@ class TestSequentialDenoisingModelProperties:
         result_with_denoise = model_with_denoise(data)
 
         # Both should produce valid outputs with correct shape
-        assert result_no_denoise.to_edge_state().shape == A.shape
-        assert result_with_denoise.to_edge_state().shape == A.shape
+        assert legacy_edge_scalar(result_no_denoise).shape == A.shape
+        assert legacy_edge_scalar(result_with_denoise).shape == A.shape
 
     @given(config=hybrid_config())
     @settings(max_examples=10, deadline=2000)
@@ -269,11 +272,13 @@ class TestSequentialDenoisingModelProperties:
         model = create_sequential_model(gnn_config, transformer_config)
 
         try:
-            result = model(GraphData.from_edge_state(A))
+            result = model(edge_scalar_graphdata(A))
 
             assert isinstance(result, GraphData)
-            assert result.to_edge_state().shape == A.shape
-            assert not torch.isnan(result.E).any()
+            assert legacy_edge_scalar(result).shape == A.shape
+            out_e = result.E_feat if result.E_feat is not None else result.E_class
+            assert out_e is not None
+            assert not torch.isnan(out_e).any()
         except EigenDecompositionError:
             # Expected for some matrices
             note("Eigendecomposition failed - expected for some matrices")
@@ -351,8 +356,8 @@ class TestHybridModelErrorHandling:
             def forward(
                 self, data: GraphData, t: torch.Tensor | None = None
             ) -> GraphData:
-                A = data.to_edge_state()
-                return GraphData.from_edge_state(
+                A = legacy_edge_scalar(data)
+                return edge_scalar_graphdata(
                     torch.randn_like(A), node_mask=data.node_mask
                 )
 
@@ -377,7 +382,7 @@ class TestHybridModelErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         with pytest.raises(EigenDecompositionError):
-            _ = model(GraphData.from_edge_state(A))
+            _ = model(edge_scalar_graphdata(A))
 
     def test_dimension_mismatch_handling(self) -> None:
         """Test handling of dimension mismatches between components."""
@@ -391,9 +396,9 @@ class TestHybridModelErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         # Model should still work, though denoising might not be optimal
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == A.shape
+        assert legacy_edge_scalar(result).shape == A.shape
 
 
 class TestCompositionProperties:
@@ -422,8 +427,8 @@ class TestCompositionProperties:
         for i in range(1, batch_size):
             A_batch[i] = torch.eye(num_nodes) * 0.1
 
-        result = model(GraphData.from_edge_state(A_batch))
-        raw_adj = result.to_edge_state()
+        result = model(edge_scalar_graphdata(A_batch))
+        raw_adj = legacy_edge_scalar(result)
 
         # Check that first reconstruction is different from others
         first_recon = raw_adj[0]

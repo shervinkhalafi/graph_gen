@@ -16,6 +16,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data import generate_sbm_adjacency
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention.attention import MultiLayerAttention
@@ -179,10 +180,10 @@ class TestIssues4And5NodeVarGNNRedesign:
         model = NodeVarGNN(num_layers=1, num_terms=2, feature_dim=5)
         A = torch.eye(10).unsqueeze(0)
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (1, 10, 10)
+        assert legacy_edge_scalar(result).shape == (1, 10, 10)
 
 
 class TestIssue6EigenvaluePowerNormalization:
@@ -200,10 +201,12 @@ class TestIssue6EigenvaluePowerNormalization:
         A = (A + A.transpose(-1, -2)) / 2
         A = A * 10  # Scale up eigenvalues
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
-        assert not torch.isnan(result.E).any(), "NaN in filter bank output"
-        assert not torch.isinf(result.E).any(), "Inf in filter bank output"
+        out_e = result.E_feat if result.E_feat is not None else result.E_class
+        assert out_e is not None
+        assert not torch.isnan(out_e).any(), "NaN in filter bank output"
+        assert not torch.isinf(out_e).any(), "Inf in filter bank output"
 
 
 class TestIssue7MetricsConvergenceHandling:
@@ -248,10 +251,10 @@ class TestIssue8SigmoidConsistency:
         A = torch.randn(2, num_nodes, num_nodes)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         assert isinstance(result, GraphData)
-        logits = result.to_edge_state()
+        logits = legacy_edge_scalar(result)
         assert logits.shape == (2, num_nodes, num_nodes)
 
     def test_gnn_symmetric_returns_graph_data(self):
@@ -261,10 +264,10 @@ class TestIssue8SigmoidConsistency:
         )
         A = torch.eye(8).unsqueeze(0)
 
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
 
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (1, 8, 8)
+        assert legacy_edge_scalar(result).shape == (1, 8, 8)
 
 
 class TestIssue9DivisionGuards:
@@ -317,9 +320,9 @@ class TestIssue10ResidualShapeAssertion:
         A = torch.eye(8).unsqueeze(0)
 
         # Should work without error
-        result = model(GraphData.from_edge_state(A))
+        result = model(edge_scalar_graphdata(A))
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (1, 8, 8)
+        assert legacy_edge_scalar(result).shape == (1, 8, 8)
 
 
 class TestIssue11ZeroEigenvectorWarning:

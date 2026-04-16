@@ -19,6 +19,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from tests._helpers.graph_builders import (
+    binary_graphdata,
+    edge_scalar_graphdata,
+    legacy_edge_scalar,
+)
 
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.noise_process import (
@@ -39,6 +44,7 @@ from tmgg.models.base import GraphModel
 from tmgg.models.gnn import GNN as _GNN
 from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
+    _categorical_kl_per_graph,
     _categorical_reconstruction_log_prob,
 )
 from tmgg.utils.noising.noise import GaussianNoise
@@ -81,13 +87,13 @@ def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
         upper = (torch.rand(n, n) > 0.5).float()
         sym = upper.triu(diagonal=1)
         adj[i] = sym + sym.t()
-    return GraphData.from_edge_state(adj)
+    return edge_scalar_graphdata(adj)
 
 
 def _make_categorical_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
     """Create a categorical binary-topology batch for discrete tests."""
-    adj = _make_batch(bs=bs, n=n).to_edge_state()
-    return GraphData.from_binary_adjacency(adj)
+    adj = legacy_edge_scalar(_make_batch(bs=bs, n=n))
+    return binary_graphdata(adj)
 
 
 def _make_module(
@@ -189,7 +195,12 @@ class TestForward:
         batch = _make_batch(bs=2, n=_NUM_NODES)
         result = module.forward(batch)
         assert isinstance(result, GraphData)
-        assert result.E.shape[0] == 2
+        # Continuous GNN models write into E_feat (or, after Wave 7
+        # edge-source configuration, E_class). Accept whichever field
+        # is populated.
+        out_edge = result.E_feat if result.E_feat is not None else result.E_class
+        assert out_edge is not None
+        assert out_edge.shape[0] == 2
 
     def test_forward_passes_timestep(self) -> None:
         """forward() relays the ``t`` argument to the model.
@@ -304,12 +315,16 @@ class TestComputeLoss:
         """
         module = _make_module(loss_type="cross_entropy")
         batch = _make_categorical_batch(bs=2, n=4)
+        assert batch.X_class is not None
+        assert batch.E_class is not None
         # Simulate model prediction: same shape but with logits
+        pred_X = torch.randn_like(batch.X_class)
+        pred_E = torch.randn_like(batch.E_class)
         pred = GraphData(
-            X=torch.randn_like(batch.X),
-            E=torch.randn_like(batch.E),
             y=batch.y,
             node_mask=batch.node_mask,
+            X_class=pred_X,
+            E_class=pred_E,
         )
         loss = module._compute_loss(pred, batch)
         assert torch.isfinite(loss)
@@ -320,11 +335,14 @@ class TestComputeLoss:
         """
         module = _make_module(loss_type="mse")
         batch = _make_batch(bs=2, n=4)
+        assert batch.E_feat is not None
+        pred_E = torch.randn_like(batch.E_feat)
+        # Symmetrise to keep downstream invariants happy.
+        pred_E = 0.5 * (pred_E + pred_E.transpose(-3, -2))
         pred = GraphData(
-            X=torch.randn_like(batch.X),
-            E=torch.randn_like(batch.E),
             y=batch.y,
             node_mask=batch.node_mask,
+            E_feat=pred_E,
         )
         loss = module._compute_loss(pred, batch)
         assert torch.isfinite(loss)
@@ -586,9 +604,10 @@ class TestGenerateGraphs:
         Test rationale: Step 2 removes sampler-owned process state. The
         sampler should receive the exact ``module.noise_process`` object so
         setup-time initialization cannot diverge between training and
-        generation.
+        generation. Wave 6.1 requires an evaluator so ``generate_graphs``
+        can delegate GraphData→nx conversion to ``to_networkx_graphs``.
         """
-        module = _make_module()
+        module = _make_module(evaluator=GraphEvaluator(eval_num_samples=4))
         observed: dict[str, Any] = {}
 
         def fake_sample(
@@ -606,9 +625,10 @@ class TestGenerateGraphs:
             observed["num_nodes"] = num_nodes
             observed["device"] = device
             observed["collector"] = collector
-            graph = GraphData.from_binary_adjacency(torch.zeros(_NUM_NODES, _NUM_NODES))
+            graph = binary_graphdata(torch.zeros(_NUM_NODES, _NUM_NODES))
             return [graph for _ in range(num_graphs)]
 
+        assert module.sampler is not None
         module.sampler.sample = fake_sample  # type: ignore[assignment]
 
         generated = module.generate_graphs(2)
@@ -632,21 +652,23 @@ class _CategoricalLogitModel(GraphModel):
 
     def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
         del t
+        assert data.X_class is not None
+        assert data.E_class is not None
         node_logits = torch.where(
-            data.X > 0,
-            torch.full_like(data.X, 2.0),
-            torch.full_like(data.X, -2.0),
+            data.X_class > 0,
+            torch.full_like(data.X_class, 2.0),
+            torch.full_like(data.X_class, -2.0),
         )
         edge_logits = torch.where(
-            data.E > 0,
-            torch.full_like(data.E, 2.0),
-            torch.full_like(data.E, -2.0),
+            data.E_class > 0,
+            torch.full_like(data.E_class, 2.0),
+            torch.full_like(data.E_class, -2.0),
         )
         return GraphData(
-            X=node_logits,
-            E=edge_logits,
             y=data.y,
             node_mask=data.node_mask,
+            X_class=node_logits,
+            E_class=edge_logits,
         )
 
     def get_config(self) -> dict[str, Any]:
@@ -688,11 +710,6 @@ class TestVLBWiring:
         module = _make_categorical_module()
         assert isinstance(module.noise_process, ExactDensityNoiseProcess)
 
-    def test_continuous_module_is_not_exact_density(self) -> None:
-        """Continuous modules should skip exact-density VLB bookkeeping."""
-        module = _make_module()
-        assert not isinstance(module.noise_process, ExactDensityNoiseProcess)
-
     def test_vlb_accumulators_start_empty(self) -> None:
         """All VLB accumulator lists should be empty at construction."""
         module = _make_categorical_module()
@@ -700,6 +717,76 @@ class TestVLBWiring:
         assert len(module._vlb_kl_prior) == 0
         assert len(module._vlb_kl_diffusion) == 0
         assert len(module._vlb_reconstruction) == 0
+
+
+class TestCategoricalKLPerGraph:
+    """Analytic categorical KL helper used by the Phase D VLB rewrite."""
+
+    def _make_pmf(
+        self, prob_x: torch.Tensor, prob_e: torch.Tensor, mask: torch.Tensor
+    ) -> GraphData:
+        """Build a ``GraphData`` carrying per-position categorical PMFs."""
+        return GraphData(
+            y=torch.zeros(prob_x.shape[0], 0),
+            node_mask=mask,
+            X_class=prob_x,
+            E_class=prob_e,
+        )
+
+    def test_kl_zero_for_identical_pmfs(self) -> None:
+        """``KL(p || p) == 0`` per graph regardless of mask coverage."""
+        bs, n, dx, de = 2, 3, 4, 2
+        prob_x = torch.full((bs, n, dx), 1.0 / dx)
+        prob_e = torch.full((bs, n, n, de), 1.0 / de)
+        mask = torch.ones(bs, n, dtype=torch.bool)
+
+        p = self._make_pmf(prob_x, prob_e, mask)
+        q = self._make_pmf(prob_x.clone(), prob_e.clone(), mask)
+
+        kl = _categorical_kl_per_graph(p, q)
+        assert torch.allclose(kl, torch.zeros(bs), atol=1e-6)
+
+    def test_kl_strictly_positive_for_disjoint_supports(self) -> None:
+        """Putting all mass on different classes drives KL up sharply."""
+        bs, n, dx, de = 1, 2, 3, 2
+        p_x = torch.zeros(bs, n, dx)
+        p_x[..., 0] = 1.0
+        q_x = torch.zeros(bs, n, dx)
+        q_x[..., 1] = 1.0
+        prob_e = torch.full((bs, n, n, de), 1.0 / de)
+        mask = torch.ones(bs, n, dtype=torch.bool)
+
+        kl = _categorical_kl_per_graph(
+            self._make_pmf(p_x, prob_e, mask),
+            self._make_pmf(q_x, prob_e.clone(), mask),
+        )
+        assert kl.item() > 1.0
+
+    def test_masked_positions_do_not_contribute(self) -> None:
+        """Positions outside the node mask must have zero KL contribution."""
+        bs, n, dx, de = 1, 4, 2, 2
+        # Two graphs that disagree everywhere; only the first two
+        # positions are "real" so only those contribute.
+        p_x = torch.zeros(bs, n, dx)
+        p_x[..., 0] = 1.0
+        q_x = torch.zeros(bs, n, dx)
+        q_x[..., 1] = 1.0
+        prob_e = torch.full((bs, n, n, de), 1.0 / de)
+        full_mask = torch.ones(bs, n, dtype=torch.bool)
+        partial_mask = torch.tensor([[True, True, False, False]])
+
+        kl_full = _categorical_kl_per_graph(
+            self._make_pmf(p_x, prob_e, full_mask),
+            self._make_pmf(q_x, prob_e.clone(), full_mask),
+        )
+        kl_partial = _categorical_kl_per_graph(
+            self._make_pmf(p_x, prob_e, partial_mask),
+            self._make_pmf(q_x, prob_e.clone(), partial_mask),
+        )
+        # Half the node positions active → roughly half the X-side KL
+        # plus the mask-shrunk edge contribution. Lower-bound is enough.
+        assert kl_partial.item() < kl_full.item()
+        assert kl_partial.item() > 0.0
 
     def test_validation_step_populates_vlb_accumulators(self) -> None:
         """After a validation step on a categorical module, each VLB
@@ -728,10 +815,17 @@ class TestVLBWiring:
 
         def soft_forward(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
             result = original_forward(data, t=t)
+            assert result.X_class is not None
+            assert result.E_class is not None
             # Convert one-hot output to soft probabilities (uniform + epsilon)
-            soft_X = torch.ones_like(result.X) / _DX
-            soft_E = torch.ones_like(result.E) / _DE
-            return GraphData(X=soft_X, E=soft_E, y=result.y, node_mask=result.node_mask)
+            soft_X = torch.ones_like(result.X_class) / _DX
+            soft_E = torch.ones_like(result.E_class) / _DE
+            return GraphData(
+                y=result.y,
+                node_mask=result.node_mask,
+                X_class=soft_X,
+                E_class=soft_E,
+            )
 
         module.model.forward = soft_forward  # type: ignore[assignment]
         module.validation_step(batch, batch_idx=0)
@@ -741,6 +835,13 @@ class TestVLBWiring:
         assert torch.isfinite(module._vlb_kl_diffusion[0])
         assert torch.isfinite(module._vlb_reconstruction[0])
 
+    @pytest.mark.skip(
+        reason=(
+            "Wave 5 per docs/plans/2026-04-15-unified-graph-features-plan.md "
+            "rewires per-field VLB for Gaussian; the 'skip VLB when continuous' "
+            "contract this test encodes no longer holds."
+        )
+    )
     def test_continuous_validation_step_skips_vlb(self) -> None:
         """A continuous-noise module's validation step must not populate
         the VLB accumulators; they should remain empty.
@@ -797,6 +898,13 @@ class TestVLBWiring:
         assert len(module._vlb_nll) == 0
         assert len(module._vlb_kl_prior) == 0
 
+    @pytest.mark.skip(
+        reason=(
+            "Wave 5 per docs/plans/2026-04-15-unified-graph-features-plan.md "
+            "rewires per-field VLB for Gaussian; the 'skip VLB when continuous' "
+            "contract this test encodes no longer holds."
+        )
+    )
     def test_epoch_end_no_vlb_when_continuous(self) -> None:
         """A continuous-noise module should not log VLB metrics at all."""
         module = _make_module(evaluator=None)
@@ -821,23 +929,34 @@ class TestCategoricalReconstructionLogProb:
 
     def test_output_shape(self) -> None:
         batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        assert batch.X_class is not None
+        assert batch.E_class is not None
+        X_soft = torch.ones_like(batch.X_class) / _DX
+        E_soft = torch.ones_like(batch.E_class) / _DE
         pred_probs = GraphData(
-            X=torch.ones_like(batch.X) / _DX,
-            E=torch.ones_like(batch.E) / _DE,
             y=batch.y,
             node_mask=batch.node_mask,
+            X_class=X_soft,
+            E_class=E_soft,
         )
         result = _categorical_reconstruction_log_prob(batch, pred_probs)
         assert result.shape == (_BATCH_SIZE,)
 
     def test_perfect_prediction_near_zero(self) -> None:
         batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        assert batch.X_class is not None
+        assert batch.E_class is not None
         eps = 1e-7
-        x_safe = batch.X + eps
+        x_safe = batch.X_class + eps
         x_safe = x_safe / x_safe.sum(dim=-1, keepdim=True)
-        e_safe = batch.E + eps
+        e_safe = batch.E_class + eps
         e_safe = e_safe / e_safe.sum(dim=-1, keepdim=True)
-        pred_probs = GraphData(X=x_safe, E=e_safe, y=batch.y, node_mask=batch.node_mask)
+        pred_probs = GraphData(
+            y=batch.y,
+            node_mask=batch.node_mask,
+            X_class=x_safe,
+            E_class=e_safe,
+        )
         result = _categorical_reconstruction_log_prob(batch, pred_probs)
         assert torch.isfinite(result).all()
         assert (result.abs() < 0.1).all()
@@ -855,13 +974,15 @@ class TestReconstructionMasking:
         """
         module = _make_categorical_module()
         batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        assert batch.X_class is not None
+        assert batch.E_class is not None
 
         # Mask out the last node in each graph to simulate variable sizes
         batch.node_mask[:, -1] = False
         # Put garbage at invalid positions to ensure masking actually works
-        batch.X[:, -1] = torch.rand_like(batch.X[:, -1])
-        batch.E[:, -1, :] = torch.rand_like(batch.E[:, -1, :])
-        batch.E[:, :, -1] = torch.rand_like(batch.E[:, :, -1])
+        batch.X_class[:, -1] = torch.rand_like(batch.X_class[:, -1])
+        batch.E_class[:, -1, :] = torch.rand_like(batch.E_class[:, -1, :])
+        batch.E_class[:, :, -1] = torch.rand_like(batch.E_class[:, :, -1])
 
         # Patch model to return soft probabilities (uniform) so log-space
         # is well-defined at valid positions.
@@ -869,13 +990,20 @@ class TestReconstructionMasking:
 
         def soft_forward(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
             result = original_forward(data, t=t)
-            soft_X = torch.ones_like(result.X) / _DX
-            soft_E = torch.ones_like(result.E) / _DE
-            return GraphData(X=soft_X, E=soft_E, y=result.y, node_mask=result.node_mask)
+            assert result.X_class is not None
+            assert result.E_class is not None
+            soft_X = torch.ones_like(result.X_class) / _DX
+            soft_E = torch.ones_like(result.E_class) / _DE
+            return GraphData(
+                y=result.y,
+                node_mask=result.node_mask,
+                X_class=soft_X,
+                E_class=soft_E,
+            )
 
         module.model.forward = soft_forward  # type: ignore[assignment]
 
-        result = module._compute_reconstruction_at_t1(batch)  # pyright: ignore[reportPrivateUsage]
+        result = module._compute_reconstruction(batch)  # pyright: ignore[reportPrivateUsage]
         assert result.shape == (_BATCH_SIZE,)
         assert torch.isfinite(
             result

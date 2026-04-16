@@ -34,7 +34,7 @@ from tmgg.data.datasets.graph_types import GraphData
 def _graphdata_to_numpy(batch: GraphData, index: int = 0) -> np.ndarray:
     """Extract one graph from a dense GraphData batch."""
     num_nodes = int(batch.node_mask[index].sum().item())
-    adj = batch.to_binary_adjacency()[index, :num_nodes, :num_nodes]
+    adj = batch.binarised_adjacency()[index, :num_nodes, :num_nodes]
     return adj.cpu().numpy()
 
 
@@ -81,16 +81,16 @@ class TestGraphDataModuleContract:
 
         batch = next(iter(dm.train_dataloader()))
         assert isinstance(batch, GraphData)
-        assert batch.to_binary_adjacency().shape == (4, 12, 12)
-        assert batch.to_binary_adjacency().dtype == torch.float32
+        assert batch.binarised_adjacency().shape == (4, 12, 12)
+        assert batch.binarised_adjacency().dtype == torch.float32
 
         val_batch = next(iter(dm.val_dataloader()))
         assert isinstance(val_batch, GraphData)
-        assert val_batch.to_binary_adjacency().shape[1:] == (12, 12)
+        assert val_batch.binarised_adjacency().shape[1:] == (12, 12)
 
         test_batch = next(iter(dm.test_dataloader()))
         assert isinstance(test_batch, GraphData)
-        assert test_batch.to_binary_adjacency().shape[1:] == (12, 12)
+        assert test_batch.binarised_adjacency().shape[1:] == (12, 12)
 
     def test_sbm_enumerated_lifecycle(self) -> None:
         """SBM with enumerated partitions: different partitions per split.
@@ -130,7 +130,7 @@ class TestGraphDataModuleContract:
         assert len(dm._test_data) == 2 * 4  # pyright: ignore[reportPrivateUsage]
 
         batch = next(iter(dm.train_dataloader()))
-        assert batch.to_binary_adjacency().shape == (4, 20, 20)
+        assert batch.binarised_adjacency().shape == (4, 20, 20)
 
     def test_er_lifecycle(self) -> None:
         """Erdos-Renyi: synthetic graph generation through SyntheticGraphDataset."""
@@ -146,7 +146,7 @@ class TestGraphDataModuleContract:
 
         batch = next(iter(dm.train_dataloader()))
         assert isinstance(batch, GraphData)
-        assert batch.to_binary_adjacency().shape[1:] == (10, 10)
+        assert batch.binarised_adjacency().shape[1:] == (10, 10)
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +181,8 @@ class TestSingleGraphDataModuleContract:
 
         batch = next(iter(dm.train_dataloader()))
         assert isinstance(batch, GraphData)
-        assert batch.to_binary_adjacency().shape == (4, 20, 20)
-        assert batch.to_binary_adjacency().dtype == torch.float32
+        assert batch.binarised_adjacency().shape == (4, 20, 20)
+        assert batch.binarised_adjacency().dtype == torch.float32
 
     def test_er_different_graphs_lifecycle(self) -> None:
         """ER with same_graph_all_splits=False: different graphs per split.
@@ -206,7 +206,7 @@ class TestSingleGraphDataModuleContract:
         assert not np.array_equal(train_graph, _first_reference_graph(dm, "val"))
 
         batch = next(iter(dm.train_dataloader()))
-        assert batch.to_binary_adjacency().shape == (2, 15, 15)
+        assert batch.binarised_adjacency().shape == (2, 15, 15)
 
     def test_graph_properties(self) -> None:
         """Generated graphs should be symmetric, binary, with zero diagonal."""
@@ -255,18 +255,18 @@ class TestMultiGraphDataModuleContract:
         # Train dataloader
         train_batch = next(iter(dm.train_dataloader()))
         assert isinstance(train_batch, GraphData)
-        assert train_batch.to_binary_adjacency().shape == (4, 16, 16)
-        assert train_batch.to_binary_adjacency().dtype == torch.float32
+        assert train_batch.binarised_adjacency().shape == (4, 16, 16)
+        assert train_batch.binarised_adjacency().dtype == torch.float32
 
         # Val dataloader
         val_batch = next(iter(dm.val_dataloader()))
         assert isinstance(val_batch, GraphData)
-        assert val_batch.to_binary_adjacency().shape[1:] == (16, 16)
+        assert val_batch.binarised_adjacency().shape[1:] == (16, 16)
 
         # Test dataloader
         test_batch = next(iter(dm.test_dataloader()))
         assert isinstance(test_batch, GraphData)
-        assert test_batch.to_binary_adjacency().shape[1:] == (16, 16)
+        assert test_batch.binarised_adjacency().shape[1:] == (16, 16)
 
     def test_er_lifecycle(self) -> None:
         """ER graphs through the generative pipeline."""
@@ -282,7 +282,7 @@ class TestMultiGraphDataModuleContract:
         dm.setup()
 
         batch = next(iter(dm.train_dataloader()))
-        assert batch.to_binary_adjacency().shape == (4, 12, 12)
+        assert batch.binarised_adjacency().shape == (4, 12, 12)
 
     def test_split_sizes(self) -> None:
         """Train/val/test split sizes should match ratios."""
@@ -403,8 +403,12 @@ class TestSyntheticCategoricalDataModuleContract:
 
         batch = next(iter(dm.train_dataloader()))
 
-        assert batch.X.shape == (4, 16, 2)  # (bs, n, dx)
-        assert batch.E.shape == (4, 16, 16, 2)  # (bs, n, n, de)
+        # Wave 9.3: structure-only SBM data emits X_class=None. E_class
+        # holds the two-channel [no-edge, edge] one-hot; node_mask marks
+        # real vs padded positions.
+        assert batch.X_class is None
+        assert batch.E_class is not None
+        assert batch.E_class.shape == (4, 16, 16, 2)  # (bs, n, n, de)
         assert batch.y.shape == (4, 0)  # (bs, 0) — no global features
         assert batch.node_mask.shape == (4, 16)  # (bs, n)
         assert batch.node_mask.dtype == torch.bool
@@ -427,13 +431,14 @@ class TestSyntheticCategoricalDataModuleContract:
         dm.setup()
 
         batch = next(iter(dm.train_dataloader()))
-        node_sums = batch.X[batch.node_mask].sum(dim=-1)
+        # Wave 9.3: structure-only datasets emit X_class=None. node_mask
+        # alone carries which positions are real.
+        assert batch.X_class is None
+        assert batch.E_class is not None
         edge_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
-        edge_sums = batch.E[edge_mask].sum(dim=-1)
+        edge_sums = batch.E_class[edge_mask].sum(dim=-1)
 
-        assert batch.X.shape[-1] == 2
-        assert batch.E.shape[-1] == 2
-        assert torch.allclose(node_sums, torch.ones_like(node_sums))
+        assert batch.E_class.shape[-1] == 2
         assert torch.allclose(edge_sums, torch.ones_like(edge_sums))
 
     def test_reference_graphs_contract(self) -> None:
@@ -463,8 +468,10 @@ class TestSyntheticCategoricalDataModuleContract:
         dm.setup()
 
         batch = next(iter(dm.train_dataloader()))
-        assert batch.X.shape[1:] == (12, 2)
-        assert batch.E.shape[1:] == (12, 12, 2)
+        # Wave 9.3: structure-only datasets emit X_class=None.
+        assert batch.X_class is None
+        assert batch.E_class is not None
+        assert batch.E_class.shape[1:] == (12, 12, 2)
 
 
 # ---------------------------------------------------------------------------

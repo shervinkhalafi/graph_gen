@@ -2,8 +2,13 @@
 
 set -euo pipefail
 
-# Launch the current TMGG discrete generative path with a synthetic SBM setup
-# chosen to approximate the upstream DiGress SBM training schedule in steps.
+# Launch the upstream-DiGress SBM training run on Modal.
+#
+# Uses the SPECTRE 200-graph SBM fixture (variable n in [44, 187],
+# 2-5 communities, p_intra=0.3, p_inter=0.005) — the same dataset
+# DiGress reports against in Vignac et al. (ICLR 2023). All numerical
+# parity fixes from ``docs/reports/2026-04-15-upstream-digress-parity
+# -audit.md`` are baked into the configs reached by this command.
 
 : "${USE_DOPPLER:=1}"
 : "${DEPLOY_FIRST:=1}"
@@ -39,25 +44,29 @@ cmd=(
   run
   tmgg-discrete-gen
   +models/discrete@model=discrete_sbm_official
+  +data=spectre_sbm
+  # The base config carries inline synthetic-only keys (``graph_type``,
+  # ``num_nodes``, ``num_graphs``, ``train_ratio``, ``val_ratio``,
+  # ``graph_config``). They are absorbed by
+  # ``SpectreSBMDataModule.__init__``'s ``**_metadata`` and re-exposed
+  # at the data namespace for downstream interpolation (the wandb
+  # logger reads ``${data.num_nodes}``). No ``~`` deletes needed.
   learning_rate=0.0002
   weight_decay=1e-12
   amsgrad=true
   seed="${SEED}"
-  data.num_graphs=200
-  data.train_ratio=0.64
-  data.val_ratio=0.16
-  data.batch_size=12
-  data.graph_config.p_intra=1.0
-  data.graph_config.p_inter=0.0
   trainer.max_steps=550000
-  trainer.val_check_interval=1100
-  model.eval_every_n_steps=1100
+  # Validate every 10 000 steps. Upstream DiGress validates per-epoch
+  # (~44k steps at our batch size); we deliberately validate ~4x more
+  # often for faster training-time feedback.
+  trainer.val_check_interval=10000
+  model.eval_every_n_steps=10000
   model.noise_schedule.timesteps=1000
   +model.model.extra_features._target_=tmgg.models.digress.extra_features.ExtraFeatures
   +model.model.extra_features.extra_features_type=all
-  +model.model.extra_features.max_n_nodes=20
-  +model.evaluator.p_intra=1.0
-  +model.evaluator.p_inter=0.0
+  # SPECTRE graphs reach n=187; cycle-feature counts need a ceiling
+  # at-or-above the largest graph in the dataset.
+  +model.model.extra_features.max_n_nodes=200
   allow_no_wandb=false
   wandb_entity="${WANDB_ENTITY}"
   wandb_project="${WANDB_PROJECT}"

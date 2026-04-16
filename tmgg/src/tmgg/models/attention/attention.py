@@ -8,7 +8,7 @@ import torch.nn as nn
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.layers.mha_layer import MultiHeadSelfAttention
 
-from ..base import GraphModel
+from ..base import EdgeSource, GraphModel, read_edge_scalar, write_edge_scalar
 
 
 class MultiLayerAttention(GraphModel):
@@ -24,6 +24,11 @@ class MultiLayerAttention(GraphModel):
         dropout: float = 0.0,
         bias: bool = False,
         use_residual: bool = True,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         """
         Initialize the Multi-Layer Attention module.
@@ -37,6 +42,11 @@ class MultiLayerAttention(GraphModel):
             dropout: Dropout probability
             bias: Whether to use bias in linear layers
             use_residual: Whether to apply residual connections in attention layers
+            edge_source: Per-spec input read selector (``"feat"`` / ``"class"``).
+            output_dims_x_class, output_dims_x_feat, output_dims_e_class, output_dims_e_feat:
+                Per-field output widths required by the Wave 7 architecture
+                contract. Default ``output_dims_e_feat=1`` preserves the
+                historical denoising path.
         """
         super().__init__()
 
@@ -48,6 +58,14 @@ class MultiLayerAttention(GraphModel):
         self.dropout = dropout
         self.bias = bias
         self.use_residual = use_residual
+        self.edge_source: EdgeSource = edge_source
+        self.output_dims_x_class = output_dims_x_class
+        self.output_dims_x_feat = output_dims_x_feat
+        self.output_dims_e_class = output_dims_e_class
+        self.output_dims_e_feat = output_dims_e_feat
+        self._output_target: EdgeSource = (
+            "class" if output_dims_e_class is not None else "feat"
+        )
 
         # Create stack of attention layers
         self.layers = nn.ModuleList(
@@ -93,22 +111,18 @@ class MultiLayerAttention(GraphModel):
     def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
         """Forward pass through all attention layers.
 
-        Parameters
-        ----------
-        data
-            Graph features. The dense edge state is extracted via
-            ``data.to_edge_state()``.
-        t
-            Diffusion timestep tensor, or None. Currently unused.
-
-        Returns
-        -------
-        GraphData
-            Denoised graph with 2-class edge features.
+        Reads the dense scalar adjacency through ``read_edge_scalar`` and
+        writes the result to the configured split edge field via
+        ``write_edge_scalar``; ``t`` is appended to ``data.y`` when
+        supplied, per the spec's two-line pattern.
         """
-        A = data.to_edge_state()
-        out = self.apply_attention(A)
-        return GraphData.from_edge_state(out, node_mask=data.node_mask)
+        A = read_edge_scalar(data, self.edge_source)
+        out_adj = self.apply_attention(A)
+        out = write_edge_scalar(data, edge_scalar=out_adj, target=self._output_target)
+        if t is not None:
+            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
+            out = out.replace(y=new_y)
+        return out
 
     @override
     def get_config(self) -> dict[str, Any]:
@@ -122,4 +136,9 @@ class MultiLayerAttention(GraphModel):
             "dropout": self.dropout,
             "bias": self.bias,
             "use_residual": self.use_residual,
+            "edge_source": self.edge_source,
+            "output_dims_x_class": self.output_dims_x_class,
+            "output_dims_x_feat": self.output_dims_x_feat,
+            "output_dims_e_class": self.output_dims_e_class,
+            "output_dims_e_feat": self.output_dims_e_feat,
         }

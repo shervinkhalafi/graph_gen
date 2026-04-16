@@ -126,8 +126,15 @@ def test_different_seeds_produce_different_splits():
     assert dm2._train_data is not None  # pyright: ignore[reportPrivateUsage]
 
     # At least one graph should differ (the SBM adjacency generation is random)
+    def _edges_equal(a: object, b: object) -> bool:
+        ea = getattr(a, "edge_index", None)
+        eb = getattr(b, "edge_index", None)
+        assert ea is not None, "PyG Data.edge_index must be populated"
+        assert eb is not None, "PyG Data.edge_index must be populated"
+        return torch.equal(ea, eb)
+
     any_differ = any(
-        not torch.equal(a.edge_index, b.edge_index)  # type: ignore[arg-type]
+        not _edges_equal(a, b)
         for a, b in zip(
             dm1._train_data,
             dm2._train_data,

@@ -7,6 +7,7 @@ projection -- a scaled bilinear form, not self-attention.
 
 import torch
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData
 
 
@@ -46,9 +47,9 @@ def test_bilinear_output_shape():
     model = BilinearDenoiser(k=4, d_k=8)
     A = torch.randn(2, 10, 10)
     A = (A + A.transpose(-1, -2)) / 2
-    result = model(GraphData.from_edge_state(A))
+    result = model(edge_scalar_graphdata(A))
     assert isinstance(result, GraphData)
-    assert result.to_edge_state().shape == (2, 10, 10)
+    assert legacy_edge_scalar(result).shape == (2, 10, 10)
 
 
 def test_bilinear_has_no_softmax():
@@ -58,8 +59,8 @@ def test_bilinear_has_no_softmax():
     model = BilinearDenoiser(k=4, d_k=8)
     A = torch.randn(2, 10, 10)
     A = (A + A.transpose(-1, -2)) / 2
-    result = model(GraphData.from_edge_state(A))
-    raw_adj = result.to_edge_state()
+    result = model(edge_scalar_graphdata(A))
+    raw_adj = legacy_edge_scalar(result)
     # Raw logits can be negative and > 1 -- softmax output would be in [0,1]
     # with rows summing to 1. Bilinear should have neither property.
     assert raw_adj.min() < 0 or raw_adj.max() > 1, "Output looks softmax-bounded"

@@ -40,11 +40,13 @@ def model() -> GraphTransformer:
 @pytest.fixture()
 def graph_data() -> GraphData:
     """Random categorical input as GraphData."""
+    X = torch.randn(BS, N, DX_IN)
+    E = torch.randn(BS, N, N, DE_IN)
     return GraphData(
-        X=torch.randn(BS, N, DX_IN),
-        E=torch.randn(BS, N, N, DE_IN),
         y=torch.randn(BS, DY_IN),
         node_mask=torch.ones(BS, N),
+        X_class=X,
+        E_class=E,
     )
 
 
@@ -67,8 +69,8 @@ class TestForwardPass:
     ) -> None:
         """X, E, y output shapes must match the configured output_dims."""
         out = model(graph_data)
-        assert out.X.shape == (BS, N, DX_OUT)
-        assert out.E.shape == (BS, N, N, DE_OUT)
+        assert out.X_class.shape == (BS, N, DX_OUT)
+        assert out.E_class.shape == (BS, N, N, DE_OUT)
         assert out.y.shape == (BS, DY_OUT)
 
     def test_outputs_finite(
@@ -78,8 +80,8 @@ class TestForwardPass:
     ) -> None:
         """All output tensors must contain finite values (no NaN or Inf)."""
         out = model(graph_data)
-        assert torch.isfinite(out.X).all(), "X contains NaN or Inf"
-        assert torch.isfinite(out.E).all(), "E contains NaN or Inf"
+        assert torch.isfinite(out.X_class).all(), "X contains NaN or Inf"
+        assert torch.isfinite(out.E_class).all(), "E contains NaN or Inf"
         assert torch.isfinite(out.y).all(), "y contains NaN or Inf"
 
     def test_partial_node_mask(
@@ -89,15 +91,17 @@ class TestForwardPass:
         """Forward pass works when some nodes are masked out."""
         node_mask = torch.ones(BS, N)
         node_mask[:, 7:] = 0  # mask out last 3 nodes
+        X = torch.randn(BS, N, DX_IN)
+        E = torch.randn(BS, N, N, DE_IN)
         data = GraphData(
-            X=torch.randn(BS, N, DX_IN),
-            E=torch.randn(BS, N, N, DE_IN),
             y=torch.randn(BS, DY_IN),
             node_mask=node_mask,
+            X_class=X,
+            E_class=E,
         )
         out = model(data)
-        assert out.X.shape == (BS, N, DX_OUT)
-        assert torch.isfinite(out.X).all()
+        assert out.X_class.shape == (BS, N, DX_OUT)
+        assert torch.isfinite(out.X_class).all()
 
 
 class TestGetConfig:
@@ -151,15 +155,17 @@ class TestEigenvectorMode:
 
     def test_forward_shape(self, eigen_model: GraphTransformer) -> None:
         """Eigenvector path produces correct output shapes."""
+        X = torch.randn(BS, N, DX_IN)
+        E = torch.randn(BS, N, N, DE_IN)
         data = GraphData(
-            X=torch.randn(BS, N, DX_IN),
-            E=torch.randn(BS, N, N, DE_IN),
             y=torch.randn(BS, DY_IN),
             node_mask=torch.ones(BS, N),
+            X_class=X,
+            E_class=E,
         )
         out = eigen_model(data)
-        assert out.X.shape == (BS, N, DX_OUT)
-        assert out.E.shape == (BS, N, N, DE_OUT)
+        assert out.X_class.shape == (BS, N, DX_OUT)
+        assert out.E_class.shape == (BS, N, N, DE_OUT)
 
     def test_config_reports_augmentation(self, eigen_model: GraphTransformer) -> None:
         config = eigen_model.get_config()
@@ -187,15 +193,17 @@ class TestTimestepMode:
 
     def test_forward_with_timestep(self, timestep_model: GraphTransformer) -> None:
         """Forward pass with a timestep tensor produces correct output shapes."""
+        X = torch.randn(BS, N, DX_IN)
+        E = torch.randn(BS, N, N, DE_IN)
         data = GraphData(
-            X=torch.randn(BS, N, DX_IN),
-            E=torch.randn(BS, N, N, DE_IN),
             y=torch.zeros(BS, 0),
             node_mask=torch.ones(BS, N),
+            X_class=X,
+            E_class=E,
         )
         t = torch.rand(BS)
         out = timestep_model(data, t=t)
-        assert out.X.shape == (BS, N, DX_OUT)
+        assert out.X_class.shape == (BS, N, DX_OUT)
 
     def test_config_reports_timestep(self, timestep_model: GraphTransformer) -> None:
         config = timestep_model.get_config()

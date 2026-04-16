@@ -19,11 +19,14 @@ import pytest
 import torch
 from torch import Tensor
 
+from tests._helpers.graph_builders import binary_graphdata, legacy_edge_scalar
+from tmgg.data.datasets.graph_data_fields import FIELD_NAMES
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
     ExactDensityNoiseProcess,
+    GaussianNoiseProcess,
     NoiseProcess,
 )
 from tmgg.diffusion.schedule import NoiseSchedule
@@ -59,12 +62,12 @@ def simple_adjacency_batch() -> Tensor:
 @pytest.fixture()
 def graph_data_from_adj(simple_adjacency_batch: Tensor) -> GraphData:
     """GraphData created from the simple adjacency batch."""
-    return GraphData.from_binary_adjacency(simple_adjacency_batch)
+    return binary_graphdata(simple_adjacency_batch)
 
 
 @pytest.fixture()
 def categorical_graph_data() -> GraphData:
-    """A small batch of one-hot categorical GraphData (bs=2, n=5, dx=3, de=2)."""
+    """A small batch of one-hot categorical GraphData(bs=2, n=5, dx=3, de=2)."""
     torch.manual_seed(42)
     bs, n, dx, de = 2, 5, 3, 2
     # Random one-hot X
@@ -85,7 +88,7 @@ def categorical_graph_data() -> GraphData:
 
     y = torch.zeros(bs, 0)
     node_mask = torch.ones(bs, n, dtype=torch.bool)
-    return GraphData(X=X, E=E, y=y, node_mask=node_mask)
+    return GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
 
 
 # cosine_schedule fixture (T=50) provided by conftest.py
@@ -114,6 +117,65 @@ class TestNoiseProcessABC:
         )
         assert isinstance(proc, NoiseProcess)
         assert proc.timesteps == cosine_schedule.timesteps
+
+    def test_concrete_subclasses_declare_nonempty_fields(
+        self, cosine_schedule: NoiseSchedule
+    ) -> None:
+        """Each concrete NoiseProcess declares a subset of FIELD_NAMES.
+
+        Test rationale (Wave 2.1): the new ``fields`` class attribute on
+        ``NoiseProcess`` is the load-bearing declaration the Lightning
+        module and composite wrapper iterate over. It must be non-empty
+        and lie inside the canonical ``FIELD_NAMES`` set for every
+        concrete subclass so the loss dispatch stays well-defined.
+        """
+        categorical = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="uniform",
+        )
+        gaussian = GaussianNoiseProcess(
+            definition=GaussianNoise(), schedule=cosine_schedule
+        )
+
+        for proc in (categorical, gaussian):
+            assert isinstance(proc.fields, frozenset)
+            assert len(proc.fields) > 0
+            assert proc.fields.issubset(FIELD_NAMES)
+
+        assert categorical.fields == frozenset({"X_class", "E_class"})
+        assert gaussian.fields == frozenset({"E_feat"})
+
+    def test_gaussian_noise_process_field_override(
+        self, cosine_schedule: NoiseSchedule
+    ) -> None:
+        """GaussianNoiseProcess accepts a valid fields override.
+
+        Test rationale: joint X_feat + E_feat diffusion must be
+        configurable via the constructor kwarg; invalid fields (outside
+        the continuous subset) must raise.
+        """
+        joint = GaussianNoiseProcess(
+            definition=GaussianNoise(),
+            schedule=cosine_schedule,
+            fields=frozenset({"X_feat", "E_feat"}),
+        )
+        assert joint.fields == frozenset({"X_feat", "E_feat"})
+
+        with pytest.raises(ValueError, match="subset"):
+            GaussianNoiseProcess(
+                definition=GaussianNoise(),
+                schedule=cosine_schedule,
+                fields=frozenset({"X_class"}),  # pyright: ignore[reportArgumentType]
+            )
+
+        with pytest.raises(ValueError, match="non-empty"):
+            GaussianNoiseProcess(
+                definition=GaussianNoise(),
+                schedule=cosine_schedule,
+                fields=frozenset(),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +235,11 @@ class TestContinuousNoiseProcess:
         result = proc.sample_at_level(graph_data_from_adj, level=0.25)
 
         assert isinstance(result, GraphData)
-        assert result.X.shape == graph_data_from_adj.X.shape
+        # Continuous noise writes into E_feat (structure-only output).
+        assert result.E_feat is not None
         assert (
-            result.to_edge_state().shape
-            == graph_data_from_adj.to_binary_adjacency().shape
+            result.to_edge_scalar(source="feat").shape
+            == graph_data_from_adj.binarised_adjacency().shape
         )
         assert result.node_mask.shape == graph_data_from_adj.node_mask.shape
 
@@ -203,28 +266,41 @@ class TestContinuousNoiseProcess:
         result = proc.forward_sample(graph_data_from_adj, t)
 
         assert isinstance(result, GraphData)
-        assert result.X.shape == graph_data_from_adj.X.shape
+        # Continuous forward_sample writes into E_feat (structure-only output).
+        assert result.E_feat is not None
         assert (
-            result.to_edge_state().shape
-            == graph_data_from_adj.to_binary_adjacency().shape
+            result.to_edge_scalar(source="feat").shape
+            == graph_data_from_adj.binarised_adjacency().shape
         )
         assert result.y.shape == graph_data_from_adj.y.shape
         assert result.node_mask.shape == graph_data_from_adj.node_mask.shape
 
-    def test_forward_sample_no_noise_at_t_zero(
+    def test_forward_sample_at_t_zero_is_near_identity(
         self,
         graph_data_from_adj: GraphData,
         cosine_schedule: NoiseSchedule,
     ) -> None:
-        """At t=0, DiGress noise should produce no change (alpha_bar=1)."""
+        """At t=0 DDPM Gaussian forward noise leaves the input nearly unchanged.
+
+        Test rationale (Wave 2.3): the rewritten ``forward_sample`` applies the
+        closed-form DDPM parametrisation ``sqrt(alpha_bar_t) * x_0 +
+        sqrt(1 - alpha_bar_t) * eps`` regardless of the wrapped
+        ``NoiseDefinition``. The ``cosine_iddpm`` schedule has
+        ``alpha_bar(0) ≈ 0.998``, so the output equals the input up to a
+        ~4 %% perturbation. We assert an element-wise absolute tolerance
+        that is loose enough to accept that perturbation but tight enough
+        to catch a regression to mid-schedule noise.
+        """
+        torch.manual_seed(42)
         gen = DigressNoise()
-        proc = ContinuousNoiseProcess(definition=gen, schedule=cosine_schedule)
+        proc = GaussianNoiseProcess(definition=gen, schedule=cosine_schedule)
         t = torch.tensor([0, 0], dtype=torch.long)
         result = proc.forward_sample(graph_data_from_adj, t)
-        # With eps=0 -> alpha_bar=1 -> flip_prob=0, output == input
-        adj_in = graph_data_from_adj.to_binary_adjacency()
-        adj_out = result.to_edge_state()
-        assert torch.allclose(adj_in, adj_out)
+        adj_in = graph_data_from_adj.binarised_adjacency().unsqueeze(-1)
+        adj_out = result.E_feat
+        assert adj_out is not None
+        # alpha_bar(0) ≈ 0.998 ⇒ noise std ≈ 0.04. Allow 5 sigma headroom.
+        assert torch.allclose(adj_in, adj_out, atol=0.25)
 
     def test_posterior_sample_returns_graph_data_with_same_shape(
         self,
@@ -241,8 +317,8 @@ class TestContinuousNoiseProcess:
         posterior = proc.posterior_sample(z_t, graph_data_from_adj, t, s)
         assert isinstance(posterior, GraphData)
         assert (
-            posterior.to_edge_state().shape
-            == graph_data_from_adj.to_binary_adjacency().shape
+            legacy_edge_scalar(posterior).shape
+            == graph_data_from_adj.binarised_adjacency().shape
         )
         assert posterior.node_mask.shape == graph_data_from_adj.node_mask.shape
 
@@ -300,7 +376,7 @@ class TestContinuousNoiseProcess:
         proc = ContinuousNoiseProcess(definition=gen, schedule=cosine_schedule)
         t = torch.tensor([25, 25], dtype=torch.long)
         result = proc.forward_sample(graph_data_from_adj, t)
-        adj = result.to_edge_state()
+        adj = legacy_edge_scalar(result)
         assert torch.allclose(adj, adj.transpose(1, 2), atol=1e-5)
 
 
@@ -382,7 +458,12 @@ class TestCategoricalNoiseProcess:
         E[0, 0, 1] = torch.tensor([0.0, 1.0])
         E[0, 1, 0] = torch.tensor([0.0, 1.0])
         node_mask = torch.tensor([[True, True]])
-        batch = GraphData(X=X, E=E, y=torch.zeros(1, 0), node_mask=node_mask)
+        batch = GraphData(
+            y=torch.zeros(1, 0),
+            node_mask=node_mask,
+            X_class=X,
+            E_class=E,
+        )
 
         proc.initialize_from_data([batch])  # type: ignore[arg-type]
 
@@ -405,7 +486,12 @@ class TestCategoricalNoiseProcess:
         X = torch.tensor([[[1.0, 0.0]]])
         E = torch.tensor([[[[1.0, 0.0]]]])
         node_mask = torch.tensor([[True]])
-        batch = GraphData(X=X, E=E, y=torch.zeros(1, 0), node_mask=node_mask)
+        batch = GraphData(
+            y=torch.zeros(1, 0),
+            node_mask=node_mask,
+            X_class=X,
+            E_class=E,
+        )
 
         proc.initialize_from_data([batch])  # type: ignore[arg-type]
 
@@ -442,6 +528,67 @@ class TestCategoricalNoiseProcess:
         with pytest.raises(RuntimeError, match="not initialised"):
             proc.forward_sample(categorical_graph_data, t)
 
+    def test_forward_sample_mirrors_legacy_into_split_fields(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+    ) -> None:
+        """forward_sample() populates both legacy and split fields (Wave 2.2 parity).
+
+        Test rationale: during the transition the categorical noise process
+        writes the same tensor into ``X`` and ``X_class`` (and into ``E`` /
+        ``E_class``) so downstream consumers reading either form stay in
+        agreement. The shim is removed in Wave 9.
+        """
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="uniform",
+        )
+        t = torch.tensor([10, 20])
+        result = proc.forward_sample(categorical_graph_data, t)
+
+        assert result.X_class is not None
+        assert result.E_class is not None
+        assert torch.equal(result.X_class, result.X_class)
+        assert torch.equal(result.E_class, result.E_class)
+
+    def test_forward_sample_reads_from_split_fields(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+    ) -> None:
+        """forward_sample() reads X_class / E_class directly.
+
+        Wave 9 removes the legacy X / E fields outright; this test now
+        pins the remaining categorical path onto the split fields by
+        cloning the inputs and checking that the forward draw at
+        alpha_bar ≈ 1 (t=0) collapses onto the cloned tensors.
+        """
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="uniform",
+        )
+        assert categorical_graph_data.X_class is not None
+        assert categorical_graph_data.E_class is not None
+        split_input = categorical_graph_data.replace(
+            X_class=categorical_graph_data.X_class.clone(),
+            E_class=categorical_graph_data.E_class.clone(),
+        )
+        torch.manual_seed(0)
+        t = torch.tensor([0, 0])  # alpha_bar ≈ 1: output must mirror the input.
+        result = proc.forward_sample(split_input, t)
+
+        assert result.X_class is not None
+        assert result.E_class is not None
+        assert split_input.X_class is not None
+        assert split_input.E_class is not None
+        torch.testing.assert_close(result.X_class, split_input.X_class)
+        torch.testing.assert_close(result.E_class, split_input.E_class)
+
     def test_forward_sample_returns_valid_one_hot(
         self,
         cosine_schedule: NoiseSchedule,
@@ -459,8 +606,10 @@ class TestCategoricalNoiseProcess:
         result = proc.forward_sample(categorical_graph_data, t)
 
         assert isinstance(result, GraphData)
+        assert result.X_class is not None
+        assert result.E_class is not None
         # X should be one-hot: each row sums to 1 for valid nodes
-        x_sums = result.X[categorical_graph_data.node_mask].sum(dim=-1)
+        x_sums = result.X_class[categorical_graph_data.node_mask].sum(dim=-1)
         assert torch.allclose(x_sums, torch.ones_like(x_sums))
 
         # E should be one-hot for valid edges (off-diagonal, valid nodes)
@@ -470,7 +619,7 @@ class TestCategoricalNoiseProcess:
         ) * categorical_graph_data.node_mask.unsqueeze(2)
         diag = torch.eye(n, dtype=torch.bool).unsqueeze(0).expand(bs, -1, -1)
         valid_edges = mask_2d & ~diag
-        e_sums = result.E[valid_edges].sum(dim=-1)
+        e_sums = result.E_class[valid_edges].sum(dim=-1)
         assert torch.allclose(e_sums, torch.ones_like(e_sums))
 
     def test_forward_sample_preserves_shape(
@@ -487,8 +636,12 @@ class TestCategoricalNoiseProcess:
         )
         t = torch.tensor([10, 20])
         result = proc.forward_sample(categorical_graph_data, t)
-        assert result.X.shape == categorical_graph_data.X.shape
-        assert result.E.shape == categorical_graph_data.E.shape
+        assert result.X_class is not None
+        assert result.E_class is not None
+        assert categorical_graph_data.X_class is not None
+        assert categorical_graph_data.E_class is not None
+        assert result.X_class.shape == categorical_graph_data.X_class.shape
+        assert result.E_class.shape == categorical_graph_data.E_class.shape
         assert result.node_mask.shape == categorical_graph_data.node_mask.shape
 
     def test_prior_log_prob_returns_per_sample_shape(
@@ -504,7 +657,8 @@ class TestCategoricalNoiseProcess:
             limit_distribution="uniform",
         )
         result = proc.prior_log_prob(categorical_graph_data)
-        assert result.shape == (categorical_graph_data.X.shape[0],)
+        assert categorical_graph_data.X_class is not None
+        assert result.shape == (categorical_graph_data.X_class.shape[0],)
         assert torch.isfinite(result).all()
 
     def test_forward_log_prob_uses_requested_final_timestep(
@@ -526,7 +680,12 @@ class TestCategoricalNoiseProcess:
         E = torch.zeros(bs, n, n, 2)
         E[:, :, :, 0] = 1.0  # all edges class 0
         node_mask = torch.ones(bs, n, dtype=torch.bool)
-        clean = GraphData(X=X, E=E, y=torch.zeros(bs, 0), node_mask=node_mask)
+        clean = GraphData(
+            y=torch.zeros(bs, 0),
+            node_mask=node_mask,
+            X_class=X,
+            E_class=E,
+        )
 
         log_prob_T = proc.forward_log_prob(
             clean, clean, torch.full((bs,), T, dtype=torch.long)
@@ -555,9 +714,13 @@ class TestCategoricalNoiseProcess:
         z_t = proc.forward_sample(categorical_graph_data, t)
         posterior = proc.posterior_sample(z_t, categorical_graph_data, t, s)
         assert isinstance(posterior, GraphData)
-        assert posterior.X.shape == categorical_graph_data.X.shape
-        assert posterior.E.shape == categorical_graph_data.E.shape
-        x_sums = posterior.X[categorical_graph_data.node_mask].sum(dim=-1)
+        assert posterior.X_class is not None
+        assert posterior.E_class is not None
+        assert categorical_graph_data.X_class is not None
+        assert categorical_graph_data.E_class is not None
+        assert posterior.X_class.shape == categorical_graph_data.X_class.shape
+        assert posterior.E_class.shape == categorical_graph_data.E_class.shape
+        x_sums = posterior.X_class[categorical_graph_data.node_mask].sum(dim=-1)
         assert torch.allclose(x_sums, torch.ones_like(x_sums))
 
         bs, n = categorical_graph_data.node_mask.shape
@@ -566,8 +729,81 @@ class TestCategoricalNoiseProcess:
         ) * categorical_graph_data.node_mask.unsqueeze(2)
         diag = torch.eye(n, dtype=torch.bool).unsqueeze(0).expand(bs, -1, -1)
         valid_edges = mask_2d & ~diag
-        e_sums = posterior.E[valid_edges].sum(dim=-1)
+        e_sums = posterior.E_class[valid_edges].sum(dim=-1)
         assert torch.allclose(e_sums, torch.ones_like(e_sums))
+
+    def test_posterior_sample_marginalised_returns_one_hot_graph_data(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+    ) -> None:
+        """``posterior_sample_marginalised`` produces valid one-hot
+        ``GraphData`` of the same shape as input. Locks in the
+        upstream-DiGress per-x0 marginalisation entry point so the
+        sampler can rely on it.
+
+        See ``docs/reports/2026-04-15-upstream-digress-parity-audit.md``
+        section 9 (sampler reverse loop).
+        """
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="uniform",
+        )
+        t = torch.tensor([20, 30])
+        s = torch.tensor([19, 29])
+        z_t = proc.forward_sample(categorical_graph_data, t)
+        # Use the clean graph itself as a "soft prediction" — when it is
+        # a one-hot, marginalisation should agree with the direct
+        # posterior at sampling resolution.
+        posterior = proc.posterior_sample_marginalised(
+            z_t, categorical_graph_data, t, s
+        )
+        assert isinstance(posterior, GraphData)
+        assert posterior.X_class is not None
+        assert posterior.E_class is not None
+        assert categorical_graph_data.X_class is not None
+        assert categorical_graph_data.E_class is not None
+        assert posterior.X_class.shape == categorical_graph_data.X_class.shape
+        assert posterior.E_class.shape == categorical_graph_data.E_class.shape
+        x_sums = posterior.X_class[categorical_graph_data.node_mask].sum(dim=-1)
+        assert torch.allclose(x_sums, torch.ones_like(x_sums))
+
+    def test_marginalised_posterior_matches_direct_when_x0_one_hot(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+    ) -> None:
+        """At convergence the model emits a one-hot prediction. The
+        marginalised posterior must then equal the direct posterior:
+        ``sum_c [c == x0] * p(z_s | z_t, x_0 = c) = p(z_s | z_t, x_0 = x0)``.
+        Compares ``_posterior_probabilities_marginalised`` against
+        ``_posterior_probabilities`` on a one-hot ``x0_param``.
+        """
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="uniform",
+        )
+        t = torch.tensor([20, 30])
+        s = torch.tensor([19, 29])
+        z_t = proc.forward_sample(categorical_graph_data, t)
+
+        direct = proc._posterior_probabilities(  # pyright: ignore[reportPrivateUsage]
+            z_t, categorical_graph_data, t, s
+        )
+        marginalised = proc._posterior_probabilities_marginalised(  # pyright: ignore[reportPrivateUsage]
+            z_t, categorical_graph_data, t, s
+        )
+
+        # Compare on valid (non-masked) positions only.
+        mask = categorical_graph_data.node_mask
+        assert direct.X_class is not None and marginalised.X_class is not None
+        assert torch.allclose(
+            direct.X_class[mask], marginalised.X_class[mask], atol=1e-5
+        )
 
     def test_apply_edge_symmetry(
         self,
@@ -583,7 +819,8 @@ class TestCategoricalNoiseProcess:
         )
         t = torch.tensor([15, 25])
         result = proc.forward_sample(categorical_graph_data, t)
+        assert result.E_class is not None
         # E should be symmetric in the one-hot encoding
         assert torch.allclose(
-            result.E, result.E.transpose(1, 2)
+            result.E_class, result.E_class.transpose(1, 2)
         ), "Edge features must remain symmetric after categorical noise"

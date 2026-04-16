@@ -24,6 +24,7 @@ import pytest
 import pytorch_lightning as pl
 import torch
 
+from tests._helpers.graph_builders import binary_graphdata
 from tmgg.data.data_modules.data_module import GraphDataModule
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.training.lightning_modules.denoising_module import (
@@ -59,7 +60,7 @@ def sample_adjacency() -> torch.Tensor:
 @pytest.fixture
 def sample_batch(sample_adjacency: torch.Tensor) -> GraphData:
     """GraphData batch wrapping the sample adjacency matrices."""
-    return GraphData.from_binary_adjacency(sample_adjacency)
+    return binary_graphdata(sample_adjacency)
 
 
 @pytest.fixture

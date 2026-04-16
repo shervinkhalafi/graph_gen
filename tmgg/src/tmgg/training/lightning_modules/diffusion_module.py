@@ -29,9 +29,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from tmgg.data.datasets.graph_data_fields import (
+    GRAPHDATA_LOSS_KIND,
+    FieldName,
+)
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.collectors import DiffusionLikelihoodCollector, StepMetricCollector
 from tmgg.diffusion.noise_process import (
+    CategoricalNoiseProcess,
     ExactDensityNoiseProcess,
     NoiseProcess,
 )
@@ -49,12 +54,28 @@ from tmgg.training.lightning_modules.base_graph_module import (
 )
 from tmgg.training.lightning_modules.train_loss_discrete import (
     TrainLossDiscrete,
+    masked_edge_ce,
+    masked_edge_mse,
+    masked_node_ce,
+    masked_node_mse,
 )
 from tmgg.training.logging import log_figures
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
 _VALID_LOSS_TYPES = frozenset({"cross_entropy", "mse", "bce_logits"})
 _DEFAULT_VISUALIZATION = {"enabled": True, "num_samples": 8}
+
+#: Default per-field loss weights for the unified per-field training loop.
+#: Edge-side fields carry a 5x weight to reproduce the DiGress (Vignac et al.
+#: 2023, Eq. 3) ``lambda_E`` convention; node-side and continuous node fields
+#: default to unit weight. A user-supplied ``lambda_per_field`` dict on the
+#: constructor merges on top of this table.
+_DEFAULT_LAMBDA_PER_FIELD: dict[FieldName, float] = {
+    "X_class": 1.0,
+    "E_class": 5.0,
+    "X_feat": 1.0,
+    "E_feat": 5.0,
+}
 
 
 def _normalize_visualization_config(
@@ -86,17 +107,64 @@ def _normalize_visualization_config(
     return {"enabled": enabled, "num_samples": num_samples}
 
 
+def _read_field(data: GraphData, field: FieldName) -> torch.Tensor:
+    """Read a split field from ``data`` or raise if unpopulated.
+
+    Called from the per-field training / validation loop to fetch the
+    target tensor for each field declared by the noise process. For
+    ``"E_feat"`` we additionally allow lifting an ``E_class`` view into
+    a single-channel scalar edge so Gaussian processes on ``E_feat``
+    can still operate on categorical batches.
+    """
+    if field == "X_class":
+        if data.X_class is None:
+            # Wave 9.3 (structure-only datasets): synthesise a degenerate
+            # "[no-node, node]" one-hot from ``node_mask`` so categorical
+            # noise processes declaring ``X_class`` can still operate on
+            # structure-only batches. See
+            # ``docs/specs/2026-04-15-unified-graph-features-spec.md
+            # §"Removed fields"`` — this is the "architecture-internal
+            # concern" synthesis applied at the training-loop boundary
+            # rather than at the dataset boundary.
+            node_ind = data.node_mask.float()
+            return torch.stack([1.0 - node_ind, node_ind], dim=-1)
+        return data.X_class
+    if field == "E_class":
+        if data.E_class is None:
+            raise ValueError(
+                "DiffusionModule._read_field: E_class is None but the noise "
+                "process declared 'E_class' as a target field."
+            )
+        return data.E_class
+    if field == "X_feat":
+        if data.X_feat is None:
+            raise ValueError(
+                "DiffusionModule._read_field: X_feat is None but the noise "
+                "process declared 'X_feat' as a target field."
+            )
+        return data.X_feat
+    if field == "E_feat":
+        if data.E_feat is not None:
+            return data.E_feat
+        if data.E_class is None:
+            raise ValueError(
+                "DiffusionModule._read_field: neither E_feat nor E_class is "
+                "populated; cannot derive a continuous edge view."
+            )
+        return data.to_edge_scalar(source="class").unsqueeze(-1)
+    raise ValueError(f"_read_field does not support field {field!r}.")
+
+
 def _continuous_target_edge_state(data: GraphData) -> torch.Tensor:
     """Extract the dense target state for continuous losses.
 
-    Continuous predictions are one-channel edge states. Clean binary-topology
-    batches are lifted through ``to_binary_adjacency()`` so the loss compares
-    semantically equivalent dense states instead of relying on ``GraphData.E``
-    channel layout.
+    Continuous predictions are one-channel edge states. For
+    categorical targets we lift ``E_class`` into a scalar adjacency so
+    the loss compares semantically equivalent dense states.
     """
-    if data.E.shape[-1] == 1:
-        return data.to_edge_state()
-    return data.to_binary_adjacency()
+    if data.E_feat is not None:
+        return data.to_edge_scalar(source="feat")
+    return data.to_edge_scalar(source="class")
 
 
 def _categorical_reconstruction_log_prob(
@@ -108,10 +176,26 @@ def _categorical_reconstruction_log_prob(
     inv = ~node_mask
     inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)
 
-    clean_x = clean.X.clone()
-    clean_e = clean.E.clone()
-    pred_x = pred_probs.X.clone()
-    pred_e = pred_probs.E.clone()
+    if clean.E_class is None or pred_probs.E_class is None:
+        raise ValueError(
+            "_categorical_reconstruction_log_prob requires E_class to be "
+            "populated on both `clean` and `pred_probs`."
+        )
+
+    # Wave 9.3: structure-only datasets carry X_class=None. Synthesise the
+    # degenerate "[no-node, node]" one-hot from node_mask on whichever side
+    # (clean or pred_probs) is missing so the reconstruction loss has
+    # compatible shapes.
+    def _synth_x_class(data: GraphData) -> torch.Tensor:
+        if data.X_class is not None:
+            return data.X_class
+        node_ind = data.node_mask.float()
+        return torch.stack([1.0 - node_ind, node_ind], dim=-1)
+
+    clean_x = _synth_x_class(clean).clone()
+    clean_e = clean.E_class.clone()
+    pred_x = _synth_x_class(pred_probs).clone()
+    pred_e = pred_probs.E_class.clone()
 
     clean_x[inv] = 0.0
     clean_e[inv_edge] = 0.0
@@ -125,6 +209,53 @@ def _categorical_reconstruction_log_prob(
         (clean_e * pred_e.clamp(min=1e-10).log()).flatten(start_dim=1).sum(dim=1)
     )
     return log_prob_x + log_prob_e
+
+
+def _categorical_kl_per_graph(p_pmf: GraphData, q_pmf: GraphData) -> torch.Tensor:
+    """Sum analytic categorical KL(p || q) over all node + edge positions per graph.
+
+    Both inputs carry per-position PMFs over the same support
+    (``X_class`` for nodes, ``E_class`` for edges). Padded positions
+    are replaced with delta + uniform so they contribute zero to the
+    KL, matching the pattern in
+    :func:`_categorical_reconstruction_log_prob`.
+
+    Returns ``(bs,)`` per-graph KL totals.
+    """
+    node_mask = p_pmf.node_mask
+    inv_node = ~node_mask
+    inv_edge = inv_node.unsqueeze(1) | inv_node.unsqueeze(2)
+
+    if (
+        p_pmf.X_class is None
+        or p_pmf.E_class is None
+        or q_pmf.X_class is None
+        or q_pmf.E_class is None
+    ):
+        raise ValueError(
+            "_categorical_kl_per_graph requires X_class and E_class on both "
+            "PMF inputs."
+        )
+
+    p_x = p_pmf.X_class.clone()
+    q_x = q_pmf.X_class.clone()
+    p_e = p_pmf.E_class.clone()
+    q_e = q_pmf.E_class.clone()
+
+    # Zero out p at masked positions (zero probability mass means zero KL
+    # contribution); set q to a strictly positive constant there so the
+    # downstream log() is well-defined.
+    p_x[inv_node] = 0.0
+    q_x[inv_node] = 1.0
+    p_e[inv_edge] = 0.0
+    q_e[inv_edge] = 1.0
+
+    eps = 1e-10
+    log_term = p_x.clamp(min=eps).log() - q_x.clamp(min=eps).log()
+    kl_x = (p_x * log_term).flatten(start_dim=1).sum(dim=1)
+    log_term_e = p_e.clamp(min=eps).log() - q_e.clamp(min=eps).log()
+    kl_e = (p_e * log_term_e).flatten(start_dim=1).sum(dim=1)
+    return kl_x + kl_e
 
 
 class DiffusionModule(BaseGraphModule):
@@ -170,9 +301,17 @@ class DiffusionModule(BaseGraphModule):
         ``"cross_entropy"`` for categorical, ``"mse"`` or ``"bce_logits"``
         for continuous diffusion.
     lambda_E : float
-        Weight for the edge loss relative to node loss in
-        ``TrainLossDiscrete``. Default is 5.0 per DiGress convention.
-        Only used when ``loss_type="cross_entropy"``.
+        Weight for the edge loss relative to node loss. Default 5.0 per
+        DiGress convention. Used only when ``loss_type="cross_entropy"``.
+        Kept for backward compatibility with configs that pass it; when
+        set, it overrides ``lambda_per_field["E_class"]`` and
+        ``lambda_per_field["E_feat"]``.
+    lambda_per_field : dict[str, float] | None
+        Per-field weights for the unified per-field training loss (Wave
+        5.1). Merged on top of the default table
+        ``{X_class: 1.0, E_class: 5.0, X_feat: 1.0, E_feat: 5.0}`` so a
+        caller can override only the fields they care about. ``None``
+        keeps the default table.
     num_nodes : int
         Node count used when sampling graphs during evaluation.
     eval_every_n_steps : int
@@ -203,6 +342,7 @@ class DiffusionModule(BaseGraphModule):
         evaluator: GraphEvaluator | None = None,
         loss_type: str = "cross_entropy",
         lambda_E: float = 5.0,
+        lambda_per_field: dict[str, float] | None = None,
         num_nodes: int = 20,
         eval_every_n_steps: int = 5000,
         visualization: dict[str, Any] | None = None,
@@ -237,6 +377,25 @@ class DiffusionModule(BaseGraphModule):
         self.visualization: dict[str, bool | int] = _normalize_visualization_config(
             visualization
         )
+
+        # Per-field loss weights: start from the DiGress-compatible default
+        # table, merge any user overrides, then have ``lambda_E`` override
+        # the two edge-side fields so existing configs that pass only
+        # ``lambda_E`` keep working bit-for-bit.
+        merged_lambdas: dict[FieldName, float] = dict(_DEFAULT_LAMBDA_PER_FIELD)
+        if lambda_per_field is not None:
+            for field_name, weight in lambda_per_field.items():
+                if field_name not in _DEFAULT_LAMBDA_PER_FIELD:
+                    raise ValueError(
+                        f"lambda_per_field key {field_name!r} is not a known "
+                        f"FieldName; expected one of "
+                        f"{sorted(_DEFAULT_LAMBDA_PER_FIELD)}."
+                    )
+                merged_lambdas[field_name] = float(weight)  # pyright: ignore[reportArgumentType]
+        merged_lambdas["E_class"] = float(lambda_E)
+        merged_lambdas["E_feat"] = float(lambda_E)
+        self.lambda_per_field: dict[FieldName, float] = merged_lambdas
+        self.lambda_E: float = float(lambda_E)
 
         self.criterion: nn.Module
         self._train_loss_discrete: TrainLossDiscrete | None = None
@@ -321,8 +480,12 @@ class DiffusionModule(BaseGraphModule):
         torch.Tensor
             Scalar loss with gradient.
         """
-        bs: int = batch.X.shape[0]
-        device = batch.X.device
+        # Read batch size / device from ``node_mask`` rather than the
+        # legacy ``batch.X`` view so the module no longer presumes a
+        # categorical node tensor is present. ``node_mask`` is required
+        # on every ``GraphData`` instance.
+        bs: int = int(batch.node_mask.shape[0])
+        device = batch.node_mask.device
 
         # Sample random timestep per batch element: t in {1, ..., T}
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
@@ -342,78 +505,111 @@ class DiffusionModule(BaseGraphModule):
         return loss
 
     def _compute_loss(self, pred: GraphData, target: GraphData) -> torch.Tensor:
-        """Compute loss between predicted and target ``GraphData``.
+        """Compute loss by iterating over ``self.noise_process.fields``.
 
-        For ``cross_entropy``, categorical features are flattened and the
-        target one-hot is converted to class indices. For ``mse`` /
-        ``bce_logits``, dense edge states are compared directly.
+        Wave 5.1 replaces the previous hardcoded ``batch.X`` / ``batch.E``
+        dual-field path with a per-field loop. For each declared field:
 
-        Parameters
-        ----------
-        pred
-            Model output.
-        target
-            Ground-truth clean graph.
+        * ``X_class`` / ``E_class`` (``GRAPHDATA_LOSS_KIND == "ce"``) use
+          masked cross-entropy on softmaxed predictions, so the two-field
+          categorical case remains bit-for-bit equivalent to the legacy
+          :class:`TrainLossDiscrete` wrapper.
+        * ``X_feat`` / ``E_feat`` (``GRAPHDATA_LOSS_KIND == "mse"``) use
+          masked MSE.
 
-        Returns
-        -------
-        torch.Tensor
-            Scalar loss.
+        Each term is weighted by ``self.lambda_per_field[field]``
+        (defaults give the DiGress ``lambda_E=5.0`` edge weighting) and
+        summed.
+
+        When ``loss_type`` is ``"mse"`` or ``"bce_logits"`` the module
+        keeps its original dense-edge-state behaviour because those
+        single-channel continuous losses operate directly on the
+        dense scalar edge view from :meth:`GraphData.to_edge_scalar`.
         """
-        discrete_loss = self._train_loss_discrete
-        if discrete_loss is not None:
-            # TrainLossDiscrete expects softmaxed probabilities, not logits.
-            # Clone before masking: mask_distributions modifies tensors in-place.
-            pred_X = F.softmax(pred.X, dim=-1).clone()
-            pred_E = F.softmax(pred.E, dim=-1).clone()
-            return discrete_loss(
-                pred_X,
-                pred_E,
-                target.X,
-                target.E,
-                target.node_mask,
-            )
-        else:
-            # MSE or BCE: compare dense edge states without depending on the
-            # internal ``GraphData.E`` channel layout.
-            pred_edge_state = pred.to_edge_state()
+        if self._train_loss_discrete is None:
+            # MSE / BCE: compare dense edge states via the split edge
+            # fields. This path predates the per-field iteration and
+            # does not go through ``lambda_per_field``.
+            if pred.E_feat is not None:
+                pred_edge_state = pred.to_edge_scalar(source="feat")
+            else:
+                pred_edge_state = pred.to_edge_scalar(source="class")
             target_edge_state = _continuous_target_edge_state(target)
             return self.criterion(pred_edge_state, target_edge_state.float())
 
-    def _compute_reconstruction_at_t1(self, batch: GraphData) -> torch.Tensor:
-        """Compute reconstruction log-probability at t=1 (DiGress Eq. 14).
+        total: torch.Tensor | None = None
+        for field in sorted(self.noise_process.fields):
+            pred_field = _read_field(pred, field)
+            target_field = _read_field(target, field)
+            kind = GRAPHDATA_LOSS_KIND[field]
+            weight = self.lambda_per_field[field]
+            if kind == "ce":
+                pred_prob = F.softmax(pred_field, dim=-1)
+                if field == "X_class":
+                    term = masked_node_ce(pred_prob, target_field, target.node_mask)
+                elif field == "E_class":
+                    term = masked_edge_ce(pred_prob, target_field, target.node_mask)
+                else:  # pragma: no cover - only X_class / E_class declare CE today
+                    raise NotImplementedError(
+                        f"No masked CE helper registered for categorical field "
+                        f"{field!r}."
+                    )
+            else:  # kind == "mse"
+                if field == "X_feat":
+                    term = masked_node_mse(pred_field, target_field, target.node_mask)
+                elif field == "E_feat":
+                    term = masked_edge_mse(pred_field, target_field, target.node_mask)
+                else:  # pragma: no cover - only X_feat / E_feat declare MSE today
+                    raise NotImplementedError(
+                        f"No masked MSE helper registered for continuous field "
+                        f"{field!r}."
+                    )
+            contribution = weight * term
+            total = contribution if total is None else total + contribution
 
-        Applies minimal noise (t=1), runs the model, and evaluates the
-        log-probability of recovering the clean graph from the prediction.
+        if total is None:  # pragma: no cover - fields is non-empty by invariant
+            raise RuntimeError(
+                "DiffusionModule._compute_loss: noise_process.fields is empty; "
+                "cannot compute a cross-entropy loss."
+            )
+        return total
 
-        Parameters
-        ----------
-        batch
-            Clean ``GraphData`` batch.
+    def _compute_reconstruction(self, batch: GraphData) -> torch.Tensor:
+        """Reconstruction log-probability ``log p(x_0 | z_1)``.
 
-        Returns
-        -------
-        torch.Tensor
-            Per-graph reconstruction log-probability, shape ``(bs,)``.
+        Aligns with upstream DiGress's ``reconstruction_logp``: noise the
+        clean batch to ``z_1``, run the model, and **pull the predicted
+        ``x_0`` distribution through the per-class marginalised reverse
+        kernel** at ``(t=1, s=0)`` to obtain ``p(x_0 = . | z_1)`` rather
+        than scoring the raw softmax. Locally pre-2026-04-15 we scored
+        the softmax directly (``_compute_reconstruction_at_t1``); the
+        difference is bounded by the Q_1 transition kernel ≈ identity at
+        T=1000 (a ~1e-3 shift in absolute magnitude) but matters for
+        numerical parity with published DiGress results.
         """
-        if not isinstance(self.noise_process, ExactDensityNoiseProcess):
+        if not isinstance(self.noise_process, CategoricalNoiseProcess):
             raise TypeError(
-                f"_compute_reconstruction_at_t1 requires ExactDensityNoiseProcess, "
+                f"_compute_reconstruction requires CategoricalNoiseProcess, "
                 f"got {type(self.noise_process).__name__}"
             )
-        bs = batch.X.shape[0]
-        device = batch.X.device
+        bs = int(batch.node_mask.shape[0])
+        device = batch.node_mask.device
 
-        # Apply noise at t=1
         t_int = torch.ones(bs, dtype=torch.long, device=device)
-        z_1 = self.noise_process.forward_sample(batch, t_int)
+        s_int = torch.zeros_like(t_int)
 
-        # Model prediction at t=1
+        z_1 = self.noise_process.forward_sample(batch, t_int)
         condition = self.noise_process.process_state_condition_vector(t_int)
         pred_logits = self.model(z_1, t=condition)
-        pred_probs = self.noise_process.model_output_to_posterior_parameter(pred_logits)
+        x0_param = self.noise_process.model_output_to_posterior_parameter(pred_logits)
 
-        return _categorical_reconstruction_log_prob(batch, pred_probs)
+        # ``_posterior_probabilities_marginalised`` returns the
+        # per-position PMF over ``z_s = x_0`` (since s=0). We score the
+        # one-hot clean batch under this PMF.
+        recon_pmf = self.noise_process._posterior_probabilities_marginalised(  # pyright: ignore[reportPrivateUsage]
+            z_1, x0_param, t_int, s_int
+        )
+        return _categorical_reconstruction_log_prob(batch, recon_pmf)
 
     @torch.no_grad()
     @override
@@ -430,8 +626,8 @@ class DiffusionModule(BaseGraphModule):
         batch_idx
             Index of the current batch (unused).
         """
-        bs: int = batch.X.shape[0]
-        device = batch.X.device
+        bs: int = int(batch.node_mask.shape[0])
+        device = batch.node_mask.device
 
         # Validation loss at a random timestep
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
@@ -441,33 +637,49 @@ class DiffusionModule(BaseGraphModule):
         loss = self._compute_loss(pred, batch)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
-        # VLB estimation via single random timestep (standard DDPM approach).
-        # Each batch samples one t and computes L_t; the epoch-end average
-        # gives an unbiased estimate of E_t[L_t]. This matches the DiGress
-        # reference implementation (cvignac/DiGress, src/diffusion_model.py,
-        # compute_val_loss). For exact full-chain VLB, see the periodic
-        # DiffusionLikelihoodCollector evaluation in on_validation_epoch_end.
-        if isinstance(self.noise_process, ExactDensityNoiseProcess):
-            exact_process = self.noise_process
+        # VLB estimation via single random timestep (standard DDPM
+        # approach). Each batch samples one ``t`` and computes ``L_t``;
+        # the epoch-end average gives an estimate of ``E_t[L_t]`` that
+        # is unbiased in ``t`` and exact (closed-form categorical KL)
+        # for each individual ``L_t``. This matches the DiGress
+        # reference implementation (cvignac/DiGress,
+        # ``src/diffusion_model.py::compute_val_loss``). For full-chain
+        # VLB, see the periodic ``DiffusionLikelihoodCollector``
+        # evaluation in :meth:`on_validation_epoch_end`.
+        if isinstance(self.noise_process, CategoricalNoiseProcess):
+            cat_process = self.noise_process
 
             x0_param = self.noise_process.model_output_to_posterior_parameter(pred)
-
             s_int = t_int - 1
-            z_s = exact_process.posterior_sample(z_t, batch, t_int, s_int)
-            log_q_true = exact_process.posterior_log_prob(z_s, z_t, batch, t_int, s_int)
-            log_q_pred = exact_process.posterior_log_prob(
-                z_s, z_t, x0_param, t_int, s_int
+
+            # Analytic KL_t = KL(q(z_s|z_t,x_0) || p_theta(z_s|z_t)).
+            # The "true" posterior plugs the clean batch (one-hot x_0)
+            # into the Bayes formula. The "predicted" posterior is the
+            # marginalised form ``sum_c p(z_s|z_t,x_0=c) * pred[c]`` —
+            # this is the distribution the sampler actually draws from
+            # (see the Phase C sampler change).
+            true_posterior = cat_process._posterior_probabilities(  # pyright: ignore[reportPrivateUsage]
+                z_t, batch, t_int, s_int
             )
-            kl_diffusion = self.T * (log_q_true - log_q_pred)
+            pred_posterior = cat_process._posterior_probabilities_marginalised(  # pyright: ignore[reportPrivateUsage]
+                z_t, x0_param, t_int, s_int
+            )
+            kl_diffusion = self.T * _categorical_kl_per_graph(
+                true_posterior, pred_posterior
+            )
 
+            # Analytic KL(q(z_T|x_0) || prior). At T=1000 with the
+            # cosine-IDDPM schedule, ``q(z_T|x_0) ≈ stationary prior``
+            # so this term is small but non-zero; computing it
+            # analytically removes the per-sample MC variance the
+            # log-prob-of-sample formulation carried before.
             t_T = torch.full((bs,), self.T, device=device, dtype=torch.long)
-            z_T = exact_process.forward_sample(batch, t_T)
-            kl_prior = exact_process.forward_log_prob(
-                z_T, batch, t_T
-            ) - exact_process.prior_log_prob(z_T)
-            reconstruction = self._compute_reconstruction_at_t1(batch)
+            forward_pmf_T = cat_process.forward_pmf(batch, t_T)
+            prior_pmf = cat_process.prior_pmf(batch.node_mask)
+            kl_prior = _categorical_kl_per_graph(forward_pmf_T, prior_pmf)
 
-            # log p(n_G): log-probability of graph size under training distribution
+            reconstruction = self._compute_reconstruction(batch)
+
             log_pn = torch.zeros(1, device=device)
             if self._size_distribution is not None:
                 node_counts = batch.node_mask.sum(dim=-1).long()  # (bs,)
@@ -482,6 +694,37 @@ class DiffusionModule(BaseGraphModule):
             self._vlb_kl_prior.append(kl_prior.mean().detach())
             self._vlb_kl_diffusion.append(kl_diffusion.mean().detach())
             self._vlb_reconstruction.append(reconstruction.mean().detach())
+            self._vlb_log_pn.append(log_pn.detach())
+        elif isinstance(self.noise_process, ExactDensityNoiseProcess):
+            # Continuous (Gaussian) noise processes still use the
+            # log-prob-on-sample VLB; the analytic categorical-KL path
+            # above is specific to categorical PMFs.
+            exact_process = self.noise_process
+            x0_param = self.noise_process.model_output_to_posterior_parameter(pred)
+            s_int = t_int - 1
+            z_s = exact_process.posterior_sample(z_t, batch, t_int, s_int)
+            log_q_true = exact_process.posterior_log_prob(z_s, z_t, batch, t_int, s_int)
+            log_q_pred = exact_process.posterior_log_prob(
+                z_s, z_t, x0_param, t_int, s_int
+            )
+            kl_diffusion = self.T * (log_q_true - log_q_pred)
+
+            t_T = torch.full((bs,), self.T, device=device, dtype=torch.long)
+            z_T = exact_process.forward_sample(batch, t_T)
+            kl_prior = exact_process.forward_log_prob(
+                z_T, batch, t_T
+            ) - exact_process.prior_log_prob(z_T)
+
+            log_pn = torch.zeros(1, device=device)
+            if self._size_distribution is not None:
+                node_counts = batch.node_mask.sum(dim=-1).long()
+                log_pn = self._size_distribution.log_prob(node_counts).mean()
+
+            nll = -log_pn + kl_prior.mean() + kl_diffusion.mean()
+
+            self._vlb_nll.append(nll.detach())
+            self._vlb_kl_prior.append(kl_prior.mean().detach())
+            self._vlb_kl_diffusion.append(kl_diffusion.mean().detach())
             self._vlb_log_pn.append(log_pn.detach())
 
     @torch.no_grad()
@@ -513,11 +756,16 @@ class DiffusionModule(BaseGraphModule):
                 torch.stack(self._vlb_kl_diffusion).mean(),
                 on_epoch=True,
             )
-            self.log(
-                "val/reconstruction_logp",
-                torch.stack(self._vlb_reconstruction).mean(),
-                on_epoch=True,
-            )
+            # Wave 2.5: the ExactDensity branch (Gaussian) does not yet populate
+            # _vlb_reconstruction; Wave 5 will close this by wiring per-field
+            # reconstruction log-probs for Gaussian. Until then, only the
+            # categorical branch contributes here.
+            if self._vlb_reconstruction:
+                self.log(
+                    "val/reconstruction_logp",
+                    torch.stack(self._vlb_reconstruction).mean(),
+                    on_epoch=True,
+                )
             self.log("val/log_pN", torch.stack(self._vlb_log_pn).mean(), on_epoch=True)
             self._vlb_nll.clear()
             self._vlb_kl_prior.clear()
@@ -621,13 +869,16 @@ class DiffusionModule(BaseGraphModule):
             collector=collector,
         )
 
-        nx_graphs: list[nx.Graph[Any]] = []
-        for gd in graph_data_list:
-            adj = gd.to_binary_adjacency()
-            if adj.ndim == 3:
-                adj = adj[0]
-            A_np = adj.cpu().numpy()
-            G: nx.Graph[Any] = nx.from_numpy_array(A_np)
-            nx_graphs.append(G)
-
-        return nx_graphs
+        # Binarisation lives on the evaluator so the threshold and the
+        # ``E_class`` / ``E_feat`` disagreement warning (Wave 6.1) stay
+        # configurable per-run. See
+        # ``docs/specs/2026-04-15-unified-graph-features-spec.md``
+        # §"Evaluator contract".
+        if self.evaluator is None:
+            raise RuntimeError(
+                "DiffusionModule.generate_graphs requires a GraphEvaluator "
+                "to derive a binary adjacency from sampled GraphData. "
+                "Configure ``evaluator`` on the module (see Wave 6.1 of "
+                "docs/specs/2026-04-15-unified-graph-features-spec.md)."
+            )
+        return self.evaluator.to_networkx_graphs(graph_data_list)

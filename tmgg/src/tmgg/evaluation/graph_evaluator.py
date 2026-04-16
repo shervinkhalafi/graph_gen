@@ -27,11 +27,13 @@ import logging
 import multiprocessing
 import warnings
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import networkx as nx
 import numpy as np
+import torch
 from scipy.stats import chi2
+from torch import Tensor
 
 from tmgg.evaluation.mmd_metrics import (
     compute_mmd,
@@ -41,6 +43,9 @@ from tmgg.evaluation.orca import (
     is_available as _orca_is_available,
 )
 from tmgg.evaluation.orca import run_orca
+
+if TYPE_CHECKING:
+    from tmgg.data.datasets.graph_types import GraphData
 
 logger = logging.getLogger(__name__)
 
@@ -465,7 +470,8 @@ class GraphEvaluator:
     kernel
         Kernel for MMD computation (``"gaussian_tv"`` or ``"gaussian"``).
     sigma
-        Bandwidth for the MMD kernel.
+        Fallback bandwidth for the MMD kernel when no per-metric override
+        is supplied.
     p_intra
         Expected within-community edge probability for SBM accuracy.
     p_inter
@@ -477,6 +483,23 @@ class GraphEvaluator:
     train_graphs
         Training set graphs used for novelty evaluation. If None, novelty
         is not computed.
+    degree_sigma, clustering_sigma, spectral_sigma
+        Per-metric kernel bandwidths. Upstream DiGress ships
+        ``clustering_sigma=0.1`` with the others at 1.0 for
+        ``gaussian_tv``; parity runs should use those values. Each
+        defaults to ``None``, which falls back to ``sigma``.
+    binarise_threshold
+        Threshold applied to ``E_feat[..., 0]`` when deriving a binary
+        adjacency from a continuous-edge ``GraphData``. Defaults to
+        ``0.5``. Ignored for the categorical path, which derives edges
+        from ``argmax(E_class, dim=-1) != 0``. Per
+        ``docs/specs/2026-04-15-unified-graph-features-spec.md``
+        §"Evaluator contract".
+    disagreement_warn_threshold
+        Mean-disagreement rate above which a single warning per
+        evaluation pass is emitted when both ``E_class`` and ``E_feat``
+        are populated. Defaults to ``0.05``. See the spec section
+        referenced above.
 
     Examples
     --------
@@ -494,6 +517,11 @@ class GraphEvaluator:
         p_inter: float = 0.005,
         skip_metrics: set[str] | frozenset[str] | list[str] | None = None,
         train_graphs: list[nx.Graph[Any]] | None = None,
+        degree_sigma: float | None = None,
+        clustering_sigma: float | None = None,
+        spectral_sigma: float | None = None,
+        binarise_threshold: float = 0.5,
+        disagreement_warn_threshold: float = 0.05,
     ) -> None:
         self.eval_num_samples = eval_num_samples
         self.kernel: Literal["gaussian", "gaussian_tv"] = kernel
@@ -503,6 +531,182 @@ class GraphEvaluator:
         self.skip_metrics: frozenset[str] = frozenset(skip_metrics or ())
         self.train_graphs = list(train_graphs) if train_graphs is not None else []
         self._train_graphs_set = train_graphs is not None
+        self.degree_sigma: float | None = degree_sigma
+        self.clustering_sigma: float | None = clustering_sigma
+        self.spectral_sigma: float | None = spectral_sigma
+        self.binarise_threshold: float = binarise_threshold
+        self.disagreement_warn_threshold: float = disagreement_warn_threshold
+        # Reset at the start of every ``evaluate()`` / ``to_networkx_graphs``
+        # call so each validation pass emits at most one warning.
+        self._disagreement_warned_this_pass: bool = False
+
+    # ------------------------------------------------------------------
+    # GraphData → binary adjacency helpers
+    # ------------------------------------------------------------------
+    def _graphdata_to_binary_adj(self, data: GraphData) -> Tensor:
+        """Derive a binary adjacency tensor from a :class:`GraphData`.
+
+        Follows the priority rule in
+        ``docs/specs/2026-04-15-unified-graph-features-spec.md``
+        §"Evaluator contract": ``E_class`` wins over ``E_feat`` when
+        both are populated. ``E_class`` is argmax'd over the class
+        channel, mapping any non-zero class to ``1``; ``E_feat`` is
+        thresholded at :attr:`binarise_threshold`. Padded positions
+        (per ``data.node_mask``) are always zeroed so the result is
+        invariant to padding artefacts.
+
+        Parameters
+        ----------
+        data
+            Batched or single-graph ``GraphData``. At least one of
+            ``E_class`` / ``E_feat`` must be non-``None``.
+
+        Returns
+        -------
+        torch.Tensor
+            Binary adjacency with the same shape as the source edge
+            field sans the channel axis (``(bs, n, n)`` or ``(n, n)``).
+            Dtype is :class:`torch.float32`.
+
+        Raises
+        ------
+        ValueError
+            When both ``E_class`` and ``E_feat`` are ``None``. Wave 9
+            tightens the constructor invariant so this branch becomes
+            unreachable; until then the message points callers at the
+            spec.
+        """
+        dtype = torch.float32
+        if data.E_class is not None:
+            adj = (data.E_class.argmax(dim=-1) != 0).to(dtype)
+        elif data.E_feat is not None:
+            e_feat = data.E_feat
+            if e_feat.dim() == data.node_mask.dim() + 1:
+                # Shape ``(..., n, n)`` without a trailing channel axis.
+                scalar = e_feat
+            else:
+                scalar = e_feat[..., 0]
+            adj = (scalar > self.binarise_threshold).to(dtype)
+        else:
+            raise ValueError(
+                "GraphEvaluator._graphdata_to_binary_adj requires at least "
+                "one of data.E_class or data.E_feat to be non-None; got both "
+                "None. See docs/specs/2026-04-15-unified-graph-features-spec.md "
+                '§"Evaluator contract".'
+            )
+
+        node_mask = data.node_mask.to(dtype)
+        if node_mask.dim() == 1:
+            mask_2d = node_mask.unsqueeze(-1) * node_mask.unsqueeze(-2)
+        else:
+            mask_2d = node_mask.unsqueeze(-1) * node_mask.unsqueeze(-2)
+        return adj * mask_2d
+
+    def _check_field_disagreement(self, data: GraphData) -> float | None:
+        """Return the mean per-entry disagreement between ``E_class`` and ``E_feat``.
+
+        When either field is ``None`` there is nothing to compare and
+        the method returns ``None``. Otherwise it computes, restricted
+        to the real (non-padded) entries defined by ``data.node_mask``,
+
+        .. math::
+
+            \\text{disagreement} = \\operatorname{mean}\\bigl[
+                (\\operatorname*{argmax}_{c} E_{\\text{class}} \\neq 0)
+                \\neq (E_{\\text{feat},0} > \\tau)
+            \\bigr]
+
+        where :math:`\\tau` is :attr:`binarise_threshold`. The return
+        value is the scalar average over all real edge positions
+        across the batch (not a per-graph mean) and lives in
+        ``[0, 1]``.
+
+        Parameters
+        ----------
+        data
+            ``GraphData`` to inspect.
+
+        Returns
+        -------
+        float or None
+            ``None`` when at least one of the two fields is absent;
+            otherwise a Python float in ``[0, 1]``.
+        """
+        if data.E_class is None or data.E_feat is None:
+            return None
+
+        class_edges = data.E_class.argmax(dim=-1) != 0
+        e_feat = data.E_feat
+        if e_feat.dim() == data.node_mask.dim() + 1:
+            feat_scalar = e_feat
+        else:
+            feat_scalar = e_feat[..., 0]
+        feat_edges = feat_scalar > self.binarise_threshold
+
+        node_mask = data.node_mask.bool()
+        mask = node_mask.unsqueeze(-1) & node_mask.unsqueeze(-2)
+
+        denom = mask.sum().clamp(min=1).float()
+        disagreement = ((class_edges != feat_edges) & mask).sum().float() / denom
+        return float(disagreement.item())
+
+    def to_networkx_graphs(
+        self, graph_data_list: list[GraphData]
+    ) -> list[nx.Graph[Any]]:
+        """Convert a list of :class:`GraphData` to NetworkX graphs.
+
+        Resets the per-pass disagreement warning flag, then loops over
+        the supplied ``GraphData`` instances and feeds each through
+        :meth:`_graphdata_to_binary_adj`. While iterating the method
+        also accumulates the mean field-disagreement via
+        :meth:`_check_field_disagreement` and emits exactly one
+        ``logging.warning`` when the batch-averaged disagreement
+        exceeds :attr:`disagreement_warn_threshold`. The warning fires
+        only if both ``E_class`` and ``E_feat`` are populated on at
+        least one sample in ``graph_data_list``.
+
+        Parameters
+        ----------
+        graph_data_list
+            Generated graphs in the unified split-field format.
+
+        Returns
+        -------
+        list[networkx.Graph]
+            One simple graph per input ``GraphData``.
+        """
+        self._disagreement_warned_this_pass = False
+
+        nx_graphs: list[nx.Graph[Any]] = []
+        disagreements: list[float] = []
+        for data in graph_data_list:
+            adj = self._graphdata_to_binary_adj(data)
+            if adj.ndim == 3:
+                adj = adj[0]
+            a_np = adj.detach().cpu().numpy()
+            nx_graphs.append(nx.from_numpy_array(a_np))
+
+            rate = self._check_field_disagreement(data)
+            if rate is not None:
+                disagreements.append(rate)
+
+        if disagreements:
+            mean_rate = float(np.mean(disagreements))
+            if (
+                mean_rate > self.disagreement_warn_threshold
+                and not self._disagreement_warned_this_pass
+            ):
+                logger.warning(
+                    "GraphEvaluator: E_class and E_feat disagree on edge "
+                    "presence at mean rate %.4f (> threshold %.4f). Using "
+                    "E_class per docs/specs/2026-04-15-unified-graph-features-spec.md "
+                    '§"Evaluator contract".',
+                    mean_rate,
+                    self.disagreement_warn_threshold,
+                )
+                self._disagreement_warned_this_pass = True
+
+        return nx_graphs
 
     def evaluate(
         self, refs: list[nx.Graph[Any]], generated: list[nx.Graph[Any]]
@@ -529,6 +733,8 @@ class GraphEvaluator:
         EvaluationResults or None
             All metrics, or None if insufficient graphs after truncation.
         """
+        self._disagreement_warned_this_pass = False
+
         refs = refs[: self.eval_num_samples]
         generated = generated[: self.eval_num_samples]
 
@@ -540,7 +746,13 @@ class GraphEvaluator:
 
         # --- Core MMD metrics (always available) ---
         mmd_results = compute_mmd_metrics(
-            refs, generated, kernel=self.kernel, sigma=self.sigma
+            refs,
+            generated,
+            kernel=self.kernel,
+            sigma=self.sigma,
+            degree_sigma=self.degree_sigma,
+            clustering_sigma=self.clustering_sigma,
+            spectral_sigma=self.spectral_sigma,
         )
 
         # --- Orbit MMD (requires orca, skippable) ---

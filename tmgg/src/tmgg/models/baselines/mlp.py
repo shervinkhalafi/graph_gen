@@ -11,7 +11,8 @@ import torch
 import torch.nn as nn
 
 from tmgg.data.datasets.graph_types import GraphData
-from tmgg.models.base import GraphModel
+
+from ..base import EdgeSource, GraphModel, read_edge_scalar, write_edge_scalar
 
 
 class MLPBaseline(GraphModel):
@@ -51,12 +52,25 @@ class MLPBaseline(GraphModel):
         max_nodes: int,
         hidden_dim: int = 256,
         num_layers: int = 2,
+        edge_source: EdgeSource = "feat",
+        output_dims_x_class: int | None = None,
+        output_dims_x_feat: int | None = None,
+        output_dims_e_class: int | None = None,
+        output_dims_e_feat: int | None = 1,
     ):
         super().__init__()
         self.max_nodes = max_nodes
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.flatten_dim = max_nodes * max_nodes
+        self.edge_source: EdgeSource = edge_source
+        self.output_dims_x_class = output_dims_x_class
+        self.output_dims_x_feat = output_dims_x_feat
+        self.output_dims_e_class = output_dims_e_class
+        self.output_dims_e_feat = output_dims_e_feat
+        self._output_target: EdgeSource = (
+            "class" if output_dims_e_class is not None else "feat"
+        )
 
         # Build MLP
         layers = []
@@ -77,20 +91,11 @@ class MLPBaseline(GraphModel):
     def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
         """Apply MLP to flattened adjacency matrix.
 
-        Parameters
-        ----------
-        data
-            Graph features. The dense edge state is extracted via
-            ``data.to_edge_state()``.
-        t
-            Diffusion timestep tensor, or None. Currently unused.
-
-        Returns
-        -------
-        GraphData
-            Denoised graph with 2-class edge features.
+        Reads the dense scalar adjacency through ``read_edge_scalar`` and
+        writes the prediction via ``write_edge_scalar``; ``t`` is appended
+        to ``data.y`` when supplied, matching the spec's two-line pattern.
         """
-        A = data.to_edge_state()
+        A = read_edge_scalar(data, self.edge_source)
         B, N, _ = A.shape
 
         if self.max_nodes > N:
@@ -100,13 +105,17 @@ class MLPBaseline(GraphModel):
             A_padded = A
 
         flat = A_padded.view(B, -1)
-        out = self.mlp(flat)
-        out = out.view(B, self.max_nodes, self.max_nodes)
+        out_flat = self.mlp(flat)
+        out_adj = out_flat.view(B, self.max_nodes, self.max_nodes)
 
         if self.max_nodes > N:
-            out = out[:, :N, :N]
+            out_adj = out_adj[:, :N, :N]
 
-        return GraphData.from_edge_state(out, node_mask=data.node_mask)
+        out = write_edge_scalar(data, edge_scalar=out_adj, target=self._output_target)
+        if t is not None:
+            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
+            out = out.replace(y=new_y)
+        return out
 
     def get_config(self) -> dict[str, Any]:
         """Return model configuration."""
@@ -116,4 +125,9 @@ class MLPBaseline(GraphModel):
             "hidden_dim": self.hidden_dim,
             "num_layers": self.num_layers,
             "flatten_dim": self.flatten_dim,
+            "edge_source": self.edge_source,
+            "output_dims_x_class": self.output_dims_x_class,
+            "output_dims_x_feat": self.output_dims_x_feat,
+            "output_dims_e_class": self.output_dims_e_class,
+            "output_dims_e_feat": self.output_dims_e_feat,
         }

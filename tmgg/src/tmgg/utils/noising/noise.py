@@ -392,9 +392,13 @@ class NoiseDefinition(ABC):
         GraphData
             Noised graph data.
         """
-        edge_state = data.to_edge_state()
+        edge_state = (
+            data.to_edge_scalar(source="feat")
+            if data.E_feat is not None
+            else data.to_edge_scalar(source="class")
+        )
         noisy = self.add_noise(edge_state, noise_level)
-        return type(data).from_edge_state(noisy, node_mask=data.node_mask)
+        return type(data).from_structure_only(data.node_mask, noisy)
 
     @property
     @abstractmethod

@@ -1,10 +1,10 @@
 """Typed containers for categorical graph data and structural context.
 
 ``GraphData`` is the universal batch type for all experiments. It holds
-batched node/edge/global features alongside a ``node_mask`` that tracks
-which node positions are real versus padding. Conversion methods split
-into explicit binary-topology helpers and lossless dense edge-state
-helpers.
+batched node/edge features alongside a ``node_mask`` that tracks which
+node positions are real versus padding. The four split feature fields
+(``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat``) are all optional;
+at least one of the edge fields MUST be populated.
 
 ``GraphStructure`` bundles pre-computed topological features (adjacency,
 eigenvectors, eigenvalues) derived from a ``GraphData`` instance before
@@ -15,7 +15,8 @@ layer iterations.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import replace as _dc_replace
+from typing import TYPE_CHECKING, Literal
 
 import torch
 from torch import Tensor
@@ -26,28 +27,124 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class GraphData:
-    """Batched categorical graph features with node validity mask.
+    """Batched graph features with a node validity mask and split feature fields.
+
+    The dataclass owns only the unified-spec fields from
+    ``docs/specs/2026-04-15-unified-graph-features-spec.md §5``: two
+    required fields (``y``, ``node_mask``) and four optional split
+    feature fields (``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat``).
+    At construction time at least one of the edge fields MUST be
+    non-``None``; every other field is free to be empty.
 
     Parameters
     ----------
-    X : Tensor
-        Node features. Batched: ``(bs, n, dx)``; single: ``(n, dx)``.
-    E : Tensor
-        Edge features. Batched: ``(bs, n, n, de)``; single: ``(n, n, de)``.
     y : Tensor
         Global features. Batched: ``(bs, dy)``; single: ``(dy,)``.
     node_mask : Tensor
         Boolean or float mask indicating real (vs padded) nodes.
         Batched: ``(bs, n)``; single: ``(n,)``.
+    X_class : Tensor, optional
+        Categorical node features (one-hot / PMF), shape
+        ``(bs, n, dx_class)`` or ``(n, dx_class)``. ``None`` for
+        structure-only graphs.
+    X_feat : Tensor, optional
+        Continuous node features, shape ``(bs, n, dx_feat)`` or
+        ``(n, dx_feat)``.
+    E_class : Tensor, optional
+        Categorical edge features (one-hot / PMF), shape
+        ``(bs, n, n, de_class)`` or ``(n, n, de_class)``. Channel 0
+        conventionally encodes "no edge".
+    E_feat : Tensor, optional
+        Continuous edge features, shape ``(bs, n, n, de_feat)`` or
+        ``(n, n, de_feat)``. Single-channel adjacency weights use
+        ``de_feat == 1``.
     """
 
-    X: Tensor
-    E: Tensor
     y: Tensor
     node_mask: Tensor
+    X_class: Tensor | None = None
+    X_feat: Tensor | None = None
+    E_class: Tensor | None = None
+    E_feat: Tensor | None = None
+
+    def __post_init__(self) -> None:
+        """Validate shapes and the "at least one E_*" invariant.
+
+        Raises
+        ------
+        ValueError
+            When ``node_mask`` is missing, has the wrong rank, neither
+            split edge field is populated, or a non-``None`` split
+            field's leading dimensions disagree with ``node_mask``.
+            Messages reference
+            ``docs/specs/2026-04-15-unified-graph-features-spec.md §5``.
+        """
+        spec_ref = "docs/specs/2026-04-15-unified-graph-features-spec.md §5"
+
+        # (1) node_mask present, 1D or 2D.
+        nm = self.node_mask
+        if nm is None:  # pyright: ignore[reportUnnecessaryComparison]
+            raise ValueError(
+                f"GraphData requires a non-None node_mask (see {spec_ref})."
+            )
+        if nm.dim() not in (1, 2):
+            raise ValueError(
+                "GraphData.node_mask must be 1D (n,) or 2D (bs, n); "
+                f"got shape {tuple(nm.shape)} (see {spec_ref})."
+            )
+
+        # (2) At least one edge field present.
+        if self.E_class is None and self.E_feat is None:
+            raise ValueError(
+                "GraphData requires at least one of E_class or E_feat "
+                f"to be populated (see {spec_ref})."
+            )
+
+        # (3) Leading-dim agreement with node_mask for any split field.
+        if nm.dim() == 1:
+            expected_n_dims: tuple[int, ...] = (int(nm.shape[0]),)
+            expected_e_dims: tuple[int, ...] = (
+                int(nm.shape[0]),
+                int(nm.shape[0]),
+            )
+        else:
+            expected_n_dims = (int(nm.shape[0]), int(nm.shape[1]))
+            expected_e_dims = (
+                int(nm.shape[0]),
+                int(nm.shape[1]),
+                int(nm.shape[1]),
+            )
+
+        def _check_leading(name: str, t: Tensor, expected: tuple[int, ...]) -> None:
+            got = tuple(int(s) for s in t.shape[: len(expected)])
+            if got != expected:
+                raise ValueError(
+                    f"GraphData.{name} leading dims {got} must match "
+                    f"node_mask-derived {expected} (see {spec_ref})."
+                )
+
+        if self.X_class is not None:
+            _check_leading("X_class", self.X_class, expected_n_dims)
+        if self.X_feat is not None:
+            _check_leading("X_feat", self.X_feat, expected_n_dims)
+        if self.E_class is not None:
+            _check_leading("E_class", self.E_class, expected_e_dims)
+        if self.E_feat is not None:
+            _check_leading("E_feat", self.E_feat, expected_e_dims)
+
+    def replace(self, **kwargs: object) -> GraphData:
+        """Return a copy with selected fields overridden.
+
+        Thin typed wrapper over :func:`dataclasses.replace`. Accepts any
+        subset of the dataclass fields; the returned instance re-runs
+        ``__post_init__`` and therefore the same validation invariants.
+        """
+        return _dc_replace(self, **kwargs)
 
     def mask(self) -> GraphData:
-        """Zero out features at masked node positions and assert E symmetry.
+        """Zero out features at masked node positions and assert edge symmetry.
+
+        Operates on every populated split field; skips ``None`` fields.
 
         Returns
         -------
@@ -57,47 +154,89 @@ class GraphData:
         Raises
         ------
         AssertionError
-            If edge features are not symmetric after masking.
+            If any populated edge-feature tensor is not symmetric after
+            masking.
         """
         x_mask = self.node_mask.unsqueeze(-1)  # (bs, n, 1)
         e_mask1 = x_mask.unsqueeze(2)  # (bs, n, 1, 1)
         e_mask2 = x_mask.unsqueeze(1)  # (bs, 1, n, 1)
 
-        X_masked = self.X * x_mask
-        E_masked = self.E * e_mask1 * e_mask2
-        assert torch.allclose(E_masked, torch.transpose(E_masked, 1, 2)), (
-            f"Edge features E must be symmetric after masking. "
-            f"Max asymmetry: {(E_masked - torch.transpose(E_masked, 1, 2)).abs().max().item():.2e}"
+        X_class_masked = self.X_class * x_mask if self.X_class is not None else None
+        X_feat_masked = self.X_feat * x_mask if self.X_feat is not None else None
+        E_class_masked: Tensor | None = None
+        E_feat_masked: Tensor | None = None
+        if self.E_class is not None:
+            E_class_masked = self.E_class * e_mask1 * e_mask2
+            assert torch.allclose(
+                E_class_masked, torch.transpose(E_class_masked, -3, -2)
+            ), (
+                "Edge features E_class must be symmetric after masking. "
+                f"Max asymmetry: {(E_class_masked - torch.transpose(E_class_masked, -3, -2)).abs().max().item():.2e}"
+            )
+        if self.E_feat is not None:
+            E_feat_masked = self.E_feat * e_mask1 * e_mask2
+            assert torch.allclose(
+                E_feat_masked, torch.transpose(E_feat_masked, -3, -2)
+            ), (
+                "Edge features E_feat must be symmetric after masking. "
+                f"Max asymmetry: {(E_feat_masked - torch.transpose(E_feat_masked, -3, -2)).abs().max().item():.2e}"
+            )
+
+        return GraphData(
+            y=self.y,
+            node_mask=self.node_mask,
+            X_class=X_class_masked,
+            X_feat=X_feat_masked,
+            E_class=E_class_masked,
+            E_feat=E_feat_masked,
         )
-        return GraphData(X=X_masked, E=E_masked, y=self.y, node_mask=self.node_mask)
 
     def mask_zero_diag(self) -> GraphData:
-        """Zero masked positions and the diagonal of E.
+        """Zero masked positions and the diagonal of every edge tensor.
 
         Used inside the transformer where self-loops are excluded from
-        the attention mechanism.
+        the attention mechanism. Operates on every populated split
+        field.
         """
-        bs, n = self.node_mask.size()
+        n = self.node_mask.size(-1)
         mask_diag = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
-        mask_diag = mask_diag * (
-            ~torch.eye(n, device=self.node_mask.device, dtype=torch.bool).unsqueeze(0)
+        eye = torch.eye(n, device=self.node_mask.device, dtype=torch.bool)
+        # Broadcast the eye across leading dims
+        while eye.dim() < mask_diag.dim():
+            eye = eye.unsqueeze(0)
+        mask_diag = mask_diag * (~eye)
+
+        x_mask = self.node_mask.unsqueeze(-1)
+        e_mask = mask_diag.unsqueeze(-1)
+
+        X_class_masked = self.X_class * x_mask if self.X_class is not None else None
+        X_feat_masked = self.X_feat * x_mask if self.X_feat is not None else None
+        E_class_masked = self.E_class * e_mask if self.E_class is not None else None
+        E_feat_masked = self.E_feat * e_mask if self.E_feat is not None else None
+
+        return GraphData(
+            y=self.y,
+            node_mask=self.node_mask,
+            X_class=X_class_masked,
+            X_feat=X_feat_masked,
+            E_class=E_class_masked,
+            E_feat=E_feat_masked,
         )
-
-        X_masked = self.X * self.node_mask.unsqueeze(-1)
-        E_masked = self.E * mask_diag.unsqueeze(-1)
-
-        return GraphData(X=X_masked, E=E_masked, y=self.y, node_mask=self.node_mask)
 
     def type_as(self, x: Tensor) -> GraphData:
         """Return a new instance with feature tensors cast to match ``x``.
 
         The ``node_mask`` is left unchanged (it is boolean, not a feature).
+        Split ``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat`` fields
+        are cast when present.
         """
         return GraphData(
-            X=self.X.type_as(x),
-            E=self.E.type_as(x),
             y=self.y.type_as(x),
             node_mask=self.node_mask,
+            X_class=self.X_class.type_as(x) if self.X_class is not None else None,
+            X_feat=self.X_feat.type_as(x) if self.X_feat is not None else None,
+            E_class=self.E_class.type_as(x) if self.E_class is not None else None,
+            E_feat=self.E_feat.type_as(x) if self.E_feat is not None else None,
         )
 
     def to(self, device: torch.device | str) -> GraphData:
@@ -107,133 +246,225 @@ class GraphData:
         dataclasses are not supported by ``apply_to_collection``.
         """
         return GraphData(
-            X=self.X.to(device),
-            E=self.E.to(device),
             y=self.y.to(device),
             node_mask=self.node_mask.to(device),
+            X_class=self.X_class.to(device) if self.X_class is not None else None,
+            X_feat=self.X_feat.to(device) if self.X_feat is not None else None,
+            E_class=self.E_class.to(device) if self.E_class is not None else None,
+            E_feat=self.E_feat.to(device) if self.E_feat is not None else None,
         )
 
     # ---- Conversion classmethods / methods ----------------------------
 
     @classmethod
-    def from_binary_adjacency(cls, adj: Tensor) -> GraphData:
-        """Convert binary adjacency matrices to one-hot categorical features.
+    def from_structure_only(cls, node_mask: Tensor, edge_scalar: Tensor) -> GraphData:
+        """Construct a structure-only graph with only ``E_feat`` populated.
 
-        Produces ``dx=2`` (no-node / node) and ``de=2`` (no-edge / edge)
-        encodings. All node positions are marked valid; padding is handled
-        separately by `collate`.
+        Wraps a dense scalar adjacency as a single-channel ``E_feat`` tensor
+        of shape ``(bs, n, n, 1)`` (or ``(n, n, 1)`` for single graphs),
+        leaving every other split field empty.
 
         Parameters
         ----------
-        adj
-            Binary adjacency, shape ``(n, n)`` for a single graph or
-            ``(bs, n, n)`` for a batch. Values should be 0 or 1.
+        node_mask
+            Boolean or float mask, ``(n,)`` or ``(bs, n)``.
+        edge_scalar
+            Dense scalar edge tensor, ``(n, n)`` or ``(bs, n, n)``.
 
         Returns
         -------
         GraphData
-            One-hot encoded graph. Single graphs have no batch dimension;
-            batched inputs produce batched outputs. Creates an all-ones
-            ``node_mask``, treating every position as real. For variable-size
-            batches with zero-padded graphs, callers must construct the mask
-            separately (see ``collate``).
+            Instance with ``E_feat`` set and every other feature field
+            ``None``.
         """
-        single = adj.dim() == 2
+        single = edge_scalar.dim() == 2
         if single:
-            adj = adj.unsqueeze(0)
+            edge_scalar = edge_scalar.unsqueeze(0)
+            if node_mask.dim() == 1:
+                node_mask = node_mask.unsqueeze(0)
 
-        bs, n, _ = adj.shape
-        adj = adj.float()
+        if edge_scalar.dim() != 3:
+            raise ValueError(
+                "from_structure_only() expects a 2D or 3D edge_scalar tensor, "
+                f"got shape {tuple(edge_scalar.shape)}"
+            )
+        if node_mask.dim() != 2:
+            raise ValueError(
+                "from_structure_only() expects a 1D or 2D node_mask, "
+                f"got shape {tuple(node_mask.shape)}"
+            )
 
-        # Nodes: all are real (padding handled by collate)
-        x_out = torch.zeros(bs, n, 2, device=adj.device, dtype=adj.dtype)
-        x_out[:, :, 1] = 1.0  # category 1 = real node
+        bs, n, _ = edge_scalar.shape
+        if tuple(node_mask.shape) != (bs, n):
+            raise ValueError(
+                "from_structure_only(): node_mask shape "
+                f"{tuple(node_mask.shape)} incompatible with edge_scalar "
+                f"shape {tuple(edge_scalar.shape)}"
+            )
 
-        # Edges: one-hot encode the adjacency
-        e_out = torch.zeros(bs, n, n, 2, device=adj.device, dtype=adj.dtype)
-        e_out[:, :, :, 0] = 1.0 - adj  # category 0 = no edge
-        e_out[:, :, :, 1] = adj  # category 1 = edge
-
-        # Zero out diagonal (no self-loops)
-        diag_idx = torch.arange(n, device=adj.device)
-        e_out[:, diag_idx, diag_idx, :] = 0
-        e_out[:, diag_idx, diag_idx, 0] = 1.0  # diagonal = "no edge"
-
-        y_out = torch.zeros(bs, 0, device=adj.device, dtype=adj.dtype)
-        node_mask = torch.ones(bs, n, device=adj.device, dtype=torch.bool)
+        e_feat = edge_scalar.float().unsqueeze(-1)
+        y = torch.zeros(bs, 0, device=edge_scalar.device, dtype=e_feat.dtype)
 
         if single:
             return cls(
-                X=x_out.squeeze(0),
-                E=e_out.squeeze(0),
-                y=y_out.squeeze(0),
+                y=y.squeeze(0),
                 node_mask=node_mask.squeeze(0),
+                E_feat=e_feat.squeeze(0),
             )
-        return cls(X=x_out, E=e_out, y=y_out, node_mask=node_mask)
+        return cls(y=y, node_mask=node_mask, E_feat=e_feat)
 
     @classmethod
-    def from_edge_state(
+    def from_edge_scalar(
         cls,
-        edge_state: Tensor,
+        edge_scalar: Tensor,
         *,
-        node_mask: Tensor | None = None,
+        node_mask: Tensor,
+        target: Literal["E_class", "E_feat"],
     ) -> GraphData:
-        """Wrap a dense edge-valued state without binary projection.
+        """Construct a graph populating exactly one split edge field from a scalar.
 
         Parameters
         ----------
-        edge_state
-            Dense edge state, shape ``(n, n)`` or ``(bs, n, n)``.
+        edge_scalar
+            Dense scalar edges, ``(n, n)`` or ``(bs, n, n)``. For
+            ``target="E_class"`` values are treated as 0/1 indicators of
+            edge presence (no hard threshold applied; callers should pass
+            already-binary tensors).
         node_mask
-            Optional node-validity mask. When omitted, all nodes are
-            treated as real.
+            Node-validity mask, ``(n,)`` or ``(bs, n)``.
+        target
+            Which split field to populate:
+            ``"E_feat"`` (single-channel continuous adjacency) or
+            ``"E_class"`` (two-channel one-hot, channel 0 = no-edge).
+
+        Returns
+        -------
+        GraphData
+            Instance with the selected split edge field populated and
+            the other split fields ``None``.
         """
-        single = edge_state.dim() == 2
+        if target == "E_feat":
+            return cls.from_structure_only(node_mask, edge_scalar)
+
+        single = edge_scalar.dim() == 2
         if single:
-            edge_state = edge_state.unsqueeze(0)
+            edge_scalar = edge_scalar.unsqueeze(0)
+            if node_mask.dim() == 1:
+                node_mask = node_mask.unsqueeze(0)
 
-        if edge_state.dim() == 4 and edge_state.shape[-1] == 1:
-            edge_state = edge_state[..., 0]
-
-        if edge_state.dim() != 3:
+        if edge_scalar.dim() != 3:
             raise ValueError(
-                "from_edge_state() expects a 2D or 3D edge-state tensor, "
-                f"got shape {tuple(edge_state.shape)}"
+                "from_edge_scalar() expects a 2D or 3D edge_scalar tensor, "
+                f"got shape {tuple(edge_scalar.shape)}"
+            )
+        if node_mask.dim() != 2:
+            raise ValueError(
+                "from_edge_scalar() expects a 1D or 2D node_mask, "
+                f"got shape {tuple(node_mask.shape)}"
             )
 
-        bs, n, _ = edge_state.shape
-        edge_state = edge_state.float()
-
-        if node_mask is None:
-            node_mask = torch.ones(bs, n, device=edge_state.device, dtype=torch.bool)
-        elif node_mask.dim() == 1:
-            node_mask = node_mask.unsqueeze(0)
-
-        if node_mask.shape != (bs, n):
+        bs, n, _ = edge_scalar.shape
+        if tuple(node_mask.shape) != (bs, n):
             raise ValueError(
-                "node_mask must have shape (bs, n) for from_edge_state(), "
-                f"got {tuple(node_mask.shape)}"
+                "from_edge_scalar(): node_mask shape "
+                f"{tuple(node_mask.shape)} incompatible with edge_scalar "
+                f"shape {tuple(edge_scalar.shape)}"
             )
 
-        x_out = torch.zeros(bs, n, 2, device=edge_state.device, dtype=edge_state.dtype)
-        x_out[:, :, 1] = node_mask.float()
-        x_out[:, :, 0] = 1.0 - node_mask.float()
+        adj = edge_scalar.float()
+        e_class = torch.zeros(bs, n, n, 2, device=adj.device, dtype=adj.dtype)
+        e_class[..., 0] = 1.0 - adj
+        e_class[..., 1] = adj
 
-        e_out = edge_state.unsqueeze(-1)
-        y_out = torch.zeros(bs, 0, device=edge_state.device, dtype=edge_state.dtype)
+        y = torch.zeros(bs, 0, device=adj.device, dtype=adj.dtype)
 
         if single:
             return cls(
-                X=x_out.squeeze(0),
-                E=e_out.squeeze(0),
-                y=y_out.squeeze(0),
+                y=y.squeeze(0),
                 node_mask=node_mask.squeeze(0),
+                E_class=e_class.squeeze(0),
             )
-        return cls(X=x_out, E=e_out, y=y_out, node_mask=node_mask)
+        return cls(y=y, node_mask=node_mask, E_class=e_class)
+
+    def to_edge_scalar(self, *, source: Literal["class", "feat"]) -> Tensor:
+        """Return a dense scalar adjacency from the requested split edge field.
+
+        Both paths mask the returned tensor by the outer product of
+        ``node_mask`` so padded positions are zero.
+
+        Parameters
+        ----------
+        source
+            ``"feat"`` reads ``E_feat`` directly (squeezing a trailing
+            single-channel axis if present). ``"class"`` returns the
+            edge-probability ``1 − E_class[..., 0]`` for multi-channel
+            categorical edges.
+
+        Returns
+        -------
+        Tensor
+            Dense scalar adjacency, shape ``(n, n)`` or ``(bs, n, n)``.
+
+        Raises
+        ------
+        ValueError
+            If the requested source field is ``None``.
+        """
+        if source == "feat":
+            if self.E_feat is None:
+                raise ValueError(
+                    "to_edge_scalar(source='feat') requires E_feat to be "
+                    "populated; got None."
+                )
+            e = self.E_feat
+            edge_scalar = e.squeeze(-1) if e.shape[-1] == 1 else e[..., 0]
+        else:  # source == "class"
+            if self.E_class is None:
+                raise ValueError(
+                    "to_edge_scalar(source='class') requires E_class to be "
+                    "populated; got None."
+                )
+            if self.E_class.shape[-1] > 1:
+                edge_scalar = 1.0 - self.E_class[..., 0]
+            else:
+                edge_scalar = self.E_class[..., 0]
+
+        mask2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
+        return edge_scalar * mask2d.to(edge_scalar.dtype)
+
+    def binarised_adjacency(self) -> Tensor:
+        """Return a hard 0/1 adjacency view from whichever edge field is populated.
+
+        When ``E_class`` is present we take ``argmax > 0`` (two-channel
+        DiGress layout treats channel 0 as "no edge"); otherwise we
+        threshold ``E_feat`` at 0.5. The result is masked by the outer
+        product of ``node_mask`` so padded positions are zero.
+
+        Raises
+        ------
+        ValueError
+            If neither edge field is populated.
+        """
+        if self.E_class is not None:
+            if self.E_class.shape[-1] > 1:
+                adj = (self.E_class.argmax(dim=-1) > 0).float()
+            else:
+                adj = self.E_class[..., 0].clone()
+        elif self.E_feat is not None:
+            e = self.E_feat
+            scalar = e.squeeze(-1) if e.shape[-1] == 1 else e[..., 0]
+            adj = (scalar > 0.5).float()
+        else:  # pragma: no cover - __post_init__ enforces at least one.
+            raise ValueError(
+                "binarised_adjacency() requires E_class or E_feat to be populated."
+            )
+
+        mask_2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
+        return adj * mask_2d.float()
 
     @classmethod
     def from_pyg_batch(cls, batch: Batch) -> GraphData:
-        """Convert a PyG Batch to dense GraphData.
+        """Convert a PyG Batch to a dense, structure-only GraphData.
 
         Parameters
         ----------
@@ -243,10 +474,16 @@ class GraphData:
         Returns
         -------
         GraphData
-            Dense batched one-hot representation with ``dx=2`` (no-node /
-            node) and ``de=2`` (no-edge / edge) encodings. ``node_mask``
-            reflects actual node counts per graph; padded positions are
-            marked ``False``.
+            Dense batched representation with ``E_class`` (``de_class=2``
+            one-hot ``[no-edge, edge]``) populated; ``X_class`` is ``None``
+            because the spec forbids datasets emitting a degenerate
+            "node-present / node-absent" one-hot that merely re-encodes
+            ``node_mask`` (see
+            ``docs/specs/2026-04-15-unified-graph-features-spec.md
+            §"Removed fields"`` — "architecture-internal concern").
+            ``node_mask`` reflects actual node counts per graph; padded
+            positions are marked ``False`` and are the single source of
+            truth for which rows correspond to real nodes.
         """
         from torch_geometric.utils import to_dense_adj
 
@@ -267,45 +504,11 @@ class GraphData:
         adj = (adj + adj.transpose(1, 2)).clamp(max=1.0)
 
         # One-hot edge features (bs, n, n, 2): [no-edge, edge]
-        E = torch.stack([1.0 - adj, adj], dim=-1)
-
-        # One-hot node features (bs, n, 2): [no-node, node]
-        node_ind = node_mask.float()
-        X = torch.stack([1.0 - node_ind, node_ind], dim=-1)
+        E_class = torch.stack([1.0 - adj, adj], dim=-1)
 
         y = torch.zeros(bs, 0, device=adj.device)
 
-        return cls(X=X, E=E, y=y, node_mask=node_mask)
-
-    def to_binary_adjacency(self) -> Tensor:
-        """Convert categorical edge features to a binary adjacency matrix."""
-        if self.E.shape[-1] > 1:
-            adj = (self.E.argmax(dim=-1) > 0).float()
-        else:
-            adj = self.E[..., 0].clone()
-
-        mask_2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
-        return adj * mask_2d.float()
-
-    def to_edge_state(self) -> Tensor:
-        """Return a dense edge-valued state tensor.
-
-        Single-channel edge-state graphs round-trip directly. Binary-topology
-        graphs expose their explicit edge-indicator channel as a lossless
-        0/1 state tensor so continuous diffusion code can lift clean graphs
-        without going back through binary-topology helpers.
-        """
-        if self.E.shape[-1] == 1:
-            edge_state = self.E[..., 0]
-        elif self.E.shape[-1] == 2:
-            edge_state = self.E[..., 1]
-        else:
-            raise ValueError(
-                "to_edge_state() requires single-channel edge states or "
-                "binary-topology edge features with 2 channels, "
-                f"got edge feature shape {tuple(self.E.shape)}"
-            )
-        return edge_state
+        return cls(y=y, node_mask=node_mask, E_class=E_class)
 
     def to_pyg(self) -> Data:
         """Convert this (unbatched) GraphData to a PyG Data object.
@@ -323,7 +526,7 @@ class GraphData:
         from torch_geometric.data import Data
         from torch_geometric.utils import dense_to_sparse
 
-        adj = self.to_binary_adjacency()
+        adj = self.binarised_adjacency()
         if adj.ndim == 3:
             if adj.shape[0] != 1:
                 raise ValueError(
@@ -345,76 +548,136 @@ class GraphData:
     def collate(graphs: list[GraphData]) -> GraphData:
         """Collate variable-size graphs into a padded batch.
 
-        Pads all graphs to the maximum node count. Padded node positions
-        receive the "no-node" class (one-hot index 0), padded edge positions
-        receive "no-edge" (one-hot index 0), and ``node_mask`` is ``False``
-        for padded slots.
+        Pads every populated split field to the maximum node count.
+        Padded node positions receive "no-node" (one-hot index 0) in
+        categorical fields, padded edge positions receive "no-edge"
+        (one-hot index 0), and ``node_mask`` is ``False`` for padded
+        slots.
 
         Parameters
         ----------
         graphs
-            Individual (unbatched) ``GraphData`` instances.
+            Individual (unbatched) ``GraphData`` instances. All graphs
+            MUST share the same set of populated split fields.
 
         Returns
         -------
         GraphData
             Batched instance with shapes ``(bs, n_max, ...)``.
         """
+        if not graphs:
+            raise ValueError("GraphData.collate() requires a non-empty list.")
+
         bs = len(graphs)
         ns = [g.node_mask.shape[0] for g in graphs]
         n_max = max(ns)
-        dx = graphs[0].X.shape[-1]
-        de = graphs[0].E.shape[-1]
         dy = graphs[0].y.shape[0]
 
-        x_batch = torch.zeros(bs, n_max, dx)
-        e_batch = torch.zeros(bs, n_max, n_max, de)
-        y_batch = torch.zeros(bs, dy)
         mask_batch = torch.zeros(bs, n_max, dtype=torch.bool)
+        y_batch = torch.zeros(bs, dy)
+
+        def _pad_field(
+            field_name: Literal["X_class", "X_feat", "E_class", "E_feat"],
+        ) -> Tensor | None:
+            """Pad a single split field from every graph, or return None."""
+            first = getattr(graphs[0], field_name)
+            if first is None:
+                for g in graphs[1:]:
+                    if getattr(g, field_name) is not None:
+                        raise ValueError(
+                            f"GraphData.collate(): {field_name} populated "
+                            "inconsistently across graphs."
+                        )
+                return None
+
+            is_edge = field_name.startswith("E_")
+            d = int(first.shape[-1])
+            if is_edge:
+                batch = torch.zeros(bs, n_max, n_max, d, dtype=first.dtype)
+            else:
+                batch = torch.zeros(bs, n_max, d, dtype=first.dtype)
+
+            for i, g in enumerate(graphs):
+                tensor = getattr(g, field_name)
+                if tensor is None:
+                    raise ValueError(
+                        f"GraphData.collate(): {field_name} missing on graph {i} "
+                        "but present on graph 0."
+                    )
+                ni = ns[i]
+                if is_edge:
+                    batch[i, :ni, :ni] = tensor
+                    # Padded edge positions -> "no edge" (class 0) when
+                    # categorical; continuous fields stay at zero.
+                    if field_name == "E_class":
+                        batch[i, :ni, ni:, 0] = 1.0
+                        batch[i, ni:, :, 0] = 1.0
+                else:
+                    batch[i, :ni] = tensor
+                    if field_name == "X_class":
+                        batch[i, ni:, 0] = 1.0
+            return batch
 
         for i, (g, ni) in enumerate(zip(graphs, ns, strict=False)):
-            x_batch[i, :ni] = g.X
-            e_batch[i, :ni, :ni] = g.E
             if dy > 0:
                 y_batch[i] = g.y
             mask_batch[i, :ni] = True
 
-            # Padded edge positions -> "no edge" (class 0)
-            e_batch[i, :ni, ni:, 0] = 1.0
-            e_batch[i, ni:, :, 0] = 1.0
-            # Padded node positions -> "no node" (class 0)
-            x_batch[i, ni:, 0] = 1.0
+        X_class = _pad_field("X_class")
+        X_feat = _pad_field("X_feat")
+        E_class = _pad_field("E_class")
+        E_feat = _pad_field("E_feat")
 
-        return GraphData(X=x_batch, E=e_batch, y=y_batch, node_mask=mask_batch)
+        return GraphData(
+            y=y_batch,
+            node_mask=mask_batch,
+            X_class=X_class,
+            X_feat=X_feat,
+            E_class=E_class,
+            E_feat=E_feat,
+        )
 
 
-def collapse_to_indices(data: GraphData) -> GraphData:
-    """Argmax X and E to class indices, with -1 for masked positions.
+def collapse_to_indices(data: GraphData) -> tuple[Tensor, Tensor | None]:
+    """Argmax ``E_class`` (and optionally ``X_class``) to class indices.
 
-    Converts one-hot encoded features to integer class labels. Positions
-    where ``node_mask`` is zero are set to -1 as a sentinel.
+    Returns a tuple ``(E_idx, X_idx)`` where each entry is a Tensor of
+    integer indices, with ``-1`` as a sentinel at masked positions.
+    ``X_idx`` is ``None`` when the data has no ``X_class``.
 
     Parameters
     ----------
     data
-        One-hot encoded graph features with ``node_mask``.
+        One-hot encoded graph features with ``node_mask``. ``E_class``
+        MUST be populated.
 
     Returns
     -------
-    GraphData
-        X shape ``(bs, n)``, E shape ``(bs, n, n)`` — integer indices.
+    (E_idx, X_idx)
+        ``E_idx`` has shape ``(bs, n, n)``; ``X_idx`` has shape
+        ``(bs, n)`` or is ``None``.
+
+    Raises
+    ------
+    ValueError
+        If ``data.E_class`` is ``None``.
     """
+    if data.E_class is None:
+        raise ValueError("collapse_to_indices() requires data.E_class to be populated.")
+
     node_mask = data.node_mask
     x_mask = node_mask.unsqueeze(-1)  # (bs, n, 1)
     e_mask = x_mask.unsqueeze(2) * x_mask.unsqueeze(1)  # (bs, n, n, 1)
 
-    X = torch.argmax(data.X, dim=-1)
-    E = torch.argmax(data.E, dim=-1)
+    E_idx = torch.argmax(data.E_class, dim=-1)
+    E_idx[e_mask.squeeze(-1) == 0] = -1
 
-    X[node_mask == 0] = -1
-    E[e_mask.squeeze(-1) == 0] = -1
+    X_idx: Tensor | None = None
+    if data.X_class is not None:
+        X_idx = torch.argmax(data.X_class, dim=-1)
+        X_idx[node_mask == 0] = -1
 
-    return GraphData(X=X, E=E, y=data.y, node_mask=node_mask)
+    return E_idx, X_idx
 
 
 @dataclass(frozen=True, slots=True)

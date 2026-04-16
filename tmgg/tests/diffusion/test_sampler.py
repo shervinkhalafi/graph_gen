@@ -25,6 +25,7 @@ import pytest
 import torch
 from torch import Tensor
 
+from tests._helpers.graph_builders import binary_graphdata
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
@@ -62,10 +63,17 @@ class UniformCategoricalModel(GraphModel):
         return {"dx": self.dx, "de": self.de}
 
     def forward(self, data: GraphData, t: Tensor | None = None) -> GraphData:
-        bs, n, _ = data.X.shape
-        X = torch.ones(bs, n, self.dx, device=data.X.device) / self.dx
-        E = torch.ones(bs, n, n, self.de, device=data.E.device) / self.de
-        return GraphData(X=X, E=E, y=data.y, node_mask=data.node_mask)
+        assert data.X_class is not None
+        assert data.E_class is not None
+        bs, n, _ = data.X_class.shape
+        X = torch.ones(bs, n, self.dx, device=data.X_class.device) / self.dx
+        E = torch.ones(bs, n, n, self.de, device=data.E_class.device) / self.de
+        return GraphData(
+            y=data.y,
+            node_mask=data.node_mask,
+            X_class=X,
+            E_class=E,
+        )
 
 
 class IdentityContinuousModel(GraphModel):
@@ -145,36 +153,39 @@ class TestDiffusionState:
     """DiffusionState should validate timestep metadata and batched graph shape."""
 
     def test_constructs_for_valid_batched_graph(self) -> None:
-        graph = GraphData.from_binary_adjacency(torch.zeros(2, N_NODES, N_NODES))
+        graph = binary_graphdata(torch.zeros(2, N_NODES, N_NODES))
         state = DiffusionState(graph=graph, t=3, max_t=T_STEPS)
         assert state.t == 3
         assert state.max_t == T_STEPS
         assert state.graph is graph
 
     def test_rejects_negative_timestep(self) -> None:
-        graph = GraphData.from_binary_adjacency(torch.zeros(2, N_NODES, N_NODES))
+        graph = binary_graphdata(torch.zeros(2, N_NODES, N_NODES))
         with pytest.raises(ValueError, match="0 <= t <= max_t"):
             DiffusionState(graph=graph, t=-1, max_t=T_STEPS)
 
     def test_rejects_timestep_above_max(self) -> None:
-        graph = GraphData.from_binary_adjacency(torch.zeros(2, N_NODES, N_NODES))
+        graph = binary_graphdata(torch.zeros(2, N_NODES, N_NODES))
         with pytest.raises(ValueError, match="0 <= t <= max_t"):
             DiffusionState(graph=graph, t=T_STEPS + 1, max_t=T_STEPS)
 
     def test_rejects_unbatched_graph(self) -> None:
-        graph = GraphData.from_binary_adjacency(torch.zeros(N_NODES, N_NODES))
-        with pytest.raises(ValueError, match="must be batched GraphData"):
+        graph = binary_graphdata(torch.zeros(N_NODES, N_NODES))
+        with pytest.raises(ValueError, match="node_mask must have shape"):
             DiffusionState(graph=graph, t=1, max_t=T_STEPS)
 
     def test_rejects_mismatched_mask_shape(self) -> None:
-        graph = GraphData(
-            X=torch.zeros(BS, N_NODES, DX),
-            E=torch.zeros(BS, N_NODES, N_NODES, DE),
-            y=torch.zeros(BS, 0),
-            node_mask=torch.ones(BS, N_NODES + 1, dtype=torch.bool),
-        )
-        with pytest.raises(ValueError, match="node_mask shape"):
-            DiffusionState(graph=graph, t=1, max_t=T_STEPS)
+        # The GraphData constructor itself now rejects mismatched leading
+        # dims; the DiffusionState contract still implicitly benefits
+        # from that validation. We verify the failure surface at the
+        # dataclass level.
+        with pytest.raises(ValueError, match="leading dims"):
+            GraphData(
+                X_class=torch.zeros(BS, N_NODES, DX),
+                E_class=torch.zeros(BS, N_NODES, N_NODES, DE),
+                y=torch.zeros(BS, 0),
+                node_mask=torch.ones(BS, N_NODES + 1, dtype=torch.bool),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -309,15 +320,13 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            # After collapse_to_indices, X is (n,) and E is (n, n)
-            assert (
-                g.X.dim() == 1
-            ), f"Expected X to be 1-D (collapsed), got shape {g.X.shape}"
-            assert g.X.shape[0] == N_NODES
-            assert (
-                g.E.dim() == 2
-            ), f"Expected E to be 2-D (collapsed), got shape {g.E.shape}"
-            assert g.E.shape == (N_NODES, N_NODES)
+            # finalize_sample returns one-hot per-graph tensors; per-node
+            # shape is (n, dx) and per-edge shape is (n, n, de).
+            assert g.X_class is not None and g.E_class is not None
+            assert g.X_class.dim() == 2
+            assert g.X_class.shape == (N_NODES, DX)
+            assert g.E_class.dim() == 3
+            assert g.E_class.shape == (N_NODES, N_NODES, DE)
 
     def test_edge_symmetry(
         self,
@@ -335,7 +344,10 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            assert torch.equal(g.E, g.E.T), "Edge indices must be symmetric"
+            assert g.E_class is not None
+            assert torch.equal(
+                g.E_class, g.E_class.transpose(0, 1)
+            ), "Edge one-hots must be symmetric"
 
     def test_valid_class_indices(
         self,
@@ -353,16 +365,18 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            # Collapsed X values should be in [0, dx)
-            assert (g.X >= 0).all() and (
-                g.X < DX
-            ).all(), f"X class indices out of range: min={g.X.min()}, max={g.X.max()}"
-            # Collapsed E values should be in [0, de) for valid positions
+            # finalize_sample returns one-hot tensors. Each row of X_class
+            # and each (i, j) position of E_class must sum to 1 at valid
+            # positions (not counting the diagonal for edges).
+            assert g.X_class is not None and g.E_class is not None
+            x_sums = g.X_class.sum(dim=-1)
+            assert torch.allclose(
+                x_sums[g.node_mask], torch.ones_like(x_sums[g.node_mask])
+            )
             valid_mask = g.node_mask.unsqueeze(0) * g.node_mask.unsqueeze(1)
-            valid_E = g.E[valid_mask.bool()]
-            assert (
-                (valid_E >= 0).all() and (valid_E < DE).all()
-            ), f"E class indices out of range: min={valid_E.min()}, max={valid_E.max()}"
+            e_sums = g.E_class.sum(dim=-1)
+            ones_like = torch.ones_like(e_sums[valid_mask.bool()])
+            assert torch.allclose(e_sums[valid_mask.bool()], ones_like)
 
     def test_variable_node_counts(
         self,
@@ -381,8 +395,8 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         assert len(results) == 2
-        assert results[0].X.shape[0] == 3
-        assert results[1].X.shape[0] == 5
+        assert results[0].node_mask.shape[0] == 3
+        assert results[1].node_mask.shape[0] == 5
 
     def test_sample_no_gradients_tracked(
         self,
@@ -407,8 +421,10 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            assert not g.X.requires_grad
-            assert not g.E.requires_grad
+            assert g.X_class is not None
+            assert g.E_class is not None
+            assert not g.X_class.requires_grad
+            assert not g.E_class.requires_grad
 
     def test_warm_start_still_works_with_explicit_noise_process(
         self,
@@ -483,10 +499,10 @@ class TestCategoricalSamplerMarginal:
             E[0, i, j] = torch.tensor([0.0, 1.0])
             E[0, j, i] = torch.tensor([0.0, 1.0])
         batch = GraphData(
-            X=X,
-            E=E,
             y=torch.zeros(1, 0),
             node_mask=torch.ones(1, N_NODES, dtype=torch.bool),
+            X_class=X,
+            E_class=E,
         )
         proc.initialize_from_data([batch])  # type: ignore[arg-type]
         return proc
@@ -509,15 +525,16 @@ class TestCategoricalSamplerMarginal:
         assert len(results) == BS
         for g in results:
             assert isinstance(g, GraphData)
-            assert g.X.shape[0] == N_NODES
+            assert g.X_class is not None
+            assert g.X_class.shape[0] == N_NODES
 
-    def test_valid_class_indices(
+    def test_valid_class_distributions(
         self,
         marginal_noise_process: CategoricalNoiseProcess,
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """Class indices remain in valid ranges with empirical marginals."""
+        """X_class rows are valid one-hot PMFs with empirical marginals."""
         sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
@@ -527,7 +544,11 @@ class TestCategoricalSamplerMarginal:
             device=torch.device("cpu"),
         )
         for g in results:
-            assert (g.X >= 0).all() and (g.X < DX).all()
+            assert g.X_class is not None
+            x_sums = g.X_class.sum(dim=-1)
+            assert torch.allclose(
+                x_sums[g.node_mask], torch.ones_like(x_sums[g.node_mask])
+            )
 
     def test_edge_symmetry(
         self,
@@ -545,7 +566,8 @@ class TestCategoricalSamplerMarginal:
             device=torch.device("cpu"),
         )
         for g in results:
-            assert torch.equal(g.E, g.E.T)
+            assert g.E_class is not None
+            assert torch.equal(g.E_class, g.E_class.transpose(0, 1))
 
 
 # ---------------------------------------------------------------------------
@@ -639,8 +661,14 @@ class TestContinuousSamplerSample:
         for g in results:
             # After thresholding, the output is stored as one-hot de=2
             # but trimmed per graph. Check that E is square.
-            n = g.X.shape[0] if g.X.dim() == 1 else g.X.shape[-2]
-            assert g.E.shape[-2] == g.E.shape[-1] or g.E.shape[0] == n
+            n = (
+                g.node_mask.shape[0]
+                if g.node_mask.dim() == 1
+                else g.node_mask.shape[-1]
+            )
+            e_class = g.E_class
+            assert e_class is not None
+            assert e_class.shape[-2] == e_class.shape[-1] or e_class.shape[0] == n
 
     def test_binary_adjacency(
         self,
@@ -658,7 +686,7 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.to_binary_adjacency()
+            adj = g.binarised_adjacency()
             unique_vals = torch.unique(adj)
             for v in unique_vals:
                 assert v.item() in (
@@ -682,7 +710,7 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.to_binary_adjacency()
+            adj = g.binarised_adjacency()
             if adj.dim() == 2:
                 assert torch.equal(adj, adj.T), "Adjacency must be symmetric"
             elif adj.dim() == 3:
@@ -706,7 +734,7 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.to_binary_adjacency()
+            adj = g.binarised_adjacency()
             if adj.dim() == 2:
                 assert torch.diag(adj).sum() == 0, "Self-loops must be zero"
             elif adj.dim() == 3:
@@ -735,7 +763,7 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.to_binary_adjacency()
+            adj = g.binarised_adjacency()
             assert not adj.requires_grad
 
     def test_warm_start_still_works_with_explicit_noise_process(

@@ -77,7 +77,13 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
         pin_memory: bool = True,
         seed: int = 42,
         graph_config: dict[str, Any] | None = None,
+        **_metadata: object,
     ) -> None:
+        # ``**_metadata`` absorbs informational config keys (notably
+        # ``eval_meta``) that the data block exposes for downstream
+        # Hydra interpolation into the evaluator. They are consumed by
+        # other subtrees of the resolved config and have no effect on
+        # data generation.
         super().__init__(
             graph_type=graph_type,
             num_nodes=num_nodes,

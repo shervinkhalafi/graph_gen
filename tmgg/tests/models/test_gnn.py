@@ -3,6 +3,7 @@
 import pytest
 import torch
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
 from tmgg.models.layers import GraphConvolutionLayer
@@ -45,11 +46,11 @@ class TestGNNModels:
         )
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
         result = model(data)
 
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
     def test_gnn_forward_avoids_binary_projection(self, monkeypatch):
         """Continuous GNN paths should not call binary adjacency extraction."""
@@ -57,13 +58,13 @@ class TestGNNModels:
         def _raise(*_args, **_kwargs):
             raise AssertionError("binary topology should not be used here")
 
-        monkeypatch.setattr(GraphData, "to_binary_adjacency", _raise)
+        monkeypatch.setattr(GraphData, "binarised_adjacency", _raise)
 
         model = GNN(num_layers=2, feature_dim_out=8)
-        data = GraphData.from_edge_state(torch.randn(1, 5, 5))
+        data = edge_scalar_graphdata(torch.randn(1, 5, 5))
 
         result = model(data)
-        assert result.to_edge_state().shape == (1, 5, 5)
+        assert legacy_edge_scalar(result).shape == (1, 5, 5)
 
     def test_gnn_embeddings(self):
         """Test GNN embeddings() method for hybrid model use."""
@@ -74,7 +75,7 @@ class TestGNNModels:
         model = GNN(num_layers=2, feature_dim_out=feature_dim_out)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
         X, Y = model.embeddings(data)
 
         assert X.shape == (batch_size, num_nodes, feature_dim_out)
@@ -90,11 +91,11 @@ class TestGNNModels:
         model = GNNSymmetric(num_layers=num_layers, feature_dim_out=feature_dim_out)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
         result = model(data)
 
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
     def test_nodevar_gnn_forward(self):
         """Test NodeVarGNN forward pass returns GraphData."""
@@ -106,11 +107,11 @@ class TestGNNModels:
         model = NodeVarGNN(num_layers=num_layers, feature_dim=feature_dim)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
         result = model(data)
 
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
     def test_gnn_get_config(self):
         """Test GNN configuration retrieval."""

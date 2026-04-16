@@ -88,11 +88,17 @@ print("Config preflight OK: datamodule setup", flush=True)
 
 print("Config preflight: fetch validation batch", flush=True)
 batch = next(iter(dm.val_dataloader()))
+
+def _shape_summary(data):
+    parts = [("node_mask", tuple(data.node_mask.shape))]
+    for name in ("X_class", "X_feat", "E_class", "E_feat"):
+        t = getattr(data, name)
+        parts.append((name, tuple(t.shape) if t is not None else None))
+    return parts
+
 print(
     "Config preflight OK: validation batch",
-    tuple(batch.X.shape),
-    tuple(batch.E.shape),
-    tuple(batch.node_mask.shape),
+    _shape_summary(batch),
     flush=True,
 )
 
@@ -111,23 +117,21 @@ print("Config preflight: transfer batch to device", flush=True)
 batch = module.transfer_batch_to_device(batch, device, 0)
 print(
     "Config preflight OK: batch to device",
-    str(batch.X.device),
-    tuple(batch.X.shape),
-    tuple(batch.E.shape),
+    str(batch.node_mask.device),
+    _shape_summary(batch),
     flush=True,
 )
 
 if hasattr(module, "noise_process") and hasattr(module, "_compute_loss") and hasattr(module, "T"):
     with torch.no_grad():
-        bs = int(batch.X.shape[0])
+        bs = int(batch.node_mask.shape[0])
         t_int = torch.randint(1, int(module.T) + 1, (bs,), device=device)
 
         print("Config preflight: noise forward_sample", flush=True)
         z_t = module.noise_process.forward_sample(batch, t_int)
         print(
             "Config preflight OK: noise forward_sample",
-            tuple(z_t.X.shape),
-            tuple(z_t.E.shape),
+            _shape_summary(z_t),
             flush=True,
         )
 
@@ -139,8 +143,7 @@ if hasattr(module, "noise_process") and hasattr(module, "_compute_loss") and has
         pred = module.model(z_t, t=condition)
         print(
             "Config preflight OK: model forward",
-            tuple(pred.X.shape),
-            tuple(pred.E.shape),
+            _shape_summary(pred),
             flush=True,
         )
 

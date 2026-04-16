@@ -9,6 +9,7 @@ from hypothesis import given, note, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
 from tmgg.models.layers import GraphConvolutionLayer
@@ -180,11 +181,15 @@ class TestGNNProperties:
         model = GNN(**params)
 
         try:
-            result = model(GraphData.from_edge_state(A))
+            result = model(edge_scalar_graphdata(A))
 
             batch_size, num_nodes, _ = A.shape
             assert isinstance(result, GraphData)
-            assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+            assert legacy_edge_scalar(result).shape == (
+                batch_size,
+                num_nodes,
+                num_nodes,
+            )
         except EigenDecompositionError:
             pass  # Expected for some matrices
 
@@ -195,14 +200,14 @@ class TestGNNProperties:
         model = GNNSymmetric(num_layers=2, feature_dim_out=5)
 
         try:
-            result = model(GraphData.from_edge_state(A))
+            result = model(edge_scalar_graphdata(A))
 
             # Check shape
             assert isinstance(result, GraphData)
-            assert result.to_edge_state().shape == A.shape
+            assert legacy_edge_scalar(result).shape == A.shape
 
             # Check symmetry of raw edge features
-            raw_adj = result.to_edge_state()
+            raw_adj = legacy_edge_scalar(result)
             diff = torch.abs(raw_adj - raw_adj.transpose(-2, -1))
             assert torch.max(diff) < 0.1  # Allow some asymmetry
         except EigenDecompositionError:
@@ -218,14 +223,14 @@ class TestGNNProperties:
         model = NodeVarGNN(num_layers=num_layers, feature_dim=5)
 
         try:
-            result = model(GraphData.from_edge_state(A))
+            result = model(edge_scalar_graphdata(A))
 
             # Check shape
             assert isinstance(result, GraphData)
-            assert result.to_edge_state().shape == A.shape
+            assert legacy_edge_scalar(result).shape == A.shape
 
             # Check raw edge features are valid
-            raw_adj = result.to_edge_state()
+            raw_adj = legacy_edge_scalar(result)
             assert not torch.isnan(raw_adj).any()
             assert not torch.isinf(raw_adj).any()
         except EigenDecompositionError:
@@ -320,9 +325,9 @@ class TestGNNErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         try:
-            result = model(GraphData.from_edge_state(A))
+            result = model(edge_scalar_graphdata(A))
             # Model should handle this by padding or truncating
-            assert result.to_edge_state().shape == (1, 5, 5)
+            assert legacy_edge_scalar(result).shape == (1, 5, 5)
         except EigenDecompositionError:
             pass  # Also acceptable
 

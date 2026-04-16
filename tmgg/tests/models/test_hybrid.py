@@ -3,6 +3,7 @@
 import pytest
 import torch
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.gnn import GNN
@@ -60,11 +61,11 @@ class TestSequentialDenoisingModel:
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
 
         result = model(data)
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
     def test_forward_does_not_touch_binary_projection(self, monkeypatch):
         """Sequential denoising should stay in edge-state space."""
@@ -72,17 +73,17 @@ class TestSequentialDenoisingModel:
         def _raise(*_args, **_kwargs):
             raise AssertionError("binary topology should not be used here")
 
-        monkeypatch.setattr(GraphData, "to_binary_adjacency", _raise)
+        monkeypatch.setattr(GraphData, "binarised_adjacency", _raise)
 
         embedding_model = GNN(
             num_layers=1, num_terms=2, feature_dim_in=6, feature_dim_out=3
         )
         denoising_model = MultiLayerAttention(d_model=6, num_heads=2, num_layers=1)
         model = SequentialDenoisingModel(embedding_model, denoising_model)
-        data = GraphData.from_edge_state(torch.randn(1, 6, 6))
+        data = edge_scalar_graphdata(torch.randn(1, 6, 6))
 
         result = model(data)
-        assert result.to_edge_state().shape == (1, 6, 6)
+        assert legacy_edge_scalar(result).shape == (1, 6, 6)
 
     def test_forward_without_denoising(self):
         """Test forward pass without denoising model returns GraphData."""
@@ -100,11 +101,11 @@ class TestSequentialDenoisingModel:
         model = SequentialDenoisingModel(embedding_model, None)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
 
         result = model(data)
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
     def test_get_config(self):
         """Test configuration retrieval."""
@@ -206,11 +207,11 @@ class TestCreateSequentialModel:
         model = create_sequential_model(gnn_config, transformer_config)
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
 
         result = model(data)
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
 
 if __name__ == "__main__":

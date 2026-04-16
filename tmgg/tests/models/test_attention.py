@@ -3,6 +3,7 @@
 import pytest
 import torch
 
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.layers import MultiHeadSelfAttention
@@ -92,11 +93,11 @@ class TestMultiLayerAttention:
         # Input: batch of dense edge states wrapped as GraphData
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         A = A + torch.randn_like(A) * 0.1  # Add some noise
-        data = GraphData.from_edge_state(A)
+        data = edge_scalar_graphdata(A)
 
         result = model(data)
         assert isinstance(result, GraphData)
-        assert result.to_edge_state().shape == (batch_size, num_nodes, num_nodes)
+        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
 
     def test_forward_does_not_touch_binary_projection(self, monkeypatch):
         """Continuous attention should not use binary-topology extraction."""
@@ -104,13 +105,13 @@ class TestMultiLayerAttention:
         def _raise(*_args, **_kwargs):
             raise AssertionError("binary topology should not be used here")
 
-        monkeypatch.setattr(GraphData, "to_binary_adjacency", _raise)
+        monkeypatch.setattr(GraphData, "binarised_adjacency", _raise)
 
         model = MultiLayerAttention(d_model=6, num_heads=2, num_layers=1)
-        data = GraphData.from_edge_state(torch.randn(1, 6, 6))
+        data = edge_scalar_graphdata(torch.randn(1, 6, 6))
 
         result = model(data)
-        assert result.to_edge_state().shape == (1, 6, 6)
+        assert legacy_edge_scalar(result).shape == (1, 6, 6)
 
     def test_get_config(self):
         """Test configuration retrieval."""

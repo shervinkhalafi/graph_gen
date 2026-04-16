@@ -198,7 +198,7 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
 
         graphs: list[Any] = []
         for batch in loader:
-            adj = batch.to_binary_adjacency()  # (B, N, N)
+            adj = batch.binarised_adjacency()  # (B, N, N)
             bs = adj.shape[0]
             for i in range(bs):
                 if len(graphs) >= max_graphs:

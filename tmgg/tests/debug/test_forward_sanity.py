@@ -16,7 +16,7 @@ Test Rationale
 import pytest
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.models.baselines import LinearBaseline, MLPBaseline
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
@@ -31,14 +31,14 @@ class TestSpectralModelsForwardSanity:
     @pytest.fixture
     def identity_data(self):
         """Create identity adjacency matrix batch as GraphData."""
-        return GraphData.from_edge_state(torch.eye(32).unsqueeze(0))
+        return edge_scalar_graphdata(torch.eye(32).unsqueeze(0))
 
     @pytest.fixture
     def random_data(self):
         """Create random symmetric adjacency matrix batch as GraphData."""
         A = torch.rand(4, 32, 32)
         A = (A + A.transpose(-2, -1)) / 2
-        return GraphData.from_edge_state(A)
+        return edge_scalar_graphdata(A)
 
     def test_linear_pe_produces_nonzero_logits(self, identity_data):
         """Verify LinearPE doesn't output uniform edge probabilities."""
@@ -46,7 +46,7 @@ class TestSpectralModelsForwardSanity:
         result = model(identity_data)
 
         # Edge-channel logits should not be exactly zero
-        edge_logits = result.to_edge_state()
+        edge_logits = legacy_edge_scalar(result)
         assert edge_logits.abs().mean() > 1e-6, (
             f"LinearPE outputs near-zero edge logits: mean={edge_logits.mean():.2e}, "
             f"std={edge_logits.std():.2e}"
@@ -57,7 +57,7 @@ class TestSpectralModelsForwardSanity:
         model = GraphFilterBank(k=8, polynomial_degree=5)
         result = model(identity_data)
 
-        edge_logits = result.to_edge_state()
+        edge_logits = legacy_edge_scalar(result)
         assert (
             edge_logits.abs().mean() > 1e-6
         ), f"GraphFilterBank outputs near-zero edge logits: mean={edge_logits.mean():.2e}"
@@ -67,7 +67,7 @@ class TestSpectralModelsForwardSanity:
         model = SelfAttentionDenoiser(k=8, d_k=64)
         result = model(identity_data)
 
-        edge_logits = result.to_edge_state()
+        edge_logits = legacy_edge_scalar(result)
         assert (
             edge_logits.abs().mean() > 1e-6
         ), f"SelfAttentionDenoiser outputs near-zero edge logits: mean={edge_logits.mean():.2e}"
@@ -87,7 +87,7 @@ class TestSpectralModelsForwardSanity:
         result = model(identity_data)
         # Use only edge-probability channel: both channels of 2-class encoding
         # sum to 1.0 per position, so E.sum() is constant with zero gradient.
-        loss = result.to_edge_state().sum()
+        loss = legacy_edge_scalar(result).sum()
         loss.backward()
 
         # Check that at least some parameters have gradients
@@ -114,7 +114,7 @@ class TestBaselineModelsForwardSanity:
         """Create random symmetric adjacency matrix batch as GraphData."""
         A = torch.rand(4, 32, 32)
         A = (A + A.transpose(-2, -1)) / 2
-        return GraphData.from_edge_state(A)
+        return edge_scalar_graphdata(A)
 
     def test_linear_baseline_produces_nonzero_logits(self, random_data):
         """Verify LinearBaseline doesn't output uniform edge probabilities.
@@ -125,7 +125,7 @@ class TestBaselineModelsForwardSanity:
         model = LinearBaseline(max_nodes=32)
         result = model(random_data)
 
-        edge_logits = result.to_edge_state()
+        edge_logits = legacy_edge_scalar(result)
         assert (
             edge_logits.abs().mean() > 0.1
         ), f"LinearBaseline outputs near-zero edge logits: mean={edge_logits.mean():.2e}"
@@ -135,7 +135,7 @@ class TestBaselineModelsForwardSanity:
         model = MLPBaseline(max_nodes=32, hidden_dim=256)
         result = model(random_data)
 
-        edge_logits = result.to_edge_state()
+        edge_logits = legacy_edge_scalar(result)
         assert (
             edge_logits.abs().mean() > 1e-6
         ), f"MLPBaseline outputs near-zero edge logits: mean={edge_logits.mean():.2e}"
@@ -153,7 +153,7 @@ class TestBaselineModelsForwardSanity:
 
         result = model(random_data)
         # Use only edge-probability channel to avoid constant-sum gradient trap.
-        loss = result.to_edge_state().sum()
+        loss = legacy_edge_scalar(result).sum()
         loss.backward()
 
         has_grad = False
