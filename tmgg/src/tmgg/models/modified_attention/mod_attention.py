@@ -218,10 +218,7 @@ class MultiHeadAttention(nn.Module):
         v = self.W_v(A, x) if self.filter_v else self.W_v(x)
         v = v.view(batch_size, -1, self.num_heads, self.d_v).transpose(1, 2)
 
-        if self.apply_softmax:
-            attn_weights = F.softmax(scores, dim=-1)
-        else:
-            attn_weights = scores
+        attn_weights = F.softmax(scores, dim=-1) if self.apply_softmax else scores
 
         attn_weights = self.dropout(attn_weights)
         context = torch.matmul(attn_weights, v)

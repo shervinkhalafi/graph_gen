@@ -581,7 +581,9 @@ class SingleStepDenoisingModule(DiffusionModule):
             )
             for col, matrix in enumerate(matrices):
                 axis = axes[row, col]
-                axis.imshow(matrix.detach().cpu().numpy(), cmap="viridis", vmin=0, vmax=1)
+                axis.imshow(
+                    matrix.detach().cpu().numpy(), cmap="viridis", vmin=0, vmax=1
+                )
                 axis.set_xticks([])
                 axis.set_yticks([])
                 if col == 0:
@@ -604,7 +606,9 @@ class SingleStepDenoisingModule(DiffusionModule):
 
         dm = self.trainer.datamodule  # pyright: ignore[reportAttributeAccessIssue]
         num_reference_graphs = self.evaluator.eval_num_samples if self.evaluator else 2
-        ref_graphs: list[nx.Graph[Any]] = dm.get_reference_graphs("val", num_reference_graphs)
+        ref_graphs: list[nx.Graph[Any]] = dm.get_reference_graphs(
+            "val", num_reference_graphs
+        )
         if len(ref_graphs) < 2:
             return
 
@@ -639,7 +643,7 @@ class SingleStepDenoisingModule(DiffusionModule):
                         eps=eps,
                         ref_graphs=ref_graphs,
                         clean_adjs=ref_adjs,
-                        noisy_adjs=noisy_gd.to_edge_state(),
+                        noisy_adjs=noisy_gd.to_edge_scalar(source="feat"),
                         denoised_adjs=predictions,
                     )
                     log_figure(
@@ -659,7 +663,9 @@ class SingleStepDenoisingModule(DiffusionModule):
                 if self.evaluator is None:
                     continue
 
-                results = self.evaluator.evaluate(refs=ref_graphs, generated=denoised_graphs)
+                results = self.evaluator.evaluate(
+                    refs=ref_graphs, generated=denoised_graphs
+                )
                 if results is None:
                     continue
 

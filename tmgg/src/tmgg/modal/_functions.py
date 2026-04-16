@@ -17,7 +17,8 @@ Serve (hot-reload)::
 
 # pyright: reportArgumentType=false
 # pyright: reportAssignmentType=false
-# Modal's type stubs are incomplete for volume mount and image parameters.
+# pyright: reportAttributeAccessIssue=false
+# Modal's type stubs are incomplete for volume mount / image / volume-class attributes.
 
 from __future__ import annotations
 
@@ -235,19 +236,71 @@ except Exception as e:
 """
 
 
-def _run_host_diagnostics() -> None:
+def _open_preflight_log() -> Path | None:
+    """Create a persistent-volume log file for this container's preflight.
+
+    Writes to ``/data/outputs/preflight_log/<UTC-stamp>_<host>_pid<pid>.log``
+    so that a failed container leaves a diagnostic trail on the volume even
+    when the subprocess dies with SIGILL and stdout isn't retrievable
+    post-hoc. Returns ``None`` if the volume isn't mounted (local testing).
+    """
+    import datetime
+    import os
+    import socket
+
+    log_dir = Path("/data/outputs/preflight_log")
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    host = socket.gethostname().replace("/", "_")[:24]
+    pid = os.getpid()
+    return log_dir / f"{stamp}_{host}_pid{pid}.log"
+
+
+def _append_preflight(path: Path | None, line: str) -> None:
+    """Append a line to the preflight log; swallow failures (best-effort)."""
+    if path is None:
+        return
+    try:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line + ("\n" if not line.endswith("\n") else ""))
+    except OSError:
+        pass
+
+
+def _commit_outputs_volume() -> None:
+    """Force-flush the outputs volume so preflight logs survive a crashing container.
+
+    Modal volumes buffer writes in the container filesystem; they only
+    land on the persistent volume when either (a) the function returns
+    cleanly or (b) the code calls ``Volume.commit()``. For preflight-log
+    purposes we need (b), so a post-mortem reader on the host can fetch
+    the log via ``modal volume get``.
+    """
+    try:
+        import modal
+
+        vol = modal.Volume.from_name("tmgg-outputs")
+        vol.commit()
+    except Exception:  # noqa: BLE001 - best effort; the preflight must not die here
+        pass
+
+
+def _run_host_diagnostics(log_path: Path | None = None) -> None:
     """Print host CPU + library diagnostics before the import preflight.
 
-    Runs once per container. The output lets us distinguish, on the next
-    ``graph_tool`` SIGILL, whether the fault tracks to a CPU-ISA mismatch
-    (distinct ``[host-diag] cpu-isa`` across failing vs healthy hosts) or
-    to a library / image inconsistency (distinct ``libstdc++`` paths or
-    ``readelf`` dependencies).
+    Runs once per container. Mirrors its stdout into the preflight log
+    on the persistent volume when a path is supplied, so the host profile
+    is retrievable after a crashing container has exited.
     """
     import subprocess
     import sys
 
     print("=== host-diag start ===", flush=True)
+    _append_preflight(log_path, "=== host-diag start ===")
     result = subprocess.run(
         [sys.executable, "-c", _HOST_DIAGNOSTICS_SNIPPET],
         capture_output=True,
@@ -255,14 +308,15 @@ def _run_host_diagnostics() -> None:
         timeout=30,
     )
     if result.stdout:
-        print(
-            result.stdout, end="" if result.stdout.endswith("\n") else "\n", flush=True
-        )
+        trailer = "" if result.stdout.endswith("\n") else "\n"
+        print(result.stdout, end=trailer, flush=True)
+        _append_preflight(log_path, result.stdout.rstrip("\n"))
     if result.stderr:
-        print(
-            result.stderr, end="" if result.stderr.endswith("\n") else "\n", flush=True
-        )
+        trailer = "" if result.stderr.endswith("\n") else "\n"
+        print(result.stderr, end=trailer, flush=True)
+        _append_preflight(log_path, "STDERR: " + result.stderr.rstrip("\n"))
     print("=== host-diag end ===", flush=True)
+    _append_preflight(log_path, "=== host-diag end ===")
 
 
 def _run_import_preflight() -> None:
@@ -271,14 +325,23 @@ def _run_import_preflight() -> None:
     Native-extension import failures can terminate Python with signals like
     ``SIGILL`` before any traceback is written. Running one import per
     subprocess gives us a precise module name and exit code in Modal logs.
+    A persistent volume log captures host-diag + per-stage markers so
+    post-mortem diagnosis works even when ``modal container logs`` is no
+    longer streamable.
     """
     import subprocess
     import sys
 
-    _run_host_diagnostics()
+    log_path = _open_preflight_log()
+    _append_preflight(log_path, "=== preflight start ===")
+    _run_host_diagnostics(log_path)
 
     for module_name, import_stmt in IMPORT_PREFLIGHTS:
         print(f"Preflight import check: {module_name}", flush=True)
+        _append_preflight(log_path, f"ATTEMPT: {module_name} :: {import_stmt}")
+        # Commit before each risky import so even a SIGILL next leaves the
+        # pre-attempt marker on the persistent volume.
+        _commit_outputs_volume()
         result = subprocess.run(
             [sys.executable, "-c", import_stmt],
             capture_output=True,
@@ -286,17 +349,28 @@ def _run_import_preflight() -> None:
         )
         if result.returncode == 0:
             print(f"Preflight import OK: {module_name}", flush=True)
+            _append_preflight(log_path, f"OK: {module_name}")
             continue
 
         output = (result.stdout or "") + (result.stderr or "")
         output_tail = output[-1000:] if output else "<no output>"
+        exit_description = _format_return_code(result.returncode)
+        _append_preflight(
+            log_path,
+            f"FAIL: {module_name} exit={exit_description}\nSTATEMENT: {import_stmt}\n"
+            f"TAIL:\n{output_tail}",
+        )
+        _commit_outputs_volume()
         raise RuntimeError(
             "Modal import preflight failed.\n"
             f"Module: {module_name}\n"
             f"Statement: {shlex.quote(import_stmt)}\n"
-            f"Exit code: {_format_return_code(result.returncode)}\n"
+            f"Exit code: {exit_description}\n"
             f"Output tail:\n{output_tail}"
         )
+
+    _append_preflight(log_path, "=== preflight done (all imports OK) ===")
+    _commit_outputs_volume()
 
 
 def _run_config_preflight(config_file: Path) -> None:
