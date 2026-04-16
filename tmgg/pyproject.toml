@@ -43,6 +43,7 @@ analysis = [
 [project.scripts]
 # Denoising experiment CLIs
 tmgg-digress = "tmgg.experiments.digress_denoising.runner:main"
+tmgg-mod-attention = "tmgg.experiments.mod_attention_denoising.runner:main"
 tmgg-gnn = "tmgg.experiments.gnn_denoising.runner:main"
 tmgg-gnn-transformer = "tmgg.experiments.gnn_transformer_denoising.runner:main"
 tmgg-spectral-arch = "tmgg.experiments.spectral_arch_denoising.runner:main"

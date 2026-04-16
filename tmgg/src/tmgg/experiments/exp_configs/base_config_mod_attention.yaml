@@ -1,0 +1,8 @@
+defaults:
+  - base_config_denoising
+  - models/modified_attention/mod_attention@model
+  - _self_
+
+experiment_name: "mod_attention_denoising"
+wandb_project: architecture-study
+_cli_cmd: tmgg-mod-attention
