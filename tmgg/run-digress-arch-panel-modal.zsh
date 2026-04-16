@@ -51,6 +51,15 @@ if [[ "${DEPLOY_FIRST}" == "1" ]]; then
   run_prefixed mise run modal-deploy
 fi
 
+# Shared per-panel launch identifier. Passed as ``run_id=...`` on every
+# spawn so each wave writes to a fresh /data/outputs/.../<run_id>/
+# directory rather than appending to an earlier run's checkpoints,
+# CSV versions, or test_results.json. Override via ``PANEL_TAG=<name>``
+# (e.g. ``PANEL_TAG=no-xf`` for a no-extra-features ablation).
+: "${PANEL_TAG:=$(date -u +%Y%m%dT%H%M%SZ)}"
+
+print -r -- "Panel launch tag: ${PANEL_TAG}"
+
 # (slug, models/discrete@model override, seed, use_extra_features)
 typeset -a panel
 panel=(
@@ -69,14 +78,20 @@ for entry in "${panel[@]}"; do
   seed=${rest%%|*}
   use_extra=${rest##*|}
 
+  # Build a disambiguated run_id: panel-tag + seed + slug. The tag comes
+  # first so wandb/volume listings sort all entries of a single launch
+  # together even with the default alphabetical ordering.
+  run_id="digress_panel_${PANEL_TAG}_s${seed}_${slug}"
+
   print -r -- ""
-  print -r -- "=== ${slug} (seed=${seed}) ==="
+  print -r -- "=== ${slug} (seed=${seed}, run_id=${run_id}) ==="
 
   typeset -a cmd
   cmd=(
     uv run tmgg-modal run tmgg-discrete-gen
     "models/discrete@model=${override}"
     +data=spectre_sbm
+    "+run_id=${run_id}"
     seed="${seed}"
     trainer.max_steps=2000
     trainer.val_check_interval=500
