@@ -32,3 +32,7 @@ eigenstructure_results_full/
 
 # ORCA is compiled in-place from source; never keep the native binary in git.
 src/tmgg/evaluation/orca/orca
+
+# Staging area for the 2026-04-18 cruft review — files pending user-approved
+# deletion after verification. Kept on disk, out of the index.
+to_delete/

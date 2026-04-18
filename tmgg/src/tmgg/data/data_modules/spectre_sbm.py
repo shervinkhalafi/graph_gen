@@ -21,13 +21,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import override
 
-import torch
 from torch.utils.data import DataLoader
 from torch_geometric.data import Data
 
 from tmgg.data.data_modules.base_data_module import BaseGraphDataModule
 from tmgg.data.data_modules.multigraph_data_module import (
     _collate_pyg_to_graphdata,
+    _ListDataset,
 )
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.spectre_sbm import (
@@ -197,18 +197,3 @@ class SpectreSBMDataModule(BaseGraphDataModule):
 
         node_counts = [int(d.num_nodes) for d in data_list]  # type: ignore[arg-type]
         return SizeDistribution.from_node_counts(node_counts)
-
-
-# Re-use the list-wrapper from multigraph_data_module rather than import
-# the private symbol — keeps this file's import surface narrow.
-class _ListDataset(torch.utils.data.Dataset[Data]):
-    """Thin wrapper making a list indexable as a Dataset."""
-
-    def __init__(self, data: list[Data]) -> None:
-        self._data = data
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __getitem__(self, idx: int) -> Data:
-        return self._data[idx]
