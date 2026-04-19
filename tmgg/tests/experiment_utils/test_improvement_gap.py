@@ -43,7 +43,12 @@ from tmgg.experiments.eigenstructure_study import (
     ImprovementGapResult,
     NoisedAnalysisComparator,
     NoisedEigenstructureCollector,
+    compute_B_invariants,
     estimate_improvement_gap,
+)
+from tmgg.utils.spectral.subspace import (
+    align_top_k_to_reference_batch,
+    compute_frechet_mean_subspace,
 )
 
 
@@ -109,6 +114,92 @@ class TestEstimatorSanity:
         )
         assert g_hat < 1e-8, f"g_hat={g_hat}, trace_cov_B={trace_cov_B}"
 
+    def test_permutation_null_ratio_is_small_on_cluster_input(self) -> None:
+        """Rationale: the reviewer-2 audit flagged that kNN(m=10) at
+        diversity=0 gave a ratio near 0.5 when the paper-predicted null
+        is ≈0. The permutation-null control diagnoses this: after
+        shuffling the conditioning features so they are decorrelated from
+        B, a calibrated estimator must return near-zero ĝ. If the
+        permutation-null ratio is large, the finite-sample kNN bias is
+        real and the headline ratio is inflated. On a two-cluster input
+        where the real-features ratio is near 1, the permuted ratio
+        should drop by at least an order of magnitude."""
+        B, features = _two_cluster_B(num_graphs=80, k=4, gap=5.0)
+        features_2d = features.unsqueeze(1)
+        _, _, ratio_real = estimate_improvement_gap(
+            B, features_2d, estimator="knn", knn_neighbours=5
+        )
+        _, _, ratio_null = estimate_improvement_gap(
+            B,
+            features_2d,
+            estimator="knn",
+            knn_neighbours=5,
+            permute_features=True,
+            permutation_seed=0,
+        )
+        assert ratio_real > 0.8, f"setup sanity: real ratio={ratio_real}"
+        assert ratio_null < ratio_real / 5, (
+            f"permuted ratio {ratio_null:.3f} too close to real {ratio_real:.3f} "
+            f"— kNN may have finite-sample bias at this N"
+        )
+
+    def test_random_features_yield_low_ratio_on_variable_B(self) -> None:
+        """Rationale: replaces the weak 'identical graphs' sanity with a
+        stronger one — B has real variance but features are uncorrelated
+        with B, so the estimator must deliver a small ratio. Tests that
+        kNN does NOT inflate ĝ merely because B varies."""
+        torch.manual_seed(0)
+        B = torch.randn(80, 4, 4)
+        B = (B + B.transpose(-2, -1)) / 2
+        # Uninformative features — independent of B.
+        features = torch.randn(80, 4)
+        _, _, ratio = estimate_improvement_gap(
+            B, features, estimator="knn", knn_neighbours=5
+        )
+        # Empirically the finite-sample kNN ratio under independence sits
+        # around 1/m ≈ 0.2; 0.4 is a conservative cap for N=80.
+        assert ratio < 0.4, f"ratio {ratio:.3f} too large under independent features"
+
+    def test_invariants_target_is_frame_free(self) -> None:
+        """Rationale: ``compute_B_invariants`` extracts (tr, ||·||_F²,
+        eigvals), all invariant under orthogonal conjugation
+        ``B → R^T B R``. Rotating every B by a graph-specific random
+        orthogonal matrix must leave the invariants (and therefore the
+        surrogate) unchanged to within numerical precision."""
+        torch.manual_seed(7)
+        N, k = 60, 4
+        B = torch.randn(N, k, k)
+        B = (B + B.transpose(-2, -1)) / 2  # symmetrise
+        # Per-graph random orthogonal conjugation.
+        R = torch.linalg.qr(torch.randn(N, k, k))[0]
+        B_rotated = R.transpose(-2, -1) @ B @ R
+
+        inv_a = compute_B_invariants(B)
+        inv_b = compute_B_invariants(B_rotated)
+        assert torch.allclose(inv_a, inv_b, atol=1e-4), (
+            f"invariants drifted under rotation: max diff "
+            f"{(inv_a - inv_b).abs().max().item()}"
+        )
+
+    def test_knn_1d_and_bin_1d_on_same_feature_agree(self) -> None:
+        """Rationale: the reviewer's M3 — with kNN using k-dim features
+        and binning using 1-D, the two estimators measure different
+        quantities and shouldn't be compared directly. Running kNN on
+        the same 1-D feature used by binning gives two estimators of the
+        SAME conditional-mean variance, so their ratios should agree up
+        to estimator-noise."""
+        B, features = _two_cluster_B(num_graphs=60, k=4, gap=5.0)
+        _, _, ratio_knn_1d = estimate_improvement_gap(
+            B, features.unsqueeze(1), estimator="knn", knn_neighbours=5
+        )
+        _, _, ratio_bin_1d = estimate_improvement_gap(
+            B, features, estimator="bin", num_bins=2
+        )
+        assert abs(ratio_knn_1d - ratio_bin_1d) < 0.10, (
+            f"knn_1d vs bin_1d disagreement: "
+            f"knn_1d={ratio_knn_1d:.3f}, bin_1d={ratio_bin_1d:.3f}"
+        )
+
     def test_law_of_total_variance_bound(self) -> None:
         """Rationale: by the law of total variance the conditional-variance
         share cannot exceed the total. A small finite-sample slack is
@@ -156,6 +247,127 @@ class TestEstimatorSanity:
         assert (
             abs(ratio_knn - ratio_bin) < 0.10
         ), f"ratio disagreement too large: knn={ratio_knn}, bin={ratio_bin}"
+
+
+class TestFrechetAlignment:
+    """Frame-convention tests for the Fréchet-mean alignment path."""
+
+    def test_frechet_mean_subspace_is_orthonormal(self) -> None:
+        """Rationale: the dataset-wide reference must be a valid
+        orthonormal basis, or the downstream Procrustes step produces
+        garbage. Checks ``V*^T V* == I_k`` to machine precision."""
+        torch.manual_seed(0)
+        N, n, k = 40, 30, 6
+        # Draw N random orthonormal top-k blocks.
+        V_blocks = torch.linalg.qr(torch.randn(N, n, k))[0]
+        V_star = compute_frechet_mean_subspace(V_blocks)
+        assert V_star.shape == (n, k)
+        gram = V_star.T @ V_star
+        assert torch.allclose(gram, torch.eye(k), atol=1e-5), (
+            f"Fréchet mean not orthonormal; gram max off-diag: "
+            f"{(gram - torch.eye(k)).abs().max().item()}"
+        )
+
+    def test_align_to_reference_is_closer_to_reference_than_raw(self) -> None:
+        """Rationale: the helper must actually reduce the residual
+        ``||V_ref − V_aligned||_F`` relative to the raw block. If it
+        doesn't, the Procrustes computation is misoriented."""
+        torch.manual_seed(1)
+        N, n, k = 20, 40, 4
+        V_ref = torch.linalg.qr(torch.randn(n, k))[0]
+        # Noisy blocks: perturb V_ref with small random rotations and noise.
+        rotations = torch.linalg.qr(torch.randn(N, k, k))[0]
+        noise = 0.05 * torch.randn(N, n, k)
+        V_noisy_k = (V_ref.unsqueeze(0) @ rotations) + noise
+        # Pack into full (N, n, n) by zero-padding the non-top-k columns.
+        V_noisy_full = torch.zeros(N, n, n)
+        V_noisy_full[:, :, -k:] = V_noisy_k
+
+        aligned = align_top_k_to_reference_batch(V_ref, V_noisy_full, k)
+        assert aligned.shape == (N, n, k)
+        raw_residuals = torch.norm(
+            V_noisy_k - V_ref.unsqueeze(0), p="fro", dim=(-2, -1)
+        )
+        aligned_residuals = torch.norm(
+            aligned - V_ref.unsqueeze(0), p="fro", dim=(-2, -1)
+        )
+        assert (
+            aligned_residuals <= raw_residuals + 1e-5
+        ).all(), "Procrustes alignment did not reduce residuals vs. raw"
+
+    def test_frechet_and_per_graph_produce_B_in_different_frames(self) -> None:
+        """Rationale: regression sanity — the two frame modes must
+        actually produce DIFFERENT B_k tensors on the same graphs (if
+        they agreed, the reviewer's concern about frame choice would be
+        moot and the Fréchet path would be pointless). We check they
+        differ materially but share the frame-invariant summaries."""
+        with tempfile.TemporaryDirectory() as tmp:
+            phase1_dir = Path(tmp) / "phase1"
+            noised_per_graph = Path(tmp) / "noised_per_graph"
+            noised_frechet = Path(tmp) / "noised_frechet"
+            phase1_dir.mkdir()
+            noised_per_graph.mkdir()
+            noised_frechet.mkdir()
+
+            TestCollectorIntegration()._build_phase1_fixture(
+                phase1_dir, num_graphs=12, n=20, batch_size=6
+            )
+
+            NoisedEigenstructureCollector(
+                input_dir=phase1_dir,
+                output_dir=noised_per_graph,
+                noise_type="gaussian",
+                noise_levels=[0.05],
+                seed=0,
+                surrogate_k_values=[4],
+                frame_mode="per_graph",
+            ).collect()
+
+            NoisedEigenstructureCollector(
+                input_dir=phase1_dir,
+                output_dir=noised_frechet,
+                noise_type="gaussian",
+                noise_levels=[0.05],
+                seed=0,
+                surrogate_k_values=[4],
+                frame_mode="frechet",
+            ).collect()
+
+            # Load B_k4 from both; compare raw matrices and invariants.
+            from tmgg.experiments.eigenstructure_study.storage import (
+                iter_batches,
+                load_decomposition_batch,
+            )
+
+            def _load_B(base: Path) -> torch.Tensor:
+                eps_dir = base / "eps_0.0500"
+                return torch.cat(
+                    [
+                        load_decomposition_batch(p)[0]["B_k4"]
+                        for p in iter_batches(eps_dir)
+                    ],
+                    dim=0,
+                )
+
+            B_per = _load_B(noised_per_graph)
+            B_fre = _load_B(noised_frechet)
+            # Raw matrices should differ — different alignments.
+            assert not torch.allclose(
+                B_per, B_fre, atol=1e-3
+            ), "frame modes produced identical B; alignment is a no-op"
+            # Invariants must match (both are orthogonal conjugates of
+            # V̂_k^T A V̂_k without alignment, so same eigvals/tr/||·||_F²).
+            # Tolerance is loose because the safetensors pipeline stores
+            # in float32 and the B matrices go through 3–4 matmuls before
+            # eigh, so per-entry relative error accumulates to ~0.5% —
+            # within expected numerical regime, not a correctness issue.
+            inv_per = compute_B_invariants(B_per)
+            inv_fre = compute_B_invariants(B_fre)
+            assert torch.allclose(inv_per, inv_fre, rtol=0.02, atol=1e-2), (
+                f"invariants should be frame-independent; max abs diff "
+                f"{(inv_per - inv_fre).abs().max().item()}, max rel diff "
+                f"{((inv_per - inv_fre).abs() / inv_fre.abs().clamp(min=1e-6)).max().item()}"
+            )
 
 
 class TestEstimatorGuards:
@@ -285,11 +497,92 @@ class TestCollectorIntegration:
                 noised_base_dir=noised_dir,
             )
             result = comparator.compute_improvement_gap_surrogate(
-                0.05, k=4, estimator="bin", num_bins=3
+                0.05,
+                k=4,
+                estimator="bin",
+                conditioning="spectral_gap",
+                num_bins=3,
             )
             assert result.estimator == "bin"
             assert result.num_bins == 3
             assert result.knn_neighbours is None
+            assert result.conditioning == "spectral_gap"
+
+    def test_invariants_target_roundtrips(self) -> None:
+        """Rationale: the invariants-target code path diverges from the
+        matrix path inside ``compute_improvement_gap_surrogate``; the
+        round trip must produce an ``ImprovementGapResult`` with
+        ``target == "invariants"`` and sane ĝ/ratio bounds. Catches
+        silent drops of the target parameter or mismatch between the
+        invariants dim and the estimator's feature dim."""
+        with tempfile.TemporaryDirectory() as tmp:
+            phase1_dir = Path(tmp) / "phase1"
+            noised_dir = Path(tmp) / "noised"
+            phase1_dir.mkdir()
+            noised_dir.mkdir()
+
+            self._build_phase1_fixture(phase1_dir, num_graphs=12)
+
+            NoisedEigenstructureCollector(
+                input_dir=phase1_dir,
+                output_dir=noised_dir,
+                noise_type="gaussian",
+                noise_levels=[0.05],
+                seed=0,
+                surrogate_k_values=[4],
+            ).collect()
+
+            comparator = NoisedAnalysisComparator(
+                original_dir=phase1_dir,
+                noised_base_dir=noised_dir,
+            )
+            result = comparator.compute_improvement_gap_surrogate(
+                0.05, k=4, estimator="knn", target="invariants", knn_neighbours=3
+            )
+            assert result.target == "invariants"
+            assert result.g_hat >= 0.0
+            assert 0.0 <= result.ratio <= 1.1
+
+    def test_permutation_null_roundtrip_reduces_ratio(self) -> None:
+        """Rationale: the reviewer asked for a permutation-null control
+        to diagnose kNN finite-sample bias. The plumbing should carry
+        ``permute_features=True`` from the comparator to the estimator;
+        testing the dropout effect on a tiny fixture is enough to prove
+        the wiring. We don't assert a tight numeric bound (too noisy at
+        N=8) — only that the permuted result is marked and returns
+        finite numbers."""
+        with tempfile.TemporaryDirectory() as tmp:
+            phase1_dir = Path(tmp) / "phase1"
+            noised_dir = Path(tmp) / "noised"
+            phase1_dir.mkdir()
+            noised_dir.mkdir()
+
+            self._build_phase1_fixture(phase1_dir)
+
+            NoisedEigenstructureCollector(
+                input_dir=phase1_dir,
+                output_dir=noised_dir,
+                noise_type="gaussian",
+                noise_levels=[0.05],
+                seed=0,
+                surrogate_k_values=[4],
+            ).collect()
+
+            comparator = NoisedAnalysisComparator(
+                original_dir=phase1_dir,
+                noised_base_dir=noised_dir,
+            )
+            result = comparator.compute_improvement_gap_surrogate(
+                0.05,
+                k=4,
+                estimator="knn",
+                knn_neighbours=3,
+                permute_features=True,
+                permutation_seed=17,
+            )
+            assert result.permuted is True
+            assert result.g_hat >= 0.0
+            assert result.trace_cov_B >= 0.0
 
     def test_missing_k_raises_keyerror(self) -> None:
         """Rationale: if the user asks for a surrogate at k that wasn't

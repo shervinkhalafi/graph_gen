@@ -9,17 +9,23 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Literal
 
 import torch
 from loguru import logger
 
 from tmgg.utils.noising.noise import create_noise_definition
 from tmgg.utils.spectral.laplacian import compute_laplacian
-from tmgg.utils.spectral.subspace import compute_procrustes_rotation_batch
+from tmgg.utils.spectral.subspace import (
+    align_top_k_to_reference_batch,
+    compute_frechet_mean_subspace,
+    compute_procrustes_rotation_batch,
+)
 
 from .analyzer import (
     CovarianceResult,
     ImprovementGapResult,
+    compute_B_invariants,
     estimate_improvement_gap,
 )
 from .storage import (
@@ -31,6 +37,10 @@ from .storage import (
 )
 
 DEFAULT_SURROGATE_K_VALUES: tuple[int, ...] = (4, 8, 16, 32)
+
+FrameMode = Literal["per_graph", "frechet"]
+ConditioningFeatures = Literal["top_k_eigenvalues", "spectral_gap"]
+SurrogateTarget = Literal["matrix", "invariants"]
 
 _EPS = 1e-10  # numerical stability for relative metrics
 
@@ -306,6 +316,7 @@ class NoisedEigenstructureCollector:
         rotation_k: int | None = None,
         seed: int = 42,
         surrogate_k_values: list[int] | None = None,
+        frame_mode: FrameMode = "frechet",
     ):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
@@ -318,10 +329,17 @@ class NoisedEigenstructureCollector:
             if surrogate_k_values is None
             else list(surrogate_k_values)
         )
+        self.frame_mode: FrameMode = frame_mode
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.manifest = load_manifest(self.input_dir)
         self._create_noise_definition()
+        # Fréchet-mean references are dataset-level (single reference per k
+        # shared across every batch and noise level). Compute once up-front
+        # so the same frame is applied at every noise level.
+        self._reference_frames: dict[int, torch.Tensor] = {}
+        if self.frame_mode == "frechet":
+            self._reference_frames = self._compute_frechet_references()
 
     def _create_noise_definition(self) -> None:
         """Initialize the noise definition."""
@@ -333,6 +351,41 @@ class NoisedEigenstructureCollector:
             rotation_k=self.rotation_k,
             seed=self.seed,
         )
+
+    def _compute_frechet_references(self) -> dict[int, torch.Tensor]:
+        """Precompute the Fréchet mean of clean top-*k* subspaces per *k*.
+
+        Stacks every clean graph's top-*k* eigenvector block and takes the
+        top-*k* left singular vectors of the resulting ``(n, N*k)`` matrix
+        (extrinsic Grassmannian mean). The resulting reference is
+        dataset-level and shared across every noise level, which is the
+        prerequisite for ``Cov(B)`` to be well-defined as a population
+        quantity — every graph's ``B_i`` ends up expressed in the same
+        ``V*_k`` frame, not in its own graph-specific frame.
+        """
+        blocks_by_k: dict[int, list[torch.Tensor]] = {
+            k: [] for k in self.surrogate_k_values
+        }
+        for batch_path in iter_batches(self.input_dir):
+            tensors, _ = load_decomposition_batch(batch_path)
+            V_clean = tensors["eigenvectors_adj"].float()
+            n = V_clean.shape[1]
+            for k in self.surrogate_k_values:
+                if k > n:
+                    continue
+                blocks_by_k[k].append(V_clean[:, :, -k:])
+
+        means: dict[int, torch.Tensor] = {}
+        for k, blocks in blocks_by_k.items():
+            if not blocks:
+                continue
+            all_blocks = torch.cat(blocks, dim=0)  # (N_total, n, k)
+            means[k] = compute_frechet_mean_subspace(all_blocks)
+            logger.info(
+                f"Fréchet reference for k={k}: subspace of shape "
+                f"{tuple(means[k].shape)} over {all_blocks.shape[0]} graphs"
+            )
+        return means
 
     def collect(self) -> None:
         """Run noised collection for all noise levels."""
@@ -429,10 +482,18 @@ class NoisedEigenstructureCollector:
         """Compute Procrustes-aligned top-*k* projections of the clean signal.
 
         For each ``k`` in ``self.surrogate_k_values``, returns the per-graph
-        tensor ``B_k[i] = V̂_aligned_i^T A_clean_i V̂_aligned_i`` with
-        ``V̂_aligned_i = V̂_{k,i} R_i`` where ``R_i`` solves the orthogonal
-        Procrustes problem ``min ||V_{k,i} - V̂_{k,i} R||_F``. Keys are
-        formatted as ``"B_k{k}"`` (e.g. ``"B_k8"``).
+        tensor ``B_k[i] = V̂_aligned_i^T A_clean_i V̂_aligned_i``. The
+        alignment reference depends on ``self.frame_mode``:
+
+        * ``"frechet"`` (default) — every ``V̂_{k,i}`` is Procrustes-aligned
+          to a single dataset-wide Fréchet mean subspace ``V*_k``. This
+          puts every ``B_i`` into the same frame, the prerequisite for
+          ``Cov(vec(B))`` and ``E[B | Λ̃_k]`` to be well-defined population
+          quantities in eq. (18) of the NeurIPS 2026 draft.
+        * ``"per_graph"`` — each ``V̂_{k,i}`` is aligned to that graph's
+          own clean ``V_{k,i}``. This keeps ``B_i`` in a graph-specific
+          frame and is retained as a diagnostic; it is **not** the frame
+          used to claim eq. (18) validity across a heterogeneous dataset.
 
         Parameters
         ----------
@@ -456,11 +517,16 @@ class NoisedEigenstructureCollector:
             if k > n:
                 logger.warning(f"surrogate_k_values contains k={k} > n={n}; skipping")
                 continue
-            rotation = compute_procrustes_rotation_batch(
-                V_clean, V_noisy, k, return_rotation=True
-            )["rotations"]  # (batch, k, k)
-            V_noisy_k = V_noisy[:, :, -k:]  # (batch, n, k)
-            V_aligned = V_noisy_k @ rotation  # (batch, n, k)
+            if self.frame_mode == "per_graph":
+                rotation = compute_procrustes_rotation_batch(
+                    V_clean, V_noisy, k, return_rotation=True
+                )["rotations"]  # (batch, k, k)
+                V_aligned = V_noisy[:, :, -k:] @ rotation  # (batch, n, k)
+            elif self.frame_mode == "frechet":
+                V_ref = self._reference_frames[k]  # (n, k)
+                V_aligned = align_top_k_to_reference_batch(V_ref, V_noisy, k)
+            else:
+                raise ValueError(f"Unknown frame_mode '{self.frame_mode}'")
             # B = V_aligned^T A_clean V_aligned  → (batch, k, k)
             B = V_aligned.transpose(-2, -1) @ A_clean @ V_aligned
             projections[f"B_k{k}"] = B
@@ -1009,15 +1075,16 @@ class NoisedAnalysisComparator:
         estimator: str = "knn",
         knn_neighbours: int = 10,
         num_bins: int = 4,
+        target: SurrogateTarget = "matrix",
+        conditioning: ConditioningFeatures = "top_k_eigenvalues",
+        permute_features: bool = False,
+        permutation_seed: int = 0,
     ) -> ImprovementGapResult:
         """Estimate the improvement-gap surrogate at one noise level.
 
         Loads ``B_k{k}`` projections pre-computed by the collector and the
         noisy adjacency eigenvalues, then hands both to
         :func:`~tmgg.experiments.eigenstructure_study.analyzer.estimate_improvement_gap`.
-        The kNN variant conditions on the sorted top-*k* noisy eigenvalues;
-        the binning variant conditions on the spectral gap
-        ``λ_1 − λ_2``.
 
         Parameters
         ----------
@@ -1032,6 +1099,26 @@ class NoisedAnalysisComparator:
             Neighbourhood size for the kNN estimator.
         num_bins : int
             Bin count for the binning estimator.
+        target : str
+            ``"matrix"`` — run the surrogate on the raw ``B_k{k}``
+            matrices (literally eq. (18); meaningful once ``B`` is in a
+            common frame, e.g. Fréchet-aligned).
+            ``"invariants"`` — run the surrogate on frame-invariant
+            summaries ``(tr B, ||B||_F², sorted eigvals(B))``. This is
+            independent of the alignment convention and serves as a
+            sanity cross-check.
+        conditioning : str
+            ``"top_k_eigenvalues"`` — condition on the full sorted top-*k*
+            noisy eigenvalues (``k``-dim feature space).
+            ``"spectral_gap"`` — condition on the scalar gap
+            ``λ_1 − λ_2``. The ``"bin"`` estimator always uses this.
+        permute_features : bool
+            If ``True``, shuffle the conditioning before estimation to
+            produce the permutation-null ĝ. A well-calibrated estimator
+            should return ĝ near zero under permutation.
+        permutation_seed : int
+            Seed for the permutation RNG; kept explicit so null runs are
+            reproducible.
 
         Returns
         -------
@@ -1042,6 +1129,10 @@ class NoisedAnalysisComparator:
         ------
         KeyError
             If the noised batches do not contain the requested ``B_k{k}``.
+        ValueError
+            If ``estimator="bin"`` is combined with
+            ``conditioning="top_k_eigenvalues"``; multi-dimensional
+            quantile binning is not supported.
         """
         noised_dir = self.noised_base_dir / f"eps_{eps:.4f}"
         B_key = f"B_k{k}"
@@ -1063,18 +1154,33 @@ class NoisedAnalysisComparator:
         # Top-k eigenvalues are the last k columns (ascending order).
         top_k_eig = noisy_eig[:, -k:]
 
-        if estimator == "bin":
-            # Spectral gap = λ_1 − λ_2 = last − second-to-last.
-            conditioning = top_k_eig[:, -1] - top_k_eig[:, -2]
+        # Binning is always 1-D by design (multi-dim quantile binning is
+        # exponential in k). Refuse the combination loudly.
+        if estimator == "bin" and conditioning == "top_k_eigenvalues":
+            raise ValueError(
+                "estimator='bin' with conditioning='top_k_eigenvalues' is not "
+                "supported: quantile binning in k dimensions is exponential."
+            )
+
+        if conditioning == "spectral_gap":
+            features = top_k_eig[:, -1] - top_k_eig[:, -2]
         else:
-            conditioning = top_k_eig
+            features = top_k_eig
+
+        # Replace B with its frame-invariant summaries under the
+        # invariant target — the reviewer-2 cross-check that survives the
+        # frame-convention ambiguity because (tr, ||.||_F², eigvals) are
+        # all orthogonal-conjugation invariant.
+        surrogate_target = compute_B_invariants(B) if target == "invariants" else B
 
         g_hat, trace_cov_B, ratio = estimate_improvement_gap(
-            B,
-            conditioning,
+            surrogate_target,
+            features,
             estimator=estimator,
             knn_neighbours=knn_neighbours,
             num_bins=num_bins,
+            permute_features=permute_features,
+            permutation_seed=permutation_seed,
         )
 
         return ImprovementGapResult(
@@ -1087,4 +1193,7 @@ class NoisedAnalysisComparator:
             ratio=ratio,
             knn_neighbours=knn_neighbours if estimator == "knn" else None,
             num_bins=num_bins if estimator == "bin" else None,
+            target=target,
+            conditioning=conditioning,
+            permuted=permute_features,
         )

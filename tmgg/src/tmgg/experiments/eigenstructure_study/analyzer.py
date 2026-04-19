@@ -369,6 +369,45 @@ class CovarianceResult:
     min_eigenvalue: float
 
 
+def compute_B_invariants(B: torch.Tensor) -> torch.Tensor:
+    """Frame-invariant summaries of the clean-signal projection ``B``.
+
+    Returns a stack of per-graph invariants with shape ``(N, k + 2)``:
+
+    * column 0 — ``trace(B_i)`` (sum of top-*k* Ritz values of ``A_i`` in
+      the noisy basis ``V̂_{k,i}``);
+    * column 1 — ``||B_i||_F²`` (Frobenius-squared mass);
+    * columns 2..k+1 — sorted eigenvalues of ``B_i`` in ascending order.
+
+    All three are invariant under orthogonal conjugation
+    ``B → R^T B R``, so these summaries are well-defined regardless of
+    which frame ``V̂_{k,i}`` is expressed in. The improvement-gap
+    surrogate computed on these invariants is a frame-free cross-check
+    for the matrix-valued surrogate on eq. (18): if both agree
+    directionally, the claim survives the frame-convention ambiguity
+    flagged in the reviewer-2 audit.
+
+    Parameters
+    ----------
+    B : torch.Tensor
+        Per-graph projection tensors of shape ``(N, k, k)``.
+
+    Returns
+    -------
+    torch.Tensor
+        Invariant summary tensor of shape ``(N, k + 2)``.
+    """
+    if B.ndim != 3 or B.shape[1] != B.shape[2]:
+        raise ValueError(f"B must have shape (N, k, k); got {tuple(B.shape)}")
+    B = B.float()
+    trace = torch.diagonal(B, dim1=-2, dim2=-1).sum(dim=-1, keepdim=True)  # (N, 1)
+    frob_sq = B.pow(2).sum(dim=(-2, -1), keepdim=False).unsqueeze(-1)  # (N, 1)
+    # Symmetrise in case of numerical asymmetry, then eigvalsh.
+    B_sym = 0.5 * (B + B.transpose(-2, -1))
+    eigvals = torch.linalg.eigvalsh(B_sym)  # (N, k), ascending
+    return torch.cat([trace, frob_sq, eigvals], dim=-1)
+
+
 @dataclass(frozen=True)
 class ImprovementGapResult:
     """Improvement-gap surrogate for one ``(noise_level, k)`` pair.
@@ -421,6 +460,17 @@ class ImprovementGapResult:
     ratio: float
     knn_neighbours: int | None = None
     num_bins: int | None = None
+    # Which per-graph target was used: the matrix ``B`` (default,
+    # literally eq. (18)) or its frame-invariant summaries (sanity check
+    # that survives the frame-convention ambiguity).
+    target: str = "matrix"
+    # Which conditioning feature was used: the full top-*k* noisy
+    # eigenvalues (default, matches kNN's original feature space) or the
+    # 1-D spectral gap (so kNN and binning see the same information).
+    conditioning: str = "top_k_eigenvalues"
+    # Whether features were permuted — the permutation-null ĝ should
+    # drop near zero for a well-calibrated estimator.
+    permuted: bool = False
 
     def to_json_dict(self) -> dict[str, object]:
         """Serialize to the flat JSON layout used by the eigenstructure report."""
@@ -428,6 +478,9 @@ class ImprovementGapResult:
             "noise_level": self.noise_level,
             "k": self.k,
             "estimator": self.estimator,
+            "target": self.target,
+            "conditioning": self.conditioning,
+            "permuted": self.permuted,
             "num_graphs": self.num_graphs,
             "g_hat": self.g_hat,
             "trace_cov_B": self.trace_cov_B,
@@ -447,13 +500,20 @@ def estimate_improvement_gap(
     estimator: str,
     knn_neighbours: int = 10,
     num_bins: int = 4,
+    permute_features: bool = False,
+    permutation_seed: int = 0,
 ) -> tuple[float, float, float]:
     """Estimate the improvement-gap surrogate from stacked projections.
 
     Parameters
     ----------
     B : torch.Tensor
-        Per-graph projection tensors of shape ``(N, k, k)``.
+        Per-graph targets. Either a matrix-valued stack of shape
+        ``(N, k, k)`` (the canonical ``B`` matrices in eq. (18)) or a
+        vector-valued stack of shape ``(N, d)`` (e.g. frame-invariant
+        summaries produced by :func:`compute_B_invariants`). The total
+        variance is measured as the mean squared Frobenius (resp.
+        Euclidean) deviation from the sample mean.
     conditioning_features : torch.Tensor
         Per-graph features used to condition ``E[B | ·]``, shape ``(N, d)``.
         For the canonical kNN estimator this is the sorted top-*k* noisy
@@ -466,6 +526,16 @@ def estimate_improvement_gap(
         Neighbourhood size for the kNN estimator (ignored for ``"bin"``).
     num_bins : int
         Bin count for the binning estimator (ignored for ``"knn"``).
+    permute_features : bool
+        If ``True``, randomly shuffle ``conditioning_features`` along axis 0
+        before estimating. Used to compute the permutation-null
+        surrogate: a correctly-calibrated estimator should return
+        ``g_hat ≈ 0`` (ratio ≈ 0) when the conditioning is decorrelated
+        from the targets. A large null ĝ signals finite-sample bias in
+        the estimator (usually kNN at small ``N`` / small ``m``).
+    permutation_seed : int
+        Seed for the permutation RNG when ``permute_features=True``. Kept
+        explicit so null runs are reproducible.
 
     Returns
     -------
@@ -479,32 +549,52 @@ def estimate_improvement_gap(
     clamped to ``0.0`` when ``trace_cov_B == 0`` to keep the JSON output
     numerically clean.
     """
-    if B.ndim != 3 or B.shape[1] != B.shape[2]:
-        raise ValueError(f"B must have shape (N, k, k); got {tuple(B.shape)}")
+    if B.ndim not in (2, 3):
+        raise ValueError(f"B must have shape (N, k, k) or (N, d); got {tuple(B.shape)}")
+    if B.ndim == 3 and B.shape[1] != B.shape[2]:
+        raise ValueError(f"Matrix B must be square; got {tuple(B.shape)}")
     num_graphs = B.shape[0]
     if num_graphs < 2:
         raise ValueError("Need at least 2 graphs to estimate the surrogate")
 
     B = B.float()
-    mu_B = B.mean(dim=0, keepdim=True)  # (1, k, k)
+    # mean across graphs, keeping shape broadcast-compatible
+    mu_B = B.mean(dim=0, keepdim=True)
     deviations = B - mu_B
-    trace_cov_B = (deviations.pow(2).sum(dim=(-2, -1))).mean().item()
+    if B.ndim == 3:
+        # Frobenius-squared deviation per graph, averaged over graphs.
+        trace_cov_B = (deviations.pow(2).sum(dim=(-2, -1))).mean().item()
+    else:
+        trace_cov_B = (deviations.pow(2).sum(dim=-1)).mean().item()
+
+    if permute_features:
+        perm_rng = torch.Generator().manual_seed(permutation_seed)
+        perm = torch.randperm(num_graphs, generator=perm_rng)
+        conditioning_features = conditioning_features[perm]
+
+    # Sum axes for per-graph squared-deviation norms — differs between the
+    # matrix (Frobenius) and vector (Euclidean) target shapes.
+    sum_dims: tuple[int, ...] = (-2, -1) if B.ndim == 3 else (-1,)
 
     if estimator == "knn":
         features = conditioning_features.float()
+        # cdist needs at least 2-D; promote a 1-D conditioning vector to
+        # a single-column matrix so kNN on scalar features (e.g. the 1-D
+        # spectral gap) doesn't trip the underlying torch kernel.
+        if features.ndim == 1:
+            features = features.unsqueeze(1)
         # Pairwise Euclidean distances in feature space, (N, N).
         dists = torch.cdist(features, features)
-        # Pick the k+1 smallest (self + k neighbours); drop self below.
+        # Pick the m+1 smallest (self + m neighbours); drop self below.
         topk = min(knn_neighbours + 1, num_graphs)
         _, neighbour_idx = dists.topk(topk, largest=False)
         # Drop the self column (distance 0).
         neighbour_idx = neighbour_idx[:, 1:]
-        # B_hat[i] = mean of B[neighbour_idx[i]]
-        # Gather along dim 0: (N, m, k, k)
+        # B_hat[i] = mean of B[neighbour_idx[i]]; shape (N, m, *B.shape[1:])
         gathered = B[neighbour_idx]
         B_hat = gathered.mean(dim=1)
         gap_deviations = B_hat - mu_B.squeeze(0)
-        g_hat = gap_deviations.pow(2).sum(dim=(-2, -1)).mean().item()
+        g_hat = gap_deviations.pow(2).sum(dim=sum_dims).mean().item()
     elif estimator == "bin":
         if conditioning_features.ndim != 1:
             raise ValueError(
@@ -517,7 +607,7 @@ def estimate_improvement_gap(
         edges = torch.quantile(feat, quantiles)
         # bucketize returns 0 for feat < edges[1]; shift so bins start at 0.
         bin_idx = torch.bucketize(feat, edges[1:-1])
-        # Between-bin variance: Σ_b (|S_b| / N) ||μ_b − μ_B||²_F
+        # Between-bin variance: Σ_b (|S_b| / N) ||μ_b − μ_B||²
         weighted_sum = 0.0
         for b in range(num_bins):
             mask = bin_idx == b

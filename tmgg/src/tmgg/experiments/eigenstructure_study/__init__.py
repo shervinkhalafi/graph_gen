@@ -29,6 +29,7 @@ from .analyzer import (
     SpectralAnalyzer,
     compute_algebraic_connectivity,
     compute_algebraic_connectivity_delta,
+    compute_B_invariants,
     compute_effective_rank,
     compute_eigengap_delta,
     compute_eigenvalue_entropy,
@@ -79,6 +80,7 @@ __all__ = [
     "compute_principal_angles",
     # Improvement-gap surrogate (eq. 18 in NeurIPS 2026 paper draft)
     "ImprovementGapResult",
+    "compute_B_invariants",
     "estimate_improvement_gap",
     # Typed delta comparison result objects
     "MeanStdMetric",

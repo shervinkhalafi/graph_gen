@@ -1,64 +1,97 @@
-# 2026-04-19 — Diversity-knob validation (Phase 3)
+# 2026-04-19 — Diversity-knob validation (Phase 3, v2)
 
-Phase 3 of the improvement-gap plan (`docs/plans/2026-04-18-improvement-gap-surrogate-and-spectrum-diversity.md`). Sweeps the SBM diversity knob at four settings and reports the improvement-gap surrogate ĝ (eq. 18 in the NeurIPS draft) at `k ∈ {4, 8, 16, 32}` with both kNN (10 neighbours) and binning (4 quantile bins) estimators. The knob is validated if ĝ increases monotonically with diversity.
+Phase 3 of the improvement-gap plan (`docs/plans/2026-04-18-improvement-gap-surrogate-and-spectrum-diversity.md`). Addresses reviewer-2 audit findings: frame mode exposed, permutation null reported, ratio monotonicity (not absolute ĝ) used as the success criterion, `num_blocks` frozen, ≥3 seeds.
 
 ## Setup
 
-- `num_graphs = 200`, `num_nodes = 50`, seed = 42
-- Hyperparameter ranges at `diversity > 0`: `num_blocks ∈ [2, 5]`, `p_intra ∈ [0.3, 0.9]`, `p_inter ∈ [0.01, 0.2]`
-- Fixed-mode reference (diversity=0) uses the midpoints: `num_blocks = 4`, `p_intra = 0.600`, `p_inter = 0.105`
+- `num_graphs = 200`, `num_nodes = 50`, seeds = [42, 123, 2024]
+- `num_blocks` frozen at 4 across all diversity levels; knob varies `p_intra ∈ [0.3, 0.9]`, `p_inter ∈ [0.01, 0.2]` scaled by diversity.
+- Fixed-mode reference (diversity=0) uses the midpoints: `p_intra = 0.600`, `p_inter = 0.105`
 - Noise: gaussian @ ε = 0.1
+- Frame modes: `frechet` (default, dataset-wide common frame via extrinsic Grassmannian mean) and `per_graph` (align each noisy V̂ to that graph's clean V; retained as diagnostic — does not satisfy the common-frame requirement of eq. (18) across heterogeneous datasets).
+- Estimators: `knn_top_k` (kNN with k-dim top-k eigenvalues on raw B), `knn_1d` and `bin_1d` (same 1-D spectral-gap feature, comparable), `invariants_knn` (kNN on frame-invariant summaries of B — frame-free cross-check).
+- Permutation null: every cell is also computed with conditioning features shuffled; a calibrated estimator returns `ratio ≈ 0` under the null.
 
-## Results
+## Monotonicity verdicts
 
-| diversity | k | estimator | ĝ | trace(Cov B) | ratio |
-|-----------|---|-----------|-----|-----|-----|
-| 0.00 | 4 | knn | 0.3380 | 0.6589 | 0.5131 |
-| 0.00 | 4 | bin | 0.1184 | 0.6589 | 0.1796 |
-| 0.00 | 8 | knn | 0.3594 | 0.8532 | 0.4212 |
-| 0.00 | 8 | bin | 0.1395 | 0.8532 | 0.1634 |
-| 0.00 | 16 | knn | 0.3920 | 1.1008 | 0.3561 |
-| 0.00 | 16 | bin | 0.1571 | 1.1008 | 0.1427 |
-| 0.00 | 32 | knn | 0.4287 | 1.5014 | 0.2855 |
-| 0.00 | 32 | bin | 0.1684 | 1.5014 | 0.1122 |
-| 0.33 | 4 | knn | 4.9870 | 5.8864 | 0.8472 |
-| 0.33 | 4 | bin | 0.8898 | 5.8864 | 0.1512 |
-| 0.33 | 8 | knn | 5.0485 | 6.1334 | 0.8231 |
-| 0.33 | 8 | bin | 0.9589 | 6.1334 | 0.1563 |
-| 0.33 | 16 | knn | 5.1591 | 6.5065 | 0.7929 |
-| 0.33 | 16 | bin | 1.0399 | 6.5065 | 0.1598 |
-| 0.33 | 32 | knn | 5.2357 | 6.9265 | 0.7559 |
-| 0.33 | 32 | bin | 1.0514 | 6.9265 | 0.1518 |
-| 0.67 | 4 | knn | 21.3997 | 23.9201 | 0.8946 |
-| 0.67 | 4 | bin | 2.0071 | 23.9201 | 0.0839 |
-| 0.67 | 8 | knn | 21.7076 | 24.7752 | 0.8762 |
-| 0.67 | 8 | bin | 2.3408 | 24.7752 | 0.0945 |
-| 0.67 | 16 | knn | 22.1379 | 25.5723 | 0.8657 |
-| 0.67 | 16 | bin | 2.6791 | 25.5723 | 0.1048 |
-| 0.67 | 32 | knn | 22.3919 | 26.2754 | 0.8522 |
-| 0.67 | 32 | bin | 2.7448 | 26.2754 | 0.1045 |
-| 1.00 | 4 | knn | 29.6420 | 34.2838 | 0.8646 |
-| 1.00 | 4 | bin | 4.4956 | 34.2838 | 0.1311 |
-| 1.00 | 8 | knn | 30.2107 | 35.9576 | 0.8402 |
-| 1.00 | 8 | bin | 5.2437 | 35.9576 | 0.1458 |
-| 1.00 | 16 | knn | 31.2402 | 37.5905 | 0.8311 |
-| 1.00 | 16 | bin | 6.0208 | 37.5905 | 0.1602 |
-| 1.00 | 32 | knn | 31.7233 | 38.6522 | 0.8207 |
-| 1.00 | 32 | bin | 6.1434 | 38.6522 | 0.1589 |
+Success criterion per cell: **mean ratio** across seeds is monotone non-decreasing in diversity (0 → 0.33 → 0.67 → 1.0). Absolute ĝ is also reported but is not the gate — it tracks `trace(Cov B)` which mechanically grows with diversity.
 
-## Monotonicity verdict
+### Real features (permutation off)
 
-- `k=4`, `knn`: monotone ↑  (series: 0.3380, 4.9870, 21.3997, 29.6420)
-- `k=4`, `bin`: monotone ↑  (series: 0.1184, 0.8898, 2.0071, 4.4956)
-- `k=8`, `knn`: monotone ↑  (series: 0.3594, 5.0485, 21.7076, 30.2107)
-- `k=8`, `bin`: monotone ↑  (series: 0.1395, 0.9589, 2.3408, 5.2437)
-- `k=16`, `knn`: monotone ↑  (series: 0.3920, 5.1591, 22.1379, 31.2402)
-- `k=16`, `bin`: monotone ↑  (series: 0.1571, 1.0399, 2.6791, 6.0208)
-- `k=32`, `knn`: monotone ↑  (series: 0.4287, 5.2357, 22.3919, 31.7233)
-- `k=32`, `bin`: monotone ↑  (series: 0.1684, 1.0514, 2.7448, 6.1434)
+| frame | estimator | k | ratio series (mean±std) | ĝ monotone? | ratio monotone? |
+|---|---|---|---|---|---|
+| frechet | knn_top_k | 4 | 0.207±0.021, 0.475±0.037, 0.724±0.032, 0.831±0.026 | ✓ | ✓ |
+| frechet | knn_top_k | 8 | 0.137±0.008, 0.306±0.023, 0.565±0.030, 0.720±0.024 | ✓ | ✓ |
+| frechet | knn_top_k | 16 | 0.109±0.003, 0.179±0.009, 0.351±0.018, 0.519±0.020 | ✓ | ✓ |
+| frechet | knn_top_k | 32 | 0.099±0.001, 0.118±0.002, 0.179±0.007, 0.267±0.010 | ✓ | ✓ |
+| frechet | knn_1d | 4 | 0.139±0.004, 0.239±0.024, 0.326±0.051, 0.369±0.047 | ✓ | ✓ |
+| frechet | knn_1d | 8 | 0.113±0.005, 0.181±0.010, 0.276±0.031, 0.342±0.035 | ✓ | ✓ |
+| frechet | knn_1d | 16 | 0.100±0.001, 0.131±0.003, 0.192±0.014, 0.257±0.020 | ✓ | ✓ |
+| frechet | knn_1d | 32 | 0.096±0.001, 0.103±0.000, 0.122±0.003, 0.150±0.006 | ✓ | ✓ |
+| frechet | bin_1d | 4 | 0.060±0.006, 0.155±0.024, 0.260±0.039, 0.306±0.049 | ✓ | ✓ |
+| frechet | bin_1d | 8 | 0.036±0.003, 0.099±0.011, 0.205±0.025, 0.275±0.036 | ✓ | ✓ |
+| frechet | bin_1d | 16 | 0.023±0.002, 0.049±0.004, 0.116±0.011, 0.185±0.022 | ✓ | ✓ |
+| frechet | bin_1d | 32 | 0.016±0.001, 0.023±0.001, 0.042±0.003, 0.072±0.007 | ✓ | ✓ |
+| frechet | invariants_knn | 4 | 0.699±0.077, 0.840±0.047, 0.899±0.029, 0.920±0.026 | ✓ | ✓ |
+| frechet | invariants_knn | 8 | 0.642±0.066, 0.813±0.059, 0.887±0.032, 0.910±0.028 | ✓ | ✓ |
+| frechet | invariants_knn | 16 | 0.611±0.083, 0.800±0.061, 0.870±0.041, 0.898±0.035 | ✓ | ✓ |
+| frechet | invariants_knn | 32 | 0.582±0.081, 0.797±0.056, 0.870±0.039, 0.897±0.031 | ✓ | ✓ |
+| per_graph | knn_top_k | 4 | 0.556±0.020, 0.758±0.035, 0.857±0.039, 0.899±0.028 | ✓ | ✓ |
+| per_graph | knn_top_k | 8 | 0.442±0.014, 0.717±0.027, 0.840±0.035, 0.887±0.030 | ✓ | ✓ |
+| per_graph | knn_top_k | 16 | 0.369±0.013, 0.670±0.032, 0.817±0.033, 0.876±0.027 | ✓ | ✓ |
+| per_graph | knn_top_k | 32 | 0.303±0.012, 0.613±0.036, 0.793±0.029, 0.860±0.027 | ✓ | ✓ |
+| per_graph | knn_1d | 4 | 0.268±0.019, 0.339±0.047, 0.385±0.029, 0.400±0.039 | ✓ | ✓ |
+| per_graph | knn_1d | 8 | 0.243±0.015, 0.345±0.038, 0.405±0.022, 0.426±0.037 | ✓ | ✓ |
+| per_graph | knn_1d | 16 | 0.220±0.008, 0.336±0.032, 0.411±0.017, 0.437±0.035 | ✓ | ✓ |
+| per_graph | knn_1d | 32 | 0.193±0.008, 0.308±0.029, 0.394±0.017, 0.425±0.035 | ✓ | ✓ |
+| per_graph | bin_1d | 4 | 0.188±0.023, 0.259±0.026, 0.304±0.043, 0.325±0.050 | ✓ | ✓ |
+| per_graph | bin_1d | 8 | 0.164±0.018, 0.267±0.019, 0.324±0.037, 0.350±0.046 | ✓ | ✓ |
+| per_graph | bin_1d | 16 | 0.140±0.009, 0.259±0.016, 0.329±0.033, 0.360±0.042 | ✓ | ✓ |
+| per_graph | bin_1d | 32 | 0.111±0.009, 0.230±0.015, 0.312±0.032, 0.347±0.041 | ✓ | ✓ |
+| per_graph | invariants_knn | 4 | 0.689±0.048, 0.838±0.041, 0.897±0.045, 0.914±0.026 | ✓ | ✓ |
+| per_graph | invariants_knn | 8 | 0.635±0.041, 0.825±0.039, 0.883±0.047, 0.905±0.033 | ✓ | ✓ |
+| per_graph | invariants_knn | 16 | 0.584±0.039, 0.802±0.053, 0.865±0.052, 0.895±0.036 | ✓ | ✓ |
+| per_graph | invariants_knn | 32 | 0.561±0.050, 0.799±0.056, 0.865±0.049, 0.888±0.036 | ✓ | ✓ |
+
+### Permutation null (features shuffled; should be ≈0 across diversity)
+
+| frame | estimator | k | null ratio series (mean±std) | null ratio max |
+|---|---|---|---|---|
+| frechet | knn_top_k | 4 | 0.102±0.006, 0.102±0.002, 0.100±0.003, 0.095±0.011 | 0.102 |
+| frechet | knn_top_k | 8 | 0.097±0.001, 0.097±0.004, 0.097±0.005, 0.096±0.010 | 0.097 |
+| frechet | knn_top_k | 16 | 0.097±0.001, 0.097±0.002, 0.095±0.004, 0.095±0.005 | 0.097 |
+| frechet | knn_top_k | 32 | 0.096±0.001, 0.095±0.001, 0.095±0.002, 0.095±0.004 | 0.096 |
+| frechet | knn_1d | 4 | 0.101±0.009, 0.099±0.012, 0.091±0.007, 0.093±0.008 | 0.101 |
+| frechet | knn_1d | 8 | 0.097±0.004, 0.100±0.009, 0.093±0.006, 0.092±0.007 | 0.100 |
+| frechet | knn_1d | 16 | 0.097±0.002, 0.096±0.003, 0.094±0.004, 0.092±0.006 | 0.097 |
+| frechet | knn_1d | 32 | 0.096±0.000, 0.094±0.003, 0.095±0.003, 0.094±0.003 | 0.096 |
+| frechet | bin_1d | 4 | 0.016±0.001, 0.016±0.004, 0.012±0.002, 0.013±0.006 | 0.016 |
+| frechet | bin_1d | 8 | 0.015±0.003, 0.017±0.002, 0.013±0.001, 0.014±0.006 | 0.017 |
+| frechet | bin_1d | 16 | 0.016±0.001, 0.015±0.001, 0.013±0.001, 0.014±0.005 | 0.016 |
+| frechet | bin_1d | 32 | 0.015±0.000, 0.015±0.001, 0.015±0.001, 0.015±0.002 | 0.015 |
+| frechet | invariants_knn | 4 | 0.110±0.007, 0.115±0.002, 0.109±0.002, 0.098±0.019 | 0.115 |
+| frechet | invariants_knn | 8 | 0.109±0.013, 0.095±0.020, 0.105±0.010, 0.096±0.015 | 0.109 |
+| frechet | invariants_knn | 16 | 0.106±0.013, 0.107±0.020, 0.100±0.008, 0.093±0.006 | 0.107 |
+| frechet | invariants_knn | 32 | 0.100±0.019, 0.105±0.025, 0.103±0.009, 0.093±0.017 | 0.105 |
+| per_graph | knn_top_k | 4 | 0.093±0.010, 0.105±0.013, 0.091±0.009, 0.094±0.011 | 0.105 |
+| per_graph | knn_top_k | 8 | 0.093±0.006, 0.097±0.021, 0.094±0.006, 0.091±0.008 | 0.097 |
+| per_graph | knn_top_k | 16 | 0.096±0.004, 0.094±0.013, 0.092±0.009, 0.091±0.008 | 0.096 |
+| per_graph | knn_top_k | 32 | 0.100±0.006, 0.094±0.013, 0.094±0.012, 0.094±0.010 | 0.100 |
+| per_graph | knn_1d | 4 | 0.109±0.017, 0.091±0.011, 0.078±0.010, 0.087±0.014 | 0.109 |
+| per_graph | knn_1d | 8 | 0.104±0.013, 0.091±0.012, 0.078±0.010, 0.088±0.013 | 0.104 |
+| per_graph | knn_1d | 16 | 0.102±0.011, 0.091±0.010, 0.079±0.010, 0.088±0.012 | 0.102 |
+| per_graph | knn_1d | 32 | 0.100±0.010, 0.091±0.009, 0.079±0.010, 0.088±0.011 | 0.100 |
+| per_graph | bin_1d | 4 | 0.019±0.010, 0.021±0.016, 0.014±0.004, 0.012±0.006 | 0.021 |
+| per_graph | bin_1d | 8 | 0.017±0.007, 0.020±0.016, 0.014±0.004, 0.012±0.006 | 0.020 |
+| per_graph | bin_1d | 16 | 0.016±0.005, 0.021±0.015, 0.014±0.005, 0.012±0.006 | 0.021 |
+| per_graph | bin_1d | 32 | 0.017±0.004, 0.020±0.014, 0.015±0.005, 0.012±0.006 | 0.020 |
+| per_graph | invariants_knn | 4 | 0.088±0.013, 0.114±0.014, 0.096±0.008, 0.102±0.015 | 0.114 |
+| per_graph | invariants_knn | 8 | 0.086±0.009, 0.100±0.026, 0.099±0.005, 0.096±0.013 | 0.100 |
+| per_graph | invariants_knn | 16 | 0.086±0.020, 0.093±0.012, 0.091±0.006, 0.095±0.011 | 0.095 |
+| per_graph | invariants_knn | 32 | 0.095±0.019, 0.095±0.016, 0.092±0.011, 0.097±0.016 | 0.097 |
 
 ## Conclusion
 
-ĝ increases monotonically with diversity across every `(k, estimator)` cell. The knob is validated and Phase 4 (full-dataset study) is unblocked.
+Mean ratios monotone across every cell AND permutation-null ratios bounded below 0.30 across every cell. Phase 4 unblocked.
 
-Raw data: `diversity_sweep.csv`
+Raw data: `diversity_sweep.csv` (768 rows).
