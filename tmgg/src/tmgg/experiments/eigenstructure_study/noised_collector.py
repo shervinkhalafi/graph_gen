@@ -15,8 +15,13 @@ from loguru import logger
 
 from tmgg.utils.noising.noise import create_noise_definition
 from tmgg.utils.spectral.laplacian import compute_laplacian
+from tmgg.utils.spectral.subspace import compute_procrustes_rotation_batch
 
-from .analyzer import CovarianceResult
+from .analyzer import (
+    CovarianceResult,
+    ImprovementGapResult,
+    estimate_improvement_gap,
+)
 from .storage import (
     iter_batches,
     load_decomposition_batch,
@@ -24,6 +29,8 @@ from .storage import (
     save_dataset_manifest,
     save_decomposition_batch,
 )
+
+DEFAULT_SURROGATE_K_VALUES: tuple[int, ...] = (4, 8, 16, 32)
 
 _EPS = 1e-10  # numerical stability for relative metrics
 
@@ -298,6 +305,7 @@ class NoisedEigenstructureCollector:
         noise_levels: list[float],
         rotation_k: int | None = None,
         seed: int = 42,
+        surrogate_k_values: list[int] | None = None,
     ):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
@@ -305,6 +313,11 @@ class NoisedEigenstructureCollector:
         self.noise_levels = noise_levels
         self.rotation_k = rotation_k
         self.seed = seed
+        self.surrogate_k_values: list[int] = (
+            list(DEFAULT_SURROGATE_K_VALUES)
+            if surrogate_k_values is None
+            else list(surrogate_k_values)
+        )
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.manifest = load_manifest(self.input_dir)
@@ -347,13 +360,23 @@ class NoisedEigenstructureCollector:
             logger.info(f"Completed eps={eps}, saved to {eps_dir}")
 
     def _collect_at_noise_level(self, eps: float, output_dir: Path) -> None:
-        """Collect decompositions for a single noise level."""
+        """Collect decompositions for a single noise level.
+
+        In addition to the noisy adjacency/Laplacian decomposition, compute
+        the improvement-gap projection ``B_k = V̂_aligned^T A_clean V̂_aligned``
+        for each requested top-*k* dimension. The Procrustes step aligns each
+        noisy top-*k* eigenvector block to the clean one, fixing sign and
+        rotation within degenerate eigenspaces so ``B_k`` is comparable
+        across graphs (see
+        ``_NeurIPS_2026__Understanding_Graph_Denoising.pdf``, eq. 18).
+        """
         for batch_path in iter_batches(self.input_dir):
             tensors, metadata = load_decomposition_batch(batch_path)
-            A_batch = tensors["adjacency"]
+            A_clean = tensors["adjacency"]
+            V_clean = tensors["eigenvectors_adj"]
 
             # Apply noise
-            A_noised = self.noise_gen.add_noise(A_batch, eps)
+            A_noised = self.noise_gen.add_noise(A_clean, eps)
 
             # Process each graph in the batch
             eig_adj_vals_list: list[torch.Tensor] = []
@@ -373,6 +396,14 @@ class NoisedEigenstructureCollector:
                 eig_lap_vals_list.append(vals_l)
                 eig_lap_vecs_list.append(vecs_l)
 
+            eig_adj_vecs = torch.stack(eig_adj_vecs_list)
+
+            extra_tensors = self._compute_surrogate_projections(
+                A_clean=A_clean.float(),
+                V_clean=V_clean.float(),
+                V_noisy=eig_adj_vecs.float(),
+            )
+
             # Extract batch index from filename
             batch_idx = int(batch_path.stem.split("_")[1])
 
@@ -380,12 +411,60 @@ class NoisedEigenstructureCollector:
                 output_dir,
                 batch_idx,
                 torch.stack(eig_adj_vals_list),
-                torch.stack(eig_adj_vecs_list),
+                eig_adj_vecs,
                 torch.stack(eig_lap_vals_list),
                 torch.stack(eig_lap_vecs_list),
                 A_noised,
                 metadata,
+                extra_tensors=extra_tensors,
             )
+
+    def _compute_surrogate_projections(
+        self,
+        *,
+        A_clean: torch.Tensor,
+        V_clean: torch.Tensor,
+        V_noisy: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Compute Procrustes-aligned top-*k* projections of the clean signal.
+
+        For each ``k`` in ``self.surrogate_k_values``, returns the per-graph
+        tensor ``B_k[i] = V̂_aligned_i^T A_clean_i V̂_aligned_i`` with
+        ``V̂_aligned_i = V̂_{k,i} R_i`` where ``R_i`` solves the orthogonal
+        Procrustes problem ``min ||V_{k,i} - V̂_{k,i} R||_F``. Keys are
+        formatted as ``"B_k{k}"`` (e.g. ``"B_k8"``).
+
+        Parameters
+        ----------
+        A_clean : torch.Tensor
+            Clean adjacency matrices, shape ``(batch, n, n)``.
+        V_clean : torch.Tensor
+            Clean eigenvector matrices from the Phase 1 decomposition,
+            columns sorted by ascending eigenvalue, shape ``(batch, n, n)``.
+        V_noisy : torch.Tensor
+            Noisy eigenvector matrices, same shape and column order.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            One ``B_k{k}`` entry per requested ``k`` (only those with
+            ``k <= n`` are included).
+        """
+        n = V_clean.shape[1]
+        projections: dict[str, torch.Tensor] = {}
+        for k in self.surrogate_k_values:
+            if k > n:
+                logger.warning(f"surrogate_k_values contains k={k} > n={n}; skipping")
+                continue
+            rotation = compute_procrustes_rotation_batch(
+                V_clean, V_noisy, k, return_rotation=True
+            )["rotations"]  # (batch, k, k)
+            V_noisy_k = V_noisy[:, :, -k:]  # (batch, n, k)
+            V_aligned = V_noisy_k @ rotation  # (batch, n, k)
+            # B = V_aligned^T A_clean V_aligned  → (batch, k, k)
+            B = V_aligned.transpose(-2, -1) @ A_clean @ V_aligned
+            projections[f"B_k{k}"] = B
+        return projections
 
 
 class NoisedAnalysisComparator:
@@ -920,4 +999,92 @@ class NoisedAnalysisComparator:
             matrix_type=matrix_type,
             original=original_result,
             per_noise_level=per_level_results,
+        )
+
+    def compute_improvement_gap_surrogate(
+        self,
+        eps: float,
+        *,
+        k: int,
+        estimator: str = "knn",
+        knn_neighbours: int = 10,
+        num_bins: int = 4,
+    ) -> ImprovementGapResult:
+        """Estimate the improvement-gap surrogate at one noise level.
+
+        Loads ``B_k{k}`` projections pre-computed by the collector and the
+        noisy adjacency eigenvalues, then hands both to
+        :func:`~tmgg.experiments.eigenstructure_study.analyzer.estimate_improvement_gap`.
+        The kNN variant conditions on the sorted top-*k* noisy eigenvalues;
+        the binning variant conditions on the spectral gap
+        ``λ_1 − λ_2``.
+
+        Parameters
+        ----------
+        eps : float
+            Noise level. Must match one of the ``eps_*`` subdirectories.
+        k : int
+            Top-*k* eigenspace dimension. A ``B_k{k}`` tensor must have
+            been saved by the collector.
+        estimator : str
+            Either ``"knn"`` or ``"bin"``.
+        knn_neighbours : int
+            Neighbourhood size for the kNN estimator.
+        num_bins : int
+            Bin count for the binning estimator.
+
+        Returns
+        -------
+        ImprovementGapResult
+            Surrogate estimate and the total between-graph variance.
+
+        Raises
+        ------
+        KeyError
+            If the noised batches do not contain the requested ``B_k{k}``.
+        """
+        noised_dir = self.noised_base_dir / f"eps_{eps:.4f}"
+        B_key = f"B_k{k}"
+
+        B_list: list[torch.Tensor] = []
+        eig_list: list[torch.Tensor] = []
+        for batch_path in iter_batches(noised_dir):
+            tensors, _ = load_decomposition_batch(batch_path)
+            if B_key not in tensors:
+                raise KeyError(
+                    f"Noised batch {batch_path.name} does not contain '{B_key}'. "
+                    f"Re-run the collector with k={k} in surrogate_k_values."
+                )
+            B_list.append(tensors[B_key])
+            eig_list.append(tensors["eigenvalues_adj"])
+
+        B = torch.cat(B_list, dim=0)
+        noisy_eig = torch.cat(eig_list, dim=0)
+        # Top-k eigenvalues are the last k columns (ascending order).
+        top_k_eig = noisy_eig[:, -k:]
+
+        if estimator == "bin":
+            # Spectral gap = λ_1 − λ_2 = last − second-to-last.
+            conditioning = top_k_eig[:, -1] - top_k_eig[:, -2]
+        else:
+            conditioning = top_k_eig
+
+        g_hat, trace_cov_B, ratio = estimate_improvement_gap(
+            B,
+            conditioning,
+            estimator=estimator,
+            knn_neighbours=knn_neighbours,
+            num_bins=num_bins,
+        )
+
+        return ImprovementGapResult(
+            noise_level=eps,
+            k=k,
+            estimator=estimator,
+            num_graphs=B.shape[0],
+            g_hat=g_hat,
+            trace_cov_B=trace_cov_B,
+            ratio=ratio,
+            knn_neighbours=knn_neighbours if estimator == "knn" else None,
+            num_bins=num_bins if estimator == "bin" else None,
         )

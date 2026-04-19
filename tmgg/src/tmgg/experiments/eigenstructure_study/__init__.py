@@ -24,6 +24,7 @@ from tmgg.utils.spectral.spectral_deltas import (
 )
 
 from .analyzer import (
+    ImprovementGapResult,
     SpectralAnalysisResult,
     SpectralAnalyzer,
     compute_algebraic_connectivity,
@@ -34,6 +35,7 @@ from .analyzer import (
     compute_eigenvector_coherence,
     compute_principal_angles,
     compute_spectral_gap,
+    estimate_improvement_gap,
 )
 from .collector import EigenstructureCollector
 from .noised_collector import (
@@ -75,6 +77,9 @@ __all__ = [
     "compute_eigenvalue_entropy",
     "compute_effective_rank",
     "compute_principal_angles",
+    # Improvement-gap surrogate (eq. 18 in NeurIPS 2026 paper draft)
+    "ImprovementGapResult",
+    "estimate_improvement_gap",
     # Typed delta comparison result objects
     "MeanStdMetric",
     "DriftComparisonResult",

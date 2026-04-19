@@ -1,0 +1,326 @@
+"""Tests for the improvement-gap surrogate.
+
+Test rationale
+--------------
+Equation (18) of the NeurIPS 2026 draft writes the improvement gap between
+a linear denoiser and the best eigenvalue-function denoiser as
+
+    ℓ_lin − ℓ_f = tr(Cov(E[vec(B) | Λ̃_k]))
+                = E‖E[B | Λ̃_k] − E[B]‖²_F,
+
+where ``B = V̂_k^T A V̂_k`` projects the clean adjacency into the noisy
+top-*k* eigenbasis. The kNN and binning estimators implemented in
+``analyzer.estimate_improvement_gap`` approximate that conditional-mean
+variance directly from finite samples of ``B`` and conditioning features.
+
+These tests exercise the pure estimator on synthetic ``B`` tensors so
+they run without needing disk-backed Phase 1 fixtures:
+
+- sanity: identical graphs ⇒ ``g_hat ≈ 0`` (no between-graph variance to
+  capture);
+- property: ``g_hat ≤ trace_cov_B + slack`` (law of total variance; the
+  conditional-variance share can exceed the total only by estimation
+  noise);
+- separability: two well-separated clusters with cluster-predictive
+  conditioning features ⇒ ``g_hat`` captures almost all of
+  ``trace_cov_B``;
+- estimator agreement: kNN and binning give comparable ratios on the
+  same controlled input;
+- collector integration: end-to-end round trip through the noised
+  collector and comparator confirms that ``B_k{k}`` tensors are
+  persisted, loaded, and surfaced by ``compute_improvement_gap_surrogate``.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
+import torch
+
+from tmgg.experiments.eigenstructure_study import (
+    EigenstructureCollector,
+    ImprovementGapResult,
+    NoisedAnalysisComparator,
+    NoisedEigenstructureCollector,
+    estimate_improvement_gap,
+)
+
+
+def _synthetic_identical_B(num_graphs: int, k: int, seed: int = 0) -> torch.Tensor:
+    """N identical symmetric projection tensors plus tiny jitter.
+
+    Zero variance would make the ratio undefined; a small jitter keeps the
+    estimator numerics live while preserving the "should be near zero"
+    semantics.
+    """
+    rng = torch.Generator().manual_seed(seed)
+    base = torch.randn(k, k, generator=rng)
+    base = (base + base.T) / 2
+    jitter = 1e-6 * torch.randn(num_graphs, k, k, generator=rng)
+    jitter = (jitter + jitter.transpose(-2, -1)) / 2
+    return base.unsqueeze(0).expand(num_graphs, k, k).clone() + jitter
+
+
+def _two_cluster_B(
+    num_graphs: int, k: int, gap: float = 5.0, seed: int = 0
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Two-cluster synthetic B tensors + matching conditioning feature.
+
+    Each cluster shares a mean B-matrix; noise within a cluster is small.
+    The conditioning feature (e.g. a mock spectral gap) also cleanly
+    separates the two clusters, so a well-tuned estimator should recover
+    almost the full between-cluster variance.
+    """
+    rng = torch.Generator().manual_seed(seed)
+    half = num_graphs // 2
+    cluster_a = torch.zeros(k, k)
+    cluster_b = gap * torch.eye(k)
+
+    noise_a = 0.1 * torch.randn(half, k, k, generator=rng)
+    noise_a = (noise_a + noise_a.transpose(-2, -1)) / 2
+    noise_b = 0.1 * torch.randn(num_graphs - half, k, k, generator=rng)
+    noise_b = (noise_b + noise_b.transpose(-2, -1)) / 2
+
+    B_a = cluster_a.unsqueeze(0) + noise_a
+    B_b = cluster_b.unsqueeze(0) + noise_b
+    B = torch.cat([B_a, B_b], dim=0)
+
+    # Cluster-predictive feature: -1 for cluster A, +1 for cluster B with
+    # small jitter so kNN distances are well-defined.
+    feat_a = -1.0 + 0.01 * torch.randn(half, generator=rng)
+    feat_b = 1.0 + 0.01 * torch.randn(num_graphs - half, generator=rng)
+    features = torch.cat([feat_a, feat_b], dim=0)
+    return B, features
+
+
+class TestEstimatorSanity:
+    """Pure-estimator behaviour on synthetic B tensors."""
+
+    def test_identical_graphs_give_near_zero_gap(self) -> None:
+        """Rationale: when B_i are identical up to jitter, both ``B̂_i`` and
+        ``μ_B`` collapse onto the same point, so the surrogate must vanish
+        to within the jitter scale. trace_cov_B also collapses, so we check
+        absolute magnitude rather than the ratio to avoid 0/0 noise."""
+        B = _synthetic_identical_B(num_graphs=40, k=4)
+        features = torch.randn(40, 4)  # uninformative features
+        g_hat, trace_cov_B, _ = estimate_improvement_gap(
+            B, features, estimator="knn", knn_neighbours=5
+        )
+        assert g_hat < 1e-8, f"g_hat={g_hat}, trace_cov_B={trace_cov_B}"
+
+    def test_law_of_total_variance_bound(self) -> None:
+        """Rationale: by the law of total variance the conditional-variance
+        share cannot exceed the total. A small finite-sample slack is
+        allowed because neighbour averaging introduces bias that can push
+        the estimator slightly above the Monte-Carlo total variance."""
+        torch.manual_seed(0)
+        B = torch.randn(60, 4, 4)
+        B = (B + B.transpose(-2, -1)) / 2
+        features = torch.randn(60, 4)
+        g_hat, trace_cov_B, _ = estimate_improvement_gap(
+            B, features, estimator="knn", knn_neighbours=5
+        )
+        # Slack: conditional-mean estimator inherits noise from the N-dim
+        # sample; small overshoots are numerical, not semantic.
+        assert (
+            g_hat <= trace_cov_B * 1.05
+        ), f"g_hat={g_hat} exceeded trace_cov_B={trace_cov_B} by more than 5%"
+
+    def test_two_cluster_knn_captures_most_variance(self) -> None:
+        """Rationale: with two well-separated B-clusters and a cluster-
+        predictive feature, kNN neighbourhoods resolve the cluster
+        identity, so ``B̂_i ≈ μ_cluster(i)`` and ``g_hat`` should cover
+        most of ``trace_cov_B``."""
+        B, features = _two_cluster_B(num_graphs=60, k=4, gap=5.0)
+        features_2d = features.unsqueeze(1)
+        g_hat, trace_cov_B, ratio = estimate_improvement_gap(
+            B, features_2d, estimator="knn", knn_neighbours=5
+        )
+        assert trace_cov_B > 1.0, "Test setup: clusters should induce sizeable variance"
+        # With gap=5, noise=0.1, ratio should be close to 1.
+        assert ratio > 0.85, f"ratio={ratio} (g_hat={g_hat}, trace_cov_B={trace_cov_B})"
+
+    def test_bin_estimator_matches_knn_on_cluster_input(self) -> None:
+        """Rationale: when the conditioning feature cleanly separates
+        clusters, quantile binning with num_bins=2 and kNN both recover
+        the same structure; their ratios should agree to within finite-
+        sample tolerance. The binning estimator takes a 1-D feature."""
+        B, features = _two_cluster_B(num_graphs=60, k=4, gap=5.0)
+        _, _, ratio_knn = estimate_improvement_gap(
+            B, features.unsqueeze(1), estimator="knn", knn_neighbours=5
+        )
+        _, _, ratio_bin = estimate_improvement_gap(
+            B, features, estimator="bin", num_bins=2
+        )
+        assert (
+            abs(ratio_knn - ratio_bin) < 0.10
+        ), f"ratio disagreement too large: knn={ratio_knn}, bin={ratio_bin}"
+
+
+class TestEstimatorGuards:
+    """Error handling at the estimator boundary."""
+
+    def test_bin_rejects_multi_dimensional_feature(self) -> None:
+        B = torch.randn(10, 3, 3)
+        bad_feature = torch.randn(10, 4)
+        try:
+            estimate_improvement_gap(B, bad_feature, estimator="bin")
+        except ValueError:
+            return
+        raise AssertionError("Expected ValueError for 2-D bin feature")
+
+    def test_unknown_estimator_raises(self) -> None:
+        B = torch.randn(10, 3, 3)
+        feat = torch.randn(10, 3)
+        try:
+            estimate_improvement_gap(B, feat, estimator="bogus")
+        except ValueError:
+            return
+        raise AssertionError("Expected ValueError for unknown estimator")
+
+    def test_non_square_B_raises(self) -> None:
+        bad_B = torch.randn(10, 3, 4)
+        feat = torch.randn(10, 3)
+        try:
+            estimate_improvement_gap(bad_B, feat, estimator="knn")
+        except ValueError:
+            return
+        raise AssertionError("Expected ValueError for non-square B")
+
+
+class TestCollectorIntegration:
+    """End-to-end: collect → noise → surrogate.
+
+    Rationale: exercises the plumbing that wires the ``B_k{k}`` extra
+    tensors through safetensors storage and back out via the comparator.
+    Uses a small synthetic SBM dataset so the full pipeline runs in
+    under a second without disk contention beyond the tempdir.
+    """
+
+    def _build_phase1_fixture(
+        self, tmpdir: Path, num_graphs: int = 8, n: int = 20, batch_size: int = 4
+    ) -> Path:
+        """Produce a Phase-1 output dir by calling the real collector on
+        a tiny Erdős–Rényi dataset. Mirrors the integration fixtures
+        already used by tests/experiment_utils/test_eigenstructure_study.py.
+
+        ER is used instead of SBM because the existing eigenstructure
+        tests exercise ER heavily and the collector's ER path is
+        simpler (no block partitioning logic)."""
+        collector = EigenstructureCollector(
+            dataset_name="er",
+            dataset_config={"num_nodes": n, "num_graphs": num_graphs, "p": 0.3},
+            output_dir=tmpdir,
+            batch_size=batch_size,
+            seed=0,
+        )
+        collector.collect()
+        return tmpdir
+
+    def test_roundtrip_produces_surrogate(self) -> None:
+        """Rationale: verifies that B_k{k} tensors survive safetensors
+        round-trip and that the comparator returns an
+        ``ImprovementGapResult`` with sane values (g_hat ≥ 0, ratio ∈
+        [0, 1+slack])."""
+        with tempfile.TemporaryDirectory() as tmp:
+            phase1_dir = Path(tmp) / "phase1"
+            noised_dir = Path(tmp) / "noised"
+            phase1_dir.mkdir()
+            noised_dir.mkdir()
+
+            self._build_phase1_fixture(phase1_dir)
+
+            collector = NoisedEigenstructureCollector(
+                input_dir=phase1_dir,
+                output_dir=noised_dir,
+                noise_type="gaussian",
+                noise_levels=[0.05],
+                seed=0,
+                surrogate_k_values=[4, 8],
+            )
+            collector.collect()
+
+            comparator = NoisedAnalysisComparator(
+                original_dir=phase1_dir,
+                noised_base_dir=noised_dir,
+            )
+            result = comparator.compute_improvement_gap_surrogate(
+                0.05, k=4, estimator="knn", knn_neighbours=3
+            )
+            assert isinstance(result, ImprovementGapResult)
+            assert result.k == 4
+            assert result.estimator == "knn"
+            assert result.g_hat >= 0.0
+            assert result.trace_cov_B >= 0.0
+            assert result.num_graphs == 8
+            # Ratio is clamped to [0, 1+slack]; 1.1 is generous for tiny N.
+            assert 0.0 <= result.ratio <= 1.1
+
+    def test_bin_estimator_works_roundtrip(self) -> None:
+        """Rationale: binning path uses a different code path inside
+        ``estimate_improvement_gap`` (1-D feature, bucketize). Making sure
+        it also survives the round trip prevents silent regressions when
+        the safetensors layout changes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            phase1_dir = Path(tmp) / "phase1"
+            noised_dir = Path(tmp) / "noised"
+            phase1_dir.mkdir()
+            noised_dir.mkdir()
+
+            self._build_phase1_fixture(phase1_dir, num_graphs=12)
+
+            collector = NoisedEigenstructureCollector(
+                input_dir=phase1_dir,
+                output_dir=noised_dir,
+                noise_type="gaussian",
+                noise_levels=[0.05],
+                seed=0,
+                surrogate_k_values=[4],
+            )
+            collector.collect()
+
+            comparator = NoisedAnalysisComparator(
+                original_dir=phase1_dir,
+                noised_base_dir=noised_dir,
+            )
+            result = comparator.compute_improvement_gap_surrogate(
+                0.05, k=4, estimator="bin", num_bins=3
+            )
+            assert result.estimator == "bin"
+            assert result.num_bins == 3
+            assert result.knn_neighbours is None
+
+    def test_missing_k_raises_keyerror(self) -> None:
+        """Rationale: if the user asks for a surrogate at k that wasn't
+        persisted by the collector, the comparator must fail loudly
+        (per CLAUDE.md: no silent fallbacks)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            phase1_dir = Path(tmp) / "phase1"
+            noised_dir = Path(tmp) / "noised"
+            phase1_dir.mkdir()
+            noised_dir.mkdir()
+
+            self._build_phase1_fixture(phase1_dir)
+
+            collector = NoisedEigenstructureCollector(
+                input_dir=phase1_dir,
+                output_dir=noised_dir,
+                noise_type="gaussian",
+                noise_levels=[0.05],
+                seed=0,
+                surrogate_k_values=[4],
+            )
+            collector.collect()
+
+            comparator = NoisedAnalysisComparator(
+                original_dir=phase1_dir,
+                noised_base_dir=noised_dir,
+            )
+            try:
+                comparator.compute_improvement_gap_surrogate(
+                    0.05, k=16, estimator="knn"
+                )
+            except KeyError:
+                return
+            raise AssertionError("Expected KeyError for missing k")

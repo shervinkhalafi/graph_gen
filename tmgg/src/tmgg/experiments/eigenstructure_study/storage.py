@@ -13,6 +13,16 @@ from typing import Any
 import torch
 from safetensors.torch import load_file, save_file
 
+_RESERVED_TENSOR_KEYS = frozenset(
+    {
+        "eigenvalues_adj",
+        "eigenvectors_adj",
+        "eigenvalues_lap",
+        "eigenvectors_lap",
+        "adjacency",
+    }
+)
+
 
 def save_decomposition_batch(
     output_dir: Path,
@@ -23,6 +33,7 @@ def save_decomposition_batch(
     eigenvectors_lap: torch.Tensor,
     adjacency_matrices: torch.Tensor,
     metadata_list: list[dict[str, Any]],
+    extra_tensors: dict[str, torch.Tensor] | None = None,
 ) -> Path:
     """
     Save a batch of eigendecompositions to safetensors format.
@@ -45,6 +56,11 @@ def save_decomposition_batch(
         Original adjacency matrices, shape (batch_size, n, n).
     metadata_list : list[dict]
         Per-graph metadata dictionaries.
+    extra_tensors : dict[str, torch.Tensor], optional
+        Additional named tensors to persist alongside the canonical
+        decomposition (e.g. ``B_k4`` projection matrices used by the
+        improvement-gap surrogate). Keys must not collide with the
+        reserved names enumerated in ``_RESERVED_TENSOR_KEYS``.
 
     Returns
     -------
@@ -61,6 +77,15 @@ def save_decomposition_batch(
         "eigenvectors_lap": eigenvectors_lap.contiguous(),
         "adjacency": adjacency_matrices.contiguous(),
     }
+
+    if extra_tensors is not None:
+        for key, tensor in extra_tensors.items():
+            if key in _RESERVED_TENSOR_KEYS:
+                raise ValueError(
+                    f"extra_tensors key '{key}' collides with a reserved "
+                    f"decomposition tensor name"
+                )
+            tensors[key] = tensor.contiguous()
 
     safetensors_path = output_dir / f"batch_{batch_index:06d}.safetensors"
     metadata_path = output_dir / f"batch_{batch_index:06d}_metadata.json"

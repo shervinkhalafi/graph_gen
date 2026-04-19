@@ -369,6 +369,173 @@ class CovarianceResult:
     min_eigenvalue: float
 
 
+@dataclass(frozen=True)
+class ImprovementGapResult:
+    """Improvement-gap surrogate for one ``(noise_level, k)`` pair.
+
+    Quantifies the between-graph variance of the conditional mean
+    ``E[B | Λ̃_k]`` where ``B = V̂_k^T A V̂_k`` projects the clean adjacency
+    into the noisy top-*k* eigenbasis. See
+    ``_NeurIPS_2026__Understanding_Graph_Denoising.pdf`` eq. (18):
+
+    ``ℓ_lin − ℓ_f = tr(Cov(E[vec(B) | Λ̃_k])) = E‖E[B|Λ̃_k] − E[B]‖²_F``
+
+    The ratio ``g_hat / trace_cov_B`` reports the conditional-variance
+    share of the total between-graph variance — close to 1 means the
+    eigenvalue spectrum captures almost all of ``B``'s variability; close
+    to 0 means the gap is negligible and a linear denoiser is already
+    near-optimal.
+
+    Attributes
+    ----------
+    noise_level : float
+        Noise magnitude ``ε`` at which the surrogate was computed.
+    k : int
+        Top-*k* eigenspace dimension.
+    estimator : str
+        Estimator name, ``"knn"`` or ``"bin"``.
+    num_graphs : int
+        Number of graphs used in the estimate.
+    g_hat : float
+        Surrogate estimate ``(1/N) Σ ‖B̂_i − μ_B‖²_F`` of the improvement
+        gap, where ``B̂_i`` is the conditional-mean estimate.
+    trace_cov_B : float
+        Total trace of ``Cov(vec(B))`` = ``(1/N) Σ ‖B_i − μ_B‖²_F``.
+        Provides the denominator for the conditional-variance ratio.
+    ratio : float
+        ``g_hat / trace_cov_B`` (set to 0.0 if ``trace_cov_B == 0``).
+    knn_neighbours : int | None
+        Number of neighbours used for the kNN estimator (``None`` for
+        ``"bin"``).
+    num_bins : int | None
+        Number of quantile bins used for the binning estimator (``None``
+        for ``"knn"``).
+    """
+
+    noise_level: float
+    k: int
+    estimator: str
+    num_graphs: int
+    g_hat: float
+    trace_cov_B: float
+    ratio: float
+    knn_neighbours: int | None = None
+    num_bins: int | None = None
+
+    def to_json_dict(self) -> dict[str, object]:
+        """Serialize to the flat JSON layout used by the eigenstructure report."""
+        payload: dict[str, object] = {
+            "noise_level": self.noise_level,
+            "k": self.k,
+            "estimator": self.estimator,
+            "num_graphs": self.num_graphs,
+            "g_hat": self.g_hat,
+            "trace_cov_B": self.trace_cov_B,
+            "ratio": self.ratio,
+        }
+        if self.knn_neighbours is not None:
+            payload["knn_neighbours"] = self.knn_neighbours
+        if self.num_bins is not None:
+            payload["num_bins"] = self.num_bins
+        return payload
+
+
+def estimate_improvement_gap(
+    B: torch.Tensor,
+    conditioning_features: torch.Tensor,
+    *,
+    estimator: str,
+    knn_neighbours: int = 10,
+    num_bins: int = 4,
+) -> tuple[float, float, float]:
+    """Estimate the improvement-gap surrogate from stacked projections.
+
+    Parameters
+    ----------
+    B : torch.Tensor
+        Per-graph projection tensors of shape ``(N, k, k)``.
+    conditioning_features : torch.Tensor
+        Per-graph features used to condition ``E[B | ·]``, shape ``(N, d)``.
+        For the canonical kNN estimator this is the sorted top-*k* noisy
+        eigenvalues; for ``"bin"`` it is typically a single-column spectral
+        gap ``λ_1 − λ_2``.
+    estimator : str
+        ``"knn"`` — k-nearest-neighbour average in feature space.
+        ``"bin"`` — quantile-binned between-group variance.
+    knn_neighbours : int
+        Neighbourhood size for the kNN estimator (ignored for ``"bin"``).
+    num_bins : int
+        Bin count for the binning estimator (ignored for ``"knn"``).
+
+    Returns
+    -------
+    tuple[float, float, float]
+        ``(g_hat, trace_cov_B, ratio)``.
+
+    Notes
+    -----
+    By the law of total variance the surrogate satisfies
+    ``g_hat ≤ trace_cov_B`` up to estimation error. The returned ratio is
+    clamped to ``0.0`` when ``trace_cov_B == 0`` to keep the JSON output
+    numerically clean.
+    """
+    if B.ndim != 3 or B.shape[1] != B.shape[2]:
+        raise ValueError(f"B must have shape (N, k, k); got {tuple(B.shape)}")
+    num_graphs = B.shape[0]
+    if num_graphs < 2:
+        raise ValueError("Need at least 2 graphs to estimate the surrogate")
+
+    B = B.float()
+    mu_B = B.mean(dim=0, keepdim=True)  # (1, k, k)
+    deviations = B - mu_B
+    trace_cov_B = (deviations.pow(2).sum(dim=(-2, -1))).mean().item()
+
+    if estimator == "knn":
+        features = conditioning_features.float()
+        # Pairwise Euclidean distances in feature space, (N, N).
+        dists = torch.cdist(features, features)
+        # Pick the k+1 smallest (self + k neighbours); drop self below.
+        topk = min(knn_neighbours + 1, num_graphs)
+        _, neighbour_idx = dists.topk(topk, largest=False)
+        # Drop the self column (distance 0).
+        neighbour_idx = neighbour_idx[:, 1:]
+        # B_hat[i] = mean of B[neighbour_idx[i]]
+        # Gather along dim 0: (N, m, k, k)
+        gathered = B[neighbour_idx]
+        B_hat = gathered.mean(dim=1)
+        gap_deviations = B_hat - mu_B.squeeze(0)
+        g_hat = gap_deviations.pow(2).sum(dim=(-2, -1)).mean().item()
+    elif estimator == "bin":
+        if conditioning_features.ndim != 1:
+            raise ValueError(
+                "Binning estimator expects a 1-D conditioning feature "
+                f"(e.g. spectral gap); got shape {tuple(conditioning_features.shape)}"
+            )
+        feat = conditioning_features.float()
+        # Quantile edges; include 0 and 1 to cover the full range.
+        quantiles = torch.linspace(0.0, 1.0, num_bins + 1)
+        edges = torch.quantile(feat, quantiles)
+        # bucketize returns 0 for feat < edges[1]; shift so bins start at 0.
+        bin_idx = torch.bucketize(feat, edges[1:-1])
+        # Between-bin variance: Σ_b (|S_b| / N) ||μ_b − μ_B||²_F
+        weighted_sum = 0.0
+        for b in range(num_bins):
+            mask = bin_idx == b
+            count = int(mask.sum().item())
+            if count == 0:
+                continue
+            mu_b = B[mask].mean(dim=0)
+            weighted_sum += (count / num_graphs) * (
+                (mu_b - mu_B.squeeze(0)).pow(2).sum().item()
+            )
+        g_hat = weighted_sum
+    else:
+        raise ValueError(f"Unknown estimator '{estimator}'")
+
+    ratio = g_hat / trace_cov_B if trace_cov_B > 0 else 0.0
+    return g_hat, trace_cov_B, ratio
+
+
 class SpectralAnalyzer:
     """
     Analyze collected eigenstructure data.
