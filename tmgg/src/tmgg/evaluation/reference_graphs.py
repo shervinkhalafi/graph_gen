@@ -52,7 +52,12 @@ def generate_reference_graphs(
         p_inter = kwargs.get("p_inter", kwargs.get("q", 0.1))
         num_blocks = kwargs.get("num_blocks", 2)
         batch = generate_sbm_batch(
-            num_graphs, num_nodes, num_blocks, p_intra, p_inter, seed
+            num_graphs,
+            num_nodes,
+            num_blocks=num_blocks,
+            p_intra=p_intra,
+            p_inter=p_inter,
+            seed=seed,
         )
         return list(torch.from_numpy(batch).float())
 

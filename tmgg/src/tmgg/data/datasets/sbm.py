@@ -74,17 +74,32 @@ def generate_sbm_adjacency(
 def generate_sbm_batch(
     num_graphs: int,
     num_nodes: int,
-    num_blocks: int = 2,
-    p_intra: float = 0.7,
-    p_inter: float = 0.1,
+    *,
+    num_blocks: int | tuple[int, int] = 2,
+    p_intra: float | tuple[float, float] = 0.7,
+    p_inter: float | tuple[float, float] = 0.1,
+    block_size_alpha: float | None = None,
+    diversity: float = 0.0,
     seed: int = 42,
 ) -> np.ndarray:
     """Generate a batch of SBM adjacency matrices.
 
-    Computes approximately equal block sizes for ``num_nodes`` across
-    ``num_blocks`` blocks, then calls ``generate_sbm_adjacency`` for each
-    graph.  That function already produces symmetric matrices with zero
-    diagonal, so no post-processing is needed.
+    Supports two modes:
+
+    * **Fixed**: all hyperparameters scalar and ``diversity == 0``. Each
+      graph uses the same ``(num_blocks, p_intra, p_inter)`` and equal
+      block sizes. Bitwise-identical to the pre-diversity implementation.
+    * **Diverse**: at least one hyperparameter is a ``(min, max)`` tuple
+      and/or ``diversity > 0``. Each graph draws its own hyperparameters
+      from ranges shrunk toward the midpoint by ``(1 − diversity)``; at
+      ``diversity = 1`` the full range is used, at ``diversity = 0`` the
+      ranges collapse to their midpoint so tuple arguments reduce to
+      scalars. ``block_size_alpha``, when set, replaces the equal-block
+      partitioning with a Dirichlet-sampled partition of ``num_nodes``.
+
+    This function powers the eigenspectrum-diversity knob used by the
+    improvement-gap sweep; see
+    ``docs/plans/2026-04-18-improvement-gap-surrogate-and-spectrum-diversity.md``.
 
     Parameters
     ----------
@@ -93,11 +108,21 @@ def generate_sbm_batch(
     num_nodes
         Number of nodes per graph.
     num_blocks
-        Number of communities in the SBM.
+        Number of communities (int) or inclusive integer range
+        ``(min, max)``.
     p_intra
-        Intra-block edge probability.
+        Intra-block edge probability or inclusive range ``(min, max)``.
     p_inter
-        Inter-block edge probability.
+        Inter-block edge probability or inclusive range ``(min, max)``.
+    block_size_alpha
+        Concentration for a symmetric Dirichlet partition of
+        ``num_nodes`` across blocks. ``None`` (default) keeps the
+        equal-block behaviour of the fixed mode.
+    diversity
+        Value in ``[0, 1]``. Scales all tuple ranges toward their
+        midpoint — ``0`` → midpoint only, ``1`` → full range. Must be
+        ``0`` when all hyperparameters are scalar and
+        ``block_size_alpha`` is ``None``.
     seed
         Random seed for reproducibility.
 
@@ -106,24 +131,172 @@ def generate_sbm_batch(
     np.ndarray
         Adjacency matrices, shape ``(num_graphs, num_nodes, num_nodes)``,
         dtype ``float32``.
+
+    Raises
+    ------
+    ValueError
+        If ``diversity`` is outside ``[0, 1]``, if all hyperparameters
+        are scalar and ``block_size_alpha is None`` but ``diversity > 0``
+        (the knob has nothing to vary), or if any tuple is malformed.
     """
+    if not 0.0 <= diversity <= 1.0:
+        raise ValueError(f"diversity must be in [0, 1]; got {diversity}")
+
+    num_blocks_is_range = isinstance(num_blocks, tuple)
+    p_intra_is_range = isinstance(p_intra, tuple)
+    p_inter_is_range = isinstance(p_inter, tuple)
+    uses_dirichlet = block_size_alpha is not None
+
+    all_scalars = (
+        not num_blocks_is_range
+        and not p_intra_is_range
+        and not p_inter_is_range
+        and not uses_dirichlet
+    )
+    if all_scalars and diversity > 0.0:
+        raise ValueError(
+            "diversity > 0 requires at least one tuple-ranged "
+            "hyperparameter (num_blocks/p_intra/p_inter) or "
+            "block_size_alpha; otherwise the knob has nothing to vary."
+        )
+
     rng = np.random.default_rng(seed)
 
-    # Equal block sizes, distributing remainder to first blocks
+    # Fixed mode: all scalars and zero diversity → preserve the original
+    # RNG sequence bit-for-bit so existing fixtures / seeded experiments
+    # don't shift.
+    if all_scalars and diversity == 0.0:
+        assert isinstance(num_blocks, int)
+        assert isinstance(p_intra, int | float)
+        assert isinstance(p_inter, int | float)
+        block_sizes = _equal_block_sizes(num_nodes, num_blocks)
+        adjacencies: list[np.ndarray] = []
+        for _ in range(num_graphs):
+            adj = generate_sbm_adjacency(
+                block_sizes=block_sizes,
+                p_intra=float(p_intra),
+                p_inter=float(p_inter),
+                rng=rng,
+            )
+            adjacencies.append(adj.astype(np.float32))
+        return np.stack(adjacencies, axis=0)
+
+    # Diverse mode: sample per-graph hyperparameters, then generate.
+    nb_range = _range_from_arg(num_blocks, diversity, kind="int")
+    pi_range = _range_from_arg(p_intra, diversity, kind="float")
+    po_range = _range_from_arg(p_inter, diversity, kind="float")
+
+    adjacencies = []
+    for _ in range(num_graphs):
+        this_num_blocks = _sample_int_range(rng, nb_range)
+        this_p_intra = _sample_float_range(rng, pi_range)
+        this_p_inter = _sample_float_range(rng, po_range)
+        if uses_dirichlet:
+            assert block_size_alpha is not None  # narrow for type-checker
+            this_block_sizes = _dirichlet_block_sizes(
+                rng, num_nodes, this_num_blocks, block_size_alpha
+            )
+        else:
+            this_block_sizes = _equal_block_sizes(num_nodes, this_num_blocks)
+        adj = generate_sbm_adjacency(
+            block_sizes=this_block_sizes,
+            p_intra=this_p_intra,
+            p_inter=this_p_inter,
+            rng=rng,
+        )
+        adjacencies.append(adj.astype(np.float32))
+    return np.stack(adjacencies, axis=0)
+
+
+def _equal_block_sizes(num_nodes: int, num_blocks: int) -> list[int]:
+    """Split ``num_nodes`` into ``num_blocks`` near-equal parts.
+
+    The remainder is distributed across the earliest blocks, matching
+    the fixed-mode behaviour relied on by pre-diversity fixtures.
+    """
     block_size = num_nodes // num_blocks
     remainder = num_nodes % num_blocks
     block_sizes = [block_size] * num_blocks
     for i in range(remainder):
         block_sizes[i] += 1
+    return block_sizes
 
-    adjacencies: list[np.ndarray] = []
-    for _ in range(num_graphs):
-        adj = generate_sbm_adjacency(
-            block_sizes=block_sizes, p_intra=p_intra, p_inter=p_inter, rng=rng
-        )
-        adjacencies.append(adj.astype(np.float32))
 
-    return np.stack(adjacencies, axis=0)
+def _range_from_arg(
+    arg: int | float | tuple[int, int] | tuple[float, float],
+    diversity: float,
+    *,
+    kind: str,
+) -> tuple[float, float]:
+    """Resolve a scalar-or-range arg into a diversity-scaled ``(lo, hi)``.
+
+    At ``diversity = 1`` the range equals the input (width preserved).
+    At ``diversity = 0`` it collapses to the midpoint. Intermediate
+    values interpolate linearly. Scalar arguments return
+    ``(scalar, scalar)`` regardless of diversity.
+    """
+    if isinstance(arg, tuple):
+        lo, hi = arg
+        if lo > hi:
+            raise ValueError(f"{kind} range malformed: min={lo} > max={hi}")
+        midpoint = (lo + hi) / 2.0
+        half_width = (hi - lo) / 2.0 * diversity
+        return (midpoint - half_width, midpoint + half_width)
+    return (float(arg), float(arg))
+
+
+def _sample_int_range(rng: np.random.Generator, rng_bounds: tuple[float, float]) -> int:
+    """Draw an integer from an inclusive ``(lo, hi)`` range.
+
+    If the range has collapsed (lo == hi) no RNG draw is taken so that
+    callers with pure-integer input don't desync their stream.
+    """
+    lo_f, hi_f = rng_bounds
+    lo = int(round(lo_f))
+    hi = int(round(hi_f))
+    if lo == hi:
+        return lo
+    return int(rng.integers(lo, hi + 1))
+
+
+def _sample_float_range(
+    rng: np.random.Generator, rng_bounds: tuple[float, float]
+) -> float:
+    """Draw a float uniformly from ``[lo, hi]``."""
+    lo, hi = rng_bounds
+    if lo == hi:
+        return lo
+    return float(rng.uniform(lo, hi))
+
+
+def _dirichlet_block_sizes(
+    rng: np.random.Generator, num_nodes: int, num_blocks: int, alpha: float
+) -> list[int]:
+    """Sample unequal block sizes via a symmetric Dirichlet partition.
+
+    Uses symmetric ``Dirichlet(alpha, ..., alpha)`` then rounds and
+    distributes rounding error into the first blocks so the partition
+    sums to ``num_nodes``. A floor of 1 prevents zero-sized blocks.
+    """
+    if alpha <= 0:
+        raise ValueError(f"block_size_alpha must be > 0; got {alpha}")
+    if num_blocks == 1:
+        return [num_nodes]
+    weights = rng.dirichlet(np.full(num_blocks, alpha))
+    sizes = np.maximum(np.round(weights * num_nodes).astype(int), 1)
+    diff = num_nodes - int(sizes.sum())
+    # Distribute any rounding slack into the first blocks.
+    i = 0
+    while diff != 0 and i < num_blocks * 10:
+        idx = i % num_blocks
+        if diff > 0:
+            sizes[idx] += 1
+            diff -= 1
+        elif sizes[idx] > 1:
+            sizes[idx] -= 1
+            diff += 1
+        i += 1
+    return sizes.tolist()
 
 
 def generate_block_sizes(
