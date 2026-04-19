@@ -2,6 +2,14 @@
 
 Target paper: `_NeurIPS_2026__Understanding_Graph_Denoising.pdf`. Three figures (F1–F3) summarise the Phase 4 improvement-gap surrogate sweep. All figures read the same CSV and share one style module so the house look stays consistent.
 
+## Goal
+
+For a given graph dataset and noise level ε, quantify the extent to which the noisy top-*k* eigenvalues `Λ̃_k` determine the projection of the clean adjacency `B = V̂_k^T A V̂_k` into the noisy top-*k* eigenbasis. Equation (18) of the target draft defines the improvement gap
+
+$$\ell_{\mathrm{lin}} - \ell_{f} \;=\; \mathbb{E}\!\left\|\,\mathbb{E}[B \mid \tilde\Lambda_k] - \mathbb{E}[B]\,\right\|_F^{2},$$
+
+i.e. the between-graph variance of the Bayes-optimal predictor of `B` given `Λ̃_k`. The figures report a bias-corrected finite-sample estimate of this population quantity, normalised by `tr Cov(B)`, so that a reader can (i) read the fraction of `B`'s variance that `Λ̃_k` determines on each dataset, (ii) compare datasets on a common `[0, 1]` scale, and (iii) verify that the estimate rises with known community strength (synthetic SBM diversity) and reflects the community content of real benchmarks. Making this quantity legible, bias-corrected, and reproducible across k, ε, noise model, and frame convention is the purpose of the figure set.
+
 ## Shared conventions
 
 - **Data source**: `docs/reports/2026-04-19-phase4-eigenvalue-study/phase4_sweep.csv` (25 600 rows).
