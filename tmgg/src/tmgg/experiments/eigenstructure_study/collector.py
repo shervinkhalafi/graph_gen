@@ -40,7 +40,7 @@ SYNTHETIC_TYPES = {
     "triangle_grid",
 }
 
-PYG_TYPES = {"qm9", "enzymes", "proteins"}
+PYG_TYPES = {"qm9", "enzymes", "proteins", "collab"}
 
 
 class EigenstructureCollector:

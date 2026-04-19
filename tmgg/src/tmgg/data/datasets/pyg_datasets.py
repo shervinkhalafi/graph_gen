@@ -1,7 +1,7 @@
 """PyTorch Geometric dataset wrappers for graph denoising experiments.
 
 This module provides wrappers around PyTorch Geometric datasets (QM9, ENZYMES,
-PROTEINS) that extract adjacency matrices and handle variable graph sizes
+PROTEINS, COLLAB) that extract adjacency matrices and handle variable graph sizes
 through padding.
 """
 
@@ -23,7 +23,7 @@ class PyGDatasetWrapper(Dataset[np.ndarray]):
     Parameters
     ----------
     dataset_name : str
-        Name of the dataset: "qm9", "enzymes", or "proteins".
+        Name of the dataset: "qm9", "enzymes", "proteins", or "collab".
     root : str or Path, optional
         Root directory for downloading/storing datasets.
         Default is "~/.pyg_data".
@@ -43,7 +43,7 @@ class PyGDatasetWrapper(Dataset[np.ndarray]):
         ``adjacencies``), each holding ``edge_index`` and ``num_nodes``.
     """
 
-    VALID_DATASETS = {"qm9", "enzymes", "proteins"}
+    VALID_DATASETS = {"qm9", "enzymes", "proteins", "collab"}
 
     def __init__(
         self,
@@ -82,6 +82,10 @@ class PyGDatasetWrapper(Dataset[np.ndarray]):
             dataset = TUDataset(root=str(self.root), name="ENZYMES")
         elif self.dataset_name == "proteins":
             dataset = TUDataset(root=str(self.root), name="PROTEINS")
+        elif self.dataset_name == "collab":
+            # Scientific collaboration ego-networks; community-structured
+            # social-network benchmark used in the Phase 4 eigenvalue study.
+            dataset = TUDataset(root=str(self.root), name="COLLAB")
         else:
             raise ValueError(f"Unknown dataset: {self.dataset_name}")
 

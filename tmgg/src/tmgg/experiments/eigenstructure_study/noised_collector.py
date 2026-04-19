@@ -441,13 +441,22 @@ class NoisedEigenstructureCollector:
                 A = A_noised[i]
                 L = compute_laplacian(A)
 
-                vals_a, vecs_a = torch.linalg.eigh(A.float())
-                vals_l, vecs_l = torch.linalg.eigh(L.float())
+                # Noised adjacency matrices can be numerically
+                # ill-conditioned or near-degenerate — especially on real
+                # bio benchmarks like ENZYMES where the underlying graph
+                # has high symmetry and small perturbations keep
+                # eigenvalues effectively repeated. float32 eigh fails to
+                # converge on those graphs (observed in the Phase 4 sweep
+                # on ENZYMES at ε=0.01). Run eigh in float64 and downcast
+                # for storage — precision is cheap, a crash here kills
+                # the whole sweep.
+                vals_a, vecs_a = torch.linalg.eigh(A.double())
+                vals_l, vecs_l = torch.linalg.eigh(L.double())
 
-                eig_adj_vals_list.append(vals_a)
-                eig_adj_vecs_list.append(vecs_a)
-                eig_lap_vals_list.append(vals_l)
-                eig_lap_vecs_list.append(vecs_l)
+                eig_adj_vals_list.append(vals_a.float())
+                eig_adj_vecs_list.append(vecs_a.float())
+                eig_lap_vals_list.append(vals_l.float())
+                eig_lap_vecs_list.append(vecs_l.float())
 
             eig_adj_vecs = torch.stack(eig_adj_vecs_list)
 
