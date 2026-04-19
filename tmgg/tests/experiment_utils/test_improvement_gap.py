@@ -24,7 +24,7 @@ they run without needing disk-backed Phase 1 fixtures:
 - separability: two well-separated clusters with cluster-predictive
   conditioning features ⇒ ``g_hat`` captures almost all of
   ``trace_cov_B``;
-- estimator agreement: kNN and binning give comparable ratios on the
+- estimator agreement: kNN and binning give comparable FVEs on the
   same controlled input;
 - collector integration: end-to-end round trip through the noised
   collector and comparator confirms that ``B_k{k}`` tensors are
@@ -55,7 +55,7 @@ from tmgg.utils.spectral.subspace import (
 def _synthetic_identical_B(num_graphs: int, k: int, seed: int = 0) -> torch.Tensor:
     """N identical symmetric projection tensors plus tiny jitter.
 
-    Zero variance would make the ratio undefined; a small jitter keeps the
+    Zero variance would make the FVE undefined; a small jitter keeps the
     estimator numerics live while preserving the "should be near zero"
     semantics.
     """
@@ -106,7 +106,7 @@ class TestEstimatorSanity:
         """Rationale: when B_i are identical up to jitter, both ``B̂_i`` and
         ``μ_B`` collapse onto the same point, so the surrogate must vanish
         to within the jitter scale. trace_cov_B also collapses, so we check
-        absolute magnitude rather than the ratio to avoid 0/0 noise."""
+        absolute magnitude rather than the FVE to avoid 0/0 noise."""
         B = _synthetic_identical_B(num_graphs=40, k=4)
         features = torch.randn(40, 4)  # uninformative features
         g_hat, trace_cov_B, _ = estimate_improvement_gap(
@@ -114,22 +114,22 @@ class TestEstimatorSanity:
         )
         assert g_hat < 1e-8, f"g_hat={g_hat}, trace_cov_B={trace_cov_B}"
 
-    def test_permutation_null_ratio_is_small_on_cluster_input(self) -> None:
+    def test_permutation_null_fve_is_small_on_cluster_input(self) -> None:
         """Rationale: the reviewer-2 audit flagged that kNN(m=10) at
-        diversity=0 gave a ratio near 0.5 when the paper-predicted null
+        diversity=0 gave an FVE near 0.5 when the paper-predicted null
         is ≈0. The permutation-null control diagnoses this: after
         shuffling the conditioning features so they are decorrelated from
         B, a calibrated estimator must return near-zero ĝ. If the
-        permutation-null ratio is large, the finite-sample kNN bias is
-        real and the headline ratio is inflated. On a two-cluster input
-        where the real-features ratio is near 1, the permuted ratio
+        permutation-null FVE is large, the finite-sample kNN bias is
+        real and the headline FVE is inflated. On a two-cluster input
+        where the real-features FVE is near 1, the permuted FVE
         should drop by at least an order of magnitude."""
         B, features = _two_cluster_B(num_graphs=80, k=4, gap=5.0)
         features_2d = features.unsqueeze(1)
-        _, _, ratio_real = estimate_improvement_gap(
+        _, _, fve_real = estimate_improvement_gap(
             B, features_2d, estimator="knn", knn_neighbours=5
         )
-        _, _, ratio_null = estimate_improvement_gap(
+        _, _, fve_null = estimate_improvement_gap(
             B,
             features_2d,
             estimator="knn",
@@ -137,28 +137,28 @@ class TestEstimatorSanity:
             permute_features=True,
             permutation_seed=0,
         )
-        assert ratio_real > 0.8, f"setup sanity: real ratio={ratio_real}"
-        assert ratio_null < ratio_real / 5, (
-            f"permuted ratio {ratio_null:.3f} too close to real {ratio_real:.3f} "
+        assert fve_real > 0.8, f"setup sanity: real FVE={fve_real}"
+        assert fve_null < fve_real / 5, (
+            f"permuted FVE {fve_null:.3f} too close to real {fve_real:.3f} "
             f"— kNN may have finite-sample bias at this N"
         )
 
-    def test_random_features_yield_low_ratio_on_variable_B(self) -> None:
+    def test_random_features_yield_low_fve_on_variable_B(self) -> None:
         """Rationale: replaces the weak 'identical graphs' sanity with a
         stronger one — B has real variance but features are uncorrelated
-        with B, so the estimator must deliver a small ratio. Tests that
+        with B, so the estimator must deliver a small FVE. Tests that
         kNN does NOT inflate ĝ merely because B varies."""
         torch.manual_seed(0)
         B = torch.randn(80, 4, 4)
         B = (B + B.transpose(-2, -1)) / 2
         # Uninformative features — independent of B.
         features = torch.randn(80, 4)
-        _, _, ratio = estimate_improvement_gap(
+        _, _, fve = estimate_improvement_gap(
             B, features, estimator="knn", knn_neighbours=5
         )
-        # Empirically the finite-sample kNN ratio under independence sits
+        # Empirically the finite-sample kNN FVE under independence sits
         # around 1/m ≈ 0.2; 0.4 is a conservative cap for N=80.
-        assert ratio < 0.4, f"ratio {ratio:.3f} too large under independent features"
+        assert fve < 0.4, f"FVE {fve:.3f} too large under independent features"
 
     def test_invariants_target_is_frame_free(self) -> None:
         """Rationale: ``compute_B_invariants`` extracts (tr, ||·||_F²,
@@ -186,18 +186,18 @@ class TestEstimatorSanity:
         and binning using 1-D, the two estimators measure different
         quantities and shouldn't be compared directly. Running kNN on
         the same 1-D feature used by binning gives two estimators of the
-        SAME conditional-mean variance, so their ratios should agree up
+        SAME conditional-mean variance, so their FVEs should agree up
         to estimator-noise."""
         B, features = _two_cluster_B(num_graphs=60, k=4, gap=5.0)
-        _, _, ratio_knn_1d = estimate_improvement_gap(
+        _, _, fve_knn_1d = estimate_improvement_gap(
             B, features.unsqueeze(1), estimator="knn", knn_neighbours=5
         )
-        _, _, ratio_bin_1d = estimate_improvement_gap(
+        _, _, fve_bin_1d = estimate_improvement_gap(
             B, features, estimator="bin", num_bins=2
         )
-        assert abs(ratio_knn_1d - ratio_bin_1d) < 0.10, (
+        assert abs(fve_knn_1d - fve_bin_1d) < 0.10, (
             f"knn_1d vs bin_1d disagreement: "
-            f"knn_1d={ratio_knn_1d:.3f}, bin_1d={ratio_bin_1d:.3f}"
+            f"knn_1d={fve_knn_1d:.3f}, bin_1d={fve_bin_1d:.3f}"
         )
 
     def test_law_of_total_variance_bound(self) -> None:
@@ -225,28 +225,28 @@ class TestEstimatorSanity:
         most of ``trace_cov_B``."""
         B, features = _two_cluster_B(num_graphs=60, k=4, gap=5.0)
         features_2d = features.unsqueeze(1)
-        g_hat, trace_cov_B, ratio = estimate_improvement_gap(
+        g_hat, trace_cov_B, fve = estimate_improvement_gap(
             B, features_2d, estimator="knn", knn_neighbours=5
         )
         assert trace_cov_B > 1.0, "Test setup: clusters should induce sizeable variance"
-        # With gap=5, noise=0.1, ratio should be close to 1.
-        assert ratio > 0.85, f"ratio={ratio} (g_hat={g_hat}, trace_cov_B={trace_cov_B})"
+        # With gap=5, noise=0.1, FVE should be close to 1.
+        assert fve > 0.85, f"fve={fve} (g_hat={g_hat}, trace_cov_B={trace_cov_B})"
 
     def test_bin_estimator_matches_knn_on_cluster_input(self) -> None:
         """Rationale: when the conditioning feature cleanly separates
         clusters, quantile binning with num_bins=2 and kNN both recover
-        the same structure; their ratios should agree to within finite-
+        the same structure; their FVEs should agree to within finite-
         sample tolerance. The binning estimator takes a 1-D feature."""
         B, features = _two_cluster_B(num_graphs=60, k=4, gap=5.0)
-        _, _, ratio_knn = estimate_improvement_gap(
+        _, _, fve_knn = estimate_improvement_gap(
             B, features.unsqueeze(1), estimator="knn", knn_neighbours=5
         )
-        _, _, ratio_bin = estimate_improvement_gap(
+        _, _, fve_bin = estimate_improvement_gap(
             B, features, estimator="bin", num_bins=2
         )
         assert (
-            abs(ratio_knn - ratio_bin) < 0.10
-        ), f"ratio disagreement too large: knn={ratio_knn}, bin={ratio_bin}"
+            abs(fve_knn - fve_bin) < 0.10
+        ), f"FVE disagreement too large: knn={fve_knn}, bin={fve_bin}"
 
 
 class TestFrechetAlignment:
@@ -433,7 +433,7 @@ class TestCollectorIntegration:
     def test_roundtrip_produces_surrogate(self) -> None:
         """Rationale: verifies that B_k{k} tensors survive safetensors
         round-trip and that the comparator returns an
-        ``ImprovementGapResult`` with sane values (g_hat ≥ 0, ratio ∈
+        ``ImprovementGapResult`` with sane values (g_hat ≥ 0, FVE ∈
         [0, 1+slack])."""
         with tempfile.TemporaryDirectory() as tmp:
             phase1_dir = Path(tmp) / "phase1"
@@ -466,8 +466,8 @@ class TestCollectorIntegration:
             assert result.g_hat >= 0.0
             assert result.trace_cov_B >= 0.0
             assert result.num_graphs == 8
-            # Ratio is clamped to [0, 1+slack]; 1.1 is generous for tiny N.
-            assert 0.0 <= result.ratio <= 1.1
+            # FVE is clamped to [0, 1+slack]; 1.1 is generous for tiny N.
+            assert 0.0 <= result.fve <= 1.1
 
     def test_bin_estimator_works_roundtrip(self) -> None:
         """Rationale: binning path uses a different code path inside
@@ -512,7 +512,7 @@ class TestCollectorIntegration:
         """Rationale: the invariants-target code path diverges from the
         matrix path inside ``compute_improvement_gap_surrogate``; the
         round trip must produce an ``ImprovementGapResult`` with
-        ``target == "invariants"`` and sane ĝ/ratio bounds. Catches
+        ``target == "invariants"`` and sane ĝ/FVE bounds. Catches
         silent drops of the target parameter or mismatch between the
         invariants dim and the estimator's feature dim."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -541,9 +541,9 @@ class TestCollectorIntegration:
             )
             assert result.target == "invariants"
             assert result.g_hat >= 0.0
-            assert 0.0 <= result.ratio <= 1.1
+            assert 0.0 <= result.fve <= 1.1
 
-    def test_permutation_null_roundtrip_reduces_ratio(self) -> None:
+    def test_permutation_null_roundtrip_reduces_fve(self) -> None:
         """Rationale: the reviewer asked for a permutation-null control
         to diagnose kNN finite-sample bias. The plumbing should carry
         ``permute_features=True`` from the comparator to the estimator;

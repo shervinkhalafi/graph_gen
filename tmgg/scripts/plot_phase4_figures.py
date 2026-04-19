@@ -95,7 +95,7 @@ def load_sweep(csv_path: Path) -> pd.DataFrame:
         "k",
         "g_hat",
         "trace_cov_B",
-        "ratio",
+        "fve",
         "num_graphs",
         "n",
     }
@@ -129,11 +129,11 @@ def assert_seed_count(group: pd.DataFrame, context: str) -> None:
         )
 
 
-def aggregate_ratio(df: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
-    """Mean and SD of ratio across seeds, grouped by key columns."""
+def aggregate_fve(df: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
+    """Mean and SD of FVE across seeds, grouped by key columns."""
     agg = df.groupby(key_cols, as_index=False).agg(
-        ratio_mean=("ratio", "mean"),
-        ratio_sd=("ratio", "std"),
+        fve_mean=("fve", "mean"),
+        fve_sd=("fve", "std"),
         n_seeds=("seed", "nunique"),
     )
     bad = agg[agg["n_seeds"] != len(SEEDS)]
@@ -148,8 +148,8 @@ def paired_margin(df: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
     Pairs permuted=False and permuted=True rows on the full key + seed, takes
     the difference, then aggregates across seeds.
     """
-    real = df[~df["permuted"]].set_index(key_cols + ["seed"])["ratio"]
-    null = df[df["permuted"]].set_index(key_cols + ["seed"])["ratio"]
+    real = df[~df["permuted"]].set_index(key_cols + ["seed"])["fve"]
+    null = df[df["permuted"]].set_index(key_cols + ["seed"])["fve"]
     aligned = pd.concat([real.rename("real"), null.rename("null")], axis=1)
     missing = aligned[aligned.isna().any(axis=1)]
     if not missing.empty:
@@ -173,7 +173,7 @@ def paired_margin(df: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
 
 
 # ----------------------------------------------------------------------------
-# F1 — ratio vs ε per dataset (double-column, 2×4 grid)
+# F1 — FVE vs ε per dataset (double-column, 2×4 grid)
 # ----------------------------------------------------------------------------
 
 
@@ -201,22 +201,22 @@ def plot_f1(
             if real.empty or null.empty:
                 continue
 
-            agg_real = aggregate_ratio(real, ["noise_level"]).sort_values("noise_level")
-            agg_null = aggregate_ratio(null, ["noise_level"]).sort_values("noise_level")
+            agg_real = aggregate_fve(real, ["noise_level"]).sort_values("noise_level")
+            agg_null = aggregate_fve(null, ["noise_level"]).sort_values("noise_level")
 
             colour = k_colour(k)
             ax.fill_between(
                 agg_null["noise_level"].to_numpy(),
-                (agg_null["ratio_mean"] - agg_null["ratio_sd"]).to_numpy(),
-                (agg_null["ratio_mean"] + agg_null["ratio_sd"]).to_numpy(),
+                (agg_null["fve_mean"] - agg_null["fve_sd"]).to_numpy(),
+                (agg_null["fve_mean"] + agg_null["fve_sd"]).to_numpy(),
                 color=colour,
                 alpha=0.12,
                 linewidth=0,
             )
             ax.errorbar(
                 agg_real["noise_level"].to_numpy(),
-                agg_real["ratio_mean"].to_numpy(),
-                yerr=agg_real["ratio_sd"].to_numpy(),
+                agg_real["fve_mean"].to_numpy(),
+                yerr=agg_real["fve_sd"].to_numpy(),
                 color=colour,
                 marker="o",
                 capsize=1.5,
@@ -232,7 +232,7 @@ def plot_f1(
         n_graphs = sub["num_graphs"].iloc[0]
         ax.set_title(f"{dataset} (N={n_graphs})")
         if panel_idx % 4 == 0:
-            ax.set_ylabel("ratio")
+            ax.set_ylabel("FVE")
         if panel_idx >= 4:
             ax.set_xlabel(r"$\varepsilon$")
 
@@ -410,7 +410,7 @@ def main() -> None:
         df_head,
         args.output_dir,
         noise_type_label="gaussian",
-        filename_stem="F1_ratio_vs_epsilon",
+        filename_stem="F1_fve_vs_epsilon",
     )
     plot_f2(df_head, args.output_dir)
     plot_f3(
@@ -426,7 +426,7 @@ def main() -> None:
             df_digress,
             args.output_dir,
             noise_type_label="digress",
-            filename_stem="FS1_ratio_vs_epsilon_digress",
+            filename_stem="FS1_fve_vs_epsilon_digress",
         )
         df_per_graph = filter_headline(df, frame_mode="per_graph")
         plot_f3(

@@ -419,11 +419,12 @@ class ImprovementGapResult:
 
     ``ℓ_lin − ℓ_f = tr(Cov(E[vec(B) | Λ̃_k])) = E‖E[B|Λ̃_k] − E[B]‖²_F``
 
-    The ratio ``g_hat / trace_cov_B`` reports the conditional-variance
-    share of the total between-graph variance — close to 1 means the
-    eigenvalue spectrum captures almost all of ``B``'s variability; close
-    to 0 means the gap is negligible and a linear denoiser is already
-    near-optimal.
+    The quantity ``fve = g_hat / trace_cov_B`` is the **fraction of
+    variance explained** (FVE) of ``B`` by the noisy top-*k* eigenvalues —
+    the population R² of the Bayes-optimal predictor. Close to 1 means
+    the eigenvalue spectrum captures almost all of ``B``'s variability;
+    close to 0 means the gap is negligible and a linear denoiser is
+    already near-optimal.
 
     Attributes
     ----------
@@ -440,9 +441,10 @@ class ImprovementGapResult:
         gap, where ``B̂_i`` is the conditional-mean estimate.
     trace_cov_B : float
         Total trace of ``Cov(vec(B))`` = ``(1/N) Σ ‖B_i − μ_B‖²_F``.
-        Provides the denominator for the conditional-variance ratio.
-    ratio : float
-        ``g_hat / trace_cov_B`` (set to 0.0 if ``trace_cov_B == 0``).
+        Provides the denominator of the FVE.
+    fve : float
+        Fraction of variance explained, ``g_hat / trace_cov_B`` (set to
+        0.0 if ``trace_cov_B == 0``).
     knn_neighbours : int | None
         Number of neighbours used for the kNN estimator (``None`` for
         ``"bin"``).
@@ -457,7 +459,7 @@ class ImprovementGapResult:
     num_graphs: int
     g_hat: float
     trace_cov_B: float
-    ratio: float
+    fve: float
     knn_neighbours: int | None = None
     num_bins: int | None = None
     # Which per-graph target was used: the matrix ``B`` (default,
@@ -484,7 +486,7 @@ class ImprovementGapResult:
             "num_graphs": self.num_graphs,
             "g_hat": self.g_hat,
             "trace_cov_B": self.trace_cov_B,
-            "ratio": self.ratio,
+            "fve": self.fve,
         }
         if self.knn_neighbours is not None:
             payload["knn_neighbours"] = self.knn_neighbours
@@ -530,7 +532,7 @@ def estimate_improvement_gap(
         If ``True``, randomly shuffle ``conditioning_features`` along axis 0
         before estimating. Used to compute the permutation-null
         surrogate: a correctly-calibrated estimator should return
-        ``g_hat ≈ 0`` (ratio ≈ 0) when the conditioning is decorrelated
+        ``g_hat ≈ 0`` (FVE ≈ 0) when the conditioning is decorrelated
         from the targets. A large null ĝ signals finite-sample bias in
         the estimator (usually kNN at small ``N`` / small ``m``).
     permutation_seed : int
@@ -540,12 +542,13 @@ def estimate_improvement_gap(
     Returns
     -------
     tuple[float, float, float]
-        ``(g_hat, trace_cov_B, ratio)``.
+        ``(g_hat, trace_cov_B, fve)`` where ``fve`` is the fraction of
+        variance explained ``g_hat / trace_cov_B``.
 
     Notes
     -----
     By the law of total variance the surrogate satisfies
-    ``g_hat ≤ trace_cov_B`` up to estimation error. The returned ratio is
+    ``g_hat ≤ trace_cov_B`` up to estimation error. The returned FVE is
     clamped to ``0.0`` when ``trace_cov_B == 0`` to keep the JSON output
     numerically clean.
     """
@@ -622,8 +625,8 @@ def estimate_improvement_gap(
     else:
         raise ValueError(f"Unknown estimator '{estimator}'")
 
-    ratio = g_hat / trace_cov_B if trace_cov_B > 0 else 0.0
-    return g_hat, trace_cov_B, ratio
+    fve = g_hat / trace_cov_B if trace_cov_B > 0 else 0.0
+    return g_hat, trace_cov_B, fve
 
 
 class SpectralAnalyzer:

@@ -81,7 +81,7 @@ class Phase4Record:
     k: int
     g_hat: float
     trace_cov_B: float
-    ratio: float
+    fve: float
     num_graphs: int
     n: int
 
@@ -357,7 +357,7 @@ def sweep_dataset_at_seed(
                                     k=k,
                                     g_hat=result.g_hat,
                                     trace_cov_B=result.trace_cov_B,
-                                    ratio=result.ratio,
+                                    fve=result.fve,
                                     num_graphs=result.num_graphs,
                                     n=dataset_n,
                                 )
@@ -397,7 +397,7 @@ def _series_mean_std(
     permuted: bool,
     k: int,
 ) -> list[tuple[float, float, float]]:
-    """Per-noise-level (mean ratio, std ratio, mean g_hat) across seeds."""
+    """Per-noise-level (mean FVE, std FVE, mean g_hat) across seeds."""
     out: list[tuple[float, float, float]] = []
     for nl in NOISE_LEVELS:
         matching = [
@@ -411,12 +411,12 @@ def _series_mean_std(
             and r.k == k
             and abs(r.noise_level - nl) < 1e-9
         ]
-        ratios = torch.tensor([r.ratio for r in matching])
+        fves = torch.tensor([r.fve for r in matching])
         g_hats = torch.tensor([r.g_hat for r in matching])
         out.append(
             (
-                float(ratios.mean().item()) if len(ratios) else 0.0,
-                float(ratios.std().item()) if len(ratios) > 1 else 0.0,
+                float(fves.mean().item()) if len(fves) else 0.0,
+                float(fves.std().item()) if len(fves) > 1 else 0.0,
                 float(g_hats.mean().item()) if len(g_hats) else 0.0,
             )
         )
@@ -433,7 +433,7 @@ def _calibrated_margin(
     k: int,
     noise_level: float,
 ) -> tuple[float, float]:
-    """Return (mean ratio_real − ratio_null, null mean) across seeds."""
+    """Return (mean FVE_real − FVE_null, null mean) across seeds."""
     real_vals: list[float] = []
     null_vals: list[float] = []
     for r in records:
@@ -445,7 +445,7 @@ def _calibrated_margin(
             and r.k == k
             and abs(r.noise_level - noise_level) < 1e-9
         ):
-            (real_vals if not r.permuted else null_vals).append(r.ratio)
+            (real_vals if not r.permuted else null_vals).append(r.fve)
     if not real_vals or not null_vals:
         return 0.0, 0.0
     real_mean = sum(real_vals) / len(real_vals)
@@ -470,7 +470,7 @@ def write_report(records: list[Phase4Record], report_dir: Path) -> None:
         "k",
         "g_hat",
         "trace_cov_B",
-        "ratio",
+        "fve",
         "num_graphs",
         "n",
     ]
@@ -552,12 +552,13 @@ def write_report(records: list[Phase4Record], report_dir: Path) -> None:
     )
     lines.append("")
     lines.append(
-        "Calibrated margin = mean(ratio_real) − mean(ratio_null). "
-        "Success criterion: margin ≥ 0.10 with null below 0.30."
+        "Calibrated margin = mean(FVE_real) − mean(FVE_null), where FVE is "
+        "the fraction of variance explained of ``B`` by the noisy top-k "
+        "eigenvalues. Success criterion: margin ≥ 0.10 with null below 0.30."
     )
     lines.append("")
     lines.append(
-        "| Dataset | real ratio (mean) | null ratio (mean) | calibrated margin | pass? |"
+        "| Dataset | real FVE (mean) | null FVE (mean) | calibrated margin | pass? |"
     )
     lines.append("|---|---|---|---|---|")
     dataset_margins: list[tuple[str, float, float]] = []
@@ -674,11 +675,11 @@ def write_report(records: list[Phase4Record], report_dir: Path) -> None:
     lines.append("")
     lines.append(
         "For each dataset at (knn_top_k, frechet, gaussian, k=8), report "
-        "ratio vs. ε series (mean±std) and whether the calibrated margin "
+        "FVE vs. ε series (mean±std) and whether the calibrated margin "
         "stays positive across ε."
     )
     lines.append("")
-    lines.append("| Dataset | ratio series | null series | margin at each ε |")
+    lines.append("| Dataset | FVE series | null series | margin at each ε |")
     lines.append("|---|---|---|---|")
     for spec in DATASETS:
         real_series = _series_mean_std(
@@ -717,7 +718,7 @@ def write_report(records: list[Phase4Record], report_dir: Path) -> None:
         "grid. Should be monotone across sbm_d{0, 0.33, 0.67, 1.0}."
     )
     lines.append("")
-    lines.append("| Diversity | real ratio | null ratio | margin |")
+    lines.append("| Diversity | real FVE | null FVE | margin |")
     lines.append("|---|---|---|---|")
     syn_datasets = [s for s in DATASETS if s.category == "synthetic_sbm"]
     for spec in syn_datasets:

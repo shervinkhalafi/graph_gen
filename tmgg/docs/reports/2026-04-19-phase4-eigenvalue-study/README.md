@@ -40,9 +40,9 @@ Final eigenvalue-study sweep across all target datasets. Applies the Phase 3 v2 
 
 ## Headline: dataset ordering at (frame=frechet, estimator=knn_top_k, k=8, noise=gaussian, ε=0.1)
 
-Calibrated margin = mean(ratio_real) − mean(ratio_null). Success criterion: margin ≥ 0.10 with null below 0.30.
+Calibrated margin = mean(FVE_real) − mean(FVE_null), where FVE = `Var(E[B | Λ̃_k]) / Var(B)` is the fraction of variance explained of the projected clean adjacency `B` by the noisy top-k eigenvalues. Success criterion: margin ≥ 0.10 with null below 0.30.
 
-| Dataset | real ratio (mean) | null ratio (mean) | calibrated margin | pass? |
+| Dataset | real FVE (mean) | null FVE (mean) | calibrated margin | pass? |
 |---|---|---|---|---|
 | sbm_d0.00 | 0.139 | 0.097 | 0.043 | ✗ |
 | sbm_d0.33 | 0.302 | 0.097 | 0.205 | ✓ |
@@ -75,9 +75,9 @@ Across all (2 × 5 × 4 × 4) = 160 (noise_type × noise_level × estimator × k
 
 ## Noise-level sensitivity (headline cell)
 
-For each dataset at (knn_top_k, frechet, gaussian, k=8), report ratio vs. ε series (mean±std) and whether the calibrated margin stays positive across ε.
+For each dataset at (knn_top_k, frechet, gaussian, k=8), report FVE vs. ε series (mean±std) and whether the calibrated margin stays positive across ε.
 
-| Dataset | ratio series | null series | margin at each ε |
+| Dataset | FVE series | null series | margin at each ε |
 |---|---|---|---|
 | sbm_d0.00 | 0.14±0.01, 0.14±0.01, 0.14±0.00, 0.14±0.00, 0.13±0.00 | 0.10±0.00, 0.10±0.00, 0.10±0.00, 0.09±0.00, 0.10±0.00 | 0.05, 0.05, 0.04, 0.04, 0.03 |
 | sbm_d0.33 | 0.31±0.02, 0.31±0.02, 0.30±0.01, 0.30±0.02, 0.28±0.01 | 0.10±0.01, 0.10±0.01, 0.10±0.01, 0.10±0.01, 0.10±0.01 | 0.22, 0.21, 0.20, 0.20, 0.18 |
@@ -92,7 +92,7 @@ For each dataset at (knn_top_k, frechet, gaussian, k=8), report ratio vs. ε ser
 
 Replicates the Phase 3 v2 finding at a single ε on the real-data grid. Should be monotone across sbm_d{0, 0.33, 0.67, 1.0}.
 
-| Diversity | real ratio | null ratio | margin |
+| Diversity | real FVE | null FVE | margin |
 |---|---|---|---|
 | 0.00 | 0.139 | 0.097 | 0.043 |
 | 0.33 | 0.302 | 0.097 | 0.205 |

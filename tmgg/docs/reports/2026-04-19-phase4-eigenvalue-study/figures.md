@@ -2,57 +2,59 @@
 
 This document accompanies the three main-paper figures (F1, F2, F3) and the two supplementary figures (FS1, FS2) produced by `scripts/plot_phase4_figures.py`. It explains what each figure shows, why we chose its particular framing, and what a reader should take away. Design details (sizes, palettes, thresholds) live in `figures-spec.md`; the quantitative headline lives in `README.md`. This file is the narrative bridge.
 
-## What the surrogate is measuring
+## What the figures measure: FVE
 
-All figures plot variants of the same quantity: the improvement-gap surrogate ratio
+All figures plot variants of the same quantity: the **fraction of variance explained** (FVE) of the projected clean adjacency by the noisy top-k eigenvalues,
 
-$$\mathrm{ratio} = \frac{\hat{g}_k}{\operatorname{tr}\operatorname{Cov}(B)} \in [0, 1],$$
+$$\mathrm{FVE}(k) = \frac{\operatorname{Var}(E[B\mid\tilde\Lambda_k])}{\operatorname{Var}(B)} = \frac{\hat{g}_k}{\operatorname{tr}\operatorname{Cov}(B)} \in [0, 1],$$
 
-where `B = V̂_k^T A V̂_k` projects the clean adjacency into the noisy top-k eigenbasis and `ĝ_k` estimates `E‖E[B | Λ̃_k] − E[B]‖²_F` (equation 18 of the draft). A ratio near zero says Λ̃_k carries no information about B beyond the overall variance; a ratio near one says the noisy eigenvalues determine B almost completely.
+where `B = V̂_k^T A V̂_k` re-expresses the clean adjacency in the noisy top-k eigenbasis and `ĝ_k` estimates `E‖E[B | Λ̃_k] − E[B]‖²_F` (equation 18 of the draft). By the law of total variance, FVE is the **population R²** of the Bayes-optimal predictor of `B` from `Λ̃_k` — model-free, not tied to any fitted regression. `FVE = 0` says `Λ̃_k` carries no information about `B`; `FVE = 1` says `Λ̃_k` determines `B` completely.
 
-The **permutation null** replaces each graph's eigenvalue vector with a random sibling's before conditioning. It absorbs finite-sample bias in the kNN conditional-mean estimator (≈1/m for m=10 neighbours, hence the ~0.10 floor) and acts as a ratio **offset**, not a significance test. The **calibrated margin** `real − null` is what we interpret: a margin ≥ 0.10 (with null < 0.30) is our pass criterion.
+The **permutation null** replaces each graph's eigenvalue vector with a random sibling's before conditioning. It absorbs finite-sample bias in the kNN conditional-mean estimator (≈1/m for m=10 neighbours, hence the ~0.10 floor) and acts as a **bias offset**, not a significance test. The **calibrated FVE margin** `FVE_real − FVE_null` is what we interpret: a margin ≥ 0.10 (with FVE_null < 0.30) is our pass criterion.
 
-## F1 — ratio vs ε per dataset (double-column, 2×4 panels)
+> **One-line caption boilerplate** (drop into any figure in the paper): *We plot the fraction of variance explained (FVE) of `B = V̂_k^T A V̂_k` by the noisy top-k eigenvalues `Λ̃_k`, i.e. `FVE = Var(E[B | Λ̃_k]) / Var(B) ∈ [0, 1]`. FVE is estimated with a kNN conditional-mean regressor (m=10), whose ≈1/m finite-sample bias we subtract via a permutation null and report as the calibrated FVE margin `FVE_real − FVE_null`.*
 
-**What it shows.** For each of the eight datasets (four synthetic SBMs with increasing diversity on the top row, four real benchmarks on the bottom) a panel of the real-data ratio versus the noise level ε, one line per k ∈ {4, 8, 16, 32}. The permutation null appears as a k-coloured ribbon at the bottom of each panel.
+## F1 — FVE vs ε per dataset (double-column, 2×4 panels)
+
+**What it shows.** For each of the eight datasets (four synthetic SBMs with increasing diversity on the top row, four real benchmarks on the bottom) a panel of the real-data FVE versus the noise level ε, one line per k ∈ {4, 8, 16, 32}. The permutation null appears as a k-coloured ribbon at the bottom of each panel.
 
 **What a reader should take away.**
-- The curves are flat in ε. This is the robustness claim: the surrogate reads community structure, not the noise shape.
+- The curves are flat in ε. This is the robustness claim: the FVE reads community structure, not the noise shape.
 - The null ribbons sit at ~0.10 across k and ε. This establishes the floor the real curves must clear.
 - The top row walks diversity upward; the real curves lift away from the null in lockstep. The bottom row situates the real benchmarks inside that monotone: COLLAB sits near `sbm_d1.0`, the SPECTRE fixture near `sbm_d0.67`, PROTEINS/ENZYMES near `sbm_d0.33`.
 
 **Why the design choices.**
 - *2×4 grid, not 4×2.* The synthetic row functions as a monotone reference; the reader compares top-to-bottom to place each real dataset on the synthetic axis. A portrait layout would break that alignment.
 - *Per-k null ribbons, not a single collapsed band.* The kNN bias depends on k. Collapsing across k would misrepresent the null for large k where the bias is slightly higher.
-- *Absolute y=0.10 threshold line*, not a per-panel null-shifted one. The readers see the uncalibrated ratio directly; the calibration lives in F2/F3 where the margin is the primary quantity.
+- *Absolute y=0.10 threshold line*, not a per-panel null-shifted one. The reader sees the uncalibrated FVE directly; the calibration lives in F2/F3 where the margin is the primary quantity.
 - *Shared y-axis per row.* Keeps the visual magnitude of the signal comparable across datasets in the same row.
 - *Gaussian only in the main figure.* DiGress (structure-preserving) noise lives in FS1. The two look similar, but headline = Gaussian keeps one noise model as the anchor.
 
 **Failure modes the figure exposes.**
-- `sbm_d0.00` (the pure-null synthetic control) sits at the null ribbon for every k and ε. That is the sanity check: when there is nothing to find, the surrogate finds nothing.
+- `sbm_d0.00` (the pure-null synthetic control) sits at the null ribbon for every k and ε. That is the sanity check: when there is nothing to find, the FVE finds nothing.
 - ENZYMES is the closest pass. Its curves barely clear the 0.10 line and degrade modestly at large ε.
 
-## F2 — calibrated margin vs diversity (single-column)
+## F2 — calibrated FVE margin vs diversity (single-column)
 
-**What it shows.** The synthetic SBM sweep at ε=0.1, headline cell, with the y-axis set to the **calibrated margin** (real − null) per seed, averaged across seeds. One line per k.
+**What it shows.** The synthetic SBM sweep at ε=0.1, headline cell, with the y-axis set to the **calibrated FVE margin** (`FVE_real − FVE_null`) per seed, averaged across seeds. One line per k.
 
 **What a reader should take away.**
-The surrogate grows monotonically with community strength at every k, which rules out k-specific quirks. The ordering across k is `k=4 > k=8 > k=16 > k=32` — smaller k carries **more** signal per component, because the top few eigenvalues already encode the block structure and the tail eigenvalues mostly add noise-dominated directions to condition on. By the time diversity reaches 1.0 the margin is large (≈0.73 for k=4, ≈0.63 for k=8), and even at diversity=0.33 the k=4 estimator passes the 0.10 threshold while k=32 only reaches it at diversity=1.0.
+The FVE grows monotonically with community strength at every k, which rules out k-specific quirks. The ordering across k is `k=4 > k=8 > k=16 > k=32` — smaller k carries **more** signal per component, because the top few eigenvalues already encode the block structure and the tail eigenvalues mostly add noise-dominated directions to condition on. By the time diversity reaches 1.0 the margin is large (≈0.73 for k=4, ≈0.63 for k=8), and even at diversity=0.33 the k=4 estimator passes the 0.10 threshold while k=32 only reaches it at diversity=1.0.
 
 **Why the design choices.**
-- *Calibrated margin, not raw ratio.* The null subtraction is the whole point of the plot: we want the reader to see the **signal** grow with diversity, not the signal plus a flat ~0.10 offset.
+- *Calibrated margin, not raw FVE.* The null subtraction is the whole point of the plot: we want the reader to see the **signal** grow with diversity, not the signal plus a flat ~0.10 offset.
 - *All four k values, not only k=8.* Showing monotonicity replicate across k is the robust-to-hyperparameter claim. A single-k plot would invite the reviewer-2 question "does the trend hold for other k?".
 - *ε=0.1 only.* Single slice through a robust quantity. F1 already establishes that ε does not qualitatively change the picture.
-- *Seed-paired differences.* `margin = ratio_real − ratio_null` is computed **per seed** before averaging, because the paired structure reduces variance. Reporting the SD of those paired differences yields tighter, honest error bars.
+- *Seed-paired differences.* `margin = FVE_real − FVE_null` is computed **per seed** before averaging, because the paired structure reduces variance. Reporting the SD of those paired differences yields tighter, honest error bars.
 
 **Failure modes exposed.** None, by design — this is the positive control. If this plot were not monotone we would not submit the paper.
 
 ## F3 — dataset ranking at the headline cell
 
-**What it shows.** Horizontal bar chart ordering all eight datasets by their calibrated margin at (k=8, ε=0.1, Fréchet frame, knn_top_k, Gaussian). Bars are blue when they pass the criterion (margin ≥ 0.10 **and** null ratio < 0.30), grey otherwise. Error bars are the standard-error of the difference of two means across five seeds.
+**What it shows.** Horizontal bar chart ordering all eight datasets by their calibrated FVE margin at (k=8, ε=0.1, Fréchet frame, knn_top_k, Gaussian). Bars are blue when they pass the criterion (margin ≥ 0.10 **and** FVE_null < 0.30), grey otherwise. Error bars are the standard-error of the difference of two means across five seeds.
 
 **What a reader should take away.**
-Seven of eight datasets pass. The one failure, `sbm_d0.00`, is the designed null control. The ordering is: `sbm_d1.00 > collab > sbm_d0.67 > spectre_sbm > sbm_d0.33 > proteins > enzymes > sbm_d0.00`. COLLAB ranking second (above the diversity=0.67 synthetic) is the concrete claim: a real benchmark the community uses as a denoising target does carry signal the surrogate recovers.
+Seven of eight datasets pass. The one failure, `sbm_d0.00`, is the designed null control. The ordering is: `sbm_d1.00 > collab > sbm_d0.67 > spectre_sbm > sbm_d0.33 > proteins > enzymes > sbm_d0.00`. COLLAB ranking second (above the diversity=0.67 synthetic) is the concrete claim: a real benchmark the community uses as a denoising target does carry an FVE signal the Bayes-optimal predictor recovers from `Λ̃_k`.
 
 **Why the design choices.**
 - *Horizontal bars, not vertical.* Dataset names are long; rotating labels hurts readability.
@@ -65,7 +67,7 @@ Seven of eight datasets pass. The one failure, `sbm_d0.00`, is the designed null
 
 ## FS1 — F1 with DiGress noise
 
-Identical construction to F1 but with `noise_type='digress'`. We expect — and observe — the same qualitative picture: flat ε-dependence, similar dataset ordering, null ribbon at ~0.10. This supports the claim that the surrogate is robust to the noise model, which matters because DiGress is the noise model our generative baselines actually use.
+Identical construction to F1 but with `noise_type='digress'`. We expect — and observe — the same qualitative picture: flat ε-dependence, similar dataset ordering, null ribbon at ~0.10. This supports the claim that the FVE is robust to the noise model, which matters because DiGress is the noise model our generative baselines actually use.
 
 ## FS2 — F3 with the per-graph frame (the reviewer-2 diagnostic)
 
@@ -73,7 +75,7 @@ Identical construction to F3 but with `frame_mode='per_graph'` — each graph's 
 
 **What it shows.** Margins are **larger, not smaller**, than under the Fréchet frame. More damning: the pure-null control `sbm_d0.00` produces a margin of 0.36 and passes the criterion, whereas in F3 it correctly failed at 0.04. The ranking also inverts parts of the Fréchet ordering (e.g. ENZYMES > SPECTRE).
 
-**What it means.** A per-graph frame change smuggles graph-specific basis rotations into `B` that depend on Λ̃_k (because the rotation is derived from the noisy eigenvectors), so the kNN estimator picks up this spurious dependence and reports a non-zero conditional-mean variance. The Fréchet frame isolates the *structural* dependence of `B` on Λ̃_k by eliminating per-graph basis freedom. FS2 is the empirical evidence that this matters: without the Fréchet alignment, the null control passes, so the margin is no longer a signal detector.
+**What it means.** A per-graph frame change smuggles graph-specific basis rotations into `B` that depend on Λ̃_k (because the rotation is derived from the noisy eigenvectors), so the kNN estimator picks up this spurious dependence and inflates the FVE. The Fréchet frame isolates the *structural* dependence of `B` on Λ̃_k by eliminating per-graph basis freedom. FS2 is the empirical evidence that this matters: without the Fréchet alignment, the null control passes, so the calibrated margin is no longer a signal detector.
 
 ## Decisions we took and why
 
@@ -90,11 +92,11 @@ Identical construction to F3 but with `frame_mode='per_graph'` — each graph's 
 
 | Figure | Claim it supports |
 |---|---|
-| F1 | Surrogate is robust to ε and k; null floor is flat at ~0.10; real-benchmark curves sit at diversity-appropriate levels. |
-| F2 | Surrogate grows monotonically with community strength; monotonicity replicates across k. |
+| F1 | FVE is robust to ε and k; null floor is flat at ~0.10; real-benchmark curves sit at diversity-appropriate levels. |
+| F2 | FVE grows monotonically with community strength; monotonicity replicates across k. |
 | F3 | Seven of eight datasets pass; real benchmarks are interleaved with synthetic diversities; COLLAB is the strongest real-data signal. |
 | FS1 | The F1 picture replicates under DiGress noise. |
-| FS2 | The F3 ranking replicates under the per-graph frame (with reduced margins as expected). |
+| FS2 | The per-graph frame **inflates** margins and produces a false pass on the null control — empirical justification for the Fréchet-frame choice. |
 
 ## Reproducing the figures
 

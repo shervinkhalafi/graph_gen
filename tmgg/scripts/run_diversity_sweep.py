@@ -3,9 +3,9 @@
 Sweeps the SBM diversity knob at four settings and reports the
 improvement-gap surrogate ĝ for multiple (frame_mode, estimator,
 conditioning, target) combinations with a permutation-null control. The
-knob is validated if the conditional-variance ratio (not just absolute
-ĝ) is monotone ↑ in diversity across frame modes, with the
-permutation-null ratio staying near zero throughout.
+knob is validated if the fraction of variance explained (FVE, not
+just absolute ĝ) is monotone ↑ in diversity across frame modes, with
+the permutation-null FVE staying near zero throughout.
 
 Run:
 
@@ -27,8 +27,8 @@ Design choices addressing the reviewer-2 audit of the Phase 3 v1 report:
   ``frame_mode=per_graph`` (legacy / diagnostic) so the frame-convention
   question is visible in the numbers.
 - Every cell is computed a second time with ``permute_features=True``
-  to produce the permutation-null ratio. A kNN finite-sample bias would
-  show as a large null ratio independent of diversity.
+  to produce the permutation-null FVE. A kNN finite-sample bias would
+  show as a large null FVE independent of diversity.
 - ``estimator`` sweeps ``{knn_top_k, knn_1d, bin_1d, invariants_knn}``
   so kNN(1-D) and bin(1-D) share a feature space (directly comparable),
   the invariants path (tr, ||·||_F², eigvals) serves as a frame-free
@@ -97,7 +97,7 @@ class SweepRecord:
     k: int
     g_hat: float
     trace_cov_B: float
-    ratio: float
+    fve: float
     num_graphs: int
 
 
@@ -263,7 +263,7 @@ def sweep_one_dataset(
                             k=k,
                             g_hat=result.g_hat,
                             trace_cov_B=result.trace_cov_B,
-                            ratio=result.ratio,
+                            fve=result.fve,
                             num_graphs=result.num_graphs,
                         )
                     )
@@ -347,7 +347,7 @@ def write_report(records: list[SweepRecord], report_dir: Path) -> None:
         "k",
         "g_hat",
         "trace_cov_B",
-        "ratio",
+        "fve",
         "num_graphs",
     ]
     with csv_path.open("w", newline="") as f:
@@ -363,7 +363,7 @@ def write_report(records: list[SweepRecord], report_dir: Path) -> None:
             "Phase 3 of the improvement-gap plan "
             "(`docs/plans/2026-04-18-improvement-gap-surrogate-and-spectrum-diversity.md`). "
             "Addresses reviewer-2 audit findings: frame mode exposed, permutation null "
-            "reported, ratio monotonicity (not absolute ĝ) used as the success "
+            "reported, FVE monotonicity (not absolute ĝ) used as the success "
             "criterion, `num_blocks` frozen, ≥3 seeds."
         ),
         "",
@@ -390,12 +390,12 @@ def write_report(records: list[SweepRecord], report_dir: Path) -> None:
         "`knn_1d` and `bin_1d` (same 1-D spectral-gap feature, comparable), "
         "`invariants_knn` (kNN on frame-invariant summaries of B — frame-free cross-check).",
         "- Permutation null: every cell is also computed with conditioning features "
-        "shuffled; a calibrated estimator returns `ratio ≈ 0` under the null.",
+        "shuffled; a calibrated estimator returns `FVE ≈ 0` under the null.",
         "",
         "## Monotonicity verdicts",
         "",
         (
-            "Success criterion per cell: **mean ratio** across seeds is "
+            "Success criterion per cell: **mean FVE** across seeds is "
             "monotone non-decreasing in diversity (0 → 0.33 → 0.67 → 1.0). "
             "Absolute ĝ is also reported but is not the gate — it tracks "
             "`trace(Cov B)` which mechanically grows with diversity."
@@ -403,14 +403,14 @@ def write_report(records: list[SweepRecord], report_dir: Path) -> None:
         "",
         "### Real features (permutation off)",
         "",
-        "| frame | estimator | k | ratio series (mean±std) | ĝ monotone? | ratio monotone? |",
+        "| frame | estimator | k | FVE series (mean±std) | ĝ monotone? | FVE monotone? |",
         "|---|---|---|---|---|---|",
     ]
 
     def _fmt_series(series: list[tuple[float, float]]) -> str:
         return ", ".join(f"{m:.3f}±{s:.3f}" for m, s in series)
 
-    any_real_ratio_non_monotone = False
+    any_real_fve_non_monotone = False
     for frame_mode in FRAME_MODES:
         for spec in ESTIMATORS:
             for k in K_VALUES:
@@ -428,12 +428,12 @@ def write_report(records: list[SweepRecord], report_dir: Path) -> None:
                     estimator_label=spec.label,
                     permuted=False,
                     k=k,
-                    field="ratio",
+                    field="fve",
                 )
                 g_mon = _is_monotone_increasing(g_series)
                 r_mon = _is_monotone_increasing(r_series)
                 if not r_mon:
-                    any_real_ratio_non_monotone = True
+                    any_real_fve_non_monotone = True
                 lines.append(
                     f"| {frame_mode} | {spec.label} | {k} | {_fmt_series(r_series)} "
                     f"| {'✓' if g_mon else '✗'} | {'✓' if r_mon else '✗'} |"
@@ -444,48 +444,48 @@ def write_report(records: list[SweepRecord], report_dir: Path) -> None:
         [
             "### Permutation null (features shuffled; should be ≈0 across diversity)",
             "",
-            "| frame | estimator | k | null ratio series (mean±std) | null ratio max |",
+            "| frame | estimator | k | null FVE series (mean±std) | null FVE max |",
             "|---|---|---|---|---|",
         ]
     )
-    any_null_ratio_elevated = False
+    any_null_fve_elevated = False
     for frame_mode in FRAME_MODES:
         for spec in ESTIMATORS:
             for k in K_VALUES:
-                null_ratio_series = _series_mean_std(
+                null_fve_series = _series_mean_std(
                     records,
                     frame_mode=frame_mode,
                     estimator_label=spec.label,
                     permuted=True,
                     k=k,
-                    field="ratio",
+                    field="fve",
                 )
-                null_max = max(m for m, _ in null_ratio_series)
+                null_max = max(m for m, _ in null_fve_series)
                 if null_max > 0.30:
-                    any_null_ratio_elevated = True
+                    any_null_fve_elevated = True
                 lines.append(
                     f"| {frame_mode} | {spec.label} | {k} | "
-                    f"{_fmt_series(null_ratio_series)} | {null_max:.3f} |"
+                    f"{_fmt_series(null_fve_series)} | {null_max:.3f} |"
                 )
     lines.append("")
 
     lines.append("## Conclusion")
     lines.append("")
-    if any_real_ratio_non_monotone:
+    if any_real_fve_non_monotone:
         lines.append(
-            "At least one (frame, estimator, k) cell has a non-monotone mean ratio "
+            "At least one (frame, estimator, k) cell has a non-monotone mean FVE "
             "across diversity. Phase 4 still blocked — investigate the failing cell."
         )
-    elif any_null_ratio_elevated:
+    elif any_null_fve_elevated:
         lines.append(
-            "All real-feature ratios are monotone, but at least one permutation-null "
-            "ratio exceeds 0.30 — this signals material finite-sample estimator bias. "
-            "Report the real-minus-null difference rather than the raw ratio if "
+            "All real-feature FVEs are monotone, but at least one permutation-null "
+            "FVE exceeds 0.30 — this signals material finite-sample estimator bias. "
+            "Report the real-minus-null difference rather than the raw FVE if "
             "proceeding to Phase 4."
         )
     else:
         lines.append(
-            "Mean ratios monotone across every cell AND permutation-null ratios "
+            "Mean FVEs monotone across every cell AND permutation-null FVEs "
             "bounded below 0.30 across every cell. Phase 4 unblocked."
         )
     lines.append("")

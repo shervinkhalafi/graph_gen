@@ -1,6 +1,6 @@
 # 2026-04-19 — Diversity-knob validation (Phase 3, v2)
 
-Phase 3 of the improvement-gap plan (`docs/plans/2026-04-18-improvement-gap-surrogate-and-spectrum-diversity.md`). Addresses reviewer-2 audit findings: frame mode exposed, permutation null reported, ratio monotonicity (not absolute ĝ) used as the success criterion, `num_blocks` frozen, ≥3 seeds.
+Phase 3 of the improvement-gap plan (`docs/plans/2026-04-18-improvement-gap-surrogate-and-spectrum-diversity.md`). Addresses reviewer-2 audit findings: frame mode exposed, permutation null reported, FVE monotonicity (not absolute ĝ) used as the success criterion, `num_blocks` frozen, ≥3 seeds.
 
 ## Setup
 
@@ -10,15 +10,15 @@ Phase 3 of the improvement-gap plan (`docs/plans/2026-04-18-improvement-gap-surr
 - Noise: gaussian @ ε = 0.1
 - Frame modes: `frechet` (default, dataset-wide common frame via extrinsic Grassmannian mean) and `per_graph` (align each noisy V̂ to that graph's clean V; retained as diagnostic — does not satisfy the common-frame requirement of eq. (18) across heterogeneous datasets).
 - Estimators: `knn_top_k` (kNN with k-dim top-k eigenvalues on raw B), `knn_1d` and `bin_1d` (same 1-D spectral-gap feature, comparable), `invariants_knn` (kNN on frame-invariant summaries of B — frame-free cross-check).
-- Permutation null: every cell is also computed with conditioning features shuffled; a calibrated estimator returns `ratio ≈ 0` under the null.
+- Permutation null: every cell is also computed with conditioning features shuffled; a calibrated estimator returns `FVE ≈ 0` under the null.
 
 ## Monotonicity verdicts
 
-Success criterion per cell: **mean ratio** across seeds is monotone non-decreasing in diversity (0 → 0.33 → 0.67 → 1.0). Absolute ĝ is also reported but is not the gate — it tracks `trace(Cov B)` which mechanically grows with diversity.
+Success criterion per cell: **mean FVE** (= `Var(E[B | Λ̃_k]) / Var(B)`) across seeds is monotone non-decreasing in diversity (0 → 0.33 → 0.67 → 1.0). Absolute ĝ is also reported but is not the gate — it tracks `trace(Cov B)` which mechanically grows with diversity.
 
 ### Real features (permutation off)
 
-| frame | estimator | k | ratio series (mean±std) | ĝ monotone? | ratio monotone? |
+| frame | estimator | k | FVE series (mean±std) | ĝ monotone? | FVE monotone? |
 |---|---|---|---|---|---|
 | frechet | knn_top_k | 4 | 0.207±0.021, 0.475±0.037, 0.724±0.032, 0.831±0.026 | ✓ | ✓ |
 | frechet | knn_top_k | 8 | 0.137±0.008, 0.306±0.023, 0.565±0.030, 0.720±0.024 | ✓ | ✓ |
@@ -55,7 +55,7 @@ Success criterion per cell: **mean ratio** across seeds is monotone non-decreasi
 
 ### Permutation null (features shuffled; should be ≈0 across diversity)
 
-| frame | estimator | k | null ratio series (mean±std) | null ratio max |
+| frame | estimator | k | null FVE series (mean±std) | null FVE max |
 |---|---|---|---|---|
 | frechet | knn_top_k | 4 | 0.102±0.006, 0.102±0.002, 0.100±0.003, 0.095±0.011 | 0.102 |
 | frechet | knn_top_k | 8 | 0.097±0.001, 0.097±0.004, 0.097±0.005, 0.096±0.010 | 0.097 |
@@ -92,6 +92,6 @@ Success criterion per cell: **mean ratio** across seeds is monotone non-decreasi
 
 ## Conclusion
 
-Mean ratios monotone across every cell AND permutation-null ratios bounded below 0.30 across every cell. Phase 4 unblocked.
+Mean FVEs monotone across every cell AND permutation-null FVEs bounded below 0.30 across every cell. Phase 4 unblocked.
 
 Raw data: `diversity_sweep.csv` (768 rows).

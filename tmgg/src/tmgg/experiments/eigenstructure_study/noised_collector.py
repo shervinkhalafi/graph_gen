@@ -1182,7 +1182,7 @@ class NoisedAnalysisComparator:
         # all orthogonal-conjugation invariant.
         surrogate_target = compute_B_invariants(B) if target == "invariants" else B
 
-        g_hat, trace_cov_B, ratio = estimate_improvement_gap(
+        g_hat, trace_cov_B, fve = estimate_improvement_gap(
             surrogate_target,
             features,
             estimator=estimator,
@@ -1199,7 +1199,7 @@ class NoisedAnalysisComparator:
             num_graphs=B.shape[0],
             g_hat=g_hat,
             trace_cov_B=trace_cov_B,
-            ratio=ratio,
+            fve=fve,
             knn_neighbours=knn_neighbours if estimator == "knn" else None,
             num_bins=num_bins if estimator == "bin" else None,
             target=target,
