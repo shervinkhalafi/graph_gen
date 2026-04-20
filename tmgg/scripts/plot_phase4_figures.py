@@ -173,68 +173,96 @@ def paired_margin(df: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
 
 
 # ----------------------------------------------------------------------------
-# F1 — FVE vs ε per dataset (double-column, 2×4 grid)
+# F1 — FVE vs ε per dataset, Gaussian (top 2 rows) vs DiGress (bottom 2 rows)
 # ----------------------------------------------------------------------------
 
 
+def _draw_f1_panel(ax, sub: pd.DataFrame, *, dataset: str) -> int:
+    """Draw one F1 sub-panel. Returns number of k-series actually plotted."""
+    n_series = 0
+    for k in K_VALUES:
+        k_sub = sub[sub["k"] == k]
+        real = k_sub[~k_sub["permuted"]]
+        null = k_sub[k_sub["permuted"]]
+        if real.empty or null.empty:
+            continue
+        agg_real = aggregate_fve(real, ["noise_level"]).sort_values("noise_level")
+        agg_null = aggregate_fve(null, ["noise_level"]).sort_values("noise_level")
+        colour = k_colour(k)
+        ax.fill_between(
+            agg_null["noise_level"].to_numpy(),
+            (agg_null["fve_mean"] - agg_null["fve_sd"]).to_numpy(),
+            (agg_null["fve_mean"] + agg_null["fve_sd"]).to_numpy(),
+            color=colour,
+            alpha=0.12,
+            linewidth=0,
+        )
+        ax.errorbar(
+            agg_real["noise_level"].to_numpy(),
+            agg_real["fve_mean"].to_numpy(),
+            yerr=agg_real["fve_sd"].to_numpy(),
+            color=colour,
+            marker="o",
+            capsize=1.5,
+            label=f"k={k}",
+        )
+        n_series += 1
+
+    ax.axhline(PASS_THRESHOLD, color="black", linestyle="--", linewidth=0.6, alpha=0.6)
+    ax.set_ylim(0.0, 0.8)
+    ax.set_xticks(list(NOISE_LEVELS))
+    ax.set_xticklabels([f"{v:g}" for v in NOISE_LEVELS])
+    n_graphs = sub["num_graphs"].iloc[0]
+    ax.set_title(f"{dataset} (N={n_graphs})")
+    return n_series
+
+
 def plot_f1(
-    df_headline: pd.DataFrame,
+    df_gaussian: pd.DataFrame,
+    df_digress: pd.DataFrame,
     out_dir: Path,
     *,
-    noise_type_label: str,
-    filename_stem: str,
+    filename_stem: str = "F1_fve_vs_epsilon",
 ) -> None:
-    fig, axes = plt.subplots(2, 4, figsize=(6.75, 3.5), sharey="row")
-    axes = axes.flatten()
+    """4×4 grid: Gaussian (rows 0–1) and DiGress (rows 2–3) noise side-by-side.
 
-    for panel_idx, dataset in enumerate(ALL_DATASETS):
-        ax = axes[panel_idx]
-        sub = df_headline[df_headline["dataset"] == dataset]
-        if sub.empty:
-            ax.set_visible(False)
-            continue
+    Dataset columns are held constant across the two halves so vertical
+    scanning within a column is the natural Gaussian-vs-DiGress comparison.
+    """
+    fig, axes = plt.subplots(4, 4, figsize=(6.75, 6.0), sharey="row")
 
-        for k in K_VALUES:
-            k_sub = sub[sub["k"] == k]
-            real = k_sub[~k_sub["permuted"]]
-            null = k_sub[k_sub["permuted"]]
-            if real.empty or null.empty:
+    halves = (
+        ("Gaussian noise", df_gaussian, 0),
+        ("DiGress noise", df_digress, 2),
+    )
+    total_panels = 0
+    for half_label, df_half, row_offset in halves:
+        for panel_idx, dataset in enumerate(ALL_DATASETS):
+            row = row_offset + panel_idx // 4
+            col = panel_idx % 4
+            ax = axes[row, col]
+            sub = df_half[df_half["dataset"] == dataset]
+            if sub.empty:
+                ax.set_visible(False)
                 continue
+            _draw_f1_panel(ax, sub, dataset=dataset)
+            total_panels += 1
+            if col == 0:
+                ax.set_ylabel("FVE")
+            if row == 3:
+                ax.set_xlabel(r"$\varepsilon$")
 
-            agg_real = aggregate_fve(real, ["noise_level"]).sort_values("noise_level")
-            agg_null = aggregate_fve(null, ["noise_level"]).sort_values("noise_level")
-
-            colour = k_colour(k)
-            ax.fill_between(
-                agg_null["noise_level"].to_numpy(),
-                (agg_null["fve_mean"] - agg_null["fve_sd"]).to_numpy(),
-                (agg_null["fve_mean"] + agg_null["fve_sd"]).to_numpy(),
-                color=colour,
-                alpha=0.12,
-                linewidth=0,
-            )
-            ax.errorbar(
-                agg_real["noise_level"].to_numpy(),
-                agg_real["fve_mean"].to_numpy(),
-                yerr=agg_real["fve_sd"].to_numpy(),
-                color=colour,
-                marker="o",
-                capsize=1.5,
-                label=f"k={k}",
-            )
-
-        ax.axhline(
-            PASS_THRESHOLD, color="black", linestyle="--", linewidth=0.6, alpha=0.6
+        # Left-margin row-group label on the leftmost panel of the top row of each half.
+        anchor_ax = axes[row_offset, 0]
+        anchor_ax.annotate(
+            half_label,
+            xy=(0.0, 1.15),
+            xycoords="axes fraction",
+            ha="left",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
         )
-        ax.set_ylim(0.0, 0.8)
-        ax.set_xticks(list(NOISE_LEVELS))
-        ax.set_xticklabels([f"{v:g}" for v in NOISE_LEVELS])
-        n_graphs = sub["num_graphs"].iloc[0]
-        ax.set_title(f"{dataset} (N={n_graphs})")
-        if panel_idx % 4 == 0:
-            ax.set_ylabel("FVE")
-        if panel_idx >= 4:
-            ax.set_xlabel(r"$\varepsilon$")
 
     k_handles = [
         Line2D([0], [0], color=k_colour(k), marker="o", label=f"k={k}")
@@ -255,19 +283,15 @@ def plot_f1(
         handles=[*k_handles, null_handle, threshold_handle],
         loc="lower center",
         ncol=6,
-        bbox_to_anchor=(0.5, -0.02),
+        bbox_to_anchor=(0.5, -0.01),
         frameon=False,
     )
-    fig.suptitle("")  # no top title
-    fig.tight_layout(rect=[0.0, 0.04, 1.0, 1.0])
+    fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.98])
 
     save_figure(fig, out_dir, filename_stem)
-    n_panels = sum(
-        1 for d in ALL_DATASETS if not df_headline[df_headline["dataset"] == d].empty
-    )
     print(
-        f"wrote F1 [{noise_type_label}] (panels={n_panels}, series={len(K_VALUES)}, "
-        f"points={n_panels * len(K_VALUES) * len(NOISE_LEVELS)}) "
+        f"wrote F1 (panels={total_panels}, series={len(K_VALUES)}, "
+        f"points={total_panels * len(K_VALUES) * len(NOISE_LEVELS)}) "
         f"→ figures/{filename_stem}.{{pdf,png}}"
     )
 
@@ -397,44 +421,31 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--csv", type=Path, default=CSV_PATH)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_FIG_DIR)
-    parser.add_argument(
-        "--supplementary", action="store_true", help="also render FS1 and FS2"
-    )
     args = parser.parse_args()
 
     set_style()
     df = load_sweep(args.csv)
 
-    df_head = filter_headline(df)
-    plot_f1(
-        df_head,
-        args.output_dir,
-        noise_type_label="gaussian",
-        filename_stem="F1_fve_vs_epsilon",
-    )
-    plot_f2(df_head, args.output_dir)
+    df_head_gauss = filter_headline(df, noise_type="gaussian")
+    df_head_digress = filter_headline(df, noise_type="digress")
+
+    plot_f1(df_head_gauss, df_head_digress, args.output_dir)
+    plot_f2(df_head_gauss, args.output_dir)
     plot_f3(
-        df_head,
+        df_head_gauss,
         args.output_dir,
         frame_label="Fréchet",
         filename_stem="F3_dataset_ranking",
     )
 
-    if args.supplementary:
-        df_digress = filter_headline(df, noise_type="digress")
-        plot_f1(
-            df_digress,
-            args.output_dir,
-            noise_type_label="digress",
-            filename_stem="FS1_fve_vs_epsilon_digress",
-        )
-        df_per_graph = filter_headline(df, frame_mode="per_graph")
-        plot_f3(
-            df_per_graph,
-            args.output_dir,
-            frame_label="per-graph",
-            filename_stem="FS2_dataset_ranking_per_graph",
-        )
+    # Supplementary (rendered by default, per spec): per-graph-frame ranking.
+    df_per_graph = filter_headline(df, frame_mode="per_graph")
+    plot_f3(
+        df_per_graph,
+        args.output_dir,
+        frame_label="per-graph",
+        filename_stem="FS1_dataset_ranking_per_graph",
+    )
 
 
 if __name__ == "__main__":
