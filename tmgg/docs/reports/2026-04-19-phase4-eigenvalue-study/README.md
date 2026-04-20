@@ -2,6 +2,8 @@
 
 Final eigenvalue-study sweep across all target datasets. Applies the Phase 3 v2 surrogate infrastructure (Fréchet-mean frame, permutation-null control, four estimator variants) to the real-data benchmarks and the synthetic diversity sweep.
 
+For the theoretical justification of the Fréchet-frame choice and the permutation-null bias offset — with citations — see [`theory.md`](theory.md).
+
 ## Setup
 
 - Seeds: [42, 123, 2024, 7, 11] (n = 5).

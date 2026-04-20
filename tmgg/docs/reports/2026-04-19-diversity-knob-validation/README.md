@@ -2,6 +2,8 @@
 
 Phase 3 of the improvement-gap plan (`docs/plans/2026-04-18-improvement-gap-surrogate-and-spectrum-diversity.md`). Addresses reviewer-2 audit findings: frame mode exposed, permutation null reported, FVE monotonicity (not absolute ĝ) used as the success criterion, `num_blocks` frozen, ≥3 seeds.
 
+For the theoretical justification of the Fréchet-frame choice and the permutation-null bias offset — with citations — see [`../2026-04-19-phase4-eigenvalue-study/theory.md`](../2026-04-19-phase4-eigenvalue-study/theory.md).
+
 ## Setup
 
 - `num_graphs = 200`, `num_nodes = 50`, seeds = [42, 123, 2024]
