@@ -69,6 +69,34 @@ The CSV's `estimator_label='knn_top_k'` column corresponds to this choice with `
 - **Consistent.** `ĝ_k → g_k` as `N → ∞`, `m → ∞`, `m/N → 0` (standard kNN-regression consistency). At our sample sizes (N ≥ 68) m=10 sits comfortably in the safe regime.
 - **Computationally trivial.** One N×N distance matrix plus a single stack-and-average per graph. Every cell in the 25 600-row sweep runs in milliseconds.
 
+### Calibrated margin as a lower bound on the Bayes FVE
+
+Decompose the kNN predictor as `m̂(λ) = m*(λ) + bias(λ) + ξ(λ)`, where `m*(λ) = E[B | Λ̃_k = λ]` is the Bayes-optimal predictor, `bias(λ) = E[m̂(λ)] − m*(λ)` is the smoothing error from averaging over m neighbours whose `Λ̃` is not exactly `λ`, and `ξ(λ)` is the residual noise of the neighbour average around `E[m̂(λ)]`. Then
+
+$$\operatorname{Var}(\hat m(\tilde\Lambda_k)) \;\approx\; \underbrace{\operatorname{Var}(m^{*}(\tilde\Lambda_k))}_{\text{true Bayes signal}} \;+\; \underbrace{O(h^{2})}_{\text{smoothing attenuation}} \;+\; \underbrace{\sigma^{2}/m}_{\text{neighbour-averaging inflation}},$$
+
+with effective bandwidth `h ~ (m/N)^{1/k}` for k-dimensional `Λ̃_k`. This is the standard kNN-regression bias-variance decomposition under Lipschitz `m*`: pointwise bias is `O(h)` so `bias² = O(h²) = O((m/N)^{2/k})`, and neighbour-averaging variance is `O(σ²/m)` (Györfi, Kohler, Krzyżak & Walk, 2002 — *A Distribution-Free Theory of Nonparametric Regression*, ch. 6 on kNN estimates; Biau & Devroye, 2015 — *Lectures on the Nearest Neighbor Method*, Part II ch. 14 "Rates of Convergence"; Ayano, 2012 — *Statistics & Probability Letters*, which further shows that for (p,C)-smooth `m*` plain kNN achieves the minimax rate only up to `p = 3/2`, so stronger-smoothness regimes — e.g. twice-differentiable `m*` giving the faster `O(h⁴)` bias² — are unreachable without local-linear corrections we do not apply).
+
+The inflation term `σ²/m` is approximately invariant under permutation (same m, N, and marginal noise), so subtracting `FVE_null` removes it cleanly. The attenuation term, however, is absent from the null: under H₀ the true `m*` is constant and there is nothing to over-smooth. It therefore survives the subtraction as a **negative** contribution to `FVE_real − FVE_null`. The calibrated margin we report is, in consequence, a **conservative lower bound** on the true Bayes FVE — the population quantity from eq. (18):
+
+$$\mathrm{FVE}_{\text{real}} - \mathrm{FVE}_{\text{null}} \;\le\; \mathrm{FVE}_{\text{Bayes}} \;+\; O\!\bigl((m/N)^{2/k}\bigr).$$
+
+Numerically the attenuation bound `(m/N)^{2/k}` at `m=10` and our sample sizes is:
+
+| k  | N = 200 | N = 3700 |
+|----|---------|----------|
+| 4  | 0.22    | 0.05     |
+| 8  | 0.47    | 0.23     |
+| 16 | 0.69    | 0.48     |
+| 32 | 0.83    | 0.69     |
+
+At k=4 with large N the bound is tight. At k=16 and k=32 it becomes loose, and our calibrated margin increasingly understates the true Bayes R². Two practical consequences: (i) a *positive* calibrated margin at high k is still evidence for real signal, because the estimator errs conservatively; (ii) a *shrinking* margin as k grows in F1 / F2 cannot be attributed solely to loss of signal — part of it is estimator conservatism. We flag this in the figure captions rather than correcting it in post, because the bias constant depends on unknown smoothness properties of `m*` and on the intrinsic (rather than ambient) dimension of `Λ̃_k`, which for eigenvalues of structured adjacency matrices is often smaller than k.
+
+**References (validated):**
+- Györfi, Kohler, Krzyżak & Walk (2002). *A Distribution-Free Theory of Nonparametric Regression.* Springer. DOI [10.1007/b97848](https://link.springer.com/book/10.1007/b97848). Chapter 6 gives the classical Lipschitz rate `O((k/n)^{2/d}) + O(1/k)` for the kNN regression estimate.
+- Biau & Devroye (2015). *Lectures on the Nearest Neighbor Method.* Springer Series in the Data Sciences. DOI [10.1007/978-3-319-25388-6](https://link.springer.com/book/10.1007/978-3-319-25388-6). Part II ch. 14 ("Rates of Convergence") reproves and extends the kNN regression rates; ch. 8 introduces the estimator.
+- Ayano, T. (2012). *Rates of convergence for the k-nearest neighbor estimators with smoother regression functions.* Statistics & Probability Letters. [ScienceDirect link](https://www.sciencedirect.com/science/article/abs/pii/S0378375812001280). Shows plain kNN attains `n^{-2p/(2p+d)}` only for `p ∈ (0, 3/2]`; higher-order smoothness requires bias-reducing variants.
+
 ### The permutation null as a bias diagnostic, not a significance test
 
 Shuffling `Λ̃_k` across graphs preserves the marginal distribution of the features but breaks the pairing with `B`, so under the null the true conditional mean is constant: `E[B | Λ̃_k^{\mathrm{perm}}] ≡ μ_B`. Any non-zero `FVE_null` is therefore estimator bias, not genuine structure. We report it and subtract it; we do **not** report a p-value. This matches the conceptual framing in the paper — the surrogate is an effect-size measurement of the Bayes gap, not a hypothesis test.
@@ -77,19 +105,23 @@ Shuffling `Λ̃_k` across graphs preserves the marginal distribution of the feat
 
 A dataset cell passes when `FVE_real − FVE_null ≥ 0.10` **and** `FVE_null < 0.30`. The first clause is the signal requirement; the second clause guards against small-N regimes where the kNN bias inflates and leaves little headroom between the null and the real curve. The two thresholds were fixed before Phase 4 data collection and are the same thresholds the Phase 3 diversity-knob validation used.
 
-## F1 — FVE vs ε per dataset (with permutation-null ribbon)
+## F1 — FVE vs ε per dataset, Gaussian vs DiGress noise side-by-side
 
-**Question**: does the FVE stay above the permutation null across ε, and does it behave similarly across k?
+**Question**: does the FVE stay above the permutation null across ε, does it behave similarly across k, and does the picture change under the structured (DiGress) noise the paper's generative models actually use?
 
-- **Layout**: 2 rows × 4 cols grid, 8 panels, shared y-axis per row. Landscape, ~6.75" × 3.5".
-- **Panel order**: row-major top-left to bottom-right — `sbm_d0.00, sbm_d0.33, sbm_d0.67, sbm_d1.00` on top row; `spectre_sbm, enzymes, proteins, collab` on bottom row.
+- **Layout**: 4 rows × 4 cols grid, 16 panels, shared y-axis per row and shared x-axis per column. Landscape, ~6.75" × 6.0".
+- **Row layout**:
+  - Rows 1–2: `noise_type='gaussian'` (top half).
+  - Rows 3–4: `noise_type='digress'` (bottom half).
+  - A thin horizontal rule between row 2 and row 3 plus a left-margin row-group label ("Gaussian" / "DiGress") makes the split visually explicit.
+- **Column layout**: same dataset ordering in every row, one dataset per column — row-major within each half, top-left to bottom-right: `sbm_d0.00, sbm_d0.33, sbm_d0.67, sbm_d1.00` on the upper row of each half; `spectre_sbm, enzymes, proteins, collab` on the lower row of each half. Holding the column order constant across the Gaussian and DiGress halves makes vertical scanning within a dataset the natural comparison.
 - **Per panel**:
   - x-axis: `noise_level ∈ {0.01, 0.05, 0.1, 0.15, 0.2}` on linear scale.
-  - y-axis: `FVE` (fraction of variance explained, `ĝ_k / tr Cov(B)`). Range 0–0.8 (shared).
+  - y-axis: `FVE` (fraction of variance explained, `ĝ_k / tr Cov(B)`). Range 0–0.8 (shared across all 16 panels).
   - Foreground: four lines for `k ∈ {4, 8, 16, 32}` over `permuted=False`, coloured by k with a sequential cmap (`plasma`). Markers at each ε, line joining them, ±1 SD vertical error bars across seeds.
   - Background ribbon: for each k, fill-between ±1 SD of the `permuted=True` curve in the same k-colour at alpha=0.15. This keeps the k-specific null visible rather than collapsing it to a single band.
   - Dashed horizontal line at `y=0.10` (pass threshold for the calibrated FVE margin, after subtracting null).
-  - Panel subtitle: dataset name + retained N (e.g. `sbm_d0.67 (N=200)`).
+  - Panel subtitle: dataset name + retained N (e.g. `sbm_d0.67 (N=200)`). Noise type is indicated by the row-group label, not repeated per panel.
 - **Legend**: single legend bottom-centre with k=4/8/16/32 swatches plus a grey ribbon swatch labelled "permutation null (±1 SD)".
 - **Filename**: `F1_fve_vs_epsilon.pdf` / `.png`.
 
@@ -121,14 +153,13 @@ A dataset cell passes when `FVE_real − FVE_null ≥ 0.10` **and** `FVE_null < 
 - **Axes**: y = dataset label; x = calibrated FVE margin (0 to ~0.7).
 - **Filename**: `F3_dataset_ranking.pdf` / `.png`.
 
-## Supplementary (optional, same script, flag-gated)
+## Supplementary (rendered by default)
 
-Flag `--supplementary` also renders:
+The same script also emits, without requiring any flag:
 
-- **F1-digress**: identical to F1 but with `noise_type='digress'`. Filename `FS1_fve_vs_epsilon_digress.pdf`.
-- **F3-per-graph-frame**: identical to F3 but with `frame_mode='per_graph'`. Demonstrates the Fréchet-frame contribution to the signal. Filename `FS2_dataset_ranking_per_graph.pdf`.
+- **FS1 — per-graph frame ranking**: identical to F3 but with `frame_mode='per_graph'`. Demonstrates the Fréchet-frame contribution to the signal. Filename `FS1_dataset_ranking_per_graph.pdf` / `.png`.
 
-The main paper cites only F1–F3; supplementary goes to the appendix.
+The main paper cites F1–F3; FS1 goes to the appendix. (The former supplementary "F1-digress" is no longer needed: DiGress now appears as the bottom half of F1.)
 
 ## Implementation notes
 
@@ -136,14 +167,14 @@ The main paper cites only F1–F3; supplementary goes to the appendix.
 - Seed count assertion: for every cell used in the figures, assert `len(group) == 5`; fail loudly if not.
 - Save each figure twice (PDF, PNG). The PDF vector output is what LaTeX will `\includegraphics`.
 - No `plt.show()`. No interactive state leaking between figures — call `plt.close(fig)` after saving.
-- The script prints a one-line manifest per figure: `wrote F1 (panels=8, series=4, points=40) → figures/F1_ratio_vs_epsilon.{pdf,png}`.
+- The script prints a one-line manifest per figure: `wrote F1 (panels=16, series=4, points=80) → figures/F1_fve_vs_epsilon.{pdf,png}`.
 
-## Open questions for the user
+## Resolved design decisions
 
-Before implementation, please confirm:
+Captured here so the rationale stays with the spec even after the open-questions block is removed.
 
-1. **Subplot grid for F1**: 2×4 landscape as specified, or 4×2 portrait? I default to 2×4 for double-column inclusion.
-2. **Pass-threshold line** on F1: should it sit at `y=0.10` (absolute ratio) or at `y = mean_null + 0.10` per panel? I defaulted to absolute 0.10 for consistency with the README headline criterion, but per-panel null-shifted might read better visually.
-3. **F2 k-lines**: include all four k-values, or only `k=8` with bigger error bars? I default to all four lines; swap to k=8-only if the panel gets noisy.
-4. **Supplementary figures**: render by default, or leave behind the `--supplementary` flag? Flag-gated by default.
-5. **DiGress headline**: the README headline is Gaussian; confirm we keep DiGress as supplementary rather than promoting it to a side-by-side panel in F1.
+1. **F1 subplot grid**: 4 rows × 4 cols (was 2×4 Gaussian-only). Gaussian on top half, DiGress on bottom, double-column width.
+2. **Pass-threshold line on F1**: absolute `y = 0.10`, matching the README headline pass criterion. Not per-panel null-shifted.
+3. **F2 k-lines**: all four k ∈ {4, 8, 16, 32} rendered.
+4. **Supplementary figures**: rendered by default — no `--supplementary` flag needed.
+5. **DiGress in F1**: promoted to the bottom half of F1 (side-by-side with Gaussian) rather than relegated to supplementary. Former "F1-digress" supplementary is subsumed.
