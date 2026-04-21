@@ -16,7 +16,7 @@ import matplotlib.figure
 import matplotlib.pyplot as plt
 from lightning_fabric.loggers.logger import Logger as FabricLogger
 from loguru import logger as loguru
-from omegaconf import DictConfig, ListConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from pytorch_lightning.loggers import CSVLogger, Logger, WandbLogger
 from torch import nn
 
@@ -59,6 +59,20 @@ def _has_wandb_credentials() -> bool:
     return bool(os.environ.get("WANDB_API_KEY"))
 
 
+def _finish_active_wandb_run() -> None:
+    """Finish an active W&B run, if one exists."""
+    try:
+        import wandb
+    except ImportError:
+        return
+
+    if wandb.run is not None:
+        loguru.warning(
+            "Finishing active wandb run before creating a new WandbLogger."
+        )
+        wandb.finish()
+
+
 def create_loggers(config: DictConfig) -> list[Logger]:
     """Create PyTorch Lightning loggers based on configuration.
 
@@ -96,6 +110,10 @@ def create_loggers(config: DictConfig) -> list[Logger]:
                 logger_params = logger_config[logger_type]
 
                 if logger_type == "wandb":
+                    # Hydra multirun can execute multiple jobs in the same process.
+                    # Ensure each job starts with a clean wandb run state.
+                    _finish_active_wandb_run()
+
                     if not _has_wandb_credentials():
                         if config.get("allow_no_wandb", False):
                             loguru.warning(
@@ -128,6 +146,19 @@ def create_loggers(config: DictConfig) -> list[Logger]:
                         "entity": logger_params.get("entity", None),
                         "log_model": logger_params.get("log_model", False),
                     }
+                    run_config: dict[str, Any] = {}
+
+                    # Promote key sweep dimensions so they are easy to filter in W&B.
+                    data_graph_type = OmegaConf.select(config, "data.graph_type")
+                    if data_graph_type is not None:
+                        run_config["data"] = str(data_graph_type)
+
+                    filter_qk = OmegaConf.select(config, "model.model.filter_qk")
+                    if filter_qk is not None:
+                        run_config["filter_qk"] = bool(filter_qk)
+
+                    if run_config:
+                        wandb_kwargs["config"] = run_config
                     for optional_key in ("group", "notes", "offline"):
                         if optional_key in logger_params:
                             wandb_kwargs[optional_key] = logger_params.get(optional_key)

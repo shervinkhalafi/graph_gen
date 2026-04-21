@@ -25,7 +25,17 @@ from tmgg.data.datasets.synthetic_graphs import SyntheticGraphDataset
 
 from ._split import split_indices
 
-PYG_BENCHMARK_DATASETS = frozenset({"qm9", "enzymes", "proteins"})
+PYG_BENCHMARK_DATASETS = frozenset(
+    {
+        "qm9",
+        "enzymes",
+        "proteins",
+        "collab",
+        "deezer_ego_nets",
+        "imdb_binary",
+        "reddit_binary",
+    }
+)
 
 
 @dataclass(frozen=True)

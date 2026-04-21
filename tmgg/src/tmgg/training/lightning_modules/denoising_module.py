@@ -34,6 +34,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import torch
+from loguru import logger as loguru
 
 from tmgg.data.datasets.graph_data_fields import FieldName
 from tmgg.data.datasets.graph_types import GraphData
@@ -533,7 +534,18 @@ class SingleStepDenoisingModule(DiffusionModule):
         )
 
         with torch.no_grad():
-            deltas_noisy = compute_spectral_deltas(A_clean, A_noisy, k=self.spectral_k)
+            try:
+                deltas_noisy = compute_spectral_deltas(
+                    A_clean, A_noisy, k=self.spectral_k
+                )
+            except Exception as exc:
+                loguru.warning(
+                    "Skipping spectral delta logging for {mode}_{eps} (noisy): {err}",
+                    mode=mode,
+                    eps=eps,
+                    err=str(exc),
+                )
+                return
             for name, values in deltas_noisy.items():
                 self.log(
                     f"{mode}_{eps}/noisy_{name}",
@@ -542,9 +554,18 @@ class SingleStepDenoisingModule(DiffusionModule):
                     on_epoch=True,
                 )
 
-            deltas_denoised = compute_spectral_deltas(
-                A_clean, A_denoised, k=self.spectral_k
-            )
+            try:
+                deltas_denoised = compute_spectral_deltas(
+                    A_clean, A_denoised, k=self.spectral_k
+                )
+            except Exception as exc:
+                loguru.warning(
+                    "Skipping spectral delta logging for {mode}_{eps} (denoised): {err}",
+                    mode=mode,
+                    eps=eps,
+                    err=str(exc),
+                )
+                return
             for name, values in deltas_denoised.items():
                 self.log(
                     f"{mode}_{eps}/denoised_{name}",

@@ -1,0 +1,28 @@
+# @package data
+# IMDB-BINARY benchmark dataset from PyTorch Geometric (TUDataset)
+# Movie collaboration graphs - adjacency only (node features ignored)
+
+_target_: tmgg.data.GraphDataModule
+
+graph_type: imdb_binary
+
+graph_config:
+  # Root directory for PyG datasets (default: ~/.pyg_data)
+  root: null
+  # Maximum graphs to load (null = all)
+  max_graphs: null
+  seed: 42
+
+# Samples per graph (permutations)
+samples_per_graph: 100
+
+# Batch size
+batch_size: 16
+
+# Data loading
+num_workers: 4
+pin_memory: true
+
+# Train/val split ratios (remainder goes to test)
+train_ratio: 0.7
+val_ratio: 0.1
