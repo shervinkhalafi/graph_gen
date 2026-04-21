@@ -435,7 +435,13 @@ class TestSyntheticCategoricalDataModuleContract:
         # alone carries which positions are real.
         assert batch.X_class is None
         assert batch.E_class is not None
+        # Off-diagonal positions must be valid one-hot; the diagonal is
+        # emitted as all-zero (upstream encode_no_edge parity — see
+        # ``GraphData.from_pyg_batch``).
+        n = batch.node_mask.size(-1)
+        off_diag = ~torch.eye(n, dtype=torch.bool, device=batch.node_mask.device)
         edge_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
+        edge_mask = edge_mask & off_diag.unsqueeze(0)
         edge_sums = batch.E_class[edge_mask].sum(dim=-1)
 
         assert batch.E_class.shape[-1] == 2

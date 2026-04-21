@@ -213,12 +213,32 @@ class TestCategoricalBatches:
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Real-edge categorical features should sum to one."""
+        """Real off-diagonal edge categorical features should sum to one.
+
+        Diagonal positions are deliberately emitted as all-zero rows (see
+        ``GraphData.from_pyg_batch`` — mirrors upstream DiGress's
+        ``utils.encode_no_edge`` contract), so the one-hot sum invariant
+        only holds off the diagonal.
+        """
         batch: GraphData = next(iter(small_dm.train_dataloader()))
         assert batch.E_class is not None
+        n = batch.node_mask.size(-1)
+        off_diag = ~torch.eye(n, dtype=torch.bool, device=batch.node_mask.device)
         edge_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
+        edge_mask = edge_mask & off_diag.unsqueeze(0)
         edge_sums = batch.E_class[edge_mask].sum(dim=-1)
         assert torch.allclose(edge_sums, torch.ones_like(edge_sums))
+
+        # Diagonal positions must be all-zero (upstream encode_no_edge
+        # equivalent). If this ever changes, the CE helpers would silently
+        # start including self-loops as valid targets — see BUG_REPORT.md.
+        diag_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
+        diag_mask = diag_mask & (~off_diag).unsqueeze(0)
+        diag_rows = batch.E_class[diag_mask]
+        assert (diag_rows == 0.0).all(), (
+            "E_class diagonal rows must be all-zero on valid nodes "
+            "(upstream parity). See GraphData.from_pyg_batch."
+        )
 
     def test_node_presence_tracked_by_node_mask(
         self,

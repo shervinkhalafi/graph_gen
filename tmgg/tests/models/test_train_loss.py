@@ -333,59 +333,53 @@ class TestUpstreamParity:
     ) -> None:
         """``masked_edge_ce`` must match upstream on pipeline-shaped E targets.
 
+        Pins the invariant from ``GraphData.from_pyg_batch`` that our
+        training targets arrive at the CE with the E diagonal explicitly
+        zeroed, mirroring upstream DiGress's ``utils.encode_no_edge``
+        (``digress-upstream-readonly/src/utils.py:73-74``: ``E[diag] = 0``).
+
         The earlier ``test_masked_edge_ce_matches_upstream`` constructs
-        ``true_E`` by manually zeroing the diagonal — it never exercises what
-        the production pipeline (``GraphData.from_dense_adj`` +
-        ``GraphData.mask``) actually produces, which is ``[1, 0]``
-        (one-hot no-edge) on the diagonal.
+        ``true_E`` with a manual upper-triangular fill — it never exercises
+        a full ``[1-adj, adj]``-stacked one-hot batch. This test builds
+        exactly what the production data path now emits (diagonal = zero
+        after the 2026-04-21 upstream-parity fix in ``from_pyg_batch``) and
+        pins ``masked_edge_ce`` to upstream's ``F.cross_entropy`` formula
+        at ``atol=1e-6``.
 
-        Upstream DiGress zeros the diagonal inside ``utils.encode_no_edge``
-        (``digress-upstream-readonly/src/utils.py:73-74``: ``E[diag] = 0``)
-        **before** ``TrainLossDiscrete.forward`` runs, so upstream's row
-        predicate ``(true != 0).any(-1)`` drops the diagonal.
-
-        This test pins the full-pipeline equivalence: given pipeline-shaped
-        ``true_E`` with ``[1, 0]`` diagonal rows, ``masked_edge_ce`` must
-        still match upstream's CE over the same valid-row population —
-        i.e. our helper must treat the diagonal as invalid the same way
-        upstream does, not as a bonus "easy no-edge" training signal.
-
-        If this test fails, the loss helper and the data pipeline have
-        drifted; see ``analysis/digress-loss-check/BUG_REPORT.md`` for
-        context.
+        If the data layer ever stops zeroing the diagonal, this test will
+        fail loudly. See ``analysis/digress-loss-check/BUG_REPORT.md`` for
+        the full tradeoff discussion.
         """
         torch.manual_seed(99)
-        # Reconstruct what ``from_dense_adj`` emits: a symmetric adjacency
-        # with zeroed diagonal, stacked into ``[1-adj, adj]`` one-hot.
+        # Reconstruct what ``GraphData.from_pyg_batch`` emits AFTER the
+        # 2026-04-21 upstream-parity fix: symmetric adjacency with zeroed
+        # diagonal, stacked into ``[1-adj, adj]`` one-hot, with the
+        # resulting E_class diagonal **explicitly zeroed** to match
+        # upstream's ``encode_no_edge``.
         adj = torch.bernoulli(torch.full((BS, N, N), 0.47))
         adj = (adj + adj.transpose(1, 2)).clamp(max=1.0)
         diag_idx = torch.arange(N)
         adj[:, diag_idx, diag_idx] = 0.0
-        true_E_pipeline = torch.stack([1.0 - adj, adj], dim=-1)  # [1, 0] on diag
-        # Sanity: diagonal must be ``[1, 0]`` in this fixture, not all-zero.
+        true_E_pipeline = torch.stack([1.0 - adj, adj], dim=-1)
+        true_E_pipeline[:, diag_idx, diag_idx, :] = 0.0
+        # Sanity: diagonal must be ``[0, 0]`` in this fixture — that's the
+        # whole point.
         assert (
-            true_E_pipeline[:, diag_idx, diag_idx] == torch.tensor([1.0, 0.0])
-        ).all(), "Test fixture construction error: diagonal should be [1, 0]."
+            true_E_pipeline[:, diag_idx, diag_idx] == torch.tensor([0.0, 0.0])
+        ).all(), "Test fixture construction error: diagonal should be [0, 0]."
 
         pred_E_logits = torch.randn(BS, N, N, DE)
         node_mask = torch.ones(BS, N, dtype=torch.bool)
 
         got = masked_edge_ce(pred_E_logits, true_E_pipeline, node_mask)
-        # Upstream reference: applies encode_no_edge's diagonal zeroing
-        # explicitly before taking the CE, matching what upstream's pipeline
-        # delivers to TrainLossDiscrete.
-        true_E_upstream = true_E_pipeline.clone()
-        true_E_upstream[:, diag_idx, diag_idx, :] = 0.0
         expected = _reference_cross_entropy_over_valid_rows(
-            pred_E_logits, true_E_upstream
+            pred_E_logits, true_E_pipeline
         )
         assert torch.allclose(got, expected, atol=1e-6), (
             f"masked_edge_ce={got.item():.6f} diverges from upstream "
-            f"reference={expected.item():.6f}. "
-            f"Likely cause: our pipeline emits [1, 0] diagonal rows (via "
-            f"from_dense_adj + .mask) that upstream zeros in encode_no_edge. "
-            f"Those rows survive the (true != 0).any(-1) predicate and inflate "
-            f"the CE denominator. See BUG_REPORT.md."
+            f"reference={expected.item():.6f} on pipeline-shaped input. "
+            f"If this fails, the data layer ``from_pyg_batch`` may have "
+            f"stopped zeroing the E diagonal; see BUG_REPORT.md."
         )
 
     def test_label_smoothing_passed_through(self) -> None:
