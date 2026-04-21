@@ -6,128 +6,126 @@ can iterate over ``noise_process.fields``. :class:`TrainLossDiscrete` is now a
 thin compatibility wrapper that composes the node and edge helpers with a
 ``lambda_E`` weighting, keeping upstream DiGress parity tests that call it
 directly green. New callers should prefer the helpers below.
+
+The categorical helpers now consume **raw logits** and dispatch to
+``torch.nn.functional.cross_entropy`` exactly as upstream DiGress does
+(`digress-upstream-readonly/src/metrics/train_metrics.py:95-102`). Invalid
+rows are dropped with the same ``(true != 0).any(-1)`` predicate upstream
+uses after flattening to ``(bs*n, dx)`` / ``(bs*n*n, de)``, so edge-diagonal
+positions (encoded as all-zero rows via ``encode_no_edge``) are excluded
+automatically. ``label_smoothing`` is exposed as an opt-in keyword-only
+parameter; the default ``0.0`` preserves bit-for-bit upstream parity.
 """
 
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 
 
-def _node_mask_fill_uniform(tensor: Tensor, node_mask: Tensor) -> Tensor:
-    """Return ``tensor`` with masked node rows replaced by a ``(1, 0, ...)`` pad.
-
-    Matches the semantics of
-    :func:`tmgg.diffusion.diffusion_sampling.mask_distributions` for the node
-    view: invalid positions get a deterministic distribution that is later
-    excluded from the averaging, so they contribute exactly zero to the loss.
-    """
-    row = torch.zeros(tensor.size(-1), dtype=torch.float, device=tensor.device)
-    row[0] = 1.0
-    out = tensor.clone()
-    out[~node_mask] = row
-    return out
-
-
-def _edge_mask_fill_uniform(tensor: Tensor, node_mask: Tensor) -> Tensor:
-    """Return ``tensor`` with masked edge positions replaced by a ``(1, 0, ...)`` pad.
-
-    Padding covers both padding-node pairs and the diagonal; the returned
-    tensor can then be epsilon-smoothed without corrupting valid entries.
-    """
-    row = torch.zeros(tensor.size(-1), dtype=torch.float, device=tensor.device)
-    row[0] = 1.0
-    diag_mask = ~torch.eye(
-        node_mask.size(1), device=node_mask.device, dtype=torch.bool
-    ).unsqueeze(0)
-    valid = node_mask.unsqueeze(1) * node_mask.unsqueeze(2) * diag_mask
-    out = tensor.clone()
-    out[~valid, :] = row
-    return out
-
-
-def _epsilon_renormalise(tensor: Tensor, eps: float = 1e-7) -> Tensor:
-    """Add a small ``eps`` and renormalise along the last axis.
-
-    Mirrors the renormalisation inside ``mask_distributions`` so per-field
-    masked CE values stay numerically equal to the legacy dual-field path.
-    """
-    out = tensor + eps
-    return out / out.sum(dim=-1, keepdim=True)
-
-
 def masked_node_ce(
-    pred_X: Tensor,
+    pred_X_logits: Tensor,
     true_X: Tensor,
     node_mask: Tensor,
+    *,
+    label_smoothing: float = 0.0,
 ) -> Tensor:
-    """Per-graph masked cross-entropy over a node-shaped categorical field.
+    """Masked cross-entropy over a node-shaped categorical field.
 
     Parameters
     ----------
-    pred_X
-        Predicted PMF, shape ``(bs, n, dx)``. Values should already be
-        post-softmax.
+    pred_X_logits
+        Raw logits, shape ``(bs, n, dx)``. No softmax expected or applied
+        externally: the fused ``log_softmax`` inside
+        :func:`torch.nn.functional.cross_entropy` handles it.
     true_X
-        Target PMF (typically one-hot), shape ``(bs, n, dx)``.
+        Target distribution, shape ``(bs, n, dx)``. Typically one-hot; soft
+        targets work too but are converted to hard class indices internally
+        via ``argmax(-1)`` to match upstream DiGress semantics.
     node_mask
-        Boolean mask of valid nodes, shape ``(bs, n)``.
+        Boolean mask of valid nodes, shape ``(bs, n)``. Currently unused for
+        row selection (the ``(true != 0).any(-1)`` predicate already excludes
+        padding rows because invalid ``true_X`` entries are all-zero), but
+        kept in the signature for API stability and future use.
+    label_smoothing
+        Forwarded to :func:`torch.nn.functional.cross_entropy`. Default
+        ``0.0`` matches upstream. Pass e.g. ``0.1`` for classical label
+        smoothing at the call site.
 
     Returns
     -------
     Tensor
-        Scalar CE loss averaged over valid node positions per graph, then
-        mean-reduced over the batch.
+        Scalar mean CE across valid node positions (flattened across batch
+        and node axes), matching upstream's per-row mean semantics.
     """
-    true_X = _node_mask_fill_uniform(true_X, node_mask)
-    pred_X = _node_mask_fill_uniform(pred_X, node_mask)
+    del node_mask  # unused — row selection uses the (true != 0) predicate
 
-    true_X = _epsilon_renormalise(true_X)
-    pred_X = _epsilon_renormalise(pred_X)
+    dx = pred_X_logits.size(-1)
+    flat_logits = pred_X_logits.reshape(-1, dx)
+    flat_true = true_X.reshape(-1, dx)
 
-    loss = -torch.sum(true_X * torch.log(pred_X.clamp(min=1e-10)), dim=-1)  # (bs, n)
-    num_nodes = node_mask.sum(dim=-1, keepdim=True).clamp(min=1)  # (bs, 1)
-    per_graph = (loss * node_mask).sum(dim=-1) / num_nodes.squeeze(-1)  # (bs,)
-    return per_graph.mean()
+    valid = (flat_true != 0).any(dim=-1)
+    flat_logits = flat_logits[valid]
+    flat_true = flat_true[valid]
+    flat_targets = flat_true.argmax(dim=-1)
+
+    return F.cross_entropy(
+        flat_logits,
+        flat_targets,
+        reduction="mean",
+        label_smoothing=label_smoothing,
+    )
 
 
 def masked_edge_ce(
-    pred_E: Tensor,
+    pred_E_logits: Tensor,
     true_E: Tensor,
     node_mask: Tensor,
+    *,
+    label_smoothing: float = 0.0,
 ) -> Tensor:
-    """Per-graph masked cross-entropy over an edge-shaped categorical field.
+    """Masked cross-entropy over an edge-shaped categorical field.
 
     Parameters
     ----------
-    pred_E
-        Predicted PMF, shape ``(bs, n, n, de)``. Already post-softmax.
+    pred_E_logits
+        Raw logits, shape ``(bs, n, n, de)``. No softmax expected or applied.
     true_E
-        Target PMF, shape ``(bs, n, n, de)``.
+        Target distribution, shape ``(bs, n, n, de)``. Diagonal positions
+        and padding-node pairs are encoded as all-zero rows by
+        :func:`tmgg.data.datasets.graph_types.encode_no_edge`; the
+        ``(true != 0).any(-1)`` predicate below excludes them automatically
+        — no additional diagonal mask is needed.
     node_mask
-        Boolean mask of valid nodes, shape ``(bs, n)``.
+        Boolean mask of valid nodes, shape ``(bs, n)``. Currently unused
+        (see :func:`masked_node_ce` note); kept for API stability.
+    label_smoothing
+        Forwarded to :func:`torch.nn.functional.cross_entropy`. Default
+        ``0.0`` matches upstream.
 
     Returns
     -------
     Tensor
-        Scalar CE loss averaged over valid off-diagonal edge positions per
-        graph, then mean-reduced over the batch.
+        Scalar mean CE across valid edge positions.
     """
-    true_E = _edge_mask_fill_uniform(true_E, node_mask)
-    pred_E = _edge_mask_fill_uniform(pred_E, node_mask)
+    del node_mask  # unused — row selection uses the (true != 0) predicate
 
-    true_E = _epsilon_renormalise(true_E)
-    pred_E = _epsilon_renormalise(pred_E)
+    de = pred_E_logits.size(-1)
+    flat_logits = pred_E_logits.reshape(-1, de)
+    flat_true = true_E.reshape(-1, de)
 
-    loss = -torch.sum(true_E * torch.log(pred_E.clamp(min=1e-10)), dim=-1)  # (bs, n, n)
+    valid = (flat_true != 0).any(dim=-1)
+    flat_logits = flat_logits[valid]
+    flat_true = flat_true[valid]
+    flat_targets = flat_true.argmax(dim=-1)
 
-    diag_mask = ~torch.eye(
-        node_mask.size(1), device=node_mask.device, dtype=torch.bool
-    ).unsqueeze(0)
-    edge_mask = node_mask.unsqueeze(1) * node_mask.unsqueeze(2) * diag_mask
-    num_edges = edge_mask.sum(dim=(-1, -2)).clamp(min=1)  # (bs,)
-    per_graph = (loss * edge_mask).sum(dim=(-1, -2)) / num_edges  # (bs,)
-    return per_graph.mean()
+    return F.cross_entropy(
+        flat_logits,
+        flat_targets,
+        reduction="mean",
+        label_smoothing=label_smoothing,
+    )
 
 
 def masked_node_mse(
@@ -184,10 +182,19 @@ class TrainLossDiscrete:
     lambda_E
         Weight for edge loss relative to node loss. Default is 5.0,
         following DiGress convention.
+    label_smoothing
+        Forwarded to the masked CE helpers. Default ``0.0`` preserves
+        upstream parity.
     """
 
-    def __init__(self, lambda_E: float = 5.0) -> None:
+    def __init__(
+        self,
+        lambda_E: float = 5.0,
+        *,
+        label_smoothing: float = 0.0,
+    ) -> None:
         self.lambda_E = lambda_E
+        self.label_smoothing = label_smoothing
 
     def __call__(
         self,
@@ -202,9 +209,9 @@ class TrainLossDiscrete:
         Parameters
         ----------
         pred_X
-            Predicted node class probabilities, shape ``(bs, n, dx)``.
+            Raw node logits, shape ``(bs, n, dx)``. Not softmaxed.
         pred_E
-            Predicted edge class probabilities, shape ``(bs, n, n, de)``.
+            Raw edge logits, shape ``(bs, n, n, de)``. Not softmaxed.
         true_X
             True node class distribution (one-hot or soft targets),
             shape ``(bs, n, dx)``.
@@ -216,8 +223,12 @@ class TrainLossDiscrete:
         Returns
         -------
         Tensor
-            Scalar loss value, averaged over the batch.
+            Scalar loss value, averaged over valid positions then weighted.
         """
-        loss_x = masked_node_ce(pred_X, true_X, node_mask)
-        loss_e = masked_edge_ce(pred_E, true_E, node_mask)
+        loss_x = masked_node_ce(
+            pred_X, true_X, node_mask, label_smoothing=self.label_smoothing
+        )
+        loss_e = masked_edge_ce(
+            pred_E, true_E, node_mask, label_smoothing=self.label_smoothing
+        )
         return loss_x + self.lambda_E * loss_e

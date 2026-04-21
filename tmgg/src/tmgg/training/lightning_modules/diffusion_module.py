@@ -27,7 +27,6 @@ from typing import Any, override
 import networkx as nx
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from tmgg.data.datasets.graph_data_fields import (
     GRAPHDATA_LOSS_KIND,
@@ -126,8 +125,15 @@ def _read_field(data: GraphData, field: FieldName) -> torch.Tensor:
             # §"Removed fields"`` — this is the "architecture-internal
             # concern" synthesis applied at the training-loop boundary
             # rather than at the dataset boundary.
+            #
+            # Padding positions emit an **all-zero** row rather than
+            # ``[1, 0]`` so the ``(true != 0).any(-1)`` predicate inside
+            # :func:`masked_node_ce` correctly excludes them — matching
+            # upstream's convention that padding contributes nothing to
+            # the loss.
             node_ind = data.node_mask.float()
-            return torch.stack([1.0 - node_ind, node_ind], dim=-1)
+            synth = torch.stack([1.0 - node_ind, node_ind], dim=-1)
+            return synth * node_ind.unsqueeze(-1)
         return data.X_class
     if field == "E_class":
         if data.E_class is None:
@@ -511,11 +517,15 @@ class DiffusionModule(BaseGraphModule):
         dual-field path with a per-field loop. For each declared field:
 
         * ``X_class`` / ``E_class`` (``GRAPHDATA_LOSS_KIND == "ce"``) use
-          masked cross-entropy on softmaxed predictions, so the two-field
-          categorical case remains bit-for-bit equivalent to the legacy
-          :class:`TrainLossDiscrete` wrapper.
+          masked cross-entropy on raw logits via :func:`masked_node_ce` /
+          :func:`masked_edge_ce`. Targets are zeroed at padding positions
+          first (matching upstream DiGress's
+          ``dense_data.mask(node_mask)`` step, see
+          ``digress-upstream-readonly/src/diffusion_model_discrete.py:108``)
+          so the ``(true != 0).any(-1)`` row predicate inside the helpers
+          drops padding and diagonal rows automatically.
         * ``X_feat`` / ``E_feat`` (``GRAPHDATA_LOSS_KIND == "mse"``) use
-          masked MSE.
+          masked MSE; these helpers consume ``node_mask`` directly.
 
         Each term is weighted by ``self.lambda_per_field[field]``
         (defaults give the DiGress ``lambda_E=5.0`` edge weighting) and
@@ -537,6 +547,12 @@ class DiffusionModule(BaseGraphModule):
             target_edge_state = _continuous_target_edge_state(target)
             return self.criterion(pred_edge_state, target_edge_state.float())
 
+        # Zero padding rows in the target categorical fields so the row
+        # predicate inside the CE helpers correctly excludes them. Matches
+        # upstream's ``dense_data.mask(node_mask)`` call that happens before
+        # ``train_loss(...)``.
+        target = target.mask()
+
         total: torch.Tensor | None = None
         for field in sorted(self.noise_process.fields):
             pred_field = _read_field(pred, field)
@@ -544,11 +560,14 @@ class DiffusionModule(BaseGraphModule):
             kind = GRAPHDATA_LOSS_KIND[field]
             weight = self.lambda_per_field[field]
             if kind == "ce":
-                pred_prob = F.softmax(pred_field, dim=-1)
+                # Raw logits pass straight through: the fused log_softmax
+                # inside F.cross_entropy inside the helpers handles
+                # normalisation, matching upstream DiGress
+                # (`src/metrics/train_metrics.py:95-102`).
                 if field == "X_class":
-                    term = masked_node_ce(pred_prob, target_field, target.node_mask)
+                    term = masked_node_ce(pred_field, target_field, target.node_mask)
                 elif field == "E_class":
-                    term = masked_edge_ce(pred_prob, target_field, target.node_mask)
+                    term = masked_edge_ce(pred_field, target_field, target.node_mask)
                 else:  # pragma: no cover - only X_class / E_class declare CE today
                     raise NotImplementedError(
                         f"No masked CE helper registered for categorical field "
