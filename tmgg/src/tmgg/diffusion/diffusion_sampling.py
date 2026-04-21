@@ -184,52 +184,6 @@ def compute_posterior_distribution(
     return prob
 
 
-def mask_distributions(
-    true_X: torch.Tensor,
-    true_E: torch.Tensor,
-    pred_X: torch.Tensor,
-    pred_E: torch.Tensor,
-    node_mask: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Set masked rows to arbitrary distributions, so it doesn't contribute to loss
-    :param true_X: bs, n, dx_out
-    :param true_E: bs, n, n, de_out
-    :param pred_X: bs, n, dx_out
-    :param pred_E: bs, n, n, de_out
-    :param node_mask: bs, n
-    :return: same sizes as input
-    """
-
-    row_X = torch.zeros(true_X.size(-1), dtype=torch.float, device=true_X.device)
-    row_X[0] = 1.0
-    row_E = torch.zeros(true_E.size(-1), dtype=torch.float, device=true_E.device)
-    row_E[0] = 1.0
-
-    diag_mask = ~torch.eye(
-        node_mask.size(1), device=node_mask.device, dtype=torch.bool
-    ).unsqueeze(0)
-    true_X[~node_mask] = row_X
-    pred_X[~node_mask] = row_X
-    true_E[~(node_mask.unsqueeze(1) * node_mask.unsqueeze(2) * diag_mask), :] = row_E
-    pred_E[~(node_mask.unsqueeze(1) * node_mask.unsqueeze(2) * diag_mask), :] = row_E
-
-    # Epsilon prevents log(0) = -inf downstream (reconstruction_logp, KL).
-    # Masked positions are already set to one-hot; epsilon only affects
-    # non-masked entries and is removed by renormalization.
-    true_X = true_X + 1e-7
-    pred_X = pred_X + 1e-7
-    true_E = true_E + 1e-7
-    pred_E = pred_E + 1e-7
-
-    true_X = true_X / torch.sum(true_X, dim=-1, keepdim=True)
-    pred_X = pred_X / torch.sum(pred_X, dim=-1, keepdim=True)
-    true_E = true_E / torch.sum(true_E, dim=-1, keepdim=True)
-    pred_E = pred_E / torch.sum(pred_E, dim=-1, keepdim=True)
-
-    return true_X, true_E, pred_X, pred_E
-
-
 def sample_discrete_feature_noise(
     x_limit: torch.Tensor,
     e_limit: torch.Tensor,
