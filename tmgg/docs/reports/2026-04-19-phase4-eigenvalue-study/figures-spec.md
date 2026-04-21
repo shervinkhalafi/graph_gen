@@ -28,6 +28,76 @@ i.e. the between-graph variance of the Bayes-optimal predictor of `B` given `Λ�
   - Null ribbon: neutral grey `#b0b0b0` at alpha=0.35.
   - Pass / fail bar colouring in F3: pass = `#3b7dd8`, fail = `#b0b0b0`.
 
+## Synthetic-SBM diversity knob — what the four levels mean
+
+The x-axis of F2 and four of the datasets in F1/F3 (`sbm_d0.00` through
+`sbm_d1.00`) are generated from a single parametrised SBM generator
+with one scalar *diversity* knob `d ∈ [0, 1]`. The knob interpolates
+the per-graph hyperparameter ranges; only two hyperparameters vary
+with `d`, and `num_blocks` is frozen so any FVE growth is unambiguously
+attributable to edge-density diversity rather than to community-count
+changes. This is the Phase 3 v2 parametrisation (see
+`scripts/run_diversity_sweep.py:104-125` and
+`scripts/run_phase4_eigenvalue_study.py:106-122`, both copying the
+same constants).
+
+**Per-dataset fixed parameters** (identical across all four synthetic
+`sbm_d*` cells):
+
+| parameter | value |
+|---|---|
+| `num_graphs` | 200 |
+| `num_nodes` | 50 |
+| `num_blocks` | **4 (frozen — does not vary with `d`)** |
+| seeds | `{42, 123, 2024, 7, 11}` (5 seeds, re-generating dataset per seed) |
+
+**Diversity-scaled ranges** (used as *per-graph uniform draws* at
+`d > 0`):
+
+| parameter | input range (`d = 1`) | midpoint (`d = 0`) | half-width at `d = 1` |
+|---|---|---|---|
+| `p_intra` | `(0.3, 0.9)` | `0.6` | `0.3` |
+| `p_inter` | `(0.01, 0.2)` | `0.105` | `0.095` |
+
+**Interpolation formula** (`src/tmgg/data/datasets/sbm.py:225-245`,
+`_range_from_arg`): at diversity `d` a tuple `(lo, hi)` is scaled to
+`[midpoint − d · half_width, midpoint + d · half_width]`. Each graph
+then draws its `p_intra` and `p_inter` uniformly from the scaled
+interval. At `d = 0` the interval collapses to the scalar midpoint,
+so all 200 graphs have identical hyperparameters (though each still
+draws independent block-assignments and Bernoulli edges). At `d = 1`
+the interval equals the full input range.
+
+**Resolved per-graph ranges at each diversity level:**
+
+| `d` | `p_intra` range | `p_inter` range |
+|---|---|---|
+| 0.00 | `[0.6, 0.6]` (scalar) | `[0.105, 0.105]` (scalar) |
+| 0.33 | `[0.501, 0.699]` | `[0.07365, 0.13635]` |
+| 0.67 | `[0.399, 0.801]` | `[0.04135, 0.16865]` |
+| 1.00 | `[0.3, 0.9]` | `[0.01, 0.2]` |
+
+**Relationship to community strength.** The community-strength axis
+the reader reads off F2 is *spectral density diversity*: at `d = 0`
+every clean Laplacian has the same top-4 non-trivial eigenvalues
+(deterministic given the single `(p_intra, p_inter, num_blocks)`
+triple); at `d = 1` the ranges span most of the feasible SBM regime
+and the top-4 eigenvalues vary materially between graphs. FVE tracks
+this spread: the surrogate can only explain between-graph variance
+in `B` when there *is* between-graph variance, and `d` is the knob
+that creates it.
+
+**Phase 3 v2 rationale** (why `num_blocks` is frozen): the original
+Phase 3 v1 sweep drew `num_blocks ∈ {2, 3, 4, 5}` at `d > 0`, with
+integer midpoint 3.5 biasing the `d = 0` reference (where
+`num_blocks = 4`) asymmetrically against the `d = 1` distribution
+mean. Freezing `num_blocks = 4` removes the confound.
+
+Real-data datasets (`spectre_sbm`, `enzymes`, `proteins`, `collab`)
+are not diversity-scaled; they enter F1/F3 as fixed distributions,
+with n-range filters documented in the Phase 4 script
+(`run_phase4_eigenvalue_study.py:113-122`).
+
 ## Metric definition — fraction of variance explained (FVE)
 
 Let `B_i = V̂_{k,i}^T A_i V̂_{k,i} ∈ ℝ^{k×k}` be the clean adjacency of graph *i* re-expressed in the noisy top-*k* eigenbasis, and let `Λ̃_{k,i} ∈ ℝ^k` be the corresponding noisy eigenvalues (both in the dataset-wide Fréchet frame; see `figures.md` for why). The metric on all figure y-axes derives from
