@@ -505,6 +505,17 @@ class GraphData:
 
         # One-hot edge features (bs, n, n, 2): [no-edge, edge]
         E_class = torch.stack([1.0 - adj, adj], dim=-1)
+        # Upstream parity: zero the diagonal of the target tensor so the
+        # ``(true != 0).any(-1)`` row predicate inside the masked CE
+        # helpers excludes self-loops automatically. Mirrors upstream
+        # DiGress's ``utils.encode_no_edge`` at
+        # ``digress-upstream-readonly/src/utils.py:73-74`` (``E[diag] = 0``),
+        # which is the single data-layer site where upstream enforces the
+        # same invariant. Without this, the diagonal would emit
+        # ``[1, 0]`` one-hot "no-edge" targets that survive the predicate
+        # and inflate the CE denominator (see
+        # ``analysis/digress-loss-check/BUG_REPORT.md`` on 2026-04-21).
+        E_class[:, diag, diag, :] = 0.0
 
         y = torch.zeros(bs, 0, device=adj.device)
 
