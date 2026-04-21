@@ -27,7 +27,7 @@ batch and accompanied by a boolean `node_mask` of shape `(B, n_max)`.
 
 ### Code
 
-`src/utils.py:53-75` converts a PyG sparse batch into dense tensors:
+`src/utils.py:53-62` converts a PyG sparse batch into dense tensors:
 
 ```python
 def to_dense(x, edge_index, edge_attr, batch):
@@ -78,7 +78,7 @@ class and two edge classes, i.e. $d_X = 1$, $d_E = 2$, $d_y = 0$
 
 Only dataset-derived; no configurable knobs here. `max_n_nodes` is
 derived by `AbstractDatasetInfos.complete_infos` at
-`src/datasets/abstract_dataset.py:94-100` as the largest node count
+`src/datasets/abstract_dataset.py:95-100` as the largest node count
 seen in train+val.
 
 ---
@@ -948,7 +948,10 @@ and `compute_emd=False`.
 
 `is_sbm_graph` (`src/analysis/spectre_utils.py:608-657`) fits a
 stochastic block model with `graph_tool.minimize_blockmodel_dl`,
-refines with 1000 `multiflip_mcmc_sweep(beta=inf)` steps, estimates
+refines with 100 `multiflip_mcmc_sweep(beta=inf)` steps (the value
+`SpectreSamplingMetrics.forward` passes via `refinement_steps=100` at
+`src/analysis/spectre_utils.py:830`; `is_sbm_graph`'s own default is
+1000, but the live caller overrides it), estimates
 per-block intra/inter edge probabilities and computes a Wald statistic
 
 $$
