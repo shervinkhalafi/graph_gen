@@ -1,8 +1,8 @@
 """PyTorch Geometric dataset wrappers for graph denoising experiments.
 
-This module provides wrappers around PyTorch Geometric datasets (QM9, ENZYMES,
-PROTEINS, COLLAB) that extract adjacency matrices and handle variable graph sizes
-through padding.
+This module provides wrappers around PyTorch Geometric datasets (QM9 plus
+selected TU datasets) that extract adjacency matrices and handle variable
+graph sizes through padding.
 """
 
 from pathlib import Path
@@ -23,7 +23,8 @@ class PyGDatasetWrapper(Dataset[np.ndarray]):
     Parameters
     ----------
     dataset_name : str
-        Name of the dataset: "qm9", "enzymes", "proteins", or "collab".
+        Name of the dataset key, e.g. "qm9", "enzymes", "proteins",
+        "collab", "deezer_ego_nets", "imdb_binary", or "reddit_binary".
     root : str or Path, optional
         Root directory for downloading/storing datasets.
         Default is "~/.pyg_data".
@@ -43,7 +44,23 @@ class PyGDatasetWrapper(Dataset[np.ndarray]):
         ``adjacencies``), each holding ``edge_index`` and ``num_nodes``.
     """
 
-    VALID_DATASETS = {"qm9", "enzymes", "proteins", "collab"}
+    VALID_DATASETS = {
+        "qm9",
+        "enzymes",
+        "proteins",
+        "collab",
+        "deezer_ego_nets",
+        "imdb_binary",
+        "reddit_binary",
+    }
+    TU_DATASET_NAME_MAP = {
+        "enzymes": "ENZYMES",
+        "proteins": "PROTEINS",
+        "collab": "COLLAB",
+        "deezer_ego_nets": "deezer_ego_nets",
+        "imdb_binary": "IMDB-BINARY",
+        "reddit_binary": "REDDIT-BINARY",
+    }
 
     def __init__(
         self,
@@ -78,14 +95,10 @@ class PyGDatasetWrapper(Dataset[np.ndarray]):
         # Load appropriate dataset
         if self.dataset_name == "qm9":
             dataset = QM9(root=str(self.root / "QM9"))
-        elif self.dataset_name == "enzymes":
-            dataset = TUDataset(root=str(self.root), name="ENZYMES")
-        elif self.dataset_name == "proteins":
-            dataset = TUDataset(root=str(self.root), name="PROTEINS")
-        elif self.dataset_name == "collab":
-            # Scientific collaboration ego-networks; community-structured
-            # social-network benchmark used in the Phase 4 eigenvalue study.
-            dataset = TUDataset(root=str(self.root), name="COLLAB")
+        elif self.dataset_name in self.TU_DATASET_NAME_MAP:
+            dataset = TUDataset(
+                root=str(self.root), name=self.TU_DATASET_NAME_MAP[self.dataset_name]
+            )
         else:
             raise ValueError(f"Unknown dataset: {self.dataset_name}")
 
