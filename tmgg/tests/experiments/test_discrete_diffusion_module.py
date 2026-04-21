@@ -342,8 +342,11 @@ class TestDiGressAlignment:
         """_compute_loss delegates to TrainLossDiscrete for the categorical path.
 
         Starting state: set-up module, one batch from train dataloader.
-        Invariant: loss from _compute_loss matches a manual TrainLossDiscrete call
-        with the same softmaxed+cloned predictions.
+        Invariant: loss from _compute_loss matches a manual TrainLossDiscrete
+        call with the same raw logits. Post the 2026-04-21 upstream-parity
+        refactor, both the module and the direct wrapper feed raw logits to
+        ``F.cross_entropy``, so the two paths differ only by tensor cloning
+        and should agree to float32 rounding.
         """
         _attach_trainer_and_setup(lightning_module, datamodule)
         batch = next(iter(datamodule.train_dataloader()))
@@ -357,14 +360,15 @@ class TestDiGressAlignment:
         # Loss via DiffusionModule
         loss_module = lightning_module._compute_loss(pred, batch)  # pyright: ignore[reportUnknownVariableType]
 
-        # Loss via direct TrainLossDiscrete call
+        # Loss via direct TrainLossDiscrete call — pass raw logits; the
+        # wrapper now applies the fused log_softmax inside F.cross_entropy.
         from tmgg.training.lightning_modules.train_loss_discrete import (
             TrainLossDiscrete,
         )
 
         tld = TrainLossDiscrete(lambda_E=5.0)
-        pred_X = torch.nn.functional.softmax(pred.X_class, dim=-1).clone()  # pyright: ignore[reportUnknownMemberType]
-        pred_E = torch.nn.functional.softmax(pred.E_class, dim=-1).clone()  # pyright: ignore[reportUnknownMemberType]
+        pred_X = pred.X_class.clone()  # pyright: ignore[reportUnknownMemberType]
+        pred_E = pred.E_class.clone()  # pyright: ignore[reportUnknownMemberType]
         # Wave 9.3: structure-only batches carry X_class=None; synthesise the
         # degenerate "[no-node, node]" one-hot from node_mask for the direct
         # TrainLossDiscrete comparison.
