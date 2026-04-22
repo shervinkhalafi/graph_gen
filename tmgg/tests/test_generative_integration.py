@@ -38,6 +38,7 @@ from tmgg.training.lightning_modules.diffusion_module import (
     DiffusionModule,
 )
 from tmgg.utils.noising.noise import DigressNoise
+from tmgg.utils.noising.size_distribution import SizeDistribution
 
 # Dataset configurations for parametrized tests (excludes LFR due to generation complexity)
 DATASET_CONFIGS: dict[str, dict] = {
@@ -70,7 +71,7 @@ def _make_diffusion_module(
     evaluator = GraphEvaluator(
         eval_num_samples=eval_num_samples, kernel="gaussian", sigma=1.0
     )
-    return DiffusionModule(
+    module = DiffusionModule(
         model=model,
         noise_process=noise_process,
         sampler=sampler,
@@ -80,6 +81,13 @@ def _make_diffusion_module(
         num_nodes=num_nodes,
         eval_every_n_steps=1,
     )
+    # Inject a stub size distribution so validation_step doesn't trip the
+    # parity #32 fail-loud guard. Production code populates this in
+    # DiffusionModule.setup() from the datamodule; unit tests bypass setup.
+    module._size_distribution = SizeDistribution(  # pyright: ignore[reportPrivateUsage]
+        sizes=(num_nodes,), counts=(1,), max_size=num_nodes
+    )
+    return module
 
 
 def _make_block_adjacency(bs: int = 4, n: int = 16) -> torch.Tensor:
