@@ -178,14 +178,25 @@ def compute_posterior_distribution(
     denom = M @ Qtb_M  # (bs, N, d) @ (bs, d, d) = (bs, N, d)
     denom = (denom * M_t).sum(dim=-1)  # (bs, N, d) * (bs, N, d) + sum = (bs, N)
     # Upstream parity (compute_posterior_distribution, diffusion_utils.py:269-290)
-    # divides without any guard. Per CLAUDE.md fail-loud preference: assert
-    # positivity rather than silently degrading. On healthy trained models the
-    # invariant holds; on a degenerate prediction we crash informatively
-    # instead of producing miscalibrated probabilities.
-    assert (denom > 0).all(), (
-        f"compute_posterior_distribution_per_x0: degenerate posterior denominator "
-        f"(field={field}, min={denom.min().item():.3e})"
-    )
+    # divides without any guard and relies on mask_distributions downstream
+    # to overwrite masked positions before KL. We removed mask_distributions
+    # (commit 59e9593f), so handle the masked-position cleanup here:
+    #   - At valid positions (both M and M_t carry one-hot mass), assert
+    #     denom > 0 per CLAUDE.md fail-loud — a zero here is a real bug.
+    #   - At structural-zero positions (M or M_t zeroed by padding/diagonal),
+    #     replace denom with 1 so the division yields 0 (since product is
+    #     also zero there) instead of NaN. Downstream masking discards them.
+    valid = (M.sum(dim=-1) > 0) & (M_t.sum(dim=-1) > 0)  # (bs, N)
+    if valid.any():
+        valid_denom = denom[valid]
+        assert (valid_denom > 0).all(), (
+            f"compute_posterior_distribution: degenerate posterior denominator "
+            f"at valid (non-masked) position (field={field}, "
+            f"min_at_valid={valid_denom.min().item():.3e}, "
+            f"valid_count={int(valid.sum().item())}, "
+            f"zero_at_valid={int((valid_denom == 0).sum().item())})"
+        )
+    denom = torch.where(valid, denom, torch.ones_like(denom))
 
     prob = product / denom.unsqueeze(-1)  # (bs, N, d)
 
