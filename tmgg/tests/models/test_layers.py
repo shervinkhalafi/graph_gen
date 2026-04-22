@@ -45,15 +45,21 @@ class TestMaskedSoftmax:
         assert torch.allclose(output[0, :3].sum(), torch.tensor(1.0))
 
     def test_empty_mask(self):
-        """Test with empty mask (all zeros)."""
+        """All-masked branch returns the raw input (upstream parity #25).
+
+        Upstream (cvignac/DiGress models/layers.py:41-46) returns ``x``
+        when every position is masked. Behaviourally equivalent to
+        returning zeros since the value-side mask zeros the downstream
+        attention output, but pinning identity here guards against
+        regression away from upstream form.
+        """
         x = torch.randn(1, 5)
         mask = torch.zeros_like(x)
 
         output = masked_softmax(x, mask, dim=-1)
 
-        # When mask.sum() == 0, should return zeros
         assert output.shape == x.shape
-        assert torch.all(output == 0)
+        assert torch.equal(output, x)
 
     def test_2d_mask_on_3d_tensor(self):
         """Test 2D mask applied to 3D tensor."""

@@ -20,17 +20,23 @@ def masked_softmax(
     Returns
     -------
     torch.Tensor
-        Softmax output with masked positions set to 0
+        Softmax output with masked positions set to 0.
 
     Notes
     -----
-    When all positions are masked, returns zeros instead of NaN.
+    When all positions are masked, returns the raw input ``x`` for
+    upstream parity (cvignac/DiGress models/layers.py:41-46). The
+    downstream attention output is zeroed by the value-side mask
+    either way, so this branch is behaviourally equivalent to
+    returning zeros, but matches upstream form for cross-codebase
+    auditability. Per-row NaN cleanup below still applies for the
+    partial-mask case.
     """
     if mask is None:
         return torch.softmax(x, **kwargs)
 
     if mask.sum() == 0:
-        return torch.zeros_like(x)
+        return x
 
     x_masked = x.clone()
     x_masked[mask == 0] = -float("inf")
