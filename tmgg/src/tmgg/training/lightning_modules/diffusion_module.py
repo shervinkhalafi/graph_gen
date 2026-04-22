@@ -439,7 +439,7 @@ class DiffusionModule(BaseGraphModule):
                 )
             else:
                 self.noise_process.initialize_from_data(
-                    dm.train_dataloader()  # pyright: ignore[reportUnknownMemberType]
+                    dm.train_dataloader_raw_pyg()  # pyright: ignore[reportUnknownMemberType]
                 )
 
         if self._size_distribution is None and isinstance(

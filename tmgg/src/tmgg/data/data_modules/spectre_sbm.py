@@ -26,6 +26,7 @@ from torch_geometric.data import Data
 
 from tmgg.data.data_modules.base_data_module import BaseGraphDataModule
 from tmgg.data.data_modules.multigraph_data_module import (
+    _collate_pyg_raw,
     _collate_pyg_to_graphdata,
     _ListDataset,
 )
@@ -174,6 +175,17 @@ class SpectreSBMDataModule(BaseGraphDataModule):
             _ListDataset(self._test_data),
             shuffle=False,
             collate_fn=_collate_pyg_to_graphdata,
+        )
+
+    @override
+    def train_dataloader_raw_pyg(self) -> DataLoader[object]:
+        """Raw PyG ``Batch`` training loader for the parity-port π estimator."""
+        if self._train_data is None:
+            raise RuntimeError("SpectreSBMDataModule not setup. Call setup() first.")
+        return self._make_dataloader(
+            _ListDataset(self._train_data),
+            shuffle=False,
+            collate_fn=_collate_pyg_raw,
         )
 
     @override

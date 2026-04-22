@@ -64,6 +64,22 @@ def _collate_pyg_to_graphdata(data_list: list[Data]) -> GraphData:
     return GraphData.from_pyg_batch(batch)
 
 
+def _collate_pyg_raw(data_list: list[Data]):
+    """Collate PyG Data objects into a raw PyG Batch (no densification).
+
+    Used by ``train_dataloader_raw_pyg`` to expose the sparse PyG view
+    that sits one layer below the dense ``GraphData`` collator. The
+    upstream-parity edge / node count helpers in
+    :mod:`tmgg.data.utils.edge_counts` consume the result directly.
+    """
+    from typing import cast
+
+    from torch_geometric.data import Batch
+    from torch_geometric.data.data import BaseData
+
+    return Batch.from_data_list(cast(list[BaseData], data_list))
+
+
 class _ListDataset(Dataset[Data]):
     """Thin wrapper making a list indexable as a Dataset."""
 
@@ -243,4 +259,21 @@ class MultiGraphDataModule(BaseGraphDataModule):
             _ListDataset(self._test_data),
             shuffle=False,
             collate_fn=_collate_pyg_to_graphdata,
+        )
+
+    @override
+    def train_dataloader_raw_pyg(self) -> DataLoader[Any]:
+        """Return the training loader without the dense GraphData collator.
+
+        Used by the upstream-parity sparse π estimator. Shuffle is off so
+        the iteration is deterministic across the (single) preprocessing
+        pass; the dense ``train_dataloader`` keeps shuffling on for
+        actual training.
+        """
+        if self._train_data is None:
+            raise RuntimeError("DataModule not setup. Call setup() first.")
+        return self._make_dataloader(
+            _ListDataset(self._train_data),
+            shuffle=False,
+            collate_fn=_collate_pyg_raw,
         )

@@ -1061,7 +1061,9 @@ class TestSetup:
         module.setup(stage="fit")
 
     def test_setup_marginal_initialises_transition(self) -> None:
-        """Empirical-marginal setup should initialise from the train loader."""
+        """Empirical-marginal setup should initialise from the raw PyG loader."""
+        from torch_geometric.data import Batch, Data
+
         module = _make_categorical_module(limit_distribution="empirical_marginal")
         # Clear the fixture-injected stub so setup() takes the
         # populate-from-datamodule path that this test exercises.
@@ -1070,10 +1072,13 @@ class TestSetup:
         assert module.noise_process._limit_x is None
         assert module.noise_process._limit_e is None
 
+        # Sparse PyG batches feed the upstream-parity edge_counts port
+        # (parity #13 / D-3); the dense train_dataloader is no longer
+        # consulted during noise-process initialisation.
+        edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+        pyg_batch = Batch.from_data_list([Data(edge_index=edge_index, num_nodes=2)])
         mock_dm = MagicMock()
-        mock_dm.train_dataloader.return_value = [
-            _make_categorical_batch(bs=_BATCH_SIZE)
-        ]
+        mock_dm.train_dataloader_raw_pyg.return_value = [pyg_batch]
 
         mock_trainer = MagicMock()
         mock_trainer.datamodule = mock_dm

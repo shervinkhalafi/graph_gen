@@ -25,7 +25,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
 
@@ -119,8 +118,21 @@ class TestCategoricalStationaryPmfs:
         torch.testing.assert_close(proc._limit_x, torch.ones(3) / 3)
         torch.testing.assert_close(proc._limit_e, torch.ones(4) / 4)
 
-    def test_empirical_mode_initialises_from_real_nodes_and_upper_edges(self) -> None:
-        """Loader-driven empirical PMFs should ignore masked nodes and mirrored edges."""
+    def test_empirical_mode_initialises_from_sparse_pyg_batches(self) -> None:
+        """Sparse PyG-backed π estimator matches upstream's edge_counts formula.
+
+        Two graphs in the batch:
+
+        - Graph 0: 2 real nodes, 1 undirected edge (PyG enumerates 2 directed)
+        - Graph 1: 3 nodes, 1 undirected edge (PyG enumerates 2 directed)
+
+        all_pairs = 2*1 + 3*2 = 8; directed edges = 4; non-edges = 4.
+        Expected π_E = [0.5, 0.5]. With no per-node features the
+        structure-only fallback assigns every node to class 1, so
+        π_X = [0, 1].
+        """
+        from torch_geometric.data import Batch, Data
+
         proc = CategoricalNoiseProcess(
             schedule=NoiseSchedule(schedule_type="cosine_iddpm", timesteps=16),
             x_classes=2,
@@ -128,29 +140,19 @@ class TestCategoricalStationaryPmfs:
             limit_distribution="empirical_marginal",
         )
 
-        X = torch.tensor(
-            [
-                [[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]],
-                [[0.0, 1.0], [1.0, 0.0], [1.0, 0.0]],
-            ]
+        g0 = Data(
+            edge_index=torch.tensor([[0, 1], [1, 0]], dtype=torch.long),
+            num_nodes=2,
         )
-        E = torch.zeros(2, 3, 3, 2)
-        E[..., 0] = 1.0
-        E[0, 0, 1] = torch.tensor([0.0, 1.0])
-        E[0, 1, 0] = torch.tensor([0.0, 1.0])
-        E[1, 0, 1] = torch.tensor([0.0, 1.0])
-        E[1, 1, 0] = torch.tensor([0.0, 1.0])
-        node_mask = torch.tensor([[True, True, False], [True, True, True]])
-        batch = GraphData(
-            y=torch.zeros(2, 0),
-            node_mask=node_mask,
-            X_class=X,
-            E_class=E,
+        g1 = Data(
+            edge_index=torch.tensor([[0, 1], [1, 0]], dtype=torch.long),
+            num_nodes=3,
         )
+        pyg_batch = Batch.from_data_list([g0, g1])
 
-        proc.initialize_from_data([batch])  # type: ignore[arg-type]
+        proc.initialize_from_data([pyg_batch])
 
         assert proc._limit_x is not None
         assert proc._limit_e is not None
-        torch.testing.assert_close(proc._limit_x, torch.tensor([0.6, 0.4]))
+        torch.testing.assert_close(proc._limit_x, torch.tensor([0.0, 1.0]))
         torch.testing.assert_close(proc._limit_e, torch.tensor([0.5, 0.5]))

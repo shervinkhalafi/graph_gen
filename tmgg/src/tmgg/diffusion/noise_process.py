@@ -19,20 +19,24 @@ stateful subcomponents follow device placement automatically.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Literal
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import functional as F
-from torch.utils.data import DataLoader
+from torch_geometric.data import Batch
 
 from tmgg.data.datasets.graph_data_fields import (
     GRAPHDATA_LOSS_KIND,
     FieldName,
 )
 from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.utils.edge_counts import (
+    count_edge_classes_sparse,
+    count_node_classes_sparse,
+)
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.utils.noising.noise import NoiseDefinition
 
@@ -266,9 +270,17 @@ class NoiseProcess(ABC, nn.Module):
         """Number of discrete diffusion steps owned by the process."""
         ...
 
-    def initialize_from_data(self, train_loader: DataLoader[GraphData]) -> None:
-        """Initialise any data-dependent state from the training loader."""
-        _ = train_loader
+    def initialize_from_data(self, raw_pyg_loader: Iterable[Batch]) -> None:
+        """Initialise any data-dependent state from the *raw PyG* training loader.
+
+        Subclasses that need data-dependent state should iterate the
+        loader of PyG ``Batch`` objects (yielded by
+        ``BaseGraphDataModule.train_dataloader_raw_pyg``) rather than
+        the dense ``GraphData`` view, so the count helpers in
+        :mod:`tmgg.data.utils.edge_counts` can be reused as direct
+        ports of upstream DiGress (parity #13 / D-3).
+        """
+        _ = raw_pyg_loader
 
     def needs_data_initialization(self) -> bool:
         """Whether the process requires a dataloader-backed setup phase."""
@@ -831,38 +843,26 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         """
         return z_0.mask()
 
-    def initialize_from_data(self, train_loader: DataLoader[GraphData]) -> None:
-        """Initialise empirical stationary marginals from the training loader."""
+    def initialize_from_data(self, raw_pyg_loader: Iterable[Batch]) -> None:
+        """Estimate empirical stationary marginals from raw PyG batches.
+
+        Direct port of upstream DiGress's
+        :meth:`AbstractDatasetInfos.edge_counts` / ``node_types``
+        (``digress-upstream-readonly/src/datasets/abstract_dataset.py:34-72``).
+        We sum sparse counts per class across the training PyG loader,
+        then normalise to a PMF (parity #13 / D-3). The hot training
+        loop is untouched and still consumes dense ``GraphData``; only
+        this preprocessing pass crosses into the sparse view.
+        """
         if self.limit_distribution == "uniform" or self._limit_x is not None:
             return
 
         x_counts = torch.zeros(self.x_classes, dtype=torch.float64)
         e_counts = torch.zeros(self.e_classes, dtype=torch.float64)
 
-        for batch in train_loader:
-            x_class = _read_categorical_x(batch)
-            e_class = _read_categorical_e(batch)
-            if batch.node_mask.dim() == 1:
-                node_mask = batch.node_mask.unsqueeze(0)
-                x_batched = x_class.unsqueeze(0)
-                e_batched = e_class.unsqueeze(0)
-            else:
-                node_mask = batch.node_mask
-                x_batched = x_class
-                e_batched = e_class
-
-            x_counts += x_batched[node_mask].sum(dim=0).to(torch.float64).cpu()
-
-            _, n = node_mask.shape
-            upper_triangle = torch.triu(
-                torch.ones(n, n, dtype=torch.bool, device=node_mask.device),
-                diagonal=1,
-            ).unsqueeze(0)
-            valid_edges = (
-                node_mask.unsqueeze(1) & node_mask.unsqueeze(2) & upper_triangle
-            )
-            if valid_edges.any():
-                e_counts += e_batched[valid_edges].sum(dim=0).to(torch.float64).cpu()
+        for pyg_batch in raw_pyg_loader:
+            x_counts += count_node_classes_sparse(pyg_batch, self.x_classes)
+            e_counts += count_edge_classes_sparse(pyg_batch, self.e_classes)
 
         x_marginals = _normalise_counts_or_uniform(x_counts).to(torch.float32)
         e_marginals = _normalise_counts_or_uniform(e_counts).to(torch.float32)
@@ -1386,10 +1386,15 @@ class CompositeNoiseProcess(NoiseProcess):
             )
         return next(iter(steps))
 
-    def initialize_from_data(self, train_loader: DataLoader[GraphData]) -> None:
-        """Fan out the loader-backed initialisation hook to every sub-process."""
+    def initialize_from_data(self, raw_pyg_loader: Iterable[Batch]) -> None:
+        """Fan out the loader-backed initialisation hook to every sub-process.
+
+        ``raw_pyg_loader`` is consumed once per sub-process. Most concrete
+        loaders are re-iterable PyTorch ``DataLoader`` instances, which
+        is what every datamodule's ``train_dataloader_raw_pyg`` returns.
+        """
         for proc in self._process_list:
-            proc.initialize_from_data(train_loader)
+            proc.initialize_from_data(raw_pyg_loader)
 
     def needs_data_initialization(self) -> bool:
         """Return True when any sub-process needs a dataloader-backed setup."""

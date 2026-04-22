@@ -111,7 +111,7 @@ print("Config preflight OK: module to device", str(device), flush=True)
 
 if hasattr(module, "noise_process") and module.noise_process.needs_data_initialization():
     print("Config preflight: initialize noise process", flush=True)
-    module.noise_process.initialize_from_data(dm.train_dataloader())
+    module.noise_process.initialize_from_data(dm.train_dataloader_raw_pyg())
     print("Config preflight OK: noise process initialized", flush=True)
 
 print("Config preflight: transfer batch to device", flush=True)

@@ -444,7 +444,9 @@ class TestCategoricalNoiseProcess:
     def test_initialize_from_data_uses_strict_upper_triangle(
         self, cosine_schedule: NoiseSchedule
     ) -> None:
-        """Empirical edge marginals ignore mirrored edges and diagonal mass."""
+        """Sparse edge counts produce the expected π_E on a fully-connected pair."""
+        from torch_geometric.data import Batch, Data
+
         proc = CategoricalNoiseProcess(
             schedule=cosine_schedule,
             x_classes=2,
@@ -452,20 +454,12 @@ class TestCategoricalNoiseProcess:
             limit_distribution="empirical_marginal",
         )
 
-        X = torch.tensor([[[1.0, 0.0], [1.0, 0.0]]])
-        E = torch.zeros(1, 2, 2, 2)
-        E[..., 0] = 1.0
-        E[0, 0, 1] = torch.tensor([0.0, 1.0])
-        E[0, 1, 0] = torch.tensor([0.0, 1.0])
-        node_mask = torch.tensor([[True, True]])
-        batch = GraphData(
-            y=torch.zeros(1, 0),
-            node_mask=node_mask,
-            X_class=X,
-            E_class=E,
-        )
+        # Two-node graph with one undirected edge: PyG enumerates both
+        # directions, so edge_index has 2 columns.
+        edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+        pyg_batch = Batch.from_data_list([Data(edge_index=edge_index, num_nodes=2)])
 
-        proc.initialize_from_data([batch])  # type: ignore[arg-type]
+        proc.initialize_from_data([pyg_batch])
 
         torch.testing.assert_close(
             proc._limit_e,
@@ -476,6 +470,8 @@ class TestCategoricalNoiseProcess:
         self, cosine_schedule: NoiseSchedule
     ) -> None:
         """Empirical edge marginals fall back to uniform when no real edges exist."""
+        from torch_geometric.data import Batch, Data
+
         proc = CategoricalNoiseProcess(
             schedule=cosine_schedule,
             x_classes=2,
@@ -483,17 +479,12 @@ class TestCategoricalNoiseProcess:
             limit_distribution="empirical_marginal",
         )
 
-        X = torch.tensor([[[1.0, 0.0]]])
-        E = torch.tensor([[[[1.0, 0.0]]]])
-        node_mask = torch.tensor([[True]])
-        batch = GraphData(
-            y=torch.zeros(1, 0),
-            node_mask=node_mask,
-            X_class=X,
-            E_class=E,
-        )
+        # Single-node graph with no edges: per-class counts are all zero,
+        # so the PMF falls back to uniform.
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        pyg_batch = Batch.from_data_list([Data(edge_index=edge_index, num_nodes=1)])
 
-        proc.initialize_from_data([batch])  # type: ignore[arg-type]
+        proc.initialize_from_data([pyg_batch])
 
         torch.testing.assert_close(
             proc._limit_e,

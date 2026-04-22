@@ -477,34 +477,26 @@ class TestCategoricalSamplerMarginal:
         self,
         cosine_schedule_short: NoiseSchedule,
     ) -> CategoricalNoiseProcess:
+        from torch_geometric.data import Batch, Data
+
         proc = CategoricalNoiseProcess(
             schedule=cosine_schedule_short,
             x_classes=DX,
             e_classes=DE,
             limit_distribution="empirical_marginal",
         )
-        X = torch.tensor(
-            [
-                [
-                    [1.0, 0.0, 0.0],
-                    [1.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0],
-                    [0.0, 0.0, 1.0],
-                ]
-            ]
+        # 4-node graph with edges (0,1), (0,2), (1,2). PyG enumerates both
+        # directions per undirected edge → 6 directed edges total.
+        edges = [(0, 1), (0, 2), (1, 2)]
+        directed = [(i, j) for i, j in edges] + [(j, i) for i, j in edges]
+        edge_index = torch.tensor(
+            [[u for u, _ in directed], [v for _, v in directed]],
+            dtype=torch.long,
         )
-        E = torch.zeros(1, N_NODES, N_NODES, DE)
-        E[..., 0] = 1.0
-        for i, j in [(0, 1), (0, 2), (1, 2)]:
-            E[0, i, j] = torch.tensor([0.0, 1.0])
-            E[0, j, i] = torch.tensor([0.0, 1.0])
-        batch = GraphData(
-            y=torch.zeros(1, 0),
-            node_mask=torch.ones(1, N_NODES, dtype=torch.bool),
-            X_class=X,
-            E_class=E,
+        pyg_batch = Batch.from_data_list(
+            [Data(edge_index=edge_index, num_nodes=N_NODES)]
         )
-        proc.initialize_from_data([batch])  # type: ignore[arg-type]
+        proc.initialize_from_data([pyg_batch])
         return proc
 
     def test_returns_valid_graph_data(

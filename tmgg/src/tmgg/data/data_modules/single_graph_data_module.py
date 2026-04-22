@@ -18,6 +18,7 @@ from .base_data_module import BaseGraphDataModule
 from .graph_generation import generate_single_graph
 from .multigraph_data_module import (
     _adjacencies_to_pyg,
+    _collate_pyg_raw,
     _collate_pyg_to_graphdata,
     _ListDataset,
 )
@@ -238,4 +239,15 @@ class SingleGraphDataModule(BaseGraphDataModule):
             _ListDataset(self._test_data),
             shuffle=False,
             collate_fn=_collate_pyg_to_graphdata,
+        )
+
+    @override
+    def train_dataloader_raw_pyg(self) -> DataLoader[object]:
+        """Raw PyG ``Batch`` training loader for the parity-port π estimator."""
+        if self._train_data is None:
+            raise RuntimeError("Call setup() before accessing dataloaders")
+        return self._make_dataloader(
+            _ListDataset(self._train_data),
+            shuffle=False,
+            collate_fn=_collate_pyg_raw,
         )

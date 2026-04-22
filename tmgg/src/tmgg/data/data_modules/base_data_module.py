@@ -136,6 +136,27 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         """Return the test dataloader."""
         ...
 
+    def train_dataloader_raw_pyg(self) -> DataLoader[Any]:
+        """Return a training dataloader yielding *raw* PyG ``Batch`` objects.
+
+        Sits one layer below ``train_dataloader``: bypasses the dense
+        ``GraphData`` collator so consumers that need the sparse PyG
+        representation (notably the upstream-parity edge / node count
+        helpers in :mod:`tmgg.data.utils.edge_counts`) can iterate the
+        same training data without going through densification.
+
+        Subclasses that produce PyG ``Data`` lists must override this to
+        wire their stored split through the raw collator. The base
+        method raises so the omission is loud rather than silent (any
+        datamodule whose training data is *not* PyG-backed must declare
+        that explicitly).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not expose a raw PyG training "
+            "dataloader; override train_dataloader_raw_pyg() if the "
+            "datamodule's training data is PyG-backed."
+        )
+
     # ------------------------------------------------------------------
     # Concrete utility methods
     # ------------------------------------------------------------------
