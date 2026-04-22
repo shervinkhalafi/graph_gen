@@ -91,7 +91,9 @@ class TestGaussianForwardSample:
         """
         proc = GaussianNoiseProcess(definition=GaussianNoise(), schedule=long_schedule)
         t = torch.tensor([100] * continuous_graph_data.node_mask.shape[0])
-        out = proc.forward_sample(continuous_graph_data, t)
+        # forward_sample returns NoisedBatch (parity D-4); shape / passthrough
+        # assertions operate on .z_t.
+        out = proc.forward_sample(continuous_graph_data, t).z_t
 
         assert out.X_class is not None
         assert continuous_graph_data.X_class is not None
@@ -137,7 +139,7 @@ class TestGaussianForwardSample:
             fields=frozenset({"X_feat", "E_feat"}),
         )
         t = torch.tensor([long_schedule.timesteps - 1] * bs, dtype=torch.long)
-        out = proc.forward_sample(data, t)
+        out = proc.forward_sample(data, t).z_t
         assert out.X_feat is not None and out.E_feat is not None
 
         x_std = out.X_feat.std().item()
@@ -173,7 +175,7 @@ class TestGaussianForwardSample:
         torch.manual_seed(0)
         proc = GaussianNoiseProcess(definition=GaussianNoise(), schedule=long_schedule)
         t = torch.tensor([0] * continuous_graph_data.node_mask.shape[0])
-        out = proc.forward_sample(continuous_graph_data, t)
+        out = proc.forward_sample(continuous_graph_data, t).z_t
         assert out.E_feat is not None
         assert continuous_graph_data.E_feat is not None
         assert torch.allclose(out.E_feat, continuous_graph_data.E_feat, atol=0.2)
@@ -192,7 +194,7 @@ class TestGaussianForwardSample:
         """
         proc = GaussianNoiseProcess(definition=GaussianNoise(), schedule=long_schedule)
         t = torch.tensor([100] * continuous_graph_data.node_mask.shape[0])
-        out = proc.forward_sample(continuous_graph_data, t)
+        out = proc.forward_sample(continuous_graph_data, t).z_t
         assert out.E_feat is not None
         torch.testing.assert_close(out.E_feat, out.E_feat.transpose(-2, -3))
         n = out.E_feat.shape[-2]
@@ -220,7 +222,7 @@ class TestGaussianPosterior:
         bs = continuous_graph_data.node_mask.shape[0]
         t = torch.tensor([1] * bs, dtype=torch.long)
         s = torch.tensor([0] * bs, dtype=torch.long)
-        z_t = proc.forward_sample(continuous_graph_data, t)
+        z_t = proc.forward_sample(continuous_graph_data, t).z_t
 
         torch.manual_seed(0)
         a = proc.posterior_sample(z_t, continuous_graph_data, t, s)
@@ -245,7 +247,7 @@ class TestGaussianPosterior:
         bs = continuous_graph_data.node_mask.shape[0]
         t = torch.tensor([200] * bs, dtype=torch.long)
         s = torch.tensor([100] * bs, dtype=torch.long)
-        z_t = proc.forward_sample(continuous_graph_data, t)
+        z_t = proc.forward_sample(continuous_graph_data, t).z_t
         out = proc.posterior_sample(z_t, continuous_graph_data, t, s)
         assert out.E_feat is not None
         torch.testing.assert_close(out.E_feat, out.E_feat.transpose(-2, -3))
@@ -267,7 +269,7 @@ class TestGaussianPosterior:
         proc = GaussianNoiseProcess(definition=GaussianNoise(), schedule=long_schedule)
         bs = continuous_graph_data.node_mask.shape[0]
         t = torch.tensor([100] * bs, dtype=torch.long)
-        z_t = proc.forward_sample(continuous_graph_data, t)
+        z_t = proc.forward_sample(continuous_graph_data, t).z_t
         lp = proc.forward_log_prob(z_t, continuous_graph_data, t)
         assert lp.shape == (bs,)
         assert torch.isfinite(lp).all()
@@ -312,7 +314,7 @@ class TestGaussianPosterior:
         bs = continuous_graph_data.node_mask.shape[0]
         t = torch.tensor([200] * bs, dtype=torch.long)
         s = torch.tensor([100] * bs, dtype=torch.long)
-        z_t = proc.forward_sample(continuous_graph_data, t)
+        z_t = proc.forward_sample(continuous_graph_data, t).z_t
         x_s = proc.posterior_sample(z_t, continuous_graph_data, t, s)
         lp = proc.posterior_log_prob(x_s, z_t, continuous_graph_data, t, s)
         assert lp.shape == (bs,)

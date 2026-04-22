@@ -84,7 +84,7 @@ class TestPosteriorLogProb:
     ) -> None:
         """posterior_log_prob returns one value per batch element."""
         t_int = torch.tensor([5, 3, 7])
-        noisy = proc.forward_sample(clean_data, t_int)
+        noisy = proc.forward_sample(clean_data, t_int).z_t
         s_int = t_int - 1
         x_s = proc.posterior_sample(noisy, clean_data, t_int, s_int)
         result = proc.posterior_log_prob(x_s, noisy, clean_data, t_int, s_int)
@@ -95,7 +95,7 @@ class TestPosteriorLogProb:
     ) -> None:
         """posterior_log_prob produces finite values."""
         t_int = torch.tensor([5, 3, 7])
-        noisy = proc.forward_sample(clean_data, t_int)
+        noisy = proc.forward_sample(clean_data, t_int).z_t
         s_int = t_int - 1
         x_s = proc.posterior_sample(noisy, clean_data, t_int, s_int)
         result = proc.posterior_log_prob(x_s, noisy, clean_data, t_int, s_int)
@@ -106,7 +106,7 @@ class TestPosteriorLogProb:
     ) -> None:
         """The posterior KL identity collapses to zero for identical parameters."""
         t_int = torch.tensor([5, 3, 7])
-        noisy = proc.forward_sample(clean_data, t_int)
+        noisy = proc.forward_sample(clean_data, t_int).z_t
         s_int = t_int - 1
         x_s = proc.posterior_sample(noisy, clean_data, t_int, s_int)
         log_true = proc.posterior_log_prob(x_s, noisy, clean_data, t_int, s_int)
@@ -127,7 +127,7 @@ class TestExactDensityTerms:
     ) -> None:
         """forward_log_prob and prior_log_prob return one value per sample."""
         t_int = torch.tensor([T, T - 1, T - 2])
-        noisy = proc.forward_sample(clean_data, t_int)
+        noisy = proc.forward_sample(clean_data, t_int).z_t
         forward = proc.forward_log_prob(noisy, clean_data, t_int)
         prior = proc.prior_log_prob(noisy)
         assert forward.shape == (BS,)
@@ -138,7 +138,7 @@ class TestExactDensityTerms:
     ) -> None:
         """forward_log_prob and prior_log_prob stay finite on sampled states."""
         t_int = torch.tensor([T, T - 1, T - 2])
-        noisy = proc.forward_sample(clean_data, t_int)
+        noisy = proc.forward_sample(clean_data, t_int).z_t
         forward = proc.forward_log_prob(noisy, clean_data, t_int)
         prior = proc.prior_log_prob(noisy)
         assert torch.isfinite(forward).all()

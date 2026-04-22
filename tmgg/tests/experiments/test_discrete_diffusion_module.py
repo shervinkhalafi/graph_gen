@@ -200,7 +200,7 @@ class TestForward:
         lightning_module.eval()
         bs, n = batch.node_mask.shape
         t_int = torch.randint(1, _T + 1, (bs,))
-        z_t = lightning_module.noise_process.forward_sample(batch, t_int)
+        z_t = lightning_module.noise_process.forward_sample(batch, t_int).z_t
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
@@ -233,7 +233,7 @@ class TestTraining:
         lightning_module.train()
         bs = batch.node_mask.shape[0]
         t_int = torch.randint(1, _T + 1, (bs,))
-        z_t = lightning_module.noise_process.forward_sample(batch, t_int)
+        z_t = lightning_module.noise_process.forward_sample(batch, t_int).z_t
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
@@ -353,7 +353,7 @@ class TestDiGressAlignment:
 
         # Get model prediction
         t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
-        z_t = lightning_module.noise_process.forward_sample(batch, t_int)
+        z_t = lightning_module.noise_process.forward_sample(batch, t_int).z_t
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
@@ -407,7 +407,7 @@ class TestDiGressAlignment:
 
         # Get predictions
         t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
-        z_t = lightning_module.noise_process.forward_sample(batch_padded, t_int)
+        z_t = lightning_module.noise_process.forward_sample(batch_padded, t_int).z_t
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
@@ -497,7 +497,7 @@ class TestDiGressAlignment:
 
         batch = next(iter(datamodule.train_dataloader()))
         t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
-        z_t = noise_process.forward_sample(batch, t_int)
+        z_t = noise_process.forward_sample(batch, t_int).z_t
         t_norm = t_int.float() / _T
         pred = mod_low.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 

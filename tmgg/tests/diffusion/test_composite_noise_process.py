@@ -138,7 +138,7 @@ class TestCompositeForward:
         gauss = GaussianNoiseProcess(definition=GaussianNoise(), schedule=schedule)
         comp = CompositeNoiseProcess([cat, gauss])
         t = torch.tensor([40, 40], dtype=torch.long)
-        out = comp.forward_sample(hybrid_graph_data, t)
+        out = comp.forward_sample(hybrid_graph_data, t).z_t
 
         # All declared fields must be present on the output.
         assert out.X_class is not None
@@ -219,7 +219,7 @@ class TestCompositeForward:
         gauss = GaussianNoiseProcess(definition=GaussianNoise(), schedule=schedule)
         comp = CompositeNoiseProcess([cat, gauss])
         t = torch.tensor([40, 40], dtype=torch.long)
-        x_t = comp.forward_sample(hybrid_graph_data, t)
+        x_t = comp.forward_sample(hybrid_graph_data, t).z_t
 
         composite = comp.forward_log_prob(x_t, hybrid_graph_data, t)
         direct = cat.forward_log_prob(
@@ -258,7 +258,7 @@ class TestReverseSamplerDispatchHook:
         s = torch.tensor([29, 29], dtype=torch.long)
         # Sample ``z_t`` from the forward process so the posterior call
         # receives a well-shaped state for the declared fields.
-        z_t = gauss.forward_sample(hybrid_graph_data, t)
+        z_t = gauss.forward_sample(hybrid_graph_data, t).z_t
 
         torch.manual_seed(7)
         hook = gauss.posterior_sample_from_model_output(z_t, hybrid_graph_data, t, s)
@@ -286,7 +286,7 @@ class TestReverseSamplerDispatchHook:
         )
         t = torch.tensor([30, 30], dtype=torch.long)
         s = torch.tensor([29, 29], dtype=torch.long)
-        z_t = cat.forward_sample(hybrid_graph_data, t)
+        z_t = cat.forward_sample(hybrid_graph_data, t).z_t
 
         # Soft prediction: fully diffuse over classes. The two code
         # paths disagree numerically under this prediction, so
@@ -320,7 +320,7 @@ class TestReverseSamplerDispatchHook:
 
         t = torch.tensor([30, 30], dtype=torch.long)
         s = torch.tensor([29, 29], dtype=torch.long)
-        z_t = comp.forward_sample(hybrid_graph_data, t)
+        z_t = comp.forward_sample(hybrid_graph_data, t).z_t
 
         # Manual iteration under the same seed must agree with the
         # composite's hook call.

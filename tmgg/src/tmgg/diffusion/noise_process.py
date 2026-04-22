@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Literal
 
 import torch
@@ -47,6 +48,86 @@ from .diffusion_sampling import (
     sample_discrete_feature_noise,
     sample_discrete_features,
 )
+
+
+@dataclass(frozen=True)
+class NoisedBatch:
+    """Forward-noise output: corrupted graph plus per-sample schedule scalars.
+
+    Mirrors upstream DiGress's ``apply_noise`` return dict
+    (``diffusion_model_discrete.py:407-442``) field by field, with the
+    noised tensors packaged as a typed :class:`GraphData` rather than
+    four loose ``(X_t, E_t, y_t, node_mask)`` entries. The schedule
+    scalars carry shape ``(B, 1)`` so VLB-path expressions translate
+    one-to-one between this codebase and the upstream reference.
+
+    Attributes
+    ----------
+    z_t
+        Noised graph state at integer timestep ``t_int``.
+    t_int
+        Integer timesteps, shape ``(B, 1)`` with dtype ``torch.long``.
+    t
+        Normalised time ``t_int / T``, shape ``(B, 1)``.
+    beta_t
+        Schedule beta at ``t_int``, shape ``(B, 1)``.
+    alpha_t_bar
+        Cumulative alpha-bar at ``t_int``, shape ``(B, 1)``.
+    alpha_s_bar
+        Cumulative alpha-bar at ``s = t_int - 1``, shape ``(B, 1)``.
+
+    Notes
+    -----
+    Composite processes share a single schedule across sub-processes, so
+    the schedule scalars are well-defined for ``CompositeNoiseProcess``
+    too; the composite picks any sub-process's schedule (they must agree
+    by the construction-time timestep invariant).
+    """
+
+    z_t: GraphData
+    t_int: Tensor
+    t: Tensor
+    beta_t: Tensor
+    alpha_t_bar: Tensor
+    alpha_s_bar: Tensor
+
+
+def _build_noised_batch(
+    z_t: GraphData,
+    t_int: Tensor,
+    schedule: NoiseSchedule,
+) -> NoisedBatch:
+    """Bundle a noised graph with the schedule scalars at ``t_int``.
+
+    Reshapes ``t_int`` to ``(B, 1)`` and pulls the matching ``beta_t``,
+    ``alpha_t_bar`` and ``alpha_s_bar`` off the schedule. Mirrors the
+    upstream layout where ``apply_noise`` returns the ``(B, 1)`` per-
+    sample scalars alongside the noised state.
+    """
+    if t_int.dim() == 1:
+        t_int_b1 = t_int.unsqueeze(-1).long()
+    elif t_int.dim() == 2 and t_int.shape[-1] == 1:
+        t_int_b1 = t_int.long()
+    else:
+        raise ValueError(
+            f"_build_noised_batch: t_int must have shape (B,) or (B, 1), "
+            f"got {tuple(t_int.shape)}"
+        )
+
+    s_int_b1 = (t_int_b1 - 1).clamp(min=0)
+    timesteps = schedule.timesteps
+    t_norm = t_int_b1.float() / timesteps
+    beta_t = schedule(t_int=t_int_b1)
+    alpha_t_bar = schedule.get_alpha_bar(t_int=t_int_b1)
+    alpha_s_bar = schedule.get_alpha_bar(t_int=s_int_b1)
+    return NoisedBatch(
+        z_t=z_t,
+        t_int=t_int_b1,
+        t=t_norm,
+        beta_t=beta_t,
+        alpha_t_bar=alpha_t_bar,
+        alpha_s_bar=alpha_s_bar,
+    )
 
 
 def _continuous_edge_state(data: GraphData) -> Tensor:
@@ -309,8 +390,13 @@ class NoiseProcess(ABC, nn.Module):
         ...
 
     @abstractmethod
-    def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
-        """Sample ``q(z_t | x_0)`` at integer timesteps ``t``."""
+    def forward_sample(self, x_0: GraphData, t: Tensor) -> NoisedBatch:
+        """Sample ``q(z_t | x_0)`` at integer timesteps ``t``.
+
+        Returns a :class:`NoisedBatch` bundling the noised state with the
+        schedule scalars at ``t_int`` (matching upstream DiGress's
+        ``apply_noise`` dict).
+        """
         ...
 
     @abstractmethod
@@ -487,7 +573,7 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
         edge_state = edge_state * mask_2d.float()
         return GraphData.from_structure_only(node_mask, edge_state).mask()
 
-    def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
+    def forward_sample(self, x_0: GraphData, t: Tensor) -> NoisedBatch:
         """Sample ``q(z_t | x_0) = N(sqrt(alpha_bar_t) x_0, (1 - alpha_bar_t) I)``.
 
         For every field in :attr:`fields` draws fresh ``eps ~ N(0, I)``
@@ -495,6 +581,10 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
         sqrt(1 - alpha_bar_t) * eps``. Edge-field outputs are
         symmetrised via ``(E + E.transpose(-2, -3)) / 2`` and
         diagonal-zeroed; non-declared fields pass through untouched.
+
+        Returns a :class:`NoisedBatch` bundling the noised state with
+        ``t_int``, ``t``, ``beta_t``, ``alpha_t_bar``, ``alpha_s_bar``
+        for VLB-path callers (parity #17 / #18 / D-4).
         """
         alpha_bar = self.noise_schedule.get_alpha_bar(t_int=t)
         updates: dict[FieldName, Tensor] = {}
@@ -504,7 +594,8 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
             noise = torch.randn_like(x_val)
             noised = torch.sqrt(sqrt_ab) * x_val + torch.sqrt(1.0 - sqrt_ab) * noise
             updates[field] = self._finalise_field(field, noised, x_0.node_mask)
-        return _gaussian_graphdata(x_0, updates).mask()
+        z_t = _gaussian_graphdata(x_0, updates).mask()
+        return _build_noised_batch(z_t, t, self.noise_schedule)
 
     def sample_at_level(self, x_0: GraphData, level: Tensor | float) -> GraphData:
         """Sample the forward process at an explicit continuous noise level.
@@ -891,10 +982,15 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         x_limit, e_limit, y_limit = self._stationary_distribution()
         return sample_discrete_feature_noise(x_limit, e_limit, node_mask, y_limit)
 
-    def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
-        """Sample the forward categorical process at timestep ``t``."""
+    def forward_sample(self, x_0: GraphData, t: Tensor) -> NoisedBatch:
+        """Sample the forward categorical process at timestep ``t``.
+
+        Returns a :class:`NoisedBatch` bundling the noised state with
+        the schedule scalars at ``t_int`` (parity #17 / #18 / D-4).
+        """
         alpha_bar = self._schedule_to_level(t)
-        return self._apply_noise(x_0, alpha_bar)
+        z_t = self._apply_noise(x_0, alpha_bar)
+        return _build_noised_batch(z_t, t, self.noise_schedule)
 
     def _set_stationary_distribution(
         self,
@@ -1448,12 +1544,32 @@ class CompositeNoiseProcess(NoiseProcess):
         assert data is not None  # non-empty processes enforced at __init__
         return data
 
-    def forward_sample(self, x_0: GraphData, t: Tensor) -> GraphData:
-        """Apply each sub-process in list order and thread the output forward."""
+    def forward_sample(self, x_0: GraphData, t: Tensor) -> NoisedBatch:
+        """Apply each sub-process in list order and thread the output forward.
+
+        Returns a single :class:`NoisedBatch` whose ``z_t`` carries the
+        composed per-sub-process noise and whose schedule scalars come
+        from the last sub-process. The composite enforces a shared
+        timestep count across sub-processes
+        (:attr:`CompositeNoiseProcess.timesteps`); when sub-processes
+        share an identical schedule (the canonical case) the scalars
+        agree across choices.
+        """
         data = x_0
+        last_batch: NoisedBatch | None = None
         for proc in self._process_list:
-            data = proc.forward_sample(data, t)
-        return data
+            last_batch = proc.forward_sample(data, t)
+            data = last_batch.z_t
+        # ``processes`` is non-empty by ``__init__`` invariant.
+        assert last_batch is not None
+        return NoisedBatch(
+            z_t=data,
+            t_int=last_batch.t_int,
+            t=last_batch.t,
+            beta_t=last_batch.beta_t,
+            alpha_t_bar=last_batch.alpha_t_bar,
+            alpha_s_bar=last_batch.alpha_s_bar,
+        )
 
     def posterior_sample(
         self,

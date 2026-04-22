@@ -129,7 +129,9 @@ if hasattr(module, "noise_process") and hasattr(module, "_compute_loss") and has
         t_int = torch.randint(1, int(module.T) + 1, (bs,), device=device)
 
         print("Config preflight: noise forward_sample", flush=True)
-        z_t = module.noise_process.forward_sample(batch, t_int)
+        # forward_sample returns NoisedBatch (parity #17 / #18 / D-4);
+        # the preflight only needs z_t for the downstream model call.
+        z_t = module.noise_process.forward_sample(batch, t_int).z_t
         print(
             "Config preflight OK: noise forward_sample",
             _shape_summary(z_t),

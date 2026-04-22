@@ -529,8 +529,12 @@ class DiffusionModule(BaseGraphModule):
         # validation samples t in {1..T} (t=0 handled separately by reconstruction_logp).
         t_int = torch.randint(0, self.T + 1, (bs,), device=device)
 
-        # Apply forward noise at the sampled timesteps
-        z_t = self.noise_process.forward_sample(batch, t_int)
+        # Apply forward noise at the sampled timesteps. ``forward_sample``
+        # now returns a ``NoisedBatch`` bundling the noised graph with the
+        # schedule scalars (parity #17 / #18 / D-4); only ``z_t`` is fed
+        # into the model here.
+        noised = self.noise_process.forward_sample(batch, t_int)
+        z_t = noised.z_t
 
         condition = self.noise_process.process_state_condition_vector(t_int)
 
@@ -660,7 +664,7 @@ class DiffusionModule(BaseGraphModule):
         t_int = torch.ones(bs, dtype=torch.long, device=device)
         s_int = torch.zeros_like(t_int)
 
-        z_1 = self.noise_process.forward_sample(batch, t_int)
+        z_1 = self.noise_process.forward_sample(batch, t_int).z_t
         condition = self.noise_process.process_state_condition_vector(t_int)
         pred_logits = self.model(z_1, t=condition)
         x0_param = self.noise_process.model_output_to_posterior_parameter(pred_logits)
@@ -693,7 +697,7 @@ class DiffusionModule(BaseGraphModule):
 
         # Validation loss at a random timestep
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
-        z_t = self.noise_process.forward_sample(batch, t_int)
+        z_t = self.noise_process.forward_sample(batch, t_int).z_t
         condition = self.noise_process.process_state_condition_vector(t_int)
         pred = self.model(z_t, t=condition)
         loss = self._compute_loss(pred, batch)
@@ -777,7 +781,7 @@ class DiffusionModule(BaseGraphModule):
             kl_diffusion = self.T * (log_q_true - log_q_pred)
 
             t_T = torch.full((bs,), self.T, device=device, dtype=torch.long)
-            z_T = exact_process.forward_sample(batch, t_T)
+            z_T = exact_process.forward_sample(batch, t_T).z_t
             kl_prior = exact_process.forward_log_prob(
                 z_T, batch, t_T
             ) - exact_process.prior_log_prob(z_T)
