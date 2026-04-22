@@ -141,46 +141,82 @@ class GraphData:
         """
         return _dc_replace(self, **kwargs)
 
-    def mask(self) -> GraphData:
-        """Zero out features at masked node positions and assert edge symmetry.
+    def mask(self, collapse: bool = False) -> GraphData:
+        """Zero out features at masked positions, optionally collapsing to indices.
 
         Operates on every populated split field; skips ``None`` fields.
+        Mirrors upstream DiGress's ``PlaceHolder.mask(node_mask, collapse)``
+        in ``digress-upstream-readonly/src/utils.py:103-131`` so that
+        callers can use the upstream form directly. When ``collapse=False``
+        (the default) the behaviour is unchanged: featured tensors are
+        zeroed at padded positions and the categorical edge tensors are
+        asserted symmetric. When ``collapse=True`` the categorical fields
+        are argmaxed to integer indices with ``-1`` as a sentinel at
+        masked positions (continuous ``X_feat`` / ``E_feat`` are still
+        zeroed); the symmetry assertion is skipped because integer indices
+        do not satisfy the same float-equality predicate.
+
+        Parameters
+        ----------
+        collapse
+            If ``False`` (default), zero features at masked positions and
+            keep the one-hot / continuous representation. If ``True``,
+            argmax categorical fields to integer class indices and use
+            ``-1`` as the sentinel at masked positions.
 
         Returns
         -------
         GraphData
-            New instance with masked values zeroed.
+            New instance with masked values zeroed (or, when
+            ``collapse=True``, with categorical fields argmaxed to
+            integer indices).
 
         Raises
         ------
         AssertionError
-            If any populated edge-feature tensor is not symmetric after
-            masking.
+            With ``collapse=False``: if any populated edge-feature tensor
+            is not symmetric after masking.
         """
         x_mask = self.node_mask.unsqueeze(-1)  # (bs, n, 1)
         e_mask1 = x_mask.unsqueeze(2)  # (bs, n, 1, 1)
         e_mask2 = x_mask.unsqueeze(1)  # (bs, 1, n, 1)
 
-        X_class_masked = self.X_class * x_mask if self.X_class is not None else None
-        X_feat_masked = self.X_feat * x_mask if self.X_feat is not None else None
+        X_class_masked: Tensor | None = None
         E_class_masked: Tensor | None = None
+
+        if collapse:
+            edge_pair_mask = (e_mask1 * e_mask2).squeeze(-1)  # (bs, n, n)
+            if self.X_class is not None:
+                X_class_masked = torch.argmax(self.X_class, dim=-1)
+                X_class_masked[self.node_mask == 0] = -1
+            if self.E_class is not None:
+                E_class_masked = torch.argmax(self.E_class, dim=-1)
+                E_class_masked[edge_pair_mask == 0] = -1
+        else:
+            if self.X_class is not None:
+                X_class_masked = self.X_class * x_mask
+            if self.E_class is not None:
+                E_class_masked = self.E_class * e_mask1 * e_mask2
+                assert torch.allclose(
+                    E_class_masked, torch.transpose(E_class_masked, -3, -2)
+                ), (
+                    "Edge features E_class must be symmetric after masking. "
+                    f"Max asymmetry: {(E_class_masked - torch.transpose(E_class_masked, -3, -2)).abs().max().item():.2e}"
+                )
+
+        # Continuous fields are always zeroed at masked positions; collapse
+        # only affects the categorical (one-hot) split.
+        X_feat_masked = self.X_feat * x_mask if self.X_feat is not None else None
         E_feat_masked: Tensor | None = None
-        if self.E_class is not None:
-            E_class_masked = self.E_class * e_mask1 * e_mask2
-            assert torch.allclose(
-                E_class_masked, torch.transpose(E_class_masked, -3, -2)
-            ), (
-                "Edge features E_class must be symmetric after masking. "
-                f"Max asymmetry: {(E_class_masked - torch.transpose(E_class_masked, -3, -2)).abs().max().item():.2e}"
-            )
         if self.E_feat is not None:
             E_feat_masked = self.E_feat * e_mask1 * e_mask2
-            assert torch.allclose(
-                E_feat_masked, torch.transpose(E_feat_masked, -3, -2)
-            ), (
-                "Edge features E_feat must be symmetric after masking. "
-                f"Max asymmetry: {(E_feat_masked - torch.transpose(E_feat_masked, -3, -2)).abs().max().item():.2e}"
-            )
+            if not collapse:
+                assert torch.allclose(
+                    E_feat_masked, torch.transpose(E_feat_masked, -3, -2)
+                ), (
+                    "Edge features E_feat must be symmetric after masking. "
+                    f"Max asymmetry: {(E_feat_masked - torch.transpose(E_feat_masked, -3, -2)).abs().max().item():.2e}"
+                )
 
         return GraphData(
             y=self.y,
@@ -663,9 +699,10 @@ class GraphData:
 def collapse_to_indices(data: GraphData) -> tuple[Tensor, Tensor | None]:
     """Argmax ``E_class`` (and optionally ``X_class``) to class indices.
 
-    Returns a tuple ``(E_idx, X_idx)`` where each entry is a Tensor of
-    integer indices, with ``-1`` as a sentinel at masked positions.
-    ``X_idx`` is ``None`` when the data has no ``X_class``.
+    Thin tuple-returning alias for ``data.mask(collapse=True)``, kept so
+    external callers that pre-date the merge keep working. The canonical
+    form is ``GraphData.mask(collapse=True)`` (mirrors upstream's
+    ``PlaceHolder.mask(node_mask, collapse=True)``).
 
     Parameters
     ----------
@@ -677,7 +714,7 @@ def collapse_to_indices(data: GraphData) -> tuple[Tensor, Tensor | None]:
     -------
     (E_idx, X_idx)
         ``E_idx`` has shape ``(bs, n, n)``; ``X_idx`` has shape
-        ``(bs, n)`` or is ``None``.
+        ``(bs, n)`` or is ``None`` when ``data.X_class`` is ``None``.
 
     Raises
     ------
@@ -687,19 +724,9 @@ def collapse_to_indices(data: GraphData) -> tuple[Tensor, Tensor | None]:
     if data.E_class is None:
         raise ValueError("collapse_to_indices() requires data.E_class to be populated.")
 
-    node_mask = data.node_mask
-    x_mask = node_mask.unsqueeze(-1)  # (bs, n, 1)
-    e_mask = x_mask.unsqueeze(2) * x_mask.unsqueeze(1)  # (bs, n, n, 1)
-
-    E_idx = torch.argmax(data.E_class, dim=-1)
-    E_idx[e_mask.squeeze(-1) == 0] = -1
-
-    X_idx: Tensor | None = None
-    if data.X_class is not None:
-        X_idx = torch.argmax(data.X_class, dim=-1)
-        X_idx[node_mask == 0] = -1
-
-    return E_idx, X_idx
+    collapsed = data.mask(collapse=True)
+    assert collapsed.E_class is not None  # E_class non-None already guarded above
+    return collapsed.E_class, collapsed.X_class
 
 
 @dataclass(frozen=True, slots=True)
