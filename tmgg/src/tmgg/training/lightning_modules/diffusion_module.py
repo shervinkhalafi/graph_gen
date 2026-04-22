@@ -57,6 +57,8 @@ from tmgg.training.lightning_modules.train_loss_discrete import (
     masked_edge_mse,
     masked_node_ce,
     masked_node_mse,
+    masked_y_ce,
+    masked_y_mse,
 )
 from tmgg.training.logging import log_figures
 from tmgg.utils.noising.size_distribution import SizeDistribution
@@ -69,11 +71,18 @@ _DEFAULT_VISUALIZATION = {"enabled": True, "num_samples": 8}
 #: 2023, Eq. 3) ``lambda_E`` convention; node-side and continuous node fields
 #: default to unit weight. A user-supplied ``lambda_per_field`` dict on the
 #: constructor merges on top of this table.
+#:
+#: Graph-level ``y_class`` / ``y_feat`` (parity #27 / #44 / D-13) default
+#: to ``0.0`` so the y-term contributes nothing on structure-only datasets
+#: (SBM, etc.) where no global target exists. Molecular datasets opt in
+#: with a non-zero ``lambda_y`` constructor argument.
 _DEFAULT_LAMBDA_PER_FIELD: dict[FieldName, float] = {
     "X_class": 1.0,
     "E_class": 5.0,
     "X_feat": 1.0,
     "E_feat": 5.0,
+    "y_class": 0.0,
+    "y_feat": 0.0,
 }
 
 
@@ -158,6 +167,15 @@ def _read_field(data: GraphData, field: FieldName) -> torch.Tensor:
                 "populated; cannot derive a continuous edge view."
             )
         return data.to_edge_scalar(source="class").unsqueeze(-1)
+    if field in ("y_class", "y_feat"):
+        # Graph-level fields share the underlying ``y`` tensor on
+        # ``GraphData`` (shape ``(bs, dy)``). The split between
+        # ``y_class`` (categorical) and ``y_feat`` (continuous) is a
+        # loss-dispatch concern carried by ``GRAPHDATA_LOSS_KIND``;
+        # the data layer keeps a single tensor for both. Empty-class
+        # batches (``y.shape[-1] == 0``, the SBM convention) are
+        # handled by the masked CE/MSE helpers' ``numel == 0`` guard.
+        return data.y
     raise ValueError(f"_read_field does not support field {field!r}.")
 
 
@@ -311,12 +329,19 @@ class DiffusionModule(BaseGraphModule):
         Kept for backward compatibility with configs that pass it; when
         set, it overrides ``lambda_per_field["E_class"]`` and
         ``lambda_per_field["E_feat"]``.
+    lambda_y : float
+        Weight for the graph-level loss (parity #27 / #44 / D-13). Default
+        ``0.0`` so structure-only datasets (SBM, etc.) match upstream
+        DiGress's behaviour bit-for-bit when no global target is
+        defined. Molecular and other graph-classification datasets opt
+        in by passing ``lambda_y > 0``; the value overrides
+        ``lambda_per_field["y_class"]`` and ``lambda_per_field["y_feat"]``.
     lambda_per_field : dict[str, float] | None
         Per-field weights for the unified per-field training loss (Wave
         5.1). Merged on top of the default table
-        ``{X_class: 1.0, E_class: 5.0, X_feat: 1.0, E_feat: 5.0}`` so a
-        caller can override only the fields they care about. ``None``
-        keeps the default table.
+        ``{X_class: 1.0, E_class: 5.0, X_feat: 1.0, E_feat: 5.0,
+        y_class: 0.0, y_feat: 0.0}`` so a caller can override only the
+        fields they care about. ``None`` keeps the default table.
     num_nodes : int
         Node count used when sampling graphs during evaluation.
     eval_every_n_steps : int
@@ -347,6 +372,7 @@ class DiffusionModule(BaseGraphModule):
         evaluator: GraphEvaluator | None = None,
         loss_type: str = "cross_entropy",
         lambda_E: float = 5.0,
+        lambda_y: float = 0.0,
         lambda_per_field: dict[str, float] | None = None,
         num_nodes: int = 20,
         eval_every_n_steps: int = 5000,
@@ -385,8 +411,10 @@ class DiffusionModule(BaseGraphModule):
 
         # Per-field loss weights: start from the DiGress-compatible default
         # table, merge any user overrides, then have ``lambda_E`` override
-        # the two edge-side fields so existing configs that pass only
-        # ``lambda_E`` keep working bit-for-bit.
+        # the two edge-side fields and ``lambda_y`` the two graph-level
+        # fields so existing configs that pass only the scalar knobs keep
+        # working bit-for-bit. ``lambda_y`` defaults to ``0.0`` so SBM
+        # behaviour (no global target) is unchanged.
         merged_lambdas: dict[FieldName, float] = dict(_DEFAULT_LAMBDA_PER_FIELD)
         if lambda_per_field is not None:
             for field_name, weight in lambda_per_field.items():
@@ -399,8 +427,11 @@ class DiffusionModule(BaseGraphModule):
                 merged_lambdas[field_name] = float(weight)  # pyright: ignore[reportArgumentType]
         merged_lambdas["E_class"] = float(lambda_E)
         merged_lambdas["E_feat"] = float(lambda_E)
+        merged_lambdas["y_class"] = float(lambda_y)
+        merged_lambdas["y_feat"] = float(lambda_y)
         self.lambda_per_field: dict[FieldName, float] = merged_lambdas
         self.lambda_E: float = float(lambda_E)
+        self.lambda_y: float = float(lambda_y)
 
         self.criterion: nn.Module
         self._train_loss_discrete: TrainLossDiscrete | None = None
@@ -570,7 +601,12 @@ class DiffusionModule(BaseGraphModule):
                     term = masked_node_ce(pred_field, target_field, target.node_mask)
                 elif field == "E_class":
                     term = masked_edge_ce(pred_field, target_field, target.node_mask)
-                else:  # pragma: no cover - only X_class / E_class declare CE today
+                elif field == "y_class":
+                    # Graph-level CE — no spatial mask; mirrors upstream
+                    # ``loss_y`` in train_metrics.py:62-123. Weight is
+                    # ``lambda_y`` (default 0.0 ⇒ no contribution on SBM).
+                    term = masked_y_ce(pred_field, target_field)
+                else:  # pragma: no cover - all CE fields handled above
                     raise NotImplementedError(
                         f"No masked CE helper registered for categorical field "
                         f"{field!r}."
@@ -580,7 +616,12 @@ class DiffusionModule(BaseGraphModule):
                     term = masked_node_mse(pred_field, target_field, target.node_mask)
                 elif field == "E_feat":
                     term = masked_edge_mse(pred_field, target_field, target.node_mask)
-                else:  # pragma: no cover - only X_feat / E_feat declare MSE today
+                elif field == "y_feat":
+                    # Graph-level MSE — sister of ``masked_y_ce`` for
+                    # continuous global targets. Weight is ``lambda_y``
+                    # (default 0.0 ⇒ no contribution on SBM).
+                    term = masked_y_mse(pred_field, target_field)
+                else:  # pragma: no cover - all MSE fields handled above
                     raise NotImplementedError(
                         f"No masked MSE helper registered for continuous field "
                         f"{field!r}."

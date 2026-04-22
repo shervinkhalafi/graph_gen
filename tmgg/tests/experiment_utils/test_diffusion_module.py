@@ -357,6 +357,113 @@ class TestComputeLoss:
         assert loss.item() >= 0.0
 
 
+class TestComputeLossYWiring:
+    """y_class / y_feat per-field CE wiring (parity #27 / #44 / D-13).
+
+    Verifies that the new graph-level field hooks added in D-13 plug
+    into the per-field loss loop without changing SBM behaviour
+    (``lambda_y = 0`` ⇒ y-term contributes nothing) and that opting in
+    with ``lambda_y > 0`` makes the y-CE term participate. The default
+    keeps upstream-parity SBM training bit-for-bit identical.
+    """
+
+    def test_lambda_y_zero_preserves_sbm_loss(self) -> None:
+        """SBM regression invariant: λ_y = 0 leaves total loss unchanged.
+
+        Default ``lambda_y`` is ``0.0``. Even if we artificially declare
+        ``y_class`` as a noise-process field on a structure-only
+        categorical SBM batch, the y-term must contribute zero to the
+        total, because the per-field weight is zero. This guards
+        against an accidental bias toward y-CE on SBM runs.
+        """
+        module = _make_module(loss_type="cross_entropy")
+        batch = _make_categorical_batch(bs=2, n=4)
+        assert batch.X_class is not None and batch.E_class is not None
+
+        pred = GraphData(
+            y=batch.y,
+            node_mask=batch.node_mask,
+            X_class=torch.randn_like(batch.X_class),
+            E_class=torch.randn_like(batch.E_class),
+        )
+        # Baseline: SBM-style fields only.
+        loss_baseline = module._compute_loss(pred, batch)
+
+        # Pretend the noise process now also targets y_class. With the
+        # default ``lambda_y = 0.0`` this MUST not change the total.
+        module.noise_process.fields = frozenset(  # pyright: ignore[reportAttributeAccessIssue]
+            module.noise_process.fields | {"y_class"}
+        )
+        loss_with_y_field = module._compute_loss(pred, batch)
+
+        assert torch.allclose(loss_baseline, loss_with_y_field), (
+            f"lambda_y=0 must not change loss when y_class is added to "
+            f"the field set; got baseline={loss_baseline.item()}, "
+            f"with_y={loss_with_y_field.item()}"
+        )
+
+    def test_lambda_y_positive_adds_y_ce_term(self) -> None:
+        """Opting in: λ_y > 0 makes y-CE participate in total loss.
+
+        Build two modules differing only in ``lambda_y``. With a
+        non-degenerate ``y`` carrying a real classification target on
+        the batch, declaring ``y_class`` as a noise-process field must
+        change the total loss when ``lambda_y > 0``.
+        """
+        bs, n, dy = 4, 4, 3
+        adj = torch.zeros(bs, n, n)
+        for i in range(bs):
+            upper = (torch.rand(n, n) > 0.5).float()
+            sym = upper.triu(diagonal=1)
+            adj[i] = sym + sym.t()
+        from tests._helpers.graph_builders import binary_graphdata
+
+        batch_no_y = binary_graphdata(adj)
+        # Build a real y target: one-hot per graph.
+        y_targets = torch.zeros(bs, dy)
+        y_targets[torch.arange(bs), torch.tensor([0, 1, 2, 0])] = 1.0
+        batch = batch_no_y.replace(y=y_targets)
+
+        # Predicted y logits: kept fixed across the two modules.
+        pred_X = torch.randn_like(batch.X_class)  # pyright: ignore[reportArgumentType]
+        pred_E = torch.randn_like(batch.E_class)  # pyright: ignore[reportArgumentType]
+        pred_y_logits = torch.randn(bs, dy)
+        pred = GraphData(
+            y=pred_y_logits,
+            node_mask=batch.node_mask,
+            X_class=pred_X,
+            E_class=pred_E,
+        )
+
+        module_off = _make_module(loss_type="cross_entropy", lambda_y=0.0)
+        module_on = _make_module(loss_type="cross_entropy", lambda_y=2.0)
+        for m in (module_off, module_on):
+            m.noise_process.fields = frozenset(  # pyright: ignore[reportAttributeAccessIssue]
+                m.noise_process.fields | {"y_class"}
+            )
+
+        loss_off = module_off._compute_loss(pred, batch)
+        loss_on = module_on._compute_loss(pred, batch)
+
+        assert torch.isfinite(loss_off)
+        assert torch.isfinite(loss_on)
+        # The on-module must include a strictly larger contribution
+        # from the y-CE term (random logits ⇒ positive expected CE).
+        assert loss_on.item() > loss_off.item(), (
+            f"lambda_y > 0 must increase total loss when y-CE > 0; got "
+            f"off={loss_off.item()}, on={loss_on.item()}"
+        )
+
+    def test_lambda_y_recorded_on_module(self) -> None:
+        """Constructor stores ``lambda_y`` on both the scalar and the
+        per-field map so downstream callers can introspect either.
+        """
+        module = _make_module(loss_type="cross_entropy", lambda_y=0.7)
+        assert module.lambda_y == 0.7
+        assert module.lambda_per_field["y_class"] == 0.7
+        assert module.lambda_per_field["y_feat"] == 0.7
+
+
 class TestValidationStep:
     """validation_step computes loss and VLB but does not accumulate graphs."""
 

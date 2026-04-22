@@ -10,11 +10,22 @@ from tmgg.data.datasets.graph_data_fields import (
 
 
 def test_field_names_match_literal() -> None:
-    """FIELD_NAMES contains exactly the four members of the FieldName Literal."""
+    """FIELD_NAMES contains exactly the six members of the FieldName Literal.
+
+    The graph-level ``y_class`` / ``y_feat`` members were added by parity
+    #27 / #44 / D-13 to expose upstream DiGress's ``loss_y`` term.
+    """
     literal_members = set(get_args(FieldName))
-    assert literal_members == {"X_class", "X_feat", "E_class", "E_feat"}
+    assert literal_members == {
+        "X_class",
+        "X_feat",
+        "E_class",
+        "E_feat",
+        "y_class",
+        "y_feat",
+    }
     assert set(FIELD_NAMES) == literal_members
-    assert len(FIELD_NAMES) == 4
+    assert len(FIELD_NAMES) == 6
 
 
 def test_loss_kind_keys_are_field_names() -> None:

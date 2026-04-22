@@ -128,6 +128,83 @@ def masked_edge_ce(
     )
 
 
+def masked_y_ce(
+    pred_y_logits: Tensor,
+    true_y: Tensor,
+    *,
+    label_smoothing: float = 0.0,
+) -> Tensor:
+    """Cross-entropy over a graph-level (global) categorical field.
+
+    Mirrors upstream DiGress's ``loss_y`` term in
+    ``digress-upstream-readonly/src/metrics/train_metrics.py:62-123``.
+    The graph-level ``y`` tensor is shape ``(bs, dy)``: there is no
+    spatial mask and no diagonal to exclude — every batch element
+    contributes one classification example.
+
+    Parameters
+    ----------
+    pred_y_logits
+        Raw logits, shape ``(bs, dy)``. No softmax applied externally.
+    true_y
+        Target distribution, shape ``(bs, dy)``. Typically one-hot;
+        soft targets are converted to hard class indices via
+        ``argmax(-1)`` to match upstream DiGress semantics.
+    label_smoothing
+        Forwarded to :func:`torch.nn.functional.cross_entropy`. Default
+        ``0.0`` matches upstream.
+
+    Returns
+    -------
+    Tensor
+        Scalar mean CE across the batch. Empty-batch / empty-class
+        inputs (``true_y.numel() == 0``) return a zero scalar with no
+        gradient, matching upstream's ``if true_y.numel() > 0 else 0.0``
+        guard at ``train_metrics.py:99-103``.
+    """
+    if true_y.numel() == 0:
+        # Upstream guard: a graph-level field with zero classes (the
+        # SBM convention before this wire-up) contributes no loss.
+        return pred_y_logits.new_zeros(())
+    flat_targets = true_y.argmax(dim=-1)
+    return F.cross_entropy(
+        pred_y_logits,
+        flat_targets,
+        reduction="mean",
+        label_smoothing=label_smoothing,
+    )
+
+
+def masked_y_mse(
+    pred_y: Tensor,
+    true_y: Tensor,
+) -> Tensor:
+    """Mean-squared error over a graph-level (global) continuous field.
+
+    Sister helper to :func:`masked_y_ce` for continuous global
+    targets. There is no spatial mask: every batch element contributes
+    one regression example, averaged over the feature axis.
+
+    Parameters
+    ----------
+    pred_y
+        Predicted features, shape ``(bs, dy)``.
+    true_y
+        Target features, shape ``(bs, dy)``.
+
+    Returns
+    -------
+    Tensor
+        Scalar mean MSE across the batch. Empty-feature inputs
+        (``true_y.numel() == 0``) return a zero scalar with no gradient.
+    """
+    if true_y.numel() == 0:
+        return pred_y.new_zeros(())
+    diff_sq = (pred_y - true_y) ** 2  # (bs, dy)
+    per_graph = diff_sq.mean(dim=-1)  # (bs,)
+    return per_graph.mean()
+
+
 def masked_node_mse(
     pred_X: Tensor,
     true_X: Tensor,
