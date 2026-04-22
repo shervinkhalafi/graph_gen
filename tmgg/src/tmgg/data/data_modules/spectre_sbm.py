@@ -132,7 +132,13 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         ]
 
         self._train_node_counts = [n_nodes[i] for i in splits["train"]]
-        self.num_nodes = int(max(n_nodes))
+        # Derive num_nodes from train+val only, never test. Mirrors upstream
+        # DiGress AbstractDatasetInfos.complete_infos (abstract_dataset.py:95-100).
+        # Including test would leak test-set graph sizes into model construction.
+        train_val_node_counts = [n_nodes[i] for i in splits["train"]] + [
+            n_nodes[i] for i in splits["val"]
+        ]
+        self.num_nodes = int(max(train_val_node_counts))
 
     @override
     def train_dataloader(self) -> DataLoader[GraphData]:
