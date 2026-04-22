@@ -335,6 +335,12 @@ is in scope for the current work batch**, not a separate decision.
 If the user meant a different item (e.g., #44 which pairs with #27),
 they should clarify — but #44 is now folded into D-13 above.
 
+**Resolution (2026-04-22)**: confirmed — #28 was implemented as part
+of D-5 (commit `9f8e2ed1`, ``_sample_from_unnormalised_posterior`` +
+``assert_symmetric_e`` toggle). The user-list shorthand "28: wire
+up" maps to D-5; #44 maps to D-13 (commit `b18eee6b`). No additional
+work needed under D-14.
+
 ### D-15 — EMA callback + utility (#45): **PLAN + IMPLEMENT**
 
 Add a minimal `ExponentialMovingAverage` utility (self-contained,
