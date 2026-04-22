@@ -117,6 +117,19 @@ How this assures upstream parity:
   set `zero_floor=1e-5` and hit upstream's exact value (also the
   default).
 
+**Implementation note (2026-04-22, commit `9f8e2ed1`)**: the helper
+`_sample_from_unnormalised_posterior` and the `zero_floor` sampler
+parameter are both in place, but the existing reverse-step path keeps
+the canonical "compute unnormalised + sample" pattern split across
+`compute_posterior_distribution*` (returns a normalised PMF with its
+own zero guard) and `sample_discrete_features` (does the multinomial
+draw). The helper lands as a documented primitive for future refactors
+rather than as the active sampling path; consequently the `zero_floor`
+plumbing on `Sampler` is currently unused. Functionally inert at run
+time; structurally still the spec-correct upstream-parity contract.
+The `assert_symmetric_e` toggle IS active in the reverse loop and
+fires per-step as designed.
+
 ### D-6 — `use_marginalised_vlb_kl` toggle (#30): **ADD TOGGLE, default to upstream**
 
 Default `False` = upstream's direct Bayes plug-in form (soft `x_0`
