@@ -352,6 +352,14 @@ class DiffusionModule(BaseGraphModule):
         Validation-visualization settings. ``enabled`` toggles figure
         logging, and ``num_samples`` sets the total number of plotted
         reference/generated graphs across both distributions.
+    use_marginalised_vlb_kl : bool, default False
+        When False (upstream parity, default), validation_step's KL_t
+        term plugs the soft x_0 prediction directly into the Bayes
+        posterior formula (matches diffusion_model_discrete.py:340-360).
+        When True, marginalises over discrete x_0 classes:
+        ``Σ_c p(z_s | z_t, x_0=c) · p_θ(x_0=c | z_t)``. Both estimators
+        are unbiased; marginalised has lower variance early in training
+        when ``p_θ`` is diffuse, plug-in is the published DiGress form.
     """
 
     def __init__(
@@ -377,6 +385,7 @@ class DiffusionModule(BaseGraphModule):
         num_nodes: int = 20,
         eval_every_n_steps: int = 5000,
         visualization: dict[str, Any] | None = None,
+        use_marginalised_vlb_kl: bool = False,
     ) -> None:
         super().__init__(
             model=model,
@@ -408,6 +417,7 @@ class DiffusionModule(BaseGraphModule):
         self.visualization: dict[str, bool | int] = _normalize_visualization_config(
             visualization
         )
+        self.use_marginalised_vlb_kl: bool = bool(use_marginalised_vlb_kl)
 
         # Per-field loss weights: start from the DiGress-compatible default
         # table, merge any user overrides, then have ``lambda_E`` override
@@ -719,17 +729,29 @@ class DiffusionModule(BaseGraphModule):
             s_int = t_int - 1
 
             # Analytic KL_t = KL(q(z_s|z_t,x_0) || p_theta(z_s|z_t)).
-            # The "true" posterior plugs the clean batch (one-hot x_0)
-            # into the Bayes formula. The "predicted" posterior is the
-            # marginalised form ``sum_c p(z_s|z_t,x_0=c) * pred[c]`` —
-            # this is the distribution the sampler actually draws from
-            # (see the Phase C sampler change).
+            # The "true" posterior always plugs the clean batch (one-hot
+            # x_0) into the Bayes formula. The "predicted" posterior
+            # selection follows ``use_marginalised_vlb_kl`` (D-6):
+            #
+            # * False (upstream parity, default): plug the soft x_0
+            #   prediction directly into the same Bayes posterior formula
+            #   (diffusion_model_discrete.py:340-360).
+            # * True: use the marginalised form
+            #   ``sum_c p(z_s|z_t,x_0=c) * pred[c]`` — the distribution
+            #   the sampler actually draws from (see the Phase C sampler
+            #   change). Lower variance early in training; coincides with
+            #   the plug-in form once ``p_θ`` is one-hot.
             true_posterior = cat_process._posterior_probabilities(  # pyright: ignore[reportPrivateUsage]
                 z_t, batch, t_int, s_int
             )
-            pred_posterior = cat_process._posterior_probabilities_marginalised(  # pyright: ignore[reportPrivateUsage]
-                z_t, x0_param, t_int, s_int
-            )
+            if self.use_marginalised_vlb_kl:
+                pred_posterior = cat_process._posterior_probabilities_marginalised(  # pyright: ignore[reportPrivateUsage]
+                    z_t, x0_param, t_int, s_int
+                )
+            else:
+                pred_posterior = cat_process._posterior_probabilities(  # pyright: ignore[reportPrivateUsage]
+                    z_t, x0_param, t_int, s_int
+                )
             kl_diffusion = self.T * _categorical_kl_per_graph(
                 true_posterior, pred_posterior
             )

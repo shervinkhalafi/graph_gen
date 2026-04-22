@@ -792,6 +792,8 @@ class _CategoricalLogitModel(GraphModel):
 
 def _make_categorical_module(
     limit_distribution: Literal["uniform", "empirical_marginal"] = "uniform",
+    *,
+    use_marginalised_vlb_kl: bool = False,
 ) -> DiffusionModule:
     """Build a DiffusionModule backed by a CategoricalNoiseProcess.
 
@@ -814,6 +816,7 @@ def _make_categorical_module(
         loss_type="cross_entropy",
         num_nodes=_NUM_NODES,
         eval_every_n_steps=1,
+        use_marginalised_vlb_kl=use_marginalised_vlb_kl,
     )
     # Inject a stub size distribution so validation_step doesn't trip the
     # parity #32 fail-loud guard. Production code populates this in
@@ -1130,6 +1133,91 @@ class TestReconstructionMasking:
         assert torch.isfinite(
             result
         ).all(), f"Non-finite reconstruction log-prob: {result}"
+
+
+class TestUseMarginalisedVlbKlToggle:
+    """Cover the D-6 ``use_marginalised_vlb_kl`` toggle on validation_step.
+
+    The toggle selects between the upstream-parity plug-in form (default,
+    ``False``) and the lower-variance marginalised form (``True``) for the
+    KL_t term in the VLB. Both estimators are unbiased; with one-hot
+    ``x_0`` predictions they coincide pointwise. A diffuse soft prediction
+    in general yields different per-batch values.
+    """
+
+    def _patch_soft_uniform(self, module: DiffusionModule) -> None:
+        """Patch the model to emit a uniform soft PMF so the two posterior
+        forms are well-defined and (in general) numerically distinct.
+        """
+        original_forward = module.model.forward
+
+        def soft_forward(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+            result = original_forward(data, t=t)
+            assert result.X_class is not None
+            assert result.E_class is not None
+            soft_X = torch.ones_like(result.X_class) / _DX
+            soft_E = torch.ones_like(result.E_class) / _DE
+            return GraphData(
+                y=result.y,
+                node_mask=result.node_mask,
+                X_class=soft_X,
+                E_class=soft_E,
+            )
+
+        module.model.forward = soft_forward  # type: ignore[assignment]
+
+    def test_default_is_upstream_plug_in(self) -> None:
+        """The default value of the toggle must be ``False`` (upstream parity)."""
+        module = _make_categorical_module()
+        assert module.use_marginalised_vlb_kl is False
+
+    def test_both_branches_finite(self) -> None:
+        """Both toggle settings produce finite VLB components on a soft batch."""
+        torch.manual_seed(0)
+        module_off = _make_categorical_module(use_marginalised_vlb_kl=False)
+        module_on = _make_categorical_module(use_marginalised_vlb_kl=True)
+        self._patch_soft_uniform(module_off)
+        self._patch_soft_uniform(module_on)
+
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        module_off.validation_step(batch, batch_idx=0)
+        module_on.validation_step(batch, batch_idx=0)
+
+        for accumulator in (
+            module_off._vlb_kl_diffusion,  # pyright: ignore[reportPrivateUsage]
+            module_on._vlb_kl_diffusion,  # pyright: ignore[reportPrivateUsage]
+            module_off._vlb_nll,  # pyright: ignore[reportPrivateUsage]
+            module_on._vlb_nll,  # pyright: ignore[reportPrivateUsage]
+        ):
+            assert len(accumulator) == 1
+            assert torch.isfinite(accumulator[0]), accumulator[0]
+
+    def test_branches_differ_under_diffuse_prediction(self) -> None:
+        """A diffuse soft x_0 prediction yields *different* KL_t values under
+        the two forms. Plug-in mixes the soft x_0 once through the Bayes
+        formula; marginalised computes a class-by-class mixture of
+        posterior PMFs. They agree only at one-hot predictions.
+        """
+        torch.manual_seed(1)
+        module_off = _make_categorical_module(use_marginalised_vlb_kl=False)
+        module_on = _make_categorical_module(use_marginalised_vlb_kl=True)
+        self._patch_soft_uniform(module_off)
+        self._patch_soft_uniform(module_on)
+
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        # Use the *same* random t_int draw across both modules so the
+        # comparison isolates the toggle behaviour.
+        torch.manual_seed(123)
+        module_off.validation_step(batch, batch_idx=0)
+        torch.manual_seed(123)
+        module_on.validation_step(batch, batch_idx=0)
+
+        kl_off = module_off._vlb_kl_diffusion[0]  # pyright: ignore[reportPrivateUsage]
+        kl_on = module_on._vlb_kl_diffusion[0]  # pyright: ignore[reportPrivateUsage]
+        assert not torch.allclose(kl_off, kl_on, atol=1e-6), (
+            f"Plug-in and marginalised KL_t coincided ({kl_off} vs {kl_on}) "
+            "even though x_0 prediction is diffuse — the toggle has no effect."
+        )
 
 
 class TestSetup:
