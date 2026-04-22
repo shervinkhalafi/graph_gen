@@ -105,6 +105,15 @@ def create_callbacks(config: DictConfig) -> list[pl.Callback]:
         )
     )
 
+    # EMA shadow weights (parity #45 / D-15). Mirrors upstream DiGress's
+    # cfg.train.ema_decay > 0 gate (main.py:181-183): non-zero ema_decay
+    # registers the callback, zero (default) leaves it out.
+    ema_decay = float(cb_config.get("ema_decay", 0.0))
+    if ema_decay > 0.0:
+        from tmgg.training.callbacks import EMACallback
+
+        callbacks.append(EMACallback(decay=ema_decay))
+
     return callbacks
 
 
