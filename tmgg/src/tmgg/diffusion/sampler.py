@@ -103,7 +103,38 @@ class Sampler:
     prior or warm start -> condition vector -> model -> posterior parameter
     -> posterior sample -> finalize. Process-specific math stays on the
     ``NoiseProcess`` side of the interface.
+
+    Parameters
+    ----------
+    assert_symmetric_e
+        When ``True`` (default), every reverse step asserts that the
+        sampled ``z_t.E_class`` is symmetric across the node-pair axes,
+        matching upstream DiGress's ``assert (E_s == E_s.transpose(1, 2)).all()``
+        check at ``diffusion_model_discrete.py:649``. Production hot
+        loops at fp32 batch sizes can disable this with ``False`` if
+        the per-step overhead matters; the rest of the codebase already
+        symmetrises ``E_class`` inside :func:`sample_discrete_features`,
+        so the check is a guard against future drift rather than a
+        load-bearing correctness step.
+    zero_floor
+        Floor passed to :func:`_sample_from_unnormalised_posterior`
+        when sampling categorical posteriors. Defaults to ``1e-5`` to
+        match upstream. Currently unused -- our posterior sampling path
+        normalises inside :func:`compute_posterior_distribution` and
+        feeds already-normalised PMFs into
+        :func:`sample_discrete_features` -- but kept on the constructor
+        so future code can route through the unified primitive without
+        changing the sampler signature.
     """
+
+    def __init__(
+        self,
+        *,
+        assert_symmetric_e: bool = True,
+        zero_floor: float = 1e-5,
+    ) -> None:
+        self._assert_symmetric_e = assert_symmetric_e
+        self._zero_floor = zero_floor
 
     @staticmethod
     def _build_num_nodes(
@@ -335,6 +366,21 @@ class Sampler:
             z_t = noise_process.posterior_sample_from_model_output(
                 z_t, posterior_param, t_tensor, s_tensor
             )
+
+            # Per-reverse-step E-symmetry guard, matching upstream
+            # diffusion_model_discrete.py:649 (parity #28 / #29 / D-5).
+            # Inert on healthy categorical samplers because
+            # sample_discrete_features already symmetrises; the check
+            # protects against future code paths that bypass the
+            # canonical symmetrisation primitive.
+            if self._assert_symmetric_e and z_t.E_class is not None:
+                e = z_t.E_class
+                if not torch.allclose(e, e.transpose(-3, -2)):
+                    raise AssertionError(
+                        "Sampler reverse step produced asymmetric E_class at "
+                        f"t={t_int} (max abs deviation = "
+                        f"{(e - e.transpose(-3, -2)).abs().max().item():.3e})."
+                    )
 
         final = noise_process.finalize_sample(z_t)
         return self._trim_batched_graphs(final, n_nodes)

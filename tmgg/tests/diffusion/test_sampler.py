@@ -784,3 +784,89 @@ class TestContinuousSamplerSample:
         )
 
         assert len(results) == BS
+
+
+class TestAssertSymmetricEToggle:
+    """``Sampler.assert_symmetric_e`` controls the per-step E-symmetry guard.
+
+    Test rationale (parity #28 / #29 / D-5): the toggle mirrors upstream
+    DiGress's per-reverse-step ``assert (E_s == E_s.transpose(1, 2)).all()``
+    at ``diffusion_model_discrete.py:649``. Default ``True`` matches
+    upstream semantics; ``False`` lets production hot loops skip the
+    check when fp32 batch sizes make it expensive. We pin both the
+    default and the failure surface so a future bypass of the canonical
+    symmetrisation primitive cannot silently land asymmetric edges
+    downstream.
+    """
+
+    def test_default_passes_on_normal_categorical_sampling(
+        self,
+        categorical_noise_process: CategoricalNoiseProcess,
+        uniform_model: UniformCategoricalModel,
+    ) -> None:
+        """Standard categorical sampling produces symmetric E_class with default toggle."""
+        sampler = CategoricalSampler()  # default assert_symmetric_e=True
+        assert sampler._assert_symmetric_e is True  # noqa: SLF001
+        results = sampler.sample(
+            model=uniform_model,
+            noise_process=categorical_noise_process,
+            num_graphs=BS,
+            num_nodes=N_NODES,
+            device=torch.device("cpu"),
+        )
+        # Reaches the end without firing the per-step assertion.
+        assert len(results) == BS
+
+    def test_disabling_toggle_lets_loop_complete_without_check(
+        self,
+        categorical_noise_process: CategoricalNoiseProcess,
+        uniform_model: UniformCategoricalModel,
+    ) -> None:
+        """``assert_symmetric_e=False`` bypasses the per-step symmetry guard."""
+        sampler = CategoricalSampler(assert_symmetric_e=False)
+        assert sampler._assert_symmetric_e is False  # noqa: SLF001
+        results = sampler.sample(
+            model=uniform_model,
+            noise_process=categorical_noise_process,
+            num_graphs=BS,
+            num_nodes=N_NODES,
+            device=torch.device("cpu"),
+        )
+        assert len(results) == BS
+
+    def test_assertion_fires_on_forced_asymmetric_e_class(
+        self,
+        categorical_noise_process: CategoricalNoiseProcess,
+        uniform_model: UniformCategoricalModel,
+    ) -> None:
+        """A noise process that returns asymmetric E_class trips the guard."""
+        sampler = CategoricalSampler()  # default assert_symmetric_e=True
+
+        # Wrap posterior_sample_from_model_output to force asymmetry.
+        original_hook = categorical_noise_process.posterior_sample_from_model_output
+
+        def asymmetric_hook(
+            z_t: GraphData,
+            x0_param: GraphData,
+            t: Tensor,
+            s: Tensor,
+        ) -> GraphData:
+            out = original_hook(z_t, x0_param, t, s)
+            assert out.E_class is not None
+            corrupted = out.E_class.clone()
+            # Flip a single off-diagonal entry to break symmetry.
+            corrupted[..., 0, 1, 0] = 1.0 - corrupted[..., 0, 1, 0]
+            return out.replace(E_class=corrupted)
+
+        categorical_noise_process.posterior_sample_from_model_output = (  # type: ignore[method-assign]
+            asymmetric_hook
+        )
+
+        with pytest.raises(AssertionError, match="asymmetric E_class"):
+            sampler.sample(
+                model=uniform_model,
+                noise_process=categorical_noise_process,
+                num_graphs=BS,
+                num_nodes=N_NODES,
+                device=torch.device("cpu"),
+            )

@@ -10,6 +10,63 @@ from tmgg.data.datasets.graph_data_fields import FieldName
 from tmgg.data.datasets.graph_types import GraphData
 
 
+def _sample_from_unnormalised_posterior(
+    unnorm: torch.Tensor,
+    *,
+    zero_floor: float = 1e-5,
+) -> torch.Tensor:
+    """Normalise an unnormalised posterior PMF and sample categorical indices.
+
+    Mirrors the upstream-DiGress canonical pattern in the reverse-step
+    routine ``sample_p_zs_given_zt`` (``DiGress/src/diffusion_model_discrete.py:629-639``):
+
+    .. code-block:: python
+
+        unnormalized = weighted.sum(dim=-2)                       # (bs, N, k)
+        unnormalized[unnormalized.sum(dim=-1) == 0] = 1e-5        # uniform-row fallback
+        prob = unnormalized / unnormalized.sum(dim=-1, keepdim=True)
+        idx = sample_discrete_features(prob, ...)                 # multinomial
+
+    The "row whose mass sums to zero" branch sets the *entire* row to
+    ``zero_floor``, not just the divisor, so the resulting PMF is
+    uniform on degenerate rows. On healthy posteriors the branch is
+    inert; on rare cancellations the sampler keeps going rather than
+    crashing inside :func:`torch.multinomial`.
+
+    Parameters
+    ----------
+    unnorm
+        Unnormalised PMF; the last axis is the class axis. Every entry
+        must be non-negative -- the helper raises a clear
+        :class:`ValueError` rather than calling ``abs()`` so a real bug
+        surfaces loudly per CLAUDE.md.
+    zero_floor
+        Floor mass written into a row whose unnormalised sum is zero,
+        producing a uniform PMF for that row after normalisation.
+        Defaults to ``1e-5`` to match upstream DiGress exactly.
+
+    Returns
+    -------
+    torch.Tensor
+        Sampled class indices with shape ``unnorm.shape[:-1]``.
+    """
+    if not (unnorm >= 0).all():
+        raise ValueError(
+            "_sample_from_unnormalised_posterior: input contains negative "
+            "probability mass; cannot sample. Check upstream computation."
+        )
+    # Upstream uniform-fallback for zero-mass rows (parity #28 / D-5).
+    fixed = unnorm.clone()
+    row_sum = fixed.sum(dim=-1)
+    zero_rows = row_sum == 0
+    if zero_rows.any():
+        fixed[zero_rows] = zero_floor
+    prob = fixed / fixed.sum(dim=-1, keepdim=True)
+    flat_prob = prob.reshape(-1, prob.size(-1))
+    sampled = flat_prob.multinomial(1)
+    return sampled.reshape(prob.shape[:-1])
+
+
 def sample_discrete_features(
     probX: torch.Tensor,
     probE: torch.Tensor,
