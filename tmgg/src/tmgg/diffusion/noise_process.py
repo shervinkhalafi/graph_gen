@@ -223,6 +223,26 @@ def _categorical_kernel(identity_weight: Tensor, limit: Tensor) -> Tensor:
     return identity_weight * eye + (1.0 - identity_weight) * stationary_rows
 
 
+def _assert_row_stochastic(t: Tensor, name: str, atol: float = 1e-5) -> None:
+    """Assert ``t`` is row-stochastic along the last axis.
+
+    Upstream parity (``diffusion_model_discrete.py:425-426`` asserts
+    ``Q̄_t`` row-sums equal 1 inside ``apply_noise``). Our
+    :func:`_mix_with_limit` closed form preserves the invariant
+    algebraically; this runtime check guards against future refactors
+    silently breaking it. Skips empty tensors (``numel == 0``), which
+    are valid for empty-class edge fields.
+    """
+    if t.numel() == 0:
+        return
+    sums = t.sum(dim=-1)
+    deviation = (sums - 1.0).abs().max().item()
+    assert torch.allclose(sums, torch.ones_like(sums), atol=atol), (
+        f"{name} not row-stochastic: max|row_sum - 1| = {deviation:.3e}, "
+        f"shape={tuple(t.shape)}"
+    )
+
+
 class NoiseProcess(ABC, nn.Module):
     """Abstract base for timestep-indexed graph corruption processes.
 
@@ -948,6 +968,10 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         e_class = _read_categorical_e(data)
         prob_X = _mix_with_limit(x_class, noise_level, x_limit)
         prob_E = _mix_with_limit(e_class, noise_level, e_limit)
+        # Per-position PMFs are NOT row-stochastic at padding/diagonal rows
+        # (E_class diagonal is zeroed by from_pyg_batch per upstream parity #4).
+        # The row-stochastic invariant applies to the K×K kernel matrices in
+        # _posterior_probabilities*, not to these (B, n, K) / (B, n, n, K) tensors.
         x_idx, e_idx = sample_discrete_features(prob_X, prob_E, data.node_mask)
         x_one_hot = F.one_hot(x_idx.long(), num_classes=self.x_classes).float()
         e_one_hot = F.one_hot(e_idx.long(), num_classes=self.e_classes).float()
@@ -997,6 +1021,12 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         qsb_e = _categorical_kernel(alpha_bar_s, e_limit)
         qtb_x = _categorical_kernel(alpha_bar_t, x_limit)
         qtb_e = _categorical_kernel(alpha_bar_t, e_limit)
+        _assert_row_stochastic(q_x, "_posterior_probabilities.q_x")
+        _assert_row_stochastic(q_e, "_posterior_probabilities.q_e")
+        _assert_row_stochastic(qsb_x, "_posterior_probabilities.qsb_x")
+        _assert_row_stochastic(qsb_e, "_posterior_probabilities.qsb_e")
+        _assert_row_stochastic(qtb_x, "_posterior_probabilities.qtb_x")
+        _assert_row_stochastic(qtb_e, "_posterior_probabilities.qtb_e")
 
         x0_x = _read_categorical_x(x0_param)
         x0_e = _read_categorical_e(x0_param)
@@ -1082,6 +1112,12 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         qsb_e = _categorical_kernel(alpha_bar_s, e_limit)
         qtb_x = _categorical_kernel(alpha_bar_t, x_limit)
         qtb_e = _categorical_kernel(alpha_bar_t, e_limit)
+        _assert_row_stochastic(q_x, "_posterior_probabilities_marginalised.q_x")
+        _assert_row_stochastic(q_e, "_posterior_probabilities_marginalised.q_e")
+        _assert_row_stochastic(qsb_x, "_posterior_probabilities_marginalised.qsb_x")
+        _assert_row_stochastic(qsb_e, "_posterior_probabilities_marginalised.qsb_e")
+        _assert_row_stochastic(qtb_x, "_posterior_probabilities_marginalised.qtb_x")
+        _assert_row_stochastic(qtb_e, "_posterior_probabilities_marginalised.qtb_e")
 
         zt_x = _read_categorical_x(z_t)
         zt_e = _read_categorical_e(z_t)
@@ -1203,6 +1239,9 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         x_limit, e_limit, _ = self._stationary_distribution()
         prob_x = _mix_with_limit(_read_categorical_x(x_0), alpha_bar_t, x_limit)
         prob_e = _mix_with_limit(_read_categorical_e(x_0), alpha_bar_t, e_limit)
+        # Per-position PMFs are NOT row-stochastic at padding/diagonal rows;
+        # see comment in _apply_noise above. Kernel-level invariant lives in
+        # _posterior_probabilities*.
         template = node_mask_template if node_mask_template is not None else x_0
         return _categorical_graphdata(
             prob_x, prob_e, y=template.y, node_mask=template.node_mask
