@@ -73,6 +73,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         seed: int = 42,
         cache_dir: str | None = None,
         fixture_path: str | None = None,
+        num_nodes_max_static: int = 200,
         **_metadata: object,
     ) -> None:
         # ``**_metadata`` swallows informational keys (notably
@@ -87,6 +88,11 @@ class SpectreSBMDataModule(BaseGraphDataModule):
             pin_memory=pin_memory,
             seed=seed,
         )
+        # Parity #42 / D-11: safe upper bound on node count, exposed
+        # for Hydra interpolation by model configs that need
+        # ``max_n_nodes``. Default 200 covers the SPECTRE SBM fixture's
+        # observed maximum of 187.
+        self.num_nodes_max_static = num_nodes_max_static
         self._cache_dir: Path | None = Path(cache_dir) if cache_dir else None
         self._fixture_path: Path | None = Path(fixture_path) if fixture_path else None
 

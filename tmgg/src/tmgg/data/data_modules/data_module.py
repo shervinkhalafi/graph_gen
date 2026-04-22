@@ -44,6 +44,7 @@ class GraphDataModule(MultiGraphDataModule):
         train_ratio: float = 0.6,
         val_ratio: float = 0.2,
         seed: int = 42,
+        num_nodes_max_static: int | None = None,
     ):
         """Initialize the GraphDataModule.
 
@@ -70,6 +71,15 @@ class GraphDataModule(MultiGraphDataModule):
             Fraction of data to use for validation. Remainder goes to test.
         seed
             Random seed for reproducible splitting and generation.
+        num_nodes_max_static
+            Safe upper bound on the per-graph node count across the
+            dataset. Exposed to model configs via Hydra interpolation
+            (e.g. ``${data.num_nodes_max_static}``) so dimensioning
+            decisions like ``ExtraFeatures(max_n_nodes=...)`` get a
+            single source of truth instead of hardcoding numbers that
+            silently drift with the data preset (parity audit D-11
+            / #42). When ``None``, falls back to
+            ``graph_config["num_nodes"]``.
         """
         super().__init__(
             graph_type=graph_type,
@@ -82,6 +92,11 @@ class GraphDataModule(MultiGraphDataModule):
             num_workers=num_workers,
             pin_memory=pin_memory,
             seed=seed,
+        )
+        self.num_nodes_max_static = (
+            num_nodes_max_static
+            if num_nodes_max_static is not None
+            else int(graph_config.get("num_nodes", 50))
         )
         self.save_hyperparameters()
 

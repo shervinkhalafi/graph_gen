@@ -8,3 +8,6 @@ defaults:
 graph_config:
   num_nodes: 200
   max_block_size: 60
+
+# Override the inherited safe upper bound to track ``num_nodes`` here.
+num_nodes_max_static: 200

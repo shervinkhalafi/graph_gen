@@ -33,6 +33,14 @@ model:
   output_dims_x_feat: null
   output_dims_e_class: 2
   output_dims_e_feat: null
+  # Parity #42 / D-11: any future ``extra_features`` block needing
+  # ``max_n_nodes`` (e.g. ``ExtraFeatures(extra_features_type="all",
+  # max_n_nodes=...)``) MUST interpolate it from
+  # ``${data.num_nodes_max_static}`` instead of hardcoding a literal.
+  # Each data preset under ``configs/data/`` exposes
+  # ``num_nodes_max_static`` as a safe upper bound chosen at design
+  # time; this prevents silent breakage when the same model config
+  # is paired with a larger-graph dataset (e.g. SPECTRE n up to 187).
 
 noise_process:
   _target_: tmgg.diffusion.noise_process.CategoricalNoiseProcess

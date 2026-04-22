@@ -28,6 +28,13 @@ seed: ${seed}
 fixture_path: null
 cache_dir: null
 
+# Safe upper bound on node count across the SPECTRE SBM fixture.
+# Variable node counts in [44, 187]; rounded up to 200 so the same
+# value comfortably covers any future re-sampling. Exposed for Hydra
+# interpolation by model configs that need ``max_n_nodes`` (e.g.
+# ``model.extra_features.max_n_nodes``). See parity audit D-11 / #42.
+num_nodes_max_static: 200
+
 # Informational metadata consumed by the evaluator via Hydra
 # interpolation. These are the SBM parameters the SPECTRE fixture was
 # generated with; matching them makes the Wald-test denominator
