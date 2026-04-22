@@ -527,6 +527,13 @@ class _GraphTransformer(nn.Module):
         Activation function for input MLPs. Defaults to ReLU.
     act_fn_out
         Activation function for output MLPs. Defaults to ReLU.
+    zero_output_diagonal : bool, default False
+        Upstream parity (DiGress models/transformer_model.py): the model
+        output retains diagonal logits — they're informationally useless
+        but harmless because the target-side encode_no_edge zeroing + CE
+        row predicate drops them, and the sampler's triu+symmetrize
+        handles symmetry. Set to True for the prior tmgg behaviour that
+        zeros the diagonal of model output as well.
     """
 
     n_layers: int
@@ -555,6 +562,7 @@ class _GraphTransformer(nn.Module):
         act_fn_in: nn.Module | None = None,
         act_fn_out: nn.Module | None = None,
         projection_config: dict[str, bool | int] | None = None,
+        zero_output_diagonal: bool = False,
     ) -> None:
         super().__init__()
         self.n_layers = n_layers
@@ -562,6 +570,7 @@ class _GraphTransformer(nn.Module):
         self.hidden_mlp_dims = hidden_mlp_dims
         self.hidden_dims = hidden_dims
         self.output_dims = output_dims
+        self.zero_output_diagonal = zero_output_diagonal
 
         self.out_dim_X = output_dims["X"]
         self.out_dim_E = output_dims["E"]
@@ -770,12 +779,19 @@ class _GraphTransformer(nn.Module):
 
         E_symmetric = 1 / 2 * (E_final + torch.transpose(E_final, 1, 2))
 
-        return GraphData(
+        out = GraphData(
             y=y_final,
             node_mask=node_mask,
             X_class=X_final,
             E_class=E_symmetric,
-        ).mask_zero_diag()
+        )
+        # Upstream parity: padding-only mask on the output. The diagonal
+        # logits are unused (target-side encode_no_edge + CE row predicate
+        # drop them; sampler handles symmetry) but harmless. Set
+        # ``zero_output_diagonal=True`` to recover the prior tmgg behaviour.
+        if self.zero_output_diagonal:
+            return out.mask_zero_diag()
+        return out.mask()
 
 
 class GraphTransformer(GraphModel):
@@ -813,6 +829,9 @@ class GraphTransformer(GraphModel):
     use_timestep
         If True, append the normalised diffusion timestep ``t`` to ``y``
         before the inner transformer, adding one dimension to ``y``.
+    zero_output_diagonal : bool, default False
+        Forwarded to the inner ``_GraphTransformer``. See its docstring
+        for the parity rationale; ``False`` matches upstream DiGress.
     """
 
     n_layers: int
@@ -839,6 +858,7 @@ class GraphTransformer(GraphModel):
         output_dims_x_feat: int | None = None,
         output_dims_e_class: int | None = None,
         output_dims_e_feat: int | None = None,
+        zero_output_diagonal: bool = False,
     ) -> None:
         super().__init__()
         self.n_layers = n_layers
@@ -881,6 +901,7 @@ class GraphTransformer(GraphModel):
             act_fn_in=act_fn_in,
             act_fn_out=act_fn_out,
             projection_config=projection_config,
+            zero_output_diagonal=zero_output_diagonal,
         )
 
     @override
