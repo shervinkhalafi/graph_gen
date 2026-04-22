@@ -794,6 +794,7 @@ def _make_categorical_module(
     limit_distribution: Literal["uniform", "empirical_marginal"] = "uniform",
     *,
     use_marginalised_vlb_kl: bool = False,
+    use_upstream_reconstruction: bool = True,
 ) -> DiffusionModule:
     """Build a DiffusionModule backed by a CategoricalNoiseProcess.
 
@@ -817,6 +818,7 @@ def _make_categorical_module(
         num_nodes=_NUM_NODES,
         eval_every_n_steps=1,
         use_marginalised_vlb_kl=use_marginalised_vlb_kl,
+        use_upstream_reconstruction=use_upstream_reconstruction,
     )
     # Inject a stub size distribution so validation_step doesn't trip the
     # parity #32 fail-loud guard. Production code populates this in
@@ -1217,6 +1219,106 @@ class TestUseMarginalisedVlbKlToggle:
         assert not torch.allclose(kl_off, kl_on, atol=1e-6), (
             f"Plug-in and marginalised KL_t coincided ({kl_off} vs {kl_on}) "
             "even though x_0 prediction is diffuse — the toggle has no effect."
+        )
+
+
+class TestUseUpstreamReconstructionToggle:
+    """Cover the D-7 ``use_upstream_reconstruction`` toggle.
+
+    The toggle selects between the upstream-parity z_0 + raw-softmax
+    scoring (default ``True``) and the project's previous z_1 +
+    marginalised reverse-posterior form (``False``). Both are valid
+    estimators of ``log p(x_0)``; the upstream form is the published
+    DiGress reconstruction term. They differ numerically by ~1e-3 at
+    T=1000.
+    """
+
+    def _patch_soft_uniform(self, module: DiffusionModule) -> None:
+        """Patch the model to emit a uniform soft PMF (well-defined in
+        log-space, distinct from the marginalised reverse-posterior).
+        """
+        original_forward = module.model.forward
+
+        def soft_forward(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+            result = original_forward(data, t=t)
+            assert result.X_class is not None
+            assert result.E_class is not None
+            soft_X = torch.ones_like(result.X_class) / _DX
+            soft_E = torch.ones_like(result.E_class) / _DE
+            return GraphData(
+                y=result.y,
+                node_mask=result.node_mask,
+                X_class=soft_X,
+                E_class=soft_E,
+            )
+
+        module.model.forward = soft_forward  # type: ignore[assignment]
+
+    def test_default_is_upstream(self) -> None:
+        """The toggle defaults to ``True`` (upstream parity)."""
+        module = _make_categorical_module()
+        assert module.use_upstream_reconstruction is True
+
+    def test_both_branches_finite(self) -> None:
+        """Both branches return finite per-graph reconstruction tensors."""
+        torch.manual_seed(0)
+        module_upstream = _make_categorical_module(use_upstream_reconstruction=True)
+        module_marginalised = _make_categorical_module(
+            use_upstream_reconstruction=False
+        )
+        self._patch_soft_uniform(module_upstream)
+        self._patch_soft_uniform(module_marginalised)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
+
+        recon_upstream = module_upstream._compute_reconstruction_upstream_style(  # pyright: ignore[reportPrivateUsage]
+            batch
+        )
+        recon_marginalised = module_marginalised._compute_reconstruction(batch)  # pyright: ignore[reportPrivateUsage]
+
+        assert recon_upstream.shape == (_BATCH_SIZE,)
+        assert recon_marginalised.shape == (_BATCH_SIZE,)
+        assert torch.isfinite(recon_upstream).all()
+        assert torch.isfinite(recon_marginalised).all()
+
+    def test_validation_step_uses_selected_branch(self) -> None:
+        """``validation_step`` must dispatch to the upstream-style helper
+        when the toggle is True, and to the legacy helper when False.
+        """
+        torch.manual_seed(1)
+        module_upstream = _make_categorical_module(use_upstream_reconstruction=True)
+        module_marginalised = _make_categorical_module(
+            use_upstream_reconstruction=False
+        )
+        self._patch_soft_uniform(module_upstream)
+        self._patch_soft_uniform(module_marginalised)
+        batch = _make_categorical_batch(bs=_BATCH_SIZE)
+
+        upstream_calls: list[str] = []
+        marginalised_calls: list[str] = []
+        original_upstream = module_upstream._compute_reconstruction_upstream_style  # pyright: ignore[reportPrivateUsage]
+        original_legacy = module_marginalised._compute_reconstruction  # pyright: ignore[reportPrivateUsage]
+
+        def trace_upstream(b: GraphData) -> torch.Tensor:
+            upstream_calls.append("called")
+            return original_upstream(b)
+
+        def trace_legacy(b: GraphData) -> torch.Tensor:
+            marginalised_calls.append("called")
+            return original_legacy(b)
+
+        module_upstream._compute_reconstruction_upstream_style = trace_upstream  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
+        module_marginalised._compute_reconstruction = trace_legacy  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
+
+        module_upstream.validation_step(batch, batch_idx=0)
+        module_marginalised.validation_step(batch, batch_idx=0)
+
+        assert upstream_calls == ["called"], (
+            "use_upstream_reconstruction=True should dispatch to "
+            "_compute_reconstruction_upstream_style"
+        )
+        assert marginalised_calls == ["called"], (
+            "use_upstream_reconstruction=False should dispatch to "
+            "_compute_reconstruction"
         )
 
 

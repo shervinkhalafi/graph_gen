@@ -360,6 +360,15 @@ class DiffusionModule(BaseGraphModule):
         ``Σ_c p(z_s | z_t, x_0=c) · p_θ(x_0=c | z_t)``. Both estimators
         are unbiased; marginalised has lower variance early in training
         when ``p_θ`` is diffuse, plug-in is the published DiGress form.
+    use_upstream_reconstruction : bool, default True
+        When True (upstream parity, default), the reconstruction term in
+        the VLB samples ``z_0 = x_0 @ Q_0`` and scores the model's softmax
+        against the clean target — the published DiGress "first step of
+        denoising" reconstruction likelihood
+        (diffusion_model_discrete.py:368-405). When False, samples z_1
+        and scores via the reverse-chain marginalised posterior; aligns
+        with the sampler's actual first reverse step. Numerical gap is
+        bounded at ~1e-3 abs for T=1000.
     """
 
     def __init__(
@@ -386,6 +395,7 @@ class DiffusionModule(BaseGraphModule):
         eval_every_n_steps: int = 5000,
         visualization: dict[str, Any] | None = None,
         use_marginalised_vlb_kl: bool = False,
+        use_upstream_reconstruction: bool = True,
     ) -> None:
         super().__init__(
             model=model,
@@ -418,6 +428,7 @@ class DiffusionModule(BaseGraphModule):
             visualization
         )
         self.use_marginalised_vlb_kl: bool = bool(use_marginalised_vlb_kl)
+        self.use_upstream_reconstruction: bool = bool(use_upstream_reconstruction)
 
         # Per-field loss weights: start from the DiGress-compatible default
         # table, merge any user overrides, then have ``lambda_E`` override
@@ -687,6 +698,40 @@ class DiffusionModule(BaseGraphModule):
         )
         return _categorical_reconstruction_log_prob(batch, recon_pmf)
 
+    def _compute_reconstruction_upstream_style(self, batch: GraphData) -> torch.Tensor:
+        """Reconstruction log-probability in upstream DiGress's form.
+
+        Direct port of
+        ``digress-upstream-readonly/src/diffusion_model_discrete.py::
+        reconstruction_logp`` (lines 368-405): sample
+        ``z_0 = x_0 @ Q_0`` (one-hot through the t=0 transition, which is
+        ≈ identity for cosine-IDDPM at T=1000), run the model, and score
+        the raw softmax against the clean target. This is the published
+        "first step of denoising" reconstruction likelihood. The
+        marginalised reverse-posterior path (see
+        :meth:`_compute_reconstruction`) integrates over an additional
+        Q_1 step instead; the gap is ~1e-3 abs at T=1000 (parity #31).
+        """
+        if not isinstance(self.noise_process, CategoricalNoiseProcess):
+            raise TypeError(
+                f"_compute_reconstruction_upstream_style requires "
+                f"CategoricalNoiseProcess, got {type(self.noise_process).__name__}"
+            )
+        bs = int(batch.node_mask.shape[0])
+        device = batch.node_mask.device
+
+        # Upstream samples z_0 by drawing from x_0 @ Q_0; ``forward_sample``
+        # at t=0 does exactly that (forward noising at t=0 is the Q_0
+        # mixing kernel) and returns a one-hot ``z_0`` ready for the model.
+        t_zero = torch.zeros(bs, dtype=torch.long, device=device)
+        z_0 = self.noise_process.forward_sample(batch, t_zero).z_t
+        condition = self.noise_process.process_state_condition_vector(t_zero)
+        pred_logits = self.model(z_0, t=condition)
+        # ``model_output_to_posterior_parameter`` already applies softmax
+        # along the class axis on both X_class and E_class.
+        pred_probs = self.noise_process.model_output_to_posterior_parameter(pred_logits)
+        return _categorical_reconstruction_log_prob(batch, pred_probs)
+
     @torch.no_grad()
     @override
     def validation_step(self, batch: GraphData, batch_idx: int) -> None:
@@ -766,7 +811,13 @@ class DiffusionModule(BaseGraphModule):
             prior_pmf = cat_process.prior_pmf(batch.node_mask)
             kl_prior = _categorical_kl_per_graph(forward_pmf_T, prior_pmf)
 
-            reconstruction = self._compute_reconstruction(batch)
+            # Reconstruction term selection follows ``use_upstream_reconstruction``
+            # (D-7). Default True selects the upstream-style z_0 + raw
+            # softmax form; False keeps the marginalised z_1 form.
+            if self.use_upstream_reconstruction:
+                reconstruction = self._compute_reconstruction_upstream_style(batch)
+            else:
+                reconstruction = self._compute_reconstruction(batch)
 
             if self._size_distribution is None:
                 raise RuntimeError(
