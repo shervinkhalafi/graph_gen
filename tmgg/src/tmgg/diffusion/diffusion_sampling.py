@@ -177,7 +177,15 @@ def compute_posterior_distribution(
 
     denom = M @ Qtb_M  # (bs, N, d) @ (bs, d, d) = (bs, N, d)
     denom = (denom * M_t).sum(dim=-1)  # (bs, N, d) * (bs, N, d) + sum = (bs, N)
-    denom = denom.clamp(min=1e-6)  # Prevent division by near-zero
+    # Upstream parity (compute_posterior_distribution, diffusion_utils.py:269-290)
+    # divides without any guard. Per CLAUDE.md fail-loud preference: assert
+    # positivity rather than silently degrading. On healthy trained models the
+    # invariant holds; on a degenerate prediction we crash informatively
+    # instead of producing miscalibrated probabilities.
+    assert (denom > 0).all(), (
+        f"compute_posterior_distribution_per_x0: degenerate posterior denominator "
+        f"(field={field}, min={denom.min().item():.3e})"
+    )
 
     prob = product / denom.unsqueeze(-1)  # (bs, N, d)
 
