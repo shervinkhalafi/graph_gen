@@ -500,6 +500,14 @@ class GraphEvaluator:
         evaluation pass is emitted when both ``E_class`` and ``E_feat``
         are populated. Defaults to ``0.05``. See the spec section
         referenced above.
+    sbm_refinement_steps
+        Number of multiflip MCMC sweeps used to refine the block-model
+        fit inside :func:`compute_sbm_accuracy`. Default 100 matches
+        upstream DiGress's live ``SpectreSamplingMetrics`` value
+        (``src/analysis/spectre_utils.py:830``). The underlying function
+        defaults to 1000, but upstream never invokes it at that value —
+        they always override to 100. Setting higher gives tighter
+        block-model fits but is roughly 10× slower.
 
     Examples
     --------
@@ -522,6 +530,7 @@ class GraphEvaluator:
         spectral_sigma: float | None = None,
         binarise_threshold: float = 0.5,
         disagreement_warn_threshold: float = 0.05,
+        sbm_refinement_steps: int = 100,
     ) -> None:
         self.eval_num_samples = eval_num_samples
         self.kernel: Literal["gaussian", "gaussian_tv"] = kernel
@@ -536,6 +545,7 @@ class GraphEvaluator:
         self.spectral_sigma: float | None = spectral_sigma
         self.binarise_threshold: float = binarise_threshold
         self.disagreement_warn_threshold: float = disagreement_warn_threshold
+        self.sbm_refinement_steps: int = sbm_refinement_steps
         # Reset at the start of every ``evaluate()`` / ``to_networkx_graphs``
         # call so each validation pass emits at most one warning.
         self._disagreement_warned_this_pass: bool = False
@@ -767,6 +777,7 @@ class GraphEvaluator:
                 generated,
                 p_intra=self.p_intra,
                 p_inter=self.p_inter,
+                refinement_steps=self.sbm_refinement_steps,
             )
 
         # --- Planarity (skippable) ---
