@@ -56,7 +56,9 @@ class NoiseSchedule(nn.Module):
     num_edge_classes : int
         Number of categorical edge classes *K*, passed to the custom schedule
         to compute the correct beta floor. Ignored for other types.
-        Default is 2 (binary edge/no-edge).
+        Default is 5: K=5 is the upstream-parity default — recovers
+        ``p = 1 - 1/5 = 4/5`` from upstream's hardcoded molecular case
+        (``custom_beta_schedule_discrete``, ``diffusion_utils.py:77-97``).
     """
 
     betas: Tensor
@@ -68,7 +70,7 @@ class NoiseSchedule(nn.Module):
         schedule_type: str,
         timesteps: int,
         average_num_nodes: int = 50,
-        num_edge_classes: int = 2,
+        num_edge_classes: int = 5,
     ) -> None:
         super().__init__()
 

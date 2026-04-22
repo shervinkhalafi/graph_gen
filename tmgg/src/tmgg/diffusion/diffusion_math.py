@@ -75,7 +75,7 @@ def custom_beta_schedule_discrete(
     timesteps: int,
     average_num_nodes: int = 50,
     s: float = 0.008,
-    num_edge_classes: int = 2,
+    num_edge_classes: int = 5,
 ) -> NDArray[np.floating[Any]]:
     """Cosine beta schedule with edge-class-dependent floor.
 
@@ -95,6 +95,9 @@ def custom_beta_schedule_discrete(
     num_edge_classes : int
         Number of categorical edge classes K. For binary (edge/no-edge)
         graphs K=2 gives p=1/2; for molecular datasets K=5 gives p=4/5.
+        Default is 5: K=5 is the upstream-parity default — recovers
+        ``p = 1 - 1/5 = 4/5`` from upstream's hardcoded molecular case
+        (``custom_beta_schedule_discrete``, ``diffusion_utils.py:77-97``).
     """
     steps = timesteps + 2
     x = np.linspace(0, steps, steps)
