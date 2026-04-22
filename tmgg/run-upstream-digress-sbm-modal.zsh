@@ -61,7 +61,8 @@ cmd=(
   # often for faster training-time feedback.
   trainer.val_check_interval=10000
   model.eval_every_n_steps=10000
-  model.noise_schedule.timesteps=1000
+  # timesteps=1000 now baked into discrete_sbm_official.yaml (parity #43);
+  # CLI override removed.
   +model.model.extra_features._target_=tmgg.models.digress.extra_features.ExtraFeatures
   +model.model.extra_features.extra_features_type=all
   # SPECTRE graphs reach n=187; cycle-feature counts need a ceiling

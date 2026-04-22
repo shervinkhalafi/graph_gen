@@ -47,7 +47,7 @@ sampler:
 noise_schedule:
   _target_: tmgg.diffusion.schedule.NoiseSchedule
   schedule_type: cosine_iddpm
-  timesteps: 500
+  timesteps: 1000  # Upstream SBM default (configs/experiment/sbm.yaml:21)
 
 evaluator:
   _target_: tmgg.evaluation.graph_evaluator.GraphEvaluator
