@@ -11,3 +11,11 @@ defaults:
 experiment_name: "spectral_arch_denoising"
 wandb_project: architecture-study
 _cli_cmd: tmgg-spectral-arch
+
+# Preserve prior cosine-warmup behaviour after _base_infra default flipped
+# to ``type: none`` (parity #38 / D-9). Spectral denoising experiments
+# use warmup unless explicitly disabled per-run.
+scheduler_config:
+  type: cosine_warmup
+  warmup_fraction: 0.02
+  decay_fraction: 0.8

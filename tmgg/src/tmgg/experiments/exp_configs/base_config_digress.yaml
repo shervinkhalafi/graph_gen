@@ -10,3 +10,11 @@ defaults:
 experiment_name: "digress_${model.model_name}"
 wandb_project: architecture-study
 _cli_cmd: tmgg-digress
+
+# Preserve prior cosine-warmup behaviour after _base_infra default flipped
+# to ``type: none`` (parity #38 / D-9). DiGress denoising experiments use
+# warmup unless explicitly disabled per-run.
+scheduler_config:
+  type: cosine_warmup
+  warmup_fraction: 0.02
+  decay_fraction: 0.8

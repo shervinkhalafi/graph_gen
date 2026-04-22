@@ -19,6 +19,14 @@ defaults:
 experiment_name: "grid_search_4k_params"
 wandb_project: tmgg-grid-search-4k
 
+# Preserve prior cosine-warmup behaviour after _base_infra default flipped
+# to ``type: none`` (parity #38 / D-9). Grid-search runs use warmup
+# unless explicitly disabled per-run.
+scheduler_config:
+  type: cosine_warmup
+  warmup_fraction: 0.02
+  decay_fraction: 0.8
+
 # Training: 200 epoch-equivalents converted to steps, validate every 5 epoch-equivalents
 trainer:
   max_steps: ${epochs_to_steps:${data.samples_per_graph},${data.batch_size},200}

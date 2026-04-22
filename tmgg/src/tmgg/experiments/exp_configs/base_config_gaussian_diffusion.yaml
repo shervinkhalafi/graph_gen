@@ -10,6 +10,14 @@ experiment_name: "generative_graph"
 wandb_project: gaussian-diffusion
 _cli_cmd: tmgg-gaussian-gen
 
+# Preserve prior cosine-warmup behaviour after _base_infra default flipped
+# to ``type: none`` (parity #38 / D-9). Gaussian generative runs use
+# warmup unless explicitly disabled per-run.
+scheduler_config:
+  type: cosine_warmup
+  warmup_fraction: 0.02
+  decay_fraction: 0.8
+
 # --- Generative-specific sections (not present in base) ---
 
 model:
