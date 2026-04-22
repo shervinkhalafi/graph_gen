@@ -893,6 +893,33 @@ class DiffusionModule(BaseGraphModule):
         ``get_reference_graphs()`` rather than accumulated per-batch.
         Generative evaluation is skipped when ``sampler`` is ``None``
         (e.g. single-step denoising) or no evaluator is attached.
+
+        Notes
+        -----
+        Generation cadence is gated on ``global_step``:
+
+            ``self.global_step % self.eval_every_n_steps == 0``
+
+        rather than on the upstream DiGress epoch counter
+        (``val_counter % sample_every_val == 0``,
+        ``digress-upstream-readonly/src/diffusion_model_discrete.py``).
+        Step-based gating is invariant under batch-size and
+        dataset-size changes, so the same ``eval_every_n_steps`` value
+        keeps a stable generation cadence as data scales up or down.
+        Per the parity triage (D-10 / parity #41) this is the design we
+        deliberately preserve; there is no toggle.
+
+        For runs that need to *match* an upstream epoch cadence, convert
+        as follows:
+
+            ``upstream_sample_every_val (epochs)``  ↔
+            ``ours eval_every_n_steps = upstream_sample_every_val
+            * len(train_dataloader)``
+
+        where ``len(train_dataloader)`` is the steps-per-epoch count at
+        the chosen batch size. Round to the nearest integer; the gate is
+        an exact modulo, not a "≥" check, so off-by-one rounding skips
+        the gate at the boundary epoch.
         """
         # Log VLB metrics for exact-density processes.
         if self._vlb_nll:
