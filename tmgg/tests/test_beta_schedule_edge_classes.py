@@ -3,13 +3,14 @@
 Rationale
 ---------
 The original DiGress code hardcodes p=4/5 (for K=5 molecular edge classes).
-For binary SBM with K=2, the correct value is p=1/2. Using p=4/5 with K=2
-produces a schedule calibrated for 5-class edges, which under-noises binary
-graphs during the first ~100 diffusion steps.
+The default mirrors upstream (K=5 → p=4/5); per-call overrides recover
+SBM-binary behaviour (K=2 → p=1/2). Using a K-mismatched schedule
+under-noises early diffusion steps.
 
 Starting state: custom_beta_schedule_discrete accepts num_edge_classes.
 Invariant: p = 1 - 1/num_edge_classes, so different K produce different betas.
-Reference: DiGress paper (Vignac et al. 2023), Eq. 4 and Section 3.3.
+Default value is K=5 (upstream parity #8). Reference: DiGress paper
+(Vignac et al. 2023), Eq. 4 and Section 3.3.
 """
 
 import inspect
@@ -30,13 +31,19 @@ def test_binary_edge_schedule_uses_p_half():
     ), "K=2 and K=5 produced identical beta schedules -- p is likely still hardcoded"
 
 
-def test_default_is_binary():
-    """Default num_edge_classes should be 2 for SBM/binary graphs."""
+def test_default_matches_upstream_parity():
+    """Default num_edge_classes is 5 (upstream parity #8 — recovers p=4/5).
+
+    Upstream's custom_beta_schedule_discrete hardcodes p=4/5 for the
+    K=5 molecular case. Our parameterised form 1 - 1/K recovers this
+    when K=5; the default is set accordingly. SBM/binary callers must
+    pass num_edge_classes=2 explicitly.
+    """
     from tmgg.diffusion.diffusion_math import custom_beta_schedule_discrete
 
     sig = inspect.signature(custom_beta_schedule_discrete)
     default = sig.parameters["num_edge_classes"].default
-    assert default == 2, f"Default num_edge_classes is {default}, expected 2"
+    assert default == 5, f"Default num_edge_classes is {default}, expected 5"
 
 
 def test_p_value_matches_formula():
