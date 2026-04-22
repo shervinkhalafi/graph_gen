@@ -239,8 +239,7 @@ def _categorical_kl_per_graph(p_pmf: GraphData, q_pmf: GraphData) -> torch.Tenso
         or q_pmf.E_class is None
     ):
         raise ValueError(
-            "_categorical_kl_per_graph requires X_class and E_class on both "
-            "PMF inputs."
+            "_categorical_kl_per_graph requires X_class and E_class on both PMF inputs."
         )
 
     p_x = p_pmf.X_class.clone()
@@ -493,8 +492,11 @@ class DiffusionModule(BaseGraphModule):
         bs: int = int(batch.node_mask.shape[0])
         device = batch.node_mask.device
 
-        # Sample random timestep per batch element: t in {1, ..., T}
-        t_int = torch.randint(1, self.T + 1, (bs,), device=device)
+        # Sample random timestep per batch element: t in {0, ..., T}.
+        # Upstream parity (apply_noise, diffusion_model_discrete.py:407-442):
+        # training samples t in {0..T} (the t=0 term contributes to training loss),
+        # validation samples t in {1..T} (t=0 handled separately by reconstruction_logp).
+        t_int = torch.randint(0, self.T + 1, (bs,), device=device)
 
         # Apply forward noise at the sampled timesteps
         z_t = self.noise_process.forward_sample(batch, t_int)
