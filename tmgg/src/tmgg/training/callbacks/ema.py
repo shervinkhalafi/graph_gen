@@ -24,6 +24,33 @@ if TYPE_CHECKING:
     import pytorch_lightning as pl
 
 
+def _require_backbone_parameters(pl_module: pl.LightningModule) -> Any:
+    """Return ``pl_module.model.parameters()``, raising on missing backbone.
+
+    EMACallback only needs a parameter-bearing ``.model`` backbone to
+    shadow. Lightning's callback hooks type ``pl_module`` as the loose
+    :class:`pytorch_lightning.LightningModule` base, which doesn't
+    declare ``.model``; rather than silencing the resulting pyright
+    attribute error, do the lookup via ``getattr`` (whose ``Any``
+    return type pyright accepts) and raise informatively if the
+    attribute is missing. Fail-loud at registration time per CLAUDE.md
+    instead of erroring deep inside an EMA shadow update. A
+    ``runtime_checkable`` ``Protocol`` was tried first but Python's
+    isinstance check on protocols with annotated attributes only sees
+    class-level annotations — instance-set ``self.model = ...``
+    attributes (the universal pattern in BaseGraphModule and our test
+    fixtures) are not detected.
+    """
+    backbone = getattr(pl_module, "model", None)
+    if backbone is None:
+        raise TypeError(
+            "EMACallback requires a LightningModule with a `.model` backbone "
+            f"to shadow; got {type(pl_module).__name__} which does not "
+            "expose one."
+        )
+    return backbone.parameters()
+
+
 class EMACallback(Callback):
     """Track EMA weights and swap them in around validation.
 
@@ -49,12 +76,11 @@ class EMACallback(Callback):
 
     @override
     def on_fit_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
-        # ``pl_module.model`` is the convention used by
-        # BaseGraphModule subclasses; we EMA the wrapped backbone, not
-        # the LightningModule itself, so optimizer states and other
-        # non-trainable scalars stay untouched.
+        # EMA the wrapped backbone, not the LightningModule itself, so
+        # optimizer states and other non-trainable scalars stay
+        # untouched.
         self.ema = ExponentialMovingAverage(
-            pl_module.model.parameters(),  # pyright: ignore[reportAttributeAccessIssue]
+            _require_backbone_parameters(pl_module),
             decay=self.decay,
         )
 
@@ -68,7 +94,7 @@ class EMACallback(Callback):
         batch_idx: int,
     ) -> None:
         assert self.ema is not None, "on_train_batch_end fired before on_fit_start"
-        self.ema.update(pl_module.model.parameters())  # pyright: ignore[reportAttributeAccessIssue]
+        self.ema.update(_require_backbone_parameters(pl_module))
 
     @override
     def on_validation_start(
@@ -79,8 +105,12 @@ class EMACallback(Callback):
             # on_fit_start in some configurations; skip swapping when
             # no shadow exists yet.
             return
-        self.ema.store(pl_module.model.parameters())  # pyright: ignore[reportAttributeAccessIssue]
-        self.ema.copy_to(pl_module.model.parameters())  # pyright: ignore[reportAttributeAccessIssue]
+        params = _require_backbone_parameters(pl_module)
+        self.ema.store(params)
+        # ``parameters()`` returns a fresh generator on every call; the
+        # second iteration above would be empty if we re-used ``params``,
+        # so re-fetch for copy_to.
+        self.ema.copy_to(_require_backbone_parameters(pl_module))
 
     @override
     def on_validation_end(
@@ -92,4 +122,4 @@ class EMACallback(Callback):
             # store() was skipped (sanity check before fit) — nothing
             # to restore.
             return
-        self.ema.restore(pl_module.model.parameters())  # pyright: ignore[reportAttributeAccessIssue]
+        self.ema.restore(_require_backbone_parameters(pl_module))
