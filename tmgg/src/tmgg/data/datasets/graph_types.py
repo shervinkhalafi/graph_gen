@@ -503,6 +503,12 @@ class GraphData:
         adj[:, diag, diag] = 0.0
         adj = (adj + adj.transpose(1, 2)).clamp(max=1.0)
 
+        max_asym = (adj - adj.transpose(-2, -1)).abs().max().item()
+        assert torch.allclose(adj, adj.transpose(-2, -1)), (
+            f"from_pyg_batch produced asymmetric adjacency: shape={tuple(adj.shape)}, "
+            f"max|adj - adj.T|={max_asym:.3e}"
+        )
+
         # One-hot edge features (bs, n, n, 2): [no-edge, edge]
         E_class = torch.stack([1.0 - adj, adj], dim=-1)
         # Upstream parity: zero the diagonal of the target tensor so the

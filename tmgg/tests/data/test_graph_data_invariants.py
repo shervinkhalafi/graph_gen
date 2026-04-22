@@ -297,6 +297,39 @@ def test_from_pyg_batch_populates_class_fields() -> None:
     assert graph_data.E_class is not None
 
 
+def test_from_pyg_batch_emits_symmetric_E_class() -> None:
+    """Parity #4: ``from_pyg_batch`` must always emit a symmetric edge tensor.
+
+    Upstream DiGress establishes ``E`` symmetry implicitly via
+    ``to_dense_adj`` on a symmetric ``edge_index``. Our densification
+    path symmetrises explicitly inside ``from_pyg_batch``; this
+    regression test pins that the boundary always emits a symmetric
+    ``E_class`` for both single- and multi-graph batches with mixed
+    node counts. See
+    ``docs/reports/2026-04-21-digress-spec-our-impl-review/divergence-triage.md``
+    (#4).
+    """
+    from typing import cast
+
+    from torch_geometric.data import Batch, Data
+    from torch_geometric.data.data import BaseData
+
+    data_list = [
+        Data(edge_index=torch.tensor([[0, 1], [1, 0]], dtype=torch.long), num_nodes=3),
+        Data(
+            edge_index=torch.tensor(
+                [[0, 1, 1, 2, 2, 3], [1, 0, 2, 1, 3, 2]], dtype=torch.long
+            ),
+            num_nodes=5,
+        ),
+    ]
+    batch = Batch.from_data_list(cast(list[BaseData], data_list))
+    graph_data = GraphData.from_pyg_batch(batch)
+    assert graph_data.E_class is not None
+    e = graph_data.E_class
+    assert torch.allclose(e, e.transpose(1, 2))
+
+
 def test_multigraph_datamodule_batch_populates_class_fields() -> None:
     """End-to-end: a MultiGraphDataModule batch carries E_class; X_class stays None."""
     from tmgg.data.data_modules.multigraph_data_module import MultiGraphDataModule
