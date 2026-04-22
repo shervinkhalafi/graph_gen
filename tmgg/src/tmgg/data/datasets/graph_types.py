@@ -485,11 +485,17 @@ class GraphData:
             positions are marked ``False`` and are the single source of
             truth for which rows correspond to real nodes.
         """
-        from torch_geometric.utils import to_dense_adj
+        from torch_geometric.utils import remove_self_loops, to_dense_adj
 
         bs = int(batch.num_graphs)
         edge_index: Tensor = getattr(batch, "edge_index")  # noqa: B009
         batch_vec: Tensor = getattr(batch, "batch")  # noqa: B009
+        # Upstream parity (DiGress utils.py:53-62): drop self-loops on the
+        # sparse ``edge_index`` BEFORE densification so any per-edge
+        # attributes a future dataset carries on diagonal entries are
+        # discarded with the edges, rather than zeroed only after a lossy
+        # ``to_dense_adj`` accumulation.
+        edge_index, _ = remove_self_loops(edge_index)
         adj = to_dense_adj(edge_index, batch_vec)
         n_max = adj.shape[1]
 
@@ -498,9 +504,8 @@ class GraphData:
         arange = torch.arange(n_max, device=adj.device).unsqueeze(0).expand(bs, -1)
         node_mask = arange < node_counts.unsqueeze(1)
 
-        # Zero diagonal, symmetrise
+        # Symmetrise. Self-loops were already removed pre-densification.
         diag = torch.arange(n_max, device=adj.device)
-        adj[:, diag, diag] = 0.0
         adj = (adj + adj.transpose(1, 2)).clamp(max=1.0)
 
         max_asym = (adj - adj.transpose(-2, -1)).abs().max().item()
