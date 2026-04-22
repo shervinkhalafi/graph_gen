@@ -48,6 +48,7 @@ from tmgg.training.lightning_modules.diffusion_module import (
     _categorical_reconstruction_log_prob,
 )
 from tmgg.utils.noising.noise import GaussianNoise
+from tmgg.utils.noising.size_distribution import SizeDistribution
 
 _MODEL_CONFIG: dict[str, Any] = {
     "num_layers": 2,
@@ -118,7 +119,14 @@ def _make_module(
         "eval_every_n_steps": 1,
     }
     kwargs.update(overrides)
-    return DiffusionModule(**kwargs)
+    module = DiffusionModule(**kwargs)
+    # Inject a stub size distribution so validation_step doesn't trip the
+    # parity #32 fail-loud guard. Production code populates this in
+    # DiffusionModule.setup() from the datamodule; unit tests bypass setup.
+    module._size_distribution = SizeDistribution(  # pyright: ignore[reportPrivateUsage]
+        sizes=(_NUM_NODES,), counts=(1,), max_size=_NUM_NODES
+    )
+    return module
 
 
 # -----------------------------------------------------------------------
@@ -691,7 +699,7 @@ def _make_categorical_module(
         limit_distribution=limit_distribution,
     )
     cat_sampler = CategoricalSampler()
-    return DiffusionModule(
+    module = DiffusionModule(
         model=_CategoricalLogitModel(),
         noise_process=cat_np,
         sampler=cat_sampler,
@@ -700,6 +708,13 @@ def _make_categorical_module(
         num_nodes=_NUM_NODES,
         eval_every_n_steps=1,
     )
+    # Inject a stub size distribution so validation_step doesn't trip the
+    # parity #32 fail-loud guard. Production code populates this in
+    # DiffusionModule.setup() from the datamodule; unit tests bypass setup.
+    module._size_distribution = SizeDistribution(  # pyright: ignore[reportPrivateUsage]
+        sizes=(_NUM_NODES,), counts=(1,), max_size=_NUM_NODES
+    )
+    return module
 
 
 class TestVLBWiring:
@@ -1016,6 +1031,9 @@ class TestSetup:
     def test_setup_with_uniform_is_noop(self) -> None:
         """Uniform categorical setup should skip marginal counting."""
         module = _make_categorical_module(limit_distribution="uniform")
+        # Clear the fixture-injected stub so setup() takes the
+        # populate-from-datamodule path that this test exercises.
+        module._size_distribution = None  # pyright: ignore[reportPrivateUsage]
         assert isinstance(module.noise_process, CategoricalNoiseProcess)
         assert module.noise_process._limit_x is not None
         assert module.noise_process._limit_e is not None
@@ -1045,6 +1063,9 @@ class TestSetup:
     def test_setup_marginal_initialises_transition(self) -> None:
         """Empirical-marginal setup should initialise from the train loader."""
         module = _make_categorical_module(limit_distribution="empirical_marginal")
+        # Clear the fixture-injected stub so setup() takes the
+        # populate-from-datamodule path that this test exercises.
+        module._size_distribution = None  # pyright: ignore[reportPrivateUsage]
         assert isinstance(module.noise_process, CategoricalNoiseProcess)
         assert module.noise_process._limit_x is None
         assert module.noise_process._limit_e is None

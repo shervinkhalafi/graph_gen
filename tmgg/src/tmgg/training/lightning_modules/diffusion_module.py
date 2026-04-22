@@ -701,10 +701,15 @@ class DiffusionModule(BaseGraphModule):
 
             reconstruction = self._compute_reconstruction(batch)
 
-            log_pn = torch.zeros(1, device=device)
-            if self._size_distribution is not None:
-                node_counts = batch.node_mask.sum(dim=-1).long()  # (bs,)
-                log_pn = self._size_distribution.log_prob(node_counts).mean()
+            if self._size_distribution is None:
+                raise RuntimeError(
+                    "DiffusionModule.validation_step (categorical branch): "
+                    "_size_distribution is None. The datamodule must populate "
+                    "a SizeDistribution in setup() — see SpectreSBMDataModule / "
+                    "SyntheticCategoricalDataModule."
+                )
+            node_counts = batch.node_mask.sum(dim=-1).long()  # (bs,)
+            log_pn = self._size_distribution.log_prob(node_counts).mean()
 
             # NLL = -log_pN + kl_prior + E_t[L_t] - reconstruction_logp
             nll = (
@@ -736,10 +741,15 @@ class DiffusionModule(BaseGraphModule):
                 z_T, batch, t_T
             ) - exact_process.prior_log_prob(z_T)
 
-            log_pn = torch.zeros(1, device=device)
-            if self._size_distribution is not None:
-                node_counts = batch.node_mask.sum(dim=-1).long()
-                log_pn = self._size_distribution.log_prob(node_counts).mean()
+            if self._size_distribution is None:
+                raise RuntimeError(
+                    "DiffusionModule.validation_step (continuous branch): "
+                    "_size_distribution is None. The datamodule must populate "
+                    "a SizeDistribution in setup() — see SpectreSBMDataModule / "
+                    "SyntheticCategoricalDataModule."
+                )
+            node_counts = batch.node_mask.sum(dim=-1).long()
+            log_pn = self._size_distribution.log_prob(node_counts).mean()
 
             nll = -log_pn + kl_prior.mean() + kl_diffusion.mean()
 
