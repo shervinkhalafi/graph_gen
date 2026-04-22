@@ -108,7 +108,7 @@ def run(
     if cli_cmd not in cmd_map:
         known = ", ".join(sorted(cmd_map))
         raise click.UsageError(
-            f"Unknown CLI command: {cli_cmd}\n" f"Known commands: {known}"
+            f"Unknown CLI command: {cli_cmd}\nKnown commands: {known}"
         )
 
     config_name = cmd_map[cli_cmd]

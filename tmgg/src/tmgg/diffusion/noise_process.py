@@ -400,7 +400,7 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
         if fields is not None:
             if len(fields) == 0:
                 raise ValueError(
-                    "GaussianNoiseProcess.fields must be non-empty; " f"got {fields!r}."
+                    f"GaussianNoiseProcess.fields must be non-empty; got {fields!r}."
                 )
             if not fields.issubset(_GAUSSIAN_ALLOWED_FIELDS):
                 raise ValueError(

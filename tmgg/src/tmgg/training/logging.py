@@ -67,9 +67,7 @@ def _finish_active_wandb_run() -> None:
         return
 
     if wandb.run is not None:
-        loguru.warning(
-            "Finishing active wandb run before creating a new WandbLogger."
-        )
+        loguru.warning("Finishing active wandb run before creating a new WandbLogger.")
         wandb.finish()
 
 

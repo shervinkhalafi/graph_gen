@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, List, Sequence
-
-from loguru import logger as loguru
-from omegaconf import OmegaConf
+from typing import Any
 
 from hydra._internal.core_plugins.basic_sweeper import BasicSweeper
 from hydra.core.override_parser.overrides_parser import OverridesParser
 from hydra.core.utils import JobReturn
+from loguru import logger as loguru
+from omegaconf import OmegaConf
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 class ResilientBasicSweeper(BasicSweeper):
     """Same as Hydra's BasicSweeper, but failed jobs do not stop the sweep."""
 
-    def sweep(self, arguments: List[str]) -> Any:
+    def sweep(self, arguments: list[str]) -> Any:
         assert self.config is not None
         assert self.launcher is not None
         assert self.hydra_context is not None
