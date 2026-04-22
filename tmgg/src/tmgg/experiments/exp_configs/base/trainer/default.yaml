@@ -27,7 +27,10 @@ check_val_every_n_epoch: null # Disable epoch-based validation
 # Early stopping and model checkpointing configured via callbacks config
 
 # Gradient clipping
-gradient_clip_val: 1.0
+# Upstream parity (DiGress configs/train/train_default.yaml:5): clip_grad
+# defaults to null. Per-experiment configs that need clipping must opt in
+# explicitly.
+gradient_clip_val: null
 gradient_clip_algorithm: "norm"
 
 # Reproducibility
