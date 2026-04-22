@@ -847,10 +847,34 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
     - the timestep schedule
     - the stationary categorical distribution mode
 
-    ``limit_distribution="uniform"`` uses uniform class PMFs immediately.
-    ``limit_distribution="empirical_marginal"`` defers PMF construction until
-    ``initialize_from_data()`` can count class frequencies from the train
-    loader. No public transition-object hierarchy remains.
+    ``limit_distribution`` controls the stationary class PMF that each
+    position drifts toward as ``t -> T``.
+
+    uniform : each class is equally likely; PMFs are fixed at
+        construction.
+    empirical_marginal : defers PMF construction until
+        :meth:`initialize_from_data` can count class frequencies from
+        the train loader.
+    absorbing : every node/edge collapses to a fixed class as ``t -> T``.
+        ``Q_t = (1 - beta_t) * I + beta_t * u @ 1^T`` where ``u`` is a
+        one-hot indicator on the absorbing class (parameterised via
+        ``absorbing_class_x`` / ``absorbing_class_e``; default class 0
+        maps to the "no edge"/"no node" convention). The existing
+        :func:`_mix_with_limit` closed form ``alpha_bar * x +
+        (1 - alpha_bar) * pi`` already evaluates the absorbing
+        transition correctly once ``pi`` is one-hot, so no new math
+        path is needed beyond registering a one-hot indicator as the
+        stationary PMF at construction.
+
+        Implementation note (2026-04-22): upstream DiGress's
+        ``AbsorbingStateTransition``
+        (``src/diffusion/noise_schedule.py:190-223``) has a copy-paste
+        bug at lines 200, 203 where ``self.u_e[:, :, abs_state] = 1``
+        is written twice — the second occurrence should target
+        ``self.u_y``. The class is never instantiated by any shipped
+        upstream config so the bug never fires, but our
+        re-implementation writes ``u_x``, ``u_e`` and (implicitly) the
+        ``y`` indicator as separate one-hot indicators correctly.
     """
 
     #: Categorical diffusion always acts jointly on the node-class and
@@ -867,7 +891,11 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         x_classes: int,
         e_classes: int,
         y_classes: int = 0,
-        limit_distribution: Literal["uniform", "empirical_marginal"] = "uniform",
+        limit_distribution: Literal[
+            "uniform", "empirical_marginal", "absorbing"
+        ] = "uniform",
+        absorbing_class_x: int = 0,
+        absorbing_class_e: int = 0,
     ) -> None:
         super().__init__()
 
@@ -876,6 +904,8 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         self.e_classes = e_classes
         self.y_classes = y_classes
         self.limit_distribution = limit_distribution
+        self.absorbing_class_x = absorbing_class_x
+        self.absorbing_class_e = absorbing_class_e
         self.register_buffer("_limit_x", None)
         self.register_buffer("_limit_e", None)
         self.register_buffer("_limit_y", None)
@@ -898,10 +928,41 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
                     else torch.zeros(0)
                 ),
             )
+        elif limit_distribution == "absorbing":
+            # pi is a one-hot indicator on the configured absorbing
+            # class; Q_t = (1 - beta_t) * I + beta_t * pi @ 1^T
+            # collapses every position onto that class as t -> T. The
+            # existing _mix_with_limit closed form handles the math;
+            # we just need a one-hot stationary PMF.
+            if x_classes > 0 and not 0 <= absorbing_class_x < x_classes:
+                raise ValueError(
+                    f"absorbing_class_x={absorbing_class_x} is out of range "
+                    f"for x_classes={x_classes}"
+                )
+            if e_classes > 0 and not 0 <= absorbing_class_e < e_classes:
+                raise ValueError(
+                    f"absorbing_class_e={absorbing_class_e} is out of range "
+                    f"for e_classes={e_classes}"
+                )
+            x_probs = torch.zeros(x_classes)
+            if x_classes > 0:
+                x_probs[absorbing_class_x] = 1.0
+            e_probs = torch.zeros(e_classes)
+            if e_classes > 0:
+                e_probs[absorbing_class_e] = 1.0
+            # y uses class 0 as the absorbing default since no separate
+            # knob is exposed; upstream never exercises y for categorical
+            # graph datasets (parity #12 / D-12).
+            y_probs = torch.zeros(y_classes)
+            if y_classes > 0:
+                y_probs[0] = 1.0
+            self._set_stationary_distribution(
+                x_probs=x_probs, e_probs=e_probs, y_probs=y_probs
+            )
         elif limit_distribution != "empirical_marginal":
             raise ValueError(
-                "limit_distribution must be 'uniform' or 'empirical_marginal', "
-                f"got {limit_distribution!r}"
+                "limit_distribution must be 'uniform', 'empirical_marginal', "
+                f"or 'absorbing', got {limit_distribution!r}"
             )
 
     @property

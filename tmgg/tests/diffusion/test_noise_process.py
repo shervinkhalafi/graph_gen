@@ -511,6 +511,198 @@ class TestCategoricalNoiseProcess:
                 limit_distribution="bogus",  # type: ignore[arg-type]
             )
 
+    # ---- absorbing limit-distribution variant (parity #12 / D-12) -----
+
+    def test_absorbing_construction_is_one_hot_indicator(
+        self, cosine_schedule: NoiseSchedule
+    ) -> None:
+        """Absorbing mode populates one-hot stationary PMFs at construction."""
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="absorbing",
+            absorbing_class_x=1,
+            absorbing_class_e=0,
+        )
+        assert proc.needs_data_initialization() is False
+        assert proc.is_initialized() is True
+        torch.testing.assert_close(proc._limit_x, torch.tensor([0.0, 1.0, 0.0]))
+        torch.testing.assert_close(proc._limit_e, torch.tensor([1.0, 0.0]))
+
+    def test_absorbing_rejects_out_of_range_class(
+        self, cosine_schedule: NoiseSchedule
+    ) -> None:
+        """Out-of-range absorbing-class indices raise ValueError."""
+        with pytest.raises(ValueError, match="absorbing_class_x"):
+            CategoricalNoiseProcess(
+                schedule=cosine_schedule,
+                x_classes=3,
+                e_classes=2,
+                limit_distribution="absorbing",
+                absorbing_class_x=5,
+            )
+        with pytest.raises(ValueError, match="absorbing_class_e"):
+            CategoricalNoiseProcess(
+                schedule=cosine_schedule,
+                x_classes=3,
+                e_classes=2,
+                limit_distribution="absorbing",
+                absorbing_class_e=-1,
+            )
+
+    def test_absorbing_forward_pmf_collapses_at_t_equals_T(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+    ) -> None:
+        """At t = T the per-position PMF puts all mass on the absorbing class."""
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="absorbing",
+            absorbing_class_x=2,
+            absorbing_class_e=1,
+        )
+        assert categorical_graph_data.X_class is not None
+        assert categorical_graph_data.E_class is not None
+        bs = categorical_graph_data.X_class.shape[0]
+        t = torch.full((bs,), proc.timesteps, dtype=torch.long)
+        pmf = proc.forward_pmf(categorical_graph_data, t)
+
+        # alpha_bar(T) ~ 0, so prob_x = pi_x and prob_e = pi_e at every
+        # position, regardless of the clean-graph one-hot.
+        assert pmf.X_class is not None
+        assert pmf.E_class is not None
+        # Every node-position PMF collapses to absorbing_class_x = 2.
+        expected_x = torch.zeros_like(pmf.X_class)
+        expected_x[..., 2] = 1.0
+        torch.testing.assert_close(pmf.X_class, expected_x, atol=1e-5, rtol=1e-5)
+        # Every edge-position PMF collapses to absorbing_class_e = 1.
+        expected_e = torch.zeros_like(pmf.E_class)
+        expected_e[..., 1] = 1.0
+        torch.testing.assert_close(pmf.E_class, expected_e, atol=1e-5, rtol=1e-5)
+
+    def test_absorbing_forward_pmf_preserves_signal_at_t_equals_zero(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+    ) -> None:
+        """At t = 0 the forward PMF concentrates on the clean one-hot state."""
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="absorbing",
+            absorbing_class_x=0,
+            absorbing_class_e=0,
+        )
+        assert categorical_graph_data.X_class is not None
+        assert categorical_graph_data.E_class is not None
+        bs = categorical_graph_data.X_class.shape[0]
+        t = torch.zeros(bs, dtype=torch.long)
+        pmf = proc.forward_pmf(categorical_graph_data, t)
+
+        # alpha_bar(0) is close to but not exactly 1 for cosine
+        # schedules, so the PMF concentrates strongly on the clean
+        # one-hot but allows ~1e-2 leakage onto the absorbing class.
+        # Verify that the argmax matches the clean signal at every
+        # position rather than asserting bitwise equality.
+        assert pmf.X_class is not None
+        assert pmf.E_class is not None
+        assert torch.equal(
+            pmf.X_class.argmax(dim=-1),
+            categorical_graph_data.X_class.argmax(dim=-1),
+        )
+        assert torch.equal(
+            pmf.E_class.argmax(dim=-1),
+            categorical_graph_data.E_class.argmax(dim=-1),
+        )
+
+    def test_absorbing_forward_pmf_intermediate_matches_closed_form(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+    ) -> None:
+        """Mid-trajectory PMF equals the closed-form alpha_bar*x + (1-alpha_bar)*u."""
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="absorbing",
+            absorbing_class_x=1,
+            absorbing_class_e=0,
+        )
+        assert categorical_graph_data.X_class is not None
+        assert categorical_graph_data.E_class is not None
+        bs = categorical_graph_data.X_class.shape[0]
+        mid = proc.timesteps // 2
+        t = torch.full((bs,), mid, dtype=torch.long)
+        pmf = proc.forward_pmf(categorical_graph_data, t)
+
+        alpha_bar_t = proc.noise_schedule.get_alpha_bar(t_int=t)  # (bs,)
+        # Hand-rolled closed form: alpha_bar*x + (1-alpha_bar)*pi.
+        u_x = torch.tensor([0.0, 1.0, 0.0])
+        u_e = torch.tensor([1.0, 0.0])
+        a_x = alpha_bar_t.view(-1, 1, 1)
+        a_e = alpha_bar_t.view(-1, 1, 1, 1)
+        expected_x = a_x * categorical_graph_data.X_class + (1.0 - a_x) * u_x.view(
+            1, 1, -1
+        )
+        expected_e = a_e * categorical_graph_data.E_class + (1.0 - a_e) * u_e.view(
+            1, 1, 1, -1
+        )
+        torch.testing.assert_close(pmf.X_class, expected_x, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(pmf.E_class, expected_e, atol=1e-5, rtol=1e-5)
+
+    def test_absorbing_posterior_returns_valid_pmf(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+    ) -> None:
+        """Posterior at non-trivial t produces a row-stochastic PMF."""
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="absorbing",
+            absorbing_class_x=0,
+            absorbing_class_e=0,
+        )
+        assert categorical_graph_data.X_class is not None
+        bs = categorical_graph_data.X_class.shape[0]
+        t = torch.full((bs,), proc.timesteps // 2, dtype=torch.long)
+        z_t = proc.forward_sample(categorical_graph_data, t).z_t
+        s = t - 1
+        posterior = proc._posterior_probabilities(z_t, categorical_graph_data, t, s)
+        # Per-node PMF rows sum to 1 over the class dim (within the
+        # masked region — categorical_graph_data has node_mask all-True).
+        assert posterior.X_class is not None
+        x_sums = posterior.X_class.sum(dim=-1)
+        torch.testing.assert_close(
+            x_sums,
+            torch.ones_like(x_sums),
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
+    def test_absorbing_stationary_distribution_accessor(
+        self, cosine_schedule: NoiseSchedule
+    ) -> None:
+        """_stationary_distribution returns the configured one-hot indicators."""
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=4,
+            e_classes=3,
+            limit_distribution="absorbing",
+            absorbing_class_x=3,
+            absorbing_class_e=2,
+        )
+        x_pi, e_pi, _ = proc._stationary_distribution()
+        torch.testing.assert_close(x_pi, torch.tensor([0.0, 0.0, 0.0, 1.0]))
+        torch.testing.assert_close(e_pi, torch.tensor([0.0, 0.0, 1.0]))
+
     def test_stationary_distribution_raises_before_forward_sample(
         self,
         cosine_schedule: NoiseSchedule,
