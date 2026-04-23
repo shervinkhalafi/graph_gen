@@ -94,7 +94,7 @@ hundreds of validation passes, so we want a coarse second-level throttle.
 ### Implementation site
 
 We thread chain capture through `Sampler.sample`
-(`src/tmgg/diffusion/sampler.py:268`) rather than introduce a separate
+(`src/tmgg/diffusion/sampler.py:269`) rather than introduce a separate
 Lightning callback that re-runs sampling. Two reasons:
 
 1. The sampler already owns the reverse loop and the per-step state we need
