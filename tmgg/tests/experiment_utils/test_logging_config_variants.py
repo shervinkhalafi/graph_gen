@@ -144,6 +144,13 @@ class TestLoggerAndCallbackVariants:
         assert len(cfg.logger) == 2
         assert list(cfg.logger[0].keys()) == ["wandb"]
         assert list(cfg.logger[1].keys()) == ["csv"]
+        # The wandb.name template at base/logger/discrete_wandb.yaml:6 reads
+        # ``${experiment_name}_T${model.noise_schedule.timesteps}_n${data.num_nodes}_${data.graph_type}``.
+        # ``base_config_discrete_diffusion_generative`` selects the
+        # ``discrete_default`` model variant whose ``noise_schedule.timesteps``
+        # is 500. The 2026-04-22 SBM-default flip in commit edf3c19a moved
+        # ``discrete_sbm_official.yaml`` to 1000 but left ``discrete_default``
+        # at 500, so this assertion still pins T500.
         assert cfg.logger[0].wandb.name == "discrete_diffusion_T500_n20_sbm"
 
     @pytest.mark.parametrize(
