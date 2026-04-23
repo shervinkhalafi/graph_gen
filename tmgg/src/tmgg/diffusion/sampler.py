@@ -14,6 +14,7 @@ import torch
 from torch import Tensor
 
 from tmgg.data.datasets.graph_types import GraphData
+from tmgg.diffusion.chain_recorder import ChainRecorder
 from tmgg.diffusion.collectors import StepMetricCollector
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
@@ -275,6 +276,7 @@ class Sampler:
         *,
         start_from: DiffusionState | None = None,
         collector: StepMetricCollector | None = None,
+        chain_recorder: ChainRecorder | None = None,
     ) -> list[GraphData]:
         """Generate graphs via reverse diffusion.
 
@@ -299,6 +301,14 @@ class Sampler:
             Per-step metric collector. When provided,
             ``record(t, s, metrics)`` is called at each reverse step
             with available metrics (e.g., ``{"kl": ...}``).
+        chain_recorder
+            Optional recorder that snapshots ``z_t`` after each reverse
+            step's symmetrisation site. The recorder's
+            ``maybe_record`` is called with ``step_index`` (zero-indexed
+            from the first reverse step, in capture order -- latest
+            noise first). Per parity spec D-16a (resolution Q4),
+            snapshots are post-symmetrisation, matching upstream
+            DiGress's chain-saving behaviour.
 
         Returns
         -------
@@ -333,7 +343,7 @@ class Sampler:
             bs = num_graphs
             t_start = noise_process.timesteps
 
-        for s_int in reversed(range(0, t_start)):
+        for step_index, s_int in enumerate(reversed(range(0, t_start))):
             t_int = s_int + 1
             t_tensor = torch.full((bs,), t_int, device=device, dtype=torch.long)
             s_tensor = torch.full((bs,), s_int, device=device, dtype=torch.long)
@@ -381,6 +391,12 @@ class Sampler:
                         f"t={t_int} (max abs deviation = "
                         f"{(e - e.transpose(-3, -2)).abs().max().item():.3e})."
                     )
+
+            # Post-symmetrisation chain snapshot (parity D-16a / spec
+            # resolution Q4). The recorder owns the snapshot-cadence
+            # gate; the sampler only forwards every reverse step.
+            if chain_recorder is not None:
+                chain_recorder.maybe_record(step_index, z_t)
 
         final = noise_process.finalize_sample(z_t)
         return self._trim_batched_graphs(final, n_nodes)
