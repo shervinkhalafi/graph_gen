@@ -263,3 +263,36 @@ A5. The callback raises `RuntimeError` at `on_fit_end` when the
 trained module has no sampler attached (e.g. the user enabled the
 callback against a `DenoisingModule` that omits it), with a message
 naming the missing collaborator.
+
+
+## Resolutions (2026-04-22)
+
+User responses to the open questions, applied as the implementation
+contract:
+
+- **Q6 (reference-set provenance)**: both. Validation passes during
+  training continue to evaluate against the val set as today; the
+  end-of-fit dump uses the **test** set for the published-quality
+  numbers. The callback exposes both reference handles via the
+  datamodule and selects test at `on_fit_end`.
+
+- **Q7 (EMA semantics at on_fit_end)**: swap to EMA weights for the
+  dump if and only if an `EMACallback` (D-15) is registered on the
+  trainer. The callback inspects `trainer.callbacks` for a registered
+  `EMACallback` instance, calls its `store + copy_to` shim before
+  sampling, and `restore` after. If EMA is not enabled, sample with
+  live weights.
+
+- **Q8 (Modal volume persistence)**: write to the existing
+  `tmgg-outputs` Modal volume (mounted at `/data/outputs` per
+  `src/tmgg/modal/_lib/volumes.py`). Default path resolution:
+  `${OUTPUTS_MOUNT}/final_samples/${run_name}.pt` when the runtime is
+  Modal, `${run_dir}/final_samples.pt` locally. The path-selection
+  helper inspects an env signal that already distinguishes the two
+  contexts (or falls back to a CLI/config flag — confirm the canonical
+  one at implementation time).
+
+- **Q9 (DDP / parallel sampling)**: sequential v1 confirmed.
+  Distributed-rank batching is a follow-up; for v1 the dump runs on
+  rank 0 only and other ranks no-op so DDP doesn't double-sample.
+  Document the rank gate in the callback.

@@ -254,3 +254,42 @@ A5. The captured snapshot's `step_indices` tensor matches upstream's
 write-index formula `(s_int * snapshot_step_interval) // T` evaluated for
 each `s_int` in `reversed(range(0, T))`, deduplicated to the unique
 snapshot frames.
+
+
+## Resolutions (2026-04-22)
+
+User responses to the open questions, applied as the implementation
+contract:
+
+- **Q1 (recorder vs metric collector)**: keep `ChainRecorder` as a
+  separate optional argument on the sampler. Different concerns —
+  metrics aggregate scalars per step, the recorder snapshots full
+  per-position PMFs.
+
+- **Q2 (cadence)**: configurable. Default `chain_save_every_n_val: 20`
+  (every 20th validation pass) plus `chain_save_at_fit_end: true`
+  unconditionally. Both knobs ship on the evaluator config block.
+
+- **Q3 (memory placement)**: accumulate on GPU during the reverse
+  loop. If a future large dataset OOMs, fall back to per-step CPU
+  copy as a follow-up; not needed for SPECTRE n=187 at the upper
+  bound (≈21 MB per pass).
+
+- **Q4 (pre- vs post-symmetrisation snapshot)**: post-symmetrisation,
+  matching upstream (`triu + transpose` is applied before the
+  snapshot is taken). The user-facing artifact is what the sampler
+  actually emitted at each step, not the model's pre-symmetrised
+  output.
+
+- **Q5 (CompositeNoiseProcess key naming)**: prefix snapshot keys
+  with the sub-process name (e.g. `categorical/E_class`,
+  `gaussian/E_feat`); reconverge at render time by merging the
+  per-sub-process tensors back into a single GraphData per step.
+  No deep gotcha — the disjoint-fields invariant on
+  `CompositeNoiseProcess` guarantees each sub-process owns a unique
+  subset of GraphData fields, so the merge is just
+  `merged.replace(**{f: tensor for sub in subs for f, tensor in sub.items()})`.
+  Edge case: if sub-processes use independent schedules (rare; the
+  canonical case shares one timestep), the prefix-keyed snapshots
+  stay separate timelines rather than merging — same `t` ⇒ same
+  frame, different `t` ⇒ different timelines.

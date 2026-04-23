@@ -270,3 +270,35 @@ CLI's CSV is `df.to_csv(path, index=False)`.
 A6. A follow-up analysis script (out of scope to implement here, but
 the CSV format permits it) loads the CSV, plots `degree_mmd` against
 `step`, and shows a smooth descent for a healthy SBM run.
+
+
+## Resolutions (2026-04-22)
+
+User responses to the open questions, applied as the implementation
+contract:
+
+- **Q10 (default device)**: autodetect with GPU preference. Probe
+  `torch.cuda.is_available()` and select `cuda:0` when present;
+  otherwise `cpu`. Expose a `--device {auto,cpu,cuda}` override on the
+  CLI; default `auto`.
+
+- **Q11 (CSV column-drift policy)**: easy answer — union of all keys
+  per row, write `NaN` for missing columns. Pandas does this natively
+  when re-running and concatenating: load existing CSV (if present),
+  build a new row from the current `EvaluationResults` keys, append,
+  write. Future metric additions surface as new columns with `NaN` in
+  rows from earlier runs; nothing breaks. Schema versioning is a
+  later concern if at all.
+
+The two cross-spec answers from the D-16b resolution apply here too:
+
+- **Q6 (reference-set provenance, shared with D-16b)**: the eval-all
+  CLI's `--reference-set {val,test}` flag defaults to `val` (matches
+  training-time evaluation) and the user opts into `test` for
+  published-quality numbers, mirroring the D-16b dump's split.
+
+- **Q7 (EMA semantics, shared with D-16b)**: when a checkpoint
+  carries an EMA shadow (Lightning saves it as part of the callback
+  state), the CLI loads the EMA weights into the model before
+  sampling. Add a `--use-ema {auto,true,false}` flag with `auto`
+  default that uses EMA whenever the checkpoint contains it.
