@@ -276,7 +276,7 @@ class Sampler:
         *,
         start_from: DiffusionState | None = None,
         collector: StepMetricCollector | None = None,
-        chain_recorder: ChainRecorder | None = None,
+        chain_recorder: ChainRecorder | dict[str, ChainRecorder] | None = None,
     ) -> list[GraphData]:
         """Generate graphs via reverse diffusion.
 
@@ -309,6 +309,19 @@ class Sampler:
             noise first). Per parity spec D-16a (resolution Q4),
             snapshots are post-symmetrisation, matching upstream
             DiGress's chain-saving behaviour.
+
+            May also be a ``dict[str, ChainRecorder]`` for the composite
+            fan-out case (D-16a Resolutions Q5 / W2-6): when the noise
+            process is a :class:`~tmgg.diffusion.noise_process.CompositeNoiseProcess`,
+            the :class:`~tmgg.training.callbacks.chain_saving.ChainSavingCallback`
+            supplies one recorder per sub-process with a unique
+            ``field_prefix``. The sampler fans the same post-step
+            ``z_t`` to every recorder, so each writes its prefixed
+            key namespace;
+            :func:`~tmgg.diffusion.chain_recorder.merge_chain_snapshots`
+            reconverges the per-sub-process artefacts at finalise. The
+            dict keys only affect the emitted prefixes -- every
+            recorder observes the same composed state.
 
         Returns
         -------
@@ -395,8 +408,16 @@ class Sampler:
             # Post-symmetrisation chain snapshot (parity D-16a / spec
             # resolution Q4). The recorder owns the snapshot-cadence
             # gate; the sampler only forwards every reverse step.
+            # For the composite fan-out (D-16a Resolutions Q5 / W2-6)
+            # chain_recorder may be a dict[str, ChainRecorder]; every
+            # recorder observes the same composed z_t and writes to its
+            # own field_prefix namespace at finalise.
             if chain_recorder is not None:
-                chain_recorder.maybe_record(step_index, z_t)
+                if isinstance(chain_recorder, ChainRecorder):
+                    chain_recorder.maybe_record(step_index, z_t)
+                else:
+                    for sub_recorder in chain_recorder.values():
+                        sub_recorder.maybe_record(step_index, z_t)
 
         final = noise_process.finalize_sample(z_t)
         return self._trim_batched_graphs(final, n_nodes)

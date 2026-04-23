@@ -468,3 +468,123 @@ def test_sampler_without_recorder_unchanged() -> None:
             torch.testing.assert_close(a.E_class, b.E_class)
         if a.X_class is not None and b.X_class is not None:
             torch.testing.assert_close(a.X_class, b.X_class)
+
+
+def test_sampler_accepts_recorder_dict_for_composite_fan_out() -> None:
+    """Sampler.sample dispatches a dict of recorders to every sub-recorder.
+
+    Test rationale
+    --------------
+    Per D-16a Resolutions Q5 / W2-6: when
+    ``CompositeNoiseProcess`` is active, the
+    :class:`~tmgg.training.callbacks.chain_saving.ChainSavingCallback`
+    supplies one recorder per sub-process (keyed by class name) with a
+    unique ``field_prefix``. The sampler must forward the same post-step
+    ``z_t`` to every recorder so each writes to its own prefixed
+    namespace; ``merge_chain_snapshots`` reconverges them.
+
+    We exercise this with a categorical-only process but two recorders,
+    and assert both artefacts' step_indices match and the merged dict
+    carries both prefixed key-sets.
+    """
+    schedule = NoiseSchedule("cosine_iddpm", timesteps=5)
+    process = CategoricalNoiseProcess(
+        schedule=schedule, x_classes=3, e_classes=2, limit_distribution="uniform"
+    )
+    model = _UniformCategoricalModel(dx=3, de=2)
+    sampler = CategoricalSampler()
+
+    recorders: dict[str, ChainRecorder] = {
+        "categorical": ChainRecorder(
+            num_chains_to_save=2,
+            snapshot_step_interval=2,
+            meta=_STUB_META,
+            field_prefix="categorical",
+        ),
+        "aux": ChainRecorder(
+            num_chains_to_save=2,
+            snapshot_step_interval=2,
+            meta=_STUB_META,
+            field_prefix="aux",
+        ),
+    }
+    sampler.sample(
+        model=model,
+        noise_process=process,
+        num_graphs=2,
+        num_nodes=4,
+        device=torch.device("cpu"),
+        chain_recorder=recorders,
+    )
+
+    cat_out = recorders["categorical"].finalize()
+    aux_out = recorders["aux"].finalize()
+    # T=5 reverse steps → step_indices {0, 1, 2, 3, 4}; interval=2 → {0, 2, 4}.
+    assert cat_out["categorical/step_indices"].tolist() == [0, 2, 4]
+    assert aux_out["aux/step_indices"].tolist() == [0, 2, 4]
+
+    merged = merge_chain_snapshots([cat_out, aux_out])
+    assert {
+        "categorical/E_chain",
+        "categorical/X_chain",
+        "categorical/node_mask",
+        "categorical/step_indices",
+        "aux/E_chain",
+        "aux/X_chain",
+        "aux/node_mask",
+        "aux/step_indices",
+        "meta",
+    } == set(merged.keys())
+
+
+def test_sampler_bit_identical_with_and_without_recorder_dict() -> None:
+    """Dict-form recorder plumbing is a pure side-effect (acceptance A2).
+
+    A matching-seed sample with and without a dict recorder attached
+    must produce bit-identical generated graphs; the recorder only
+    snapshots, never steers.
+    """
+    schedule = NoiseSchedule("cosine_iddpm", timesteps=3)
+    process = CategoricalNoiseProcess(
+        schedule=schedule, x_classes=3, e_classes=2, limit_distribution="uniform"
+    )
+    model = _UniformCategoricalModel(dx=3, de=2)
+    sampler = CategoricalSampler()
+
+    torch.manual_seed(42)
+    no_rec = sampler.sample(
+        model=model,
+        noise_process=process,
+        num_graphs=2,
+        num_nodes=4,
+        device=torch.device("cpu"),
+    )
+    torch.manual_seed(42)
+    recorders: dict[str, ChainRecorder] = {
+        "a": ChainRecorder(
+            num_chains_to_save=1,
+            snapshot_step_interval=1,
+            meta=_STUB_META,
+            field_prefix="a",
+        ),
+        "b": ChainRecorder(
+            num_chains_to_save=1,
+            snapshot_step_interval=1,
+            meta=_STUB_META,
+            field_prefix="b",
+        ),
+    }
+    with_rec = sampler.sample(
+        model=model,
+        noise_process=process,
+        num_graphs=2,
+        num_nodes=4,
+        device=torch.device("cpu"),
+        chain_recorder=recorders,
+    )
+    assert len(no_rec) == len(with_rec)
+    for a, b in zip(no_rec, with_rec, strict=True):
+        if a.E_class is not None and b.E_class is not None:
+            torch.testing.assert_close(a.E_class, b.E_class)
+        if a.X_class is not None and b.X_class is not None:
+            torch.testing.assert_close(a.X_class, b.X_class)
