@@ -71,18 +71,40 @@ def _make_pmf_graph(
 # ---------------------------------------------------------------------------
 
 
+_STUB_META: dict[str, Any] = {"test": "fixture"}
+
+
 class TestConstructionValidity:
     def test_rejects_zero_chains(self) -> None:
         with pytest.raises(ValueError, match="num_chains_to_save must be >= 1"):
-            ChainRecorder(num_chains_to_save=0, snapshot_step_interval=1)
+            ChainRecorder(
+                num_chains_to_save=0, snapshot_step_interval=1, meta=_STUB_META
+            )
 
     def test_rejects_negative_chains(self) -> None:
         with pytest.raises(ValueError, match="num_chains_to_save must be >= 1"):
-            ChainRecorder(num_chains_to_save=-1, snapshot_step_interval=1)
+            ChainRecorder(
+                num_chains_to_save=-1, snapshot_step_interval=1, meta=_STUB_META
+            )
 
     def test_rejects_zero_interval(self) -> None:
         with pytest.raises(ValueError, match="snapshot_step_interval must be >= 1"):
-            ChainRecorder(num_chains_to_save=1, snapshot_step_interval=0)
+            ChainRecorder(
+                num_chains_to_save=1, snapshot_step_interval=0, meta=_STUB_META
+            )
+
+    def test_meta_required_at_construction(self) -> None:
+        """meta is REQUIRED -- omitting it raises TypeError.
+
+        Test rationale
+        --------------
+        Per CLAUDE.md fail-loud spirit and W1-3 of the polished-
+        munching-codd plan, meta has no default. Callers must supply
+        provenance (global_step / epoch / T / noise_process / ...) at
+        construction so the saved artefact is self-describing.
+        """
+        with pytest.raises(TypeError, match="meta"):
+            ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1)  # pyright: ignore[reportCallIssue]
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +114,9 @@ class TestConstructionValidity:
 
 class TestMaybeRecord:
     def test_only_fires_at_snapshot_steps(self) -> None:
-        rec = ChainRecorder(num_chains_to_save=2, snapshot_step_interval=3)
+        rec = ChainRecorder(
+            num_chains_to_save=2, snapshot_step_interval=3, meta=_STUB_META
+        )
         graph = _make_pmf_graph(bs=4, n=5, dx=3, de=2)
         # step 0 fires (0 % 3 == 0), step 1 and 2 are skipped, step 3 fires.
         rec.maybe_record(0, graph)
@@ -104,7 +128,9 @@ class TestMaybeRecord:
         assert out["step_indices"].tolist() == [0, 3]
 
     def test_slices_first_c_graphs(self) -> None:
-        rec = ChainRecorder(num_chains_to_save=2, snapshot_step_interval=1)
+        rec = ChainRecorder(
+            num_chains_to_save=2, snapshot_step_interval=1, meta=_STUB_META
+        )
         graph = _make_pmf_graph(bs=4, n=5, dx=3, de=2)
         rec.maybe_record(0, graph)
         out = rec.finalize()
@@ -114,13 +140,17 @@ class TestMaybeRecord:
         assert out["node_mask"].shape == (2, 5)
 
     def test_rejects_undersized_batch(self) -> None:
-        rec = ChainRecorder(num_chains_to_save=4, snapshot_step_interval=1)
+        rec = ChainRecorder(
+            num_chains_to_save=4, snapshot_step_interval=1, meta=_STUB_META
+        )
         graph = _make_pmf_graph(bs=2, n=5, dx=3, de=2)
         with pytest.raises(ValueError, match="batch must be at least"):
             rec.maybe_record(0, graph)
 
     def test_rejects_missing_e_class(self) -> None:
-        rec = ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1)
+        rec = ChainRecorder(
+            num_chains_to_save=1, snapshot_step_interval=1, meta=_STUB_META
+        )
         graph = GraphData(
             y=torch.zeros(2, 0),
             node_mask=torch.ones(2, 4, dtype=torch.bool),
@@ -130,7 +160,9 @@ class TestMaybeRecord:
             rec.maybe_record(0, graph)
 
     def test_rejects_inconsistent_x_presence(self) -> None:
-        rec = ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1)
+        rec = ChainRecorder(
+            num_chains_to_save=1, snapshot_step_interval=1, meta=_STUB_META
+        )
         with_x = _make_pmf_graph(bs=2, n=4, dx=3, de=2)
         without_x = _make_pmf_graph(bs=2, n=4, dx=None, de=2)
         rec.maybe_record(0, with_x)
@@ -145,7 +177,9 @@ class TestMaybeRecord:
 
 class TestFinalize:
     def test_finalize_without_x_field(self) -> None:
-        rec = ChainRecorder(num_chains_to_save=2, snapshot_step_interval=2)
+        rec = ChainRecorder(
+            num_chains_to_save=2, snapshot_step_interval=2, meta=_STUB_META
+        )
         graph = _make_pmf_graph(bs=3, n=4, dx=None, de=2)
         rec.maybe_record(0, graph)
         rec.maybe_record(2, graph)
@@ -156,7 +190,9 @@ class TestFinalize:
         assert out["node_mask"].dtype == torch.bool
 
     def test_finalize_without_records_raises(self) -> None:
-        rec = ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1)
+        rec = ChainRecorder(
+            num_chains_to_save=1, snapshot_step_interval=1, meta=_STUB_META
+        )
         with pytest.raises(RuntimeError, match="no recorded snapshots"):
             rec.finalize()
 
@@ -164,32 +200,69 @@ class TestFinalize:
         rec = ChainRecorder(
             num_chains_to_save=1,
             snapshot_step_interval=1,
+            meta=_STUB_META,
             field_prefix="categorical",
         )
         graph = _make_pmf_graph(bs=2, n=4, dx=3, de=2)
         rec.maybe_record(0, graph)
         out = rec.finalize()
+        # ``meta`` is emitted unprefixed even when other keys are
+        # namespaced (one global provenance record per artefact).
         assert set(out.keys()) == {
             "categorical/E_chain",
             "categorical/X_chain",
             "categorical/node_mask",
             "categorical/step_indices",
+            "meta",
         }
 
     def test_torch_save_load_roundtrip(self, tmp_path: Path) -> None:
-        rec = ChainRecorder(num_chains_to_save=2, snapshot_step_interval=1)
+        rec = ChainRecorder(
+            num_chains_to_save=2, snapshot_step_interval=1, meta=_STUB_META
+        )
         graph = _make_pmf_graph(bs=3, n=4, dx=2, de=2)
         rec.maybe_record(0, graph)
         rec.maybe_record(1, graph)
         out = rec.finalize()
         target = tmp_path / "chain.pt"
         torch.save(out, target)
-        loaded: dict[str, Tensor] = torch.load(target, weights_only=True)
+        # weights_only=False so torch.load deserialises the meta dict
+        # (Python primitives) alongside the tensors.
+        loaded: dict[str, Any] = torch.load(target, weights_only=False)
         assert set(loaded.keys()) == set(out.keys())
         torch.testing.assert_close(loaded["E_chain"], out["E_chain"])
         torch.testing.assert_close(loaded["X_chain"], out["X_chain"])
         torch.testing.assert_close(loaded["node_mask"], out["node_mask"])
         torch.testing.assert_close(loaded["step_indices"], out["step_indices"])
+        assert loaded["meta"] == _STUB_META
+
+    def test_finalize_includes_meta_dict_verbatim(self) -> None:
+        """The structured meta dict round-trips through finalize unchanged.
+
+        Test rationale
+        --------------
+        The artefact's meta block is the provenance contract per spec
+        D-16a Resolutions Q5 (global_step / epoch / T /
+        snapshot_step_interval / noise_process / ema_active). The
+        recorder is a pure carrier -- it must not mutate or drop keys.
+        """
+        meta: dict[str, Any] = {
+            "global_step": 1234,
+            "epoch": 5,
+            "T": 1000,
+            "snapshot_step_interval": 50,
+            "noise_process": "tmgg.diffusion.noise_process.CategoricalNoiseProcess",
+            "ema_active": True,
+        }
+        rec = ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1, meta=meta)
+        graph = _make_pmf_graph(bs=2, n=4, dx=2, de=2)
+        rec.maybe_record(0, graph)
+        out = rec.finalize()
+        assert out["meta"] == meta
+        # Defensive copy: mutating the passed dict after construction
+        # must not change the recorded provenance.
+        meta["epoch"] = 999
+        assert out["meta"]["epoch"] == 5
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +273,9 @@ class TestFinalize:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 class TestGpuAccumulation:
     def test_accumulates_on_gpu_until_finalize(self) -> None:
-        rec = ChainRecorder(num_chains_to_save=2, snapshot_step_interval=1)
+        rec = ChainRecorder(
+            num_chains_to_save=2, snapshot_step_interval=1, meta=_STUB_META
+        )
         graph = _make_pmf_graph(bs=2, n=4, dx=2, de=2, device="cuda")
         rec.maybe_record(0, graph)
         # Internal buffer should still live on GPU.
@@ -219,10 +294,16 @@ class TestGpuAccumulation:
 class TestMergeChainSnapshots:
     def test_merges_disjoint_keys(self) -> None:
         cat_rec = ChainRecorder(
-            num_chains_to_save=1, snapshot_step_interval=1, field_prefix="categorical"
+            num_chains_to_save=1,
+            snapshot_step_interval=1,
+            meta=_STUB_META,
+            field_prefix="categorical",
         )
         gauss_rec = ChainRecorder(
-            num_chains_to_save=1, snapshot_step_interval=1, field_prefix="gaussian"
+            num_chains_to_save=1,
+            snapshot_step_interval=1,
+            meta=_STUB_META,
+            field_prefix="gaussian",
         )
         graph = _make_pmf_graph(bs=2, n=4, dx=2, de=2)
         cat_rec.maybe_record(0, graph)
@@ -237,15 +318,49 @@ class TestMergeChainSnapshots:
             "gaussian/X_chain",
             "gaussian/node_mask",
             "gaussian/step_indices",
+            "meta",
         } == set(merged.keys())
+        assert merged["meta"] == _STUB_META
 
     def test_rejects_colliding_keys(self) -> None:
-        rec_a = ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1)
-        rec_b = ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1)
+        rec_a = ChainRecorder(
+            num_chains_to_save=1, snapshot_step_interval=1, meta=_STUB_META
+        )
+        rec_b = ChainRecorder(
+            num_chains_to_save=1, snapshot_step_interval=1, meta=_STUB_META
+        )
         graph = _make_pmf_graph(bs=2, n=4, dx=2, de=2)
         rec_a.maybe_record(0, graph)
         rec_b.maybe_record(0, graph)
         with pytest.raises(ValueError, match="duplicate key"):
+            merge_chain_snapshots([rec_a.finalize(), rec_b.finalize()])
+
+    def test_rejects_incompatible_meta(self) -> None:
+        """Merging recorders with different meta dicts raises.
+
+        Test rationale
+        --------------
+        ``meta`` is one global provenance record per artefact. When
+        sub-process recorders fan out under CompositeNoiseProcess they
+        must be constructed with identical meta; mismatched provenance
+        is a wiring bug in the orchestration layer.
+        """
+        rec_a = ChainRecorder(
+            num_chains_to_save=1,
+            snapshot_step_interval=1,
+            meta={"global_step": 100},
+            field_prefix="cat",
+        )
+        rec_b = ChainRecorder(
+            num_chains_to_save=1,
+            snapshot_step_interval=1,
+            meta={"global_step": 200},
+            field_prefix="gauss",
+        )
+        graph = _make_pmf_graph(bs=2, n=4, dx=2, de=2)
+        rec_a.maybe_record(0, graph)
+        rec_b.maybe_record(0, graph)
+        with pytest.raises(ValueError, match="incompatible meta dicts"):
             merge_chain_snapshots([rec_a.finalize(), rec_b.finalize()])
 
 
@@ -293,7 +408,7 @@ def test_sampler_records_at_least_one_snapshot(tmp_path: Path) -> None:
     )
     model = _UniformCategoricalModel(dx=3, de=2)
     sampler = CategoricalSampler()
-    rec = ChainRecorder(num_chains_to_save=2, snapshot_step_interval=2)
+    rec = ChainRecorder(num_chains_to_save=2, snapshot_step_interval=2, meta=_STUB_META)
 
     sampler.sample(
         model=model,
@@ -338,7 +453,7 @@ def test_sampler_without_recorder_unchanged() -> None:
         device=torch.device("cpu"),
     )
     torch.manual_seed(0)
-    rec = ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1)
+    rec = ChainRecorder(num_chains_to_save=1, snapshot_step_interval=1, meta=_STUB_META)
     with_rec = sampler.sample(
         model=model,
         noise_process=process,

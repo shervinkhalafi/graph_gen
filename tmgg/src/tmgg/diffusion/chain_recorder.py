@@ -41,6 +41,15 @@ key               dtype              shape
 ``step_indices``  ``torch.long``     ``(S,)`` -- the ``step_index`` value
                                      at which each snapshot was captured,
                                      in capture order (latest noise first)
+``meta``          ``dict[str, Any]`` provenance dict supplied at
+                                     construction (``global_step``,
+                                     ``epoch``, ``T``,
+                                     ``snapshot_step_interval``,
+                                     ``noise_process``, ``ema_active``);
+                                     stored unprefixed even when
+                                     ``field_prefix`` namespaces other
+                                     keys, so a single artefact carries
+                                     one global provenance record
 ================  =================  =====================================
 
 ``S`` is the number of recorded snapshots, ``C`` the configured
@@ -77,6 +86,16 @@ class ChainRecorder:
         ``(s_int * number_chain_steps) // T``, ours simply samples every
         Kth reverse step. The two coincide for the common case of
         ``T == K * number_chain_steps``.
+    meta
+        Provenance dict written verbatim into ``finalize()`` output
+        under the ``"meta"`` key. Required at construction (no default)
+        per CLAUDE.md fail-loud spirit -- callers must explicitly
+        decide what to record. Per spec D-16a Resolutions Q5 the
+        canonical shape carries ``global_step``, ``epoch``, ``T``,
+        ``snapshot_step_interval``, ``noise_process`` (qualname
+        string), and ``ema_active``. The dict is shallow-copied at
+        construction so post-construction mutations on the caller's
+        copy do not affect the recorded artefact.
     field_prefix
         Optional namespace prefix for the snapshot keys. When the
         recorder is wired through a
@@ -84,7 +103,9 @@ class ChainRecorder:
         the sampler instantiates one recorder per sub-process with that
         sub-process's name as the prefix (e.g. ``"categorical"``) so
         the final dict carries ``categorical/E_chain`` etc. Empty
-        string (the default) emits unprefixed keys.
+        string (the default) emits unprefixed keys. The ``"meta"`` key
+        is **not** prefixed; provenance is one global record per
+        artefact.
 
     Raises
     ------
@@ -96,6 +117,7 @@ class ChainRecorder:
         self,
         num_chains_to_save: int,
         snapshot_step_interval: int,
+        meta: dict[str, Any],
         field_prefix: str = "",
     ) -> None:
         if num_chains_to_save < 1:
@@ -112,6 +134,11 @@ class ChainRecorder:
         self.num_chains_to_save = num_chains_to_save
         self.snapshot_step_interval = snapshot_step_interval
         self.field_prefix = field_prefix
+        # Defensive shallow copy: meta is provenance and the caller may
+        # mutate their dict after construction (e.g. update epoch
+        # counters). The recorded artefact must reflect the snapshot
+        # taken at construction time.
+        self._meta: dict[str, Any] = dict(meta)
 
         self._e_snapshots: list[Tensor] = []
         self._x_snapshots: list[Tensor] = []
@@ -174,19 +201,24 @@ class ChainRecorder:
         if self._node_mask is None:
             self._node_mask = z_t.node_mask[:c].detach().clone()
 
-    def finalize(self) -> dict[str, Tensor]:
+    def finalize(self) -> dict[str, Any]:
         """Stack snapshots and return a dict ready for ``torch.save``.
 
         Tensors are moved to CPU before stacking so a downstream
-        ``torch.save`` does not pin GPU memory. Keys are prefixed with
-        :attr:`field_prefix` when non-empty (separator ``/``).
+        ``torch.save`` does not pin GPU memory. Snapshot keys are
+        prefixed with :attr:`field_prefix` when non-empty (separator
+        ``/``); the provenance ``"meta"`` key is **always** unprefixed
+        because there is one global provenance record per artefact even
+        when several sub-process recorders fan out under
+        :class:`~tmgg.diffusion.noise_process.CompositeNoiseProcess`.
 
         Returns
         -------
-        dict[str, Tensor]
+        dict[str, Any]
             Schema documented in the module docstring. ``X_chain`` is
             absent when ``z_t.X_class`` was ``None`` throughout the
-            recorded chain.
+            recorded chain. ``meta`` carries the provenance dict
+            supplied at construction.
 
         Raises
         ------
@@ -209,7 +241,7 @@ class ChainRecorder:
         node_mask = self._node_mask.cpu()
         step_indices = torch.tensor(self._step_indices, dtype=torch.long)
 
-        out: dict[str, Tensor] = {}
+        out: dict[str, Any] = {}
         prefix = f"{self.field_prefix}/" if self.field_prefix else ""
         out[f"{prefix}E_chain"] = e_chain
         out[f"{prefix}node_mask"] = node_mask
@@ -217,10 +249,15 @@ class ChainRecorder:
         if self._x_snapshots:
             x_chain = torch.stack(self._x_snapshots, dim=0).cpu()
             out[f"{prefix}X_chain"] = x_chain
+        # Provenance is a single global record; never prefixed. Shallow
+        # copy on emit so a post-finalize mutation on the artefact
+        # consumer's side does not bleed back into the recorder's
+        # stored copy.
+        out["meta"] = dict(self._meta)
         return out
 
 
-def merge_chain_snapshots(snapshots: list[dict[str, Tensor]]) -> dict[str, Any]:
+def merge_chain_snapshots(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
     """Merge per-sub-process recorder outputs into a single artefact dict.
 
     Used by the sampler when the noise process is composite: each
@@ -228,7 +265,13 @@ def merge_chain_snapshots(snapshots: list[dict[str, Tensor]]) -> dict[str, Any]:
     after the loop the per-sub-process dicts are concatenated into one
     artefact via key union. Disjoint-field invariant on
     :class:`~tmgg.diffusion.noise_process.CompositeNoiseProcess`
-    guarantees the keys do not collide.
+    guarantees the field-prefixed keys do not collide.
+
+    The ``"meta"`` key is special: every recorder emits it (provenance
+    is one global record per artefact, never prefixed). The merge keeps
+    a single ``"meta"`` entry; if multiple recorders supply distinct
+    meta dicts, the merge raises -- callers must ensure all sub-process
+    recorders share the same provenance.
 
     Parameters
     ----------
@@ -238,21 +281,36 @@ def merge_chain_snapshots(snapshots: list[dict[str, Tensor]]) -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Union of all keys.
+        Union of all field-prefixed keys, plus a single ``"meta"`` entry.
 
     Raises
     ------
     ValueError
-        Two snapshots collide on the same key (would only happen if a
-        field-prefix wiring bug let two recorders share a prefix).
+        Two snapshots collide on a non-meta key (would only happen if a
+        field-prefix wiring bug let two recorders share a prefix), or
+        two snapshots carry different meta dicts.
     """
     merged: dict[str, Any] = {}
+    meta: dict[str, Any] | None = None
     for snap in snapshots:
         for key, value in snap.items():
+            if key == "meta":
+                if meta is None:
+                    meta = value
+                elif meta != value:
+                    raise ValueError(
+                        "merge_chain_snapshots: incompatible meta dicts "
+                        f"across sub-process recorders: {meta} vs {value}. "
+                        "All sub-process recorders must share the same "
+                        "provenance for a single artefact."
+                    )
+                continue
             if key in merged:
                 raise ValueError(
                     f"merge_chain_snapshots: duplicate key {key!r}; "
                     "field-prefix wiring on the sampler is broken."
                 )
             merged[key] = value
+    if meta is not None:
+        merged["meta"] = meta
     return merged
