@@ -163,8 +163,18 @@ class FinalSampleDumpCallback(Callback):
 
     @staticmethod
     def _find_ema_callback(trainer: pl.Trainer) -> EMACallback | None:
-        """Return a registered :class:`EMACallback`, or ``None``."""
-        for cb in trainer.callbacks:  # pyright: ignore[reportAttributeAccessIssue]
+        """Return a registered :class:`EMACallback`, or ``None``.
+
+        ``trainer.callbacks`` is present at runtime but absent from
+        Lightning's public type stubs; fetch it via ``getattr`` (whose
+        ``Any`` return pyright accepts) rather than silencing the
+        attribute-access error. Mirrors the getattr gate pattern used
+        by ``EMACallback._require_backbone_parameters``.
+        """
+        callbacks = getattr(trainer, "callbacks", None)
+        if callbacks is None:
+            return None
+        for cb in callbacks:
             if isinstance(cb, EMACallback):
                 return cb
         return None
@@ -275,7 +285,10 @@ class FinalSampleDumpCallback(Callback):
             # directly to the logger experiment when available so the
             # final/<metric> entries still land in W&B/CSV/etc.
             evaluator = _require_attr(pl_module, "evaluator")
-            datamodule = trainer.datamodule  # pyright: ignore[reportAttributeAccessIssue]
+            # ``trainer.datamodule`` is present at runtime via Lightning's
+            # attached datamodule but absent from its public type stubs;
+            # use getattr to keep pyright happy without a suppression.
+            datamodule = getattr(trainer, "datamodule", None)
             if datamodule is not None:
                 refs = datamodule.get_reference_graphs(
                     "test", evaluator.eval_num_samples
