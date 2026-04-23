@@ -66,10 +66,12 @@ def _parse_step_from_filename(path: Path) -> int:
 def _resolve_device(requested: Literal["auto", "cpu", "cuda"]) -> str:
     """Return a torch-device string per the ``--device`` flag.
 
-    ``auto`` picks ``cuda`` when available, else ``cpu`` (spec Q10).
+    ``auto`` picks ``cuda:0`` when available, else ``cpu`` (spec D-16c
+    Resolutions Q10). The explicit ``cuda`` choice still passes through
+    as bare ``"cuda"`` so users opting in retain the bare-string form.
     """
     if requested == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        return "cuda:0" if torch.cuda.is_available() else "cpu"
     return requested
 
 

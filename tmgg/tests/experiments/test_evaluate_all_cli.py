@@ -60,9 +60,13 @@ class TestResolveDevice:
     def test_explicit_cuda_passes_through(self) -> None:
         assert _resolve_device("cuda") == "cuda"
 
-    def test_auto_picks_cuda_when_available(self) -> None:
+    def test_auto_picks_cuda_zero_when_available(self) -> None:
+        # D-16c Resolutions Q10 specifies "cuda:0" (not bare "cuda") as
+        # the autodetect default, so a downstream caller selecting a
+        # specific GPU index gets a deterministic, fully-qualified
+        # device string.
         with patch("torch.cuda.is_available", return_value=True):
-            assert _resolve_device("auto") == "cuda"
+            assert _resolve_device("auto") == "cuda:0"
 
     def test_auto_falls_back_to_cpu(self) -> None:
         with patch("torch.cuda.is_available", return_value=False):
