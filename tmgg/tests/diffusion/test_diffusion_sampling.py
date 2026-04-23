@@ -14,7 +14,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tmgg.diffusion.diffusion_sampling import _sample_from_unnormalised_posterior
+from tmgg.diffusion.diffusion_sampling import (
+    _sample_from_unnormalised_posterior,
+    compute_posterior_distribution,
+)
 
 
 class TestSampleFromUnnormalisedPosterior:
@@ -110,3 +113,114 @@ class TestSampleFromUnnormalisedPosterior:
         unnorm = torch.rand(bs, n, n, k) + 0.1
         sampled = _sample_from_unnormalised_posterior(unnorm)
         assert sampled.shape == (bs, n, n)
+
+
+class TestComputePosteriorDistributionMaskAware:
+    """Regression tests for the mask-aware posterior denom guard.
+
+    Test rationale (parity W2-3): commit ``6424fc34`` introduced a
+    mask-aware split inside :func:`compute_posterior_distribution`
+    after its predecessor ``e74ee0f8`` tripped on legitimate VLB-path
+    inputs. CLAUDE.md mandates "first add the bug as a unit test
+    BEFORE fixing"; the meta-synthesis flagged the missing regression
+    test. These tests pin the three branches the guard distinguishes:
+
+    1. Valid (one-hot M and M_t) rows divide cleanly and match the
+       manual ``(M_t @ Qt^T) * (M @ Qsb) / denom`` formula.
+    2. Masked rows (M or M_t row-sum zero) produce zero output rather
+       than NaN, matching the post-mask cleanup the guard provides.
+    3. A zero denom at a *valid* position trips the assertion with the
+       informative ``min_at_valid`` message — the fail-loud branch
+       CLAUDE.md mandates for real bugs.
+    """
+
+    def _kernel_with_off_diagonal_mass(
+        self, bs: int, d: int, *, dtype: torch.dtype = torch.float32
+    ) -> torch.Tensor:
+        """Build an irreducible doubly-stochastic kernel of shape (bs, d, d)."""
+        kernel = torch.full((d, d), 0.1, dtype=dtype)
+        kernel.fill_diagonal_(0.9 - 0.1 * (d - 2))
+        # Row-stochastic, never exactly zero anywhere.
+        return kernel.unsqueeze(0).expand(bs, d, d).contiguous()
+
+    def test_masked_rows_yield_zero(self) -> None:
+        """Masked-row inputs (zero M or M_t) produce zero output, no NaN."""
+        torch.manual_seed(0)
+        bs, n, d = 1, 4, 3
+        M = torch.zeros(bs, n, d)
+        M_t = torch.zeros(bs, n, d)
+        # Positions 0, 1: masked (all-zero rows in both M and M_t).
+        # Positions 2, 3: valid one-hot.
+        M[0, 2, 0] = 1.0
+        M[0, 3, 1] = 1.0
+        M_t[0, 2, 1] = 1.0
+        M_t[0, 3, 2] = 1.0
+
+        Qt_M = self._kernel_with_off_diagonal_mass(bs, d)
+        Qsb_M = self._kernel_with_off_diagonal_mass(bs, d)
+        Qtb_M = self._kernel_with_off_diagonal_mass(bs, d)
+
+        out = compute_posterior_distribution(
+            M, M_t, Qt_M, Qsb_M, Qtb_M, field="X_class"
+        )
+        assert out.shape == (bs, n, d)
+        assert torch.isfinite(out).all(), "guard must not return NaN"
+        # Masked positions: every class has zero probability.
+        assert torch.allclose(out[0, 0], torch.zeros(d))
+        assert torch.allclose(out[0, 1], torch.zeros(d))
+        # Valid positions: nonzero somewhere.
+        assert out[0, 2].abs().sum() > 0
+        assert out[0, 3].abs().sum() > 0
+
+    def test_valid_rows_match_manual_formula(self) -> None:
+        """Valid-row outputs match the manual ``(M_t @ Qt^T) * (M @ Qsb) / denom`` formula."""
+        torch.manual_seed(1)
+        bs, n, d = 1, 3, 4
+        M = torch.zeros(bs, n, d)
+        M_t = torch.zeros(bs, n, d)
+        # All-valid one-hot: position k → class (k+1) mod d, M_t → class k mod d.
+        for i in range(n):
+            M[0, i, (i + 1) % d] = 1.0
+            M_t[0, i, i % d] = 1.0
+
+        Qt_M = self._kernel_with_off_diagonal_mass(bs, d)
+        Qsb_M = self._kernel_with_off_diagonal_mass(bs, d)
+        Qtb_M = self._kernel_with_off_diagonal_mass(bs, d)
+
+        out = compute_posterior_distribution(
+            M, M_t, Qt_M, Qsb_M, Qtb_M, field="X_class"
+        )
+
+        # Manual reference using the same formula (no guard applied because
+        # every position is valid).
+        Qt_M_T = Qt_M.transpose(-2, -1)
+        left = M_t @ Qt_M_T
+        right = M @ Qsb_M
+        product = left * right
+        denom = ((M @ Qtb_M) * M_t).sum(dim=-1, keepdim=True)
+        expected = product / denom
+
+        torch.testing.assert_close(out, expected)
+
+    def test_zero_denom_at_valid_position_raises(self) -> None:
+        """Construct a degenerate valid-position scenario; guard asserts loudly.
+
+        Set ``M`` and ``M_t`` to one-hot at *disjoint* classes, with
+        ``Qtb_M`` sending mass strictly along the identity. Then
+        ``denom = (M @ Qtb_M * M_t).sum(-1) = 0`` while the position is
+        flagged valid (both row-sums positive), tripping the assert.
+        """
+        bs, n, d = 1, 1, 2
+        M = torch.zeros(bs, n, d)
+        M_t = torch.zeros(bs, n, d)
+        M[0, 0, 0] = 1.0
+        M_t[0, 0, 1] = 1.0
+        # Identity kernels: M @ Qtb selects class 0; M_t selects class 1; the
+        # element-wise product has a zero at class 1, so denom = 0.
+        identity = torch.eye(d).unsqueeze(0).expand(bs, d, d).contiguous()
+        Qt_M = identity.clone()
+        Qsb_M = identity.clone()
+        Qtb_M = identity.clone()
+
+        with pytest.raises(AssertionError, match="min_at_valid"):
+            compute_posterior_distribution(M, M_t, Qt_M, Qsb_M, Qtb_M, field="X_class")
