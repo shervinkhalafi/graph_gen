@@ -1020,6 +1020,17 @@ class DiffusionModule(BaseGraphModule):
         -------
         list[nx.Graph]
             Generated NetworkX graphs.
+
+        Notes
+        -----
+        ``ChainSavingCallback`` (parity #46 / D-16a) threads its
+        :class:`~tmgg.diffusion.chain_recorder.ChainRecorder` through
+        this method via a one-shot stash on
+        ``self._pending_chain_recorder``. The stash is consumed and
+        cleared here so a subsequent ``generate_graphs`` call cannot
+        accidentally re-use a stale recorder. The plumbing keeps the
+        sampler call site single-sourced inside the module while
+        letting the callback own the recorder lifecycle.
         """
         if self.sampler is None:
             raise RuntimeError(
@@ -1036,6 +1047,15 @@ class DiffusionModule(BaseGraphModule):
         ):
             num_nodes_arg = self._size_distribution.sample(num_graphs)
 
+        # One-shot recorder handoff from ChainSavingCallback. ``getattr``
+        # with a default makes the read non-fatal when no callback set
+        # the stash; ``delattr`` clears it after use to enforce single-use
+        # semantics. The Sampler accepts both single-recorder and
+        # dict-of-recorder forms (W2-6 composite fan-out).
+        chain_recorder = getattr(self, "_pending_chain_recorder", None)
+        if chain_recorder is not None:
+            del self._pending_chain_recorder
+
         graph_data_list = self.sampler.sample(
             model=self.model,
             noise_process=self.noise_process,
@@ -1043,6 +1063,7 @@ class DiffusionModule(BaseGraphModule):
             num_nodes=num_nodes_arg,
             device=device,
             collector=collector,
+            chain_recorder=chain_recorder,
         )
 
         # Binarisation lives on the evaluator so the threshold and the

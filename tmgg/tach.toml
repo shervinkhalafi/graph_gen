@@ -57,8 +57,11 @@ depends_on = [
     "tmgg.training.lightning_modules",
     "tmgg.training.orchestration",
     "tmgg.data",
+    "tmgg.diffusion",
 ]
-# Top-level: re-exports + cross-cutting files (logging.py, exceptions.py)
+# Top-level: re-exports + cross-cutting files (logging.py, exceptions.py).
+# tmgg.diffusion: ChainSavingCallback constructs ChainRecorder and dispatches
+# per-sub-process recorders for CompositeNoiseProcess (parity #46 / D-16a).
 
 [[modules]]
 path = "tmgg.training.lightning_modules"

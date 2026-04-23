@@ -135,6 +135,28 @@ def create_callbacks(config: DictConfig) -> list[pl.Callback]:
             )
         )
 
+    # Reverse-chain snapshot recording (parity #46 / D-16a). Mirrors
+    # upstream DiGress's ``number_chain_steps > 0`` gate: leaving
+    # num_chains_to_save at 0 disables the callback entirely. Wave
+    # configs compose the block via Hydra defaults
+    # (training/chain_saving@training.chain_saving: default) so the
+    # block lives in one place.
+    cs_cfg = training_cfg.get("chain_saving", {})
+    num_chains_to_save = int(cs_cfg.get("num_chains_to_save", 0))
+    if num_chains_to_save > 0:
+        from tmgg.training.callbacks import ChainSavingCallback
+
+        callbacks.append(
+            ChainSavingCallback(
+                num_chains_to_save=num_chains_to_save,
+                snapshot_step_interval=int(cs_cfg.get("snapshot_step_interval", 50)),
+                chain_save_every_n_val=int(cs_cfg.get("chain_save_every_n_val", 20)),
+                chain_save_at_fit_end=bool(cs_cfg.get("chain_save_at_fit_end", True)),
+                chain_save_path=cs_cfg.get("chain_save_path", None),
+                run_name=str(config.get("run_id", "run")),
+            )
+        )
+
     return callbacks
 
 
