@@ -17,7 +17,8 @@ Legend in the summary column: `FIX`, `DISCUSS`, `DOC`, `NO-OP`.
 
 # Decisions (2026-04-21)
 
-User-approved decisions on Appendix B items. Execute in numeric order.
+User-approved decisions on the original triage items (former
+Appendix B, deleted 2026-04-23). Execute in numeric order.
 
 ## Cleared clear-to-fix items (12 items, no decision needed)
 
@@ -166,25 +167,27 @@ Docstring:
   reconstruction term; they differ at O(1e-3) for T=1000 per the
   original docstring. Upstream is the published DiGress formulation.
 
-### D-8 — `zero_output_diagonal` toggle on transformer (#33): **ADD TOGGLE, default to upstream**
+### D-8 — `zero_output_diagonal` toggle on transformer (#33): **SUPERSEDED — toggle was dead code, REMOVED 2026-04-23**
 
-Default `False` = upstream's behaviour (model output retains diagonal
-logits, `.mask(node_mask)` only zeros padding). Setting `True` selects
-our current `.mask_zero_diag()` (zeros both padding and diagonal).
+**Original misreading (2026-04-21)**: the triage assumed upstream
+DiGress does not zero the diagonal of `E` and that the tmgg model
+could optionally zero it via `mask_zero_diag()`. Under that reading
+the `zero_output_diagonal: bool = False` toggle let callers opt into
+the prior tmgg cleanliness behaviour.
 
-Docstring:
-- **Upstream**: allows the model to output arbitrary logits on the
-  diagonal. These are dropped downstream by the target-side
-  `encode_no_edge` zeroing + row predicate in CE, and by
-  `triu+symmetrize` in the sampler. So diagonal model output is
-  *information that's never used*, not harmful.
-- **Ours (previous default)**: zeroed the diagonal of the output for
-  "strictly cleaner predictions". Arguably cleaner but introduces a
-  needless constraint on the network's latent representation (the
-  diagonal channel is meaningful in attention-pooling; forcing zero
-  is information loss).
-- **Mathematical correctness**: both produce identical valid output
-  after the downstream filters. Upstream's is the "honest" version.
+**Verification (2026-04-23)**: this was wrong. Upstream
+`digress-upstream-readonly/src/models/transformer_model.py:279`
+computes `E = (E + E_to_out) * diag_mask`, where `diag_mask` zeros the
+diagonal. The tmgg counterpart at
+`src/tmgg/models/digress/transformer_model.py:777` does the same:
+`E_final = (E_out + E_to_out) * diag_mask`. Because `E`'s diagonal is
+already zero before `out.mask()` / `out.mask_zero_diag()` runs, both
+branches of the toggle produce identical output (for X there is no
+diagonal concept, so the toggle is trivially a no-op on X too).
+
+**Disposition**: the toggle was dead code. Removed in a 2026-04-23
+follow-up along with this disposition rewrite. The unconditional call
+is `return out.mask()`, mirroring upstream.
 
 ### D-9 — Scheduler default (#38): options and a **likely default flip**
 
@@ -1630,130 +1633,3 @@ retain diagonal logits). **FIX**. **DECISION NEEDED** on default.
 - **#43, #44, #45, #46**: config-level YAML edits + optional new
   callback/class.
 
----
-
-# Appendix B — consolidated discussion + decision items
-
-## Clear-to-fix (no decision needed, just do it)
-
-These are mechanical ports or small changes with no behavioural
-tradeoff. Sequence them in one commit per §.
-
-1. #4 — add symmetry assertion in `from_pyg_batch`.
-2. #5 — `num_nodes` from train+val only.
-3. #8 — `custom_vignac` default K=5.
-4. #14 — replace `denom.clamp(1e-6)` with positivity assert + match
-   upstream row-sum normalisation (closes #28 structurally, subsuming
-   the clamp-vs-floor question).
-5. #15 — runtime `Q_t_bar` row-sum assertion.
-6. #16 — sample `t=0` in training only (not validation). Verified
-   no cascade.
-7. #25 — one-line `masked_softmax` match: return `x` when all-masked
-   (matches upstream; behaviourally equivalent).
-8. #32 — replace `log_pN` silent fallback with raise.
-9. #35 — parametrise `sbm_refinement_steps` on `GraphEvaluator`,
-   default 100.
-10. #39 — change trainer `gradient_clip_val` default from 1.0 to
-    null.
-11. #40 — bump early-stopping patience to 1000, add divergence comment,
-    confirm `save_top_k=-1`.
-12. #43 — fix `timesteps=500` → `1000` in `discrete_sbm_official.yaml`.
-
-## Decision items (need user sign-off before fix)
-
-Each has a recommended default that preserves tmgg's tested behaviour
-while exposing strict-upstream-parity via a toggle. The question is
-whether to flip defaults for any of them.
-
-### D-1. `remove_self_loops` placement (#2)
-
-- **Option A**: use upstream's sparse `remove_self_loops` before
-  densification; drop our post-densification `adj[diag]=0`.
-- **Option B**: keep both for defence in depth.
-- **Recommendation**: A (smaller, cleaner).
-
-### D-2. `collapse` flag on `.mask()` (#3)
-
-Straightforward rename/merge. No default to decide; ship as additive.
-
-### D-3. π estimation via upstream edge_index path (#13)
-
-- **Option A**: keep our dense upper-triangle approach (cleaner given
-  dense `GraphData`).
-- **Option B**: port upstream's sparse `edge_counts`.
-- **Recommendation**: A. Numerical identity already verified; B adds
-  ~20 LoC for no result change.
-
-### D-4. `forward_sample` return type (#17)
-
-- Introduce a `NoisedBatch` dataclass bundling `z_t: GraphData` +
-  `t_int, alpha_t_bar, alpha_s_bar, beta_t`. Single open question:
-  naming + whether to move `t_int` shape from `(B,)` → `(B, 1)` to
-  fully align upstream (resolves #18 jointly).
-- **Recommendation**: do it; pick `(B, 1)` shape for cross-
-  codebase grep-friendliness.
-
-### D-5. Unnormalised-posterior sampling helper (#28, #29)
-
-- Introduce `_sample_from_unnormalised_posterior(unnorm, *,
-  zero_floor=1e-5)` with the upstream-parity row-sum normalisation
-  + zero-floor. Adds `assert_symmetric_e: bool` toggle on the
-  sampler with a default `True`.
-- **Recommendation**: ship. Expose `zero_floor` on the sampler
-  config for strict-parity knob.
-
-### D-6. `use_marginalised_vlb_kl` toggle (#30)
-
-- Add the toggle; two helpers already exist. Default `True`
-  preserves current tmgg behaviour; `False` matches upstream.
-- **Recommendation**: ship; default `True` (ours); flip via config
-  for strict-parity runs.
-
-### D-7. `use_upstream_reconstruction` toggle (#31)
-
-- Same structure as D-6. Default `False` (current tmgg form); `True`
-  for strict parity.
-- **Recommendation**: ship; default `False`; document why tmgg's
-  form is the current default.
-
-### D-8. `zero_output_diagonal` toggle on `_GraphTransformer` (#33)
-
-- Default `True` (clean tmgg predictions); `False` matches upstream.
-- **Recommendation**: ship; default `True`.
-
-### D-9. Scheduler default (#38)
-
-- **Option A**: remove `cosine_warmup` from `_base_infra.yaml`
-  defaults; require opt-in.
-- **Option B**: override per-config in `models/digress/*.yaml` to
-  `scheduler_config: {type: none}` for upstream-parity runs; keep
-  base default.
-- **Recommendation**: B (narrower blast radius).
-
-### D-10. Step-vs-epoch generation gate (#41)
-
-- Add `gate: "step" | "epoch"` parameter. Default `"step"` (current).
-- **Recommendation**: ship; default `"step"`; upstream-parity runs
-  set `"epoch"`.
-
-### D-11. `max_n_nodes` interpolation (#42)
-
-- Replace `max_n_nodes: 20` hardcode in `discrete_sbm_official.yaml`
-  with Hydra interpolation: `max_n_nodes: ${data.num_nodes}` OR
-  `${data.num_nodes_max}` (whichever is exposed). Add
-  `assert max_n_nodes >= dataset.num_nodes_max` at setup.
-- **Recommendation**: ship; one config change + one assertion.
-
-## Low-priority / feature work (backlog)
-
-- #12 absorbing transition (fix typo, implement for completeness).
-- #27 wire `y_class` per-field CE.
-- #44 `lambda_y` config knob.
-- #45 EMA callback + utility.
-- #46 expose missing upstream config functionality.
-
-## No-op confirmations (keep tmgg behaviour, do not touch)
-
-- #1, #6, #7, #9, #10, #11, #18 (subsumed by D-4),
-  #19, #20, #21, #22, #23, #24 (**verified non-issue**),
-  #26, #34, #36, #37.
