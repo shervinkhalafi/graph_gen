@@ -52,6 +52,7 @@ tmgg-baseline = "tmgg.experiments.lin_mlp_baseline_denoising.runner:main"
 tmgg-gaussian-gen = "tmgg.experiments.gaussian_diffusion_generative.runner:main"
 tmgg-discrete-gen = "tmgg.experiments.discrete_diffusion_generative.runner:main"
 tmgg-discrete-eval = "tmgg.experiments.discrete_diffusion_generative.evaluate_cli:main"
+tmgg-discrete-eval-all = "tmgg.experiments.discrete_diffusion_generative.evaluate_all_cli:main"
 # Unified experiment runner (replaces tmgg-stage1..5)
 # Usage: tmgg-experiment +stage=stage1_poc
 tmgg-experiment = "tmgg.experiments.stages.runner:main"
