@@ -733,6 +733,7 @@ class TestGenerateGraphs:
             num_nodes: int | torch.Tensor,
             device: torch.device,
             collector: Any = None,
+            chain_recorder: Any = None,
         ) -> list[GraphData]:
             observed["model"] = model
             observed["noise_process"] = noise_process
@@ -740,6 +741,7 @@ class TestGenerateGraphs:
             observed["num_nodes"] = num_nodes
             observed["device"] = device
             observed["collector"] = collector
+            observed["chain_recorder"] = chain_recorder
             graph = binary_graphdata(torch.zeros(_NUM_NODES, _NUM_NODES))
             return [graph for _ in range(num_graphs)]
 
