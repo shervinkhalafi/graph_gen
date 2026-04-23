@@ -10,28 +10,31 @@ from tmgg.data.datasets.graph_data_fields import FieldName
 from tmgg.data.datasets.graph_types import GraphData
 
 
-def _sample_from_unnormalised_posterior(
+def _normalise_unnormalised_posterior(
     unnorm: torch.Tensor,
     *,
     zero_floor: float = 1e-5,
 ) -> torch.Tensor:
-    """Normalise an unnormalised posterior PMF and sample categorical indices.
+    """Normalise an unnormalised posterior PMF with the upstream zero-row floor.
 
-    Mirrors the upstream-DiGress canonical pattern in the reverse-step
-    routine ``sample_p_zs_given_zt`` (``DiGress/src/diffusion_model_discrete.py:629-639``):
+    Mirrors the renormalisation half of the upstream-DiGress canonical
+    pattern in ``sample_p_zs_given_zt``
+    (``DiGress/src/diffusion_model_discrete.py:629-639``):
 
     .. code-block:: python
 
-        unnormalized = weighted.sum(dim=-2)                       # (bs, N, k)
-        unnormalized[unnormalized.sum(dim=-1) == 0] = 1e-5        # uniform-row fallback
+        unnormalized[unnormalized.sum(dim=-1) == 0] = 1e-5
         prob = unnormalized / unnormalized.sum(dim=-1, keepdim=True)
-        idx = sample_discrete_features(prob, ...)                 # multinomial
 
     The "row whose mass sums to zero" branch sets the *entire* row to
     ``zero_floor``, not just the divisor, so the resulting PMF is
     uniform on degenerate rows. On healthy posteriors the branch is
-    inert; on rare cancellations the sampler keeps going rather than
-    crashing inside :func:`torch.multinomial`.
+    inert.
+
+    Used by both :func:`_sample_from_unnormalised_posterior` (sampling
+    path) and ``CategoricalNoiseProcess._posterior_probabilities_marginalised``
+    (VLB / KL probabilities path); a single primitive guarantees the
+    two paths agree on the floor convention.
 
     Parameters
     ----------
@@ -48,11 +51,12 @@ def _sample_from_unnormalised_posterior(
     Returns
     -------
     torch.Tensor
-        Sampled class indices with shape ``unnorm.shape[:-1]``.
+        Normalised PMF with the same shape as ``unnorm``; every row
+        sums to ``1`` modulo float roundoff.
     """
     if not (unnorm >= 0).all():
         raise ValueError(
-            "_sample_from_unnormalised_posterior: input contains negative "
+            "_normalise_unnormalised_posterior: input contains negative "
             "probability mass; cannot sample. Check upstream computation."
         )
     # Upstream uniform-fallback for zero-mass rows (parity #28 / D-5).
@@ -61,7 +65,38 @@ def _sample_from_unnormalised_posterior(
     zero_rows = row_sum == 0
     if zero_rows.any():
         fixed[zero_rows] = zero_floor
-    prob = fixed / fixed.sum(dim=-1, keepdim=True)
+    return fixed / fixed.sum(dim=-1, keepdim=True)
+
+
+def _sample_from_unnormalised_posterior(
+    unnorm: torch.Tensor,
+    *,
+    zero_floor: float = 1e-5,
+) -> torch.Tensor:
+    """Normalise an unnormalised posterior PMF and sample categorical indices.
+
+    Thin wrapper around :func:`_normalise_unnormalised_posterior` plus
+    a flat ``torch.multinomial`` draw, matching the upstream-DiGress
+    reverse-step pattern in ``sample_p_zs_given_zt``
+    (``DiGress/src/diffusion_model_discrete.py:629-644``).
+
+    Parameters
+    ----------
+    unnorm
+        Unnormalised PMF; the last axis is the class axis. See
+        :func:`_normalise_unnormalised_posterior` for the non-negativity
+        contract.
+    zero_floor
+        Floor mass written into a row whose unnormalised sum is zero,
+        producing a uniform PMF for that row after normalisation.
+        Defaults to ``1e-5`` to match upstream DiGress exactly.
+
+    Returns
+    -------
+    torch.Tensor
+        Sampled class indices with shape ``unnorm.shape[:-1]``.
+    """
+    prob = _normalise_unnormalised_posterior(unnorm, zero_floor=zero_floor)
     flat_prob = prob.reshape(-1, prob.size(-1))
     sampled = flat_prob.multinomial(1)
     return sampled.reshape(prob.shape[:-1])
@@ -73,8 +108,17 @@ def sample_discrete_features(
     node_mask: torch.Tensor,
     *,
     field: FieldName | None = None,
+    zero_floor: float = 1e-5,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Sample node and edge class indices from per-position categorical PMFs.
+
+    Routes the multinomial draw through
+    :func:`_sample_from_unnormalised_posterior` so the upstream-DiGress
+    "row-sum-zero -> uniform" floor (parity #28 / D-5 / W4-1) is the
+    single way categorical sampling happens in tmgg. Masked rows are
+    overwritten with a uniform PMF before the helper is called, so the
+    floor stays inert on the active reverse path; it only fires if a
+    caller passes a strictly-zero PMF row through.
 
     Parameters
     ----------
@@ -89,6 +133,9 @@ def sample_discrete_features(
         :class:`tmgg.data.datasets.graph_types.GraphData` field the caller
         intends to populate with the returned draw; the helper is
         field-neutral.
+    zero_floor
+        Floor passed to :func:`_sample_from_unnormalised_posterior`.
+        Defaults to ``1e-5`` to match upstream DiGress.
 
     Returns
     -------
@@ -107,9 +154,8 @@ def sample_discrete_features(
     # The masked rows should define probability distributions as well
     probX[~node_mask] = 1 / probX.shape[-1]
 
-    probX = probX.reshape(bs * n, -1)  # (bs * n, dx_out)
-    X_t = probX.multinomial(1)  # (bs * n, 1)
-    X_t = X_t.reshape(bs, n)  # (bs, n)
+    # Single-primitive multinomial draw (parity #28 / D-5 / W4-1).
+    X_t = _sample_from_unnormalised_posterior(probX, zero_floor=zero_floor)
 
     inverse_edge_mask = ~(node_mask.unsqueeze(1) * node_mask.unsqueeze(2))
     diag_mask = torch.eye(n).unsqueeze(0).expand(bs, -1, -1)
@@ -117,8 +163,7 @@ def sample_discrete_features(
     probE[inverse_edge_mask] = 1 / probE.shape[-1]
     probE[diag_mask.bool()] = 1 / probE.shape[-1]
 
-    probE = probE.reshape(bs * n * n, -1)  # (bs * n * n, de_out)
-    E_t = probE.multinomial(1).reshape(bs, n, n)  # (bs, n, n)
+    E_t = _sample_from_unnormalised_posterior(probE, zero_floor=zero_floor)
     E_t = torch.triu(E_t, diagonal=1)
     E_t = E_t + torch.transpose(E_t, 1, 2)
 

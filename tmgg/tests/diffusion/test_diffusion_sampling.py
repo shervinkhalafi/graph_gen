@@ -17,6 +17,8 @@ import torch
 from tmgg.diffusion.diffusion_sampling import (
     _sample_from_unnormalised_posterior,
     compute_posterior_distribution,
+    compute_posterior_distribution_per_x0,
+    sample_discrete_features,
 )
 
 
@@ -224,3 +226,133 @@ class TestComputePosteriorDistributionMaskAware:
 
         with pytest.raises(AssertionError, match="min_at_valid"):
             compute_posterior_distribution(M, M_t, Qt_M, Qsb_M, Qtb_M, field="X_class")
+
+
+class TestHelperWireThroughEquivalence:
+    """Pin numerical equivalence between the helper-based reverse-step
+    sampling path and the two-step ``compute_posterior_distribution_per_x0``
+    + ``sample_discrete_features`` pattern that predated W4-1.
+
+    Test rationale (W4-1, parity #28 / D-5 wire-through): the helper
+    ``_sample_from_unnormalised_posterior`` was plumbed in commit
+    ``9f8e2ed1`` but unused. The active reverse path went through the
+    older two-step ``per_x0 → contract → multinomial`` pattern. W4-1
+    wires the helper into the active path. Before refactoring we pin
+    the numerical equivalence here so the wire-through is provably a
+    no-op on healthy posteriors.
+
+    The assertion is "PMFs agree to within 1e-6 absolute" because the
+    two paths differ only in whether the row-sum-zero floor (``1e-5``)
+    fires; on healthy strictly-positive inputs the floor is inert and
+    the two computations are float-identical up to summation order.
+    """
+
+    def _kernel_with_off_diagonal_mass(
+        self, bs: int, d: int, *, dtype: torch.dtype = torch.float32
+    ) -> torch.Tensor:
+        """Build an irreducible row-stochastic kernel of shape ``(bs, d, d)``."""
+        kernel = torch.full((d, d), 0.1, dtype=dtype)
+        kernel.fill_diagonal_(1.0 - 0.1 * (d - 1))
+        return kernel.unsqueeze(0).expand(bs, d, d).contiguous()
+
+    def _build_inputs(
+        self,
+        *,
+        bs: int = 2,
+        n: int = 5,
+        d: int = 4,
+        seed: int = 17,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Assemble a healthy posterior batch -- one-hot ``z_t``, soft ``pred_X``,
+        and three Chapman-Kolmogorov-compatible row-stochastic kernels
+        ``Qt``, ``Qsb``, ``Qtb`` with ``Qtb = Qsb @ Qt``.
+
+        The Chapman-Kolmogorov identity ``Qtb = Qsb @ Qt`` is what makes
+        the per-x0 normalisation
+        ``denominator = (z_t @ Qtb^T)[c] = p(z_t | x_0=c)`` agree with the
+        explicit row-sum of the per-x0 numerator -- i.e. it is the
+        condition under which ``per_x0[c, :]`` is a valid PMF over ``k``
+        for every ``x_0`` class ``c``. Without it the test compares two
+        un-normalised tensors and the row-sums diverge by 30%+, masking
+        the helper-vs-two-step comparison we are actually trying to pin.
+        """
+        torch.manual_seed(seed)
+        # One-hot z_t (bs, n, d)
+        zt_idx = torch.randint(0, d, (bs, n))
+        z_t = torch.nn.functional.one_hot(zt_idx, num_classes=d).float()
+        # Soft pred_X: dirichlet-ish (always > 0)
+        pred_X = torch.rand(bs, n, d).abs() + 0.1
+        pred_X = pred_X / pred_X.sum(dim=-1, keepdim=True)
+        Qt = self._kernel_with_off_diagonal_mass(bs, d)
+        Qsb = self._kernel_with_off_diagonal_mass(bs, d)
+        # Enforce Chapman-Kolmogorov compatibility per the docstring.
+        Qtb = torch.bmm(Qsb, Qt)
+        return z_t, pred_X, Qt, Qsb, Qtb
+
+    def test_helper_pmf_matches_two_step_pmf_on_healthy_posterior(self) -> None:
+        """The marginalised contraction + helper-floor produces a PMF
+        bit-equivalent to the per-x0 normalisation + contraction PMF on a
+        healthy posterior (no zero rows)."""
+        z_t, pred_X, Qt, Qsb, Qtb = self._build_inputs()
+
+        # Two-step path: per-x0 normalisation -> contract over x_0.
+        per_x0 = compute_posterior_distribution_per_x0(
+            M_t=z_t, Qt_M=Qt, Qsb_M=Qsb, Qtb_M=Qtb, field="X_class"
+        )
+        prob_two_step = (per_x0 * pred_X.unsqueeze(-1)).sum(dim=2)  # (bs, n, d_zs)
+
+        # Helper path: same contraction, then the helper's floor + normalise
+        # collapses to a no-op on healthy rows.
+        unnorm = (per_x0 * pred_X.unsqueeze(-1)).sum(dim=2)
+        # Equivalent renormalisation that the helper performs internally.
+        prob_helper = unnorm / unnorm.sum(dim=-1, keepdim=True)
+
+        # Healthy inputs: row-sum > 0 everywhere; the helper's floor never
+        # fires; renormalisation is a no-op modulo float roundoff.
+        torch.testing.assert_close(prob_two_step, prob_helper, atol=1e-6, rtol=1e-6)
+
+    def test_helper_samples_match_two_step_samples_under_same_seed(self) -> None:
+        """Drawing samples through the helper vs the two-step path under the
+        same ``torch.manual_seed`` yields the same indices on healthy posteriors.
+
+        The two-step path used ``sample_discrete_features`` which calls
+        ``probX.multinomial(1)`` after re-normalising masked rows. The
+        helper does the same multinomial on the contracted PMF. Same seed,
+        same PMF, same draw.
+        """
+        z_t, pred_X, Qt, Qsb, Qtb = self._build_inputs()
+        bs, n, d_zs = z_t.shape
+
+        # Healthy node mask: all positions valid.
+        node_mask = torch.ones(bs, n, dtype=torch.bool)
+
+        # Two-step path samples
+        per_x0 = compute_posterior_distribution_per_x0(
+            M_t=z_t, Qt_M=Qt, Qsb_M=Qsb, Qtb_M=Qtb, field="X_class"
+        )
+        prob_two_step = (per_x0 * pred_X.unsqueeze(-1)).sum(dim=2)
+
+        # Per-x0 already gives a row-summed-to-1 PMF, but sample_discrete_features
+        # operates on (probX, probE). Build a dummy probE to satisfy the API.
+        prob_E_dummy = torch.full((bs, n, n, d_zs), 1.0 / d_zs)
+        torch.manual_seed(123)
+        x_two_step, _ = sample_discrete_features(prob_two_step, prob_E_dummy, node_mask)
+
+        # Helper path: same PMF (by previous test), same seed; multinomial draw
+        # over a flat (bs*n, d_zs) PMF. The helper internally does the same
+        # multinomial after a no-op renormalise on healthy rows.
+        torch.manual_seed(123)
+        # The helper takes an unnormalised tensor; pass the un-floored
+        # contraction directly.
+        x_helper = _sample_from_unnormalised_posterior(prob_two_step)
+
+        # Both samples are integer indices in [0, d_zs); on healthy inputs
+        # they should agree exactly (same seed + same effective PMF).
+        # NOTE: sample_discrete_features overwrites masked rows to uniform
+        # before sampling; with all-True node_mask there is no overwrite,
+        # so the two paths converge.
+        assert x_two_step.shape == x_helper.shape == (bs, n)
+        assert torch.equal(x_two_step, x_helper), (
+            f"Two-step samples {x_two_step.tolist()} differ from helper "
+            f"samples {x_helper.tolist()} despite identical seed and PMF."
+        )

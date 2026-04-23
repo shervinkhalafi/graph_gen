@@ -45,6 +45,7 @@ from tmgg.utils.noising.noise import NoiseDefinition
 
 from .diffusion_math import sum_except_batch
 from .diffusion_sampling import (
+    _normalise_unnormalised_posterior,
     compute_posterior_distribution,
     compute_posterior_distribution_per_x0,
     sample_discrete_feature_noise,
@@ -923,6 +924,7 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         ] = "uniform",
         absorbing_class_x: int = 0,
         absorbing_class_e: int = 0,
+        zero_floor: float = 1e-5,
     ) -> None:
         super().__init__()
 
@@ -933,6 +935,13 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         self.limit_distribution = limit_distribution
         self.absorbing_class_x = absorbing_class_x
         self.absorbing_class_e = absorbing_class_e
+        # Per-row uniform floor for the marginalised reverse posterior.
+        # Matches upstream DiGress's ``unnormalized_prob[sum == 0] = 1e-5``
+        # in ``diffusion_model_discrete.py:629-639`` (parity #28 / D-5).
+        # Flowed into ``_posterior_probabilities_marginalised`` and the
+        # downstream sampling helper through a single primitive
+        # (:func:`_normalise_unnormalised_posterior`).
+        self.zero_floor = zero_floor
         self.register_buffer("_limit_x", None)
         self.register_buffer("_limit_e", None)
         self.register_buffer("_limit_y", None)
@@ -1321,10 +1330,23 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         # per-x0 posterior tensor.
         pred_X_flat = x0_x.flatten(start_dim=1, end_dim=-2).to(torch.float32)
         pred_E_flat = x0_e.flatten(start_dim=1, end_dim=-2).to(torch.float32)
-        prob_X = (per_x0_X * pred_X_flat.unsqueeze(-1)).sum(dim=2)  # (bs, n, d_z_s)
-        prob_E_flat = (per_x0_E * pred_E_flat.unsqueeze(-1)).sum(
+        unnorm_X = (per_x0_X * pred_X_flat.unsqueeze(-1)).sum(dim=2)  # (bs, n, d_z_s)
+        unnorm_E_flat = (per_x0_E * pred_E_flat.unsqueeze(-1)).sum(
             dim=2
         )  # (bs, n*n, d_z_s)
+
+        # Apply the upstream-DiGress row-sum-zero floor + renormalisation
+        # (parity #28 / D-5 / W4-1). On healthy inputs the per-x0 normalised
+        # contraction already sums to 1 per row, so the helper is mathematically
+        # a no-op modulo float roundoff. On rows where the per-x0 floor (1e-6)
+        # in compute_posterior_distribution_per_x0 has cancelled mass to zero,
+        # the helper's row-sum floor (1e-5, matching upstream's
+        # diffusion_model_discrete.py:631) writes a uniform PMF rather than
+        # leaving NaN to surface inside torch.multinomial downstream.
+        prob_X = _normalise_unnormalised_posterior(unnorm_X, zero_floor=self.zero_floor)
+        prob_E_flat = _normalise_unnormalised_posterior(
+            unnorm_E_flat, zero_floor=self.zero_floor
+        )
 
         bs, n, _, de = zt_e.shape
         prob_E = prob_E_flat.reshape(bs, n, n, de)

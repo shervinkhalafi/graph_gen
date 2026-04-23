@@ -105,6 +105,14 @@ class Sampler:
     -> posterior sample -> finalize. Process-specific math stays on the
     ``NoiseProcess`` side of the interface.
 
+    The categorical row-sum-zero floor (``zero_floor`` in upstream
+    DiGress, parity #28 / D-5) lives on
+    :class:`tmgg.diffusion.noise_process.CategoricalNoiseProcess` rather
+    than the sampler -- that is the object that owns the categorical
+    Bayes math and needs to thread the floor into both the sampling
+    helper and the VLB / KL probabilities computation. The sampler
+    stays process-agnostic.
+
     Parameters
     ----------
     assert_symmetric_e
@@ -117,25 +125,14 @@ class Sampler:
         symmetrises ``E_class`` inside :func:`sample_discrete_features`,
         so the check is a guard against future drift rather than a
         load-bearing correctness step.
-    zero_floor
-        Floor passed to :func:`_sample_from_unnormalised_posterior`
-        when sampling categorical posteriors. Defaults to ``1e-5`` to
-        match upstream. Currently unused -- our posterior sampling path
-        normalises inside :func:`compute_posterior_distribution` and
-        feeds already-normalised PMFs into
-        :func:`sample_discrete_features` -- but kept on the constructor
-        so future code can route through the unified primitive without
-        changing the sampler signature.
     """
 
     def __init__(
         self,
         *,
         assert_symmetric_e: bool = True,
-        zero_floor: float = 1e-5,
     ) -> None:
         self._assert_symmetric_e = assert_symmetric_e
-        self._zero_floor = zero_floor
 
     @staticmethod
     def _build_num_nodes(
