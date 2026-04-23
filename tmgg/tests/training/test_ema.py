@@ -124,6 +124,105 @@ class TestEMACallback:
         with pytest.raises(ValueError, match="decay"):
             EMACallback(decay=1.5)
 
+    def test_state_dict_roundtrip_preserves_shadow_and_decay(self, tmp_path) -> None:
+        """state_dict + load_state_dict on a fresh callback restore the shadow.
+
+        Test rationale
+        --------------
+        Lightning auto-includes ``Callback.state_dict()`` in the
+        trainer checkpoint. The eval-time CLI rebuilds the callback,
+        calls ``load_state_dict`` against the saved entry, and then
+        :meth:`copy_shadow_into` to swap into a freshly-loaded model.
+        The roundtrip therefore has to preserve both the shadow
+        tensors and the decay value bit-for-bit.
+        """
+        torch.manual_seed(0)
+        module = _TinyLightningModule()
+        x = torch.randn(16, 4)
+        y = torch.randn(16, 1)
+        loader = DataLoader(TensorDataset(x, y), batch_size=8)
+
+        callback = EMACallback(decay=0.7)
+        trainer = pl.Trainer(
+            max_epochs=1,
+            callbacks=[callback],
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            default_root_dir=str(tmp_path),
+            accelerator="cpu",
+            devices=1,
+        )
+        trainer.fit(module, loader)
+
+        saved = callback.state_dict()
+        # Sanity: the saved state carries non-empty shadow + the
+        # original decay value.
+        assert saved["decay"] == pytest.approx(0.7)
+        assert len(saved["shadow_params"]) > 0
+
+        fresh = EMACallback(decay=0.999)  # Different decay; load_state_dict overrides.
+        fresh.load_state_dict(saved)
+        assert fresh.decay == pytest.approx(0.7)
+        assert fresh.ema is not None
+        for restored, original in zip(
+            fresh.ema._shadow_params, saved["shadow_params"], strict=True
+        ):
+            torch.testing.assert_close(restored, original)
+
+    def test_copy_shadow_into_swaps_model_weights(self, tmp_path) -> None:
+        """copy_shadow_into overwrites model weights with the shadow tensors.
+
+        Test rationale
+        --------------
+        The CLI's ``--use_ema`` path calls ``copy_shadow_into(module.model)``
+        after restoring the shadow from checkpoint state. Verify the
+        in-place swap actually changes the live weights to match the
+        shadow.
+        """
+        torch.manual_seed(0)
+        module = _TinyLightningModule()
+        x = torch.randn(16, 4)
+        y = torch.randn(16, 1)
+        loader = DataLoader(TensorDataset(x, y), batch_size=8)
+
+        callback = EMACallback(decay=0.5)
+        trainer = pl.Trainer(
+            max_epochs=1,
+            callbacks=[callback],
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            default_root_dir=str(tmp_path),
+            accelerator="cpu",
+            devices=1,
+        )
+        trainer.fit(module, loader)
+
+        assert callback.ema is not None
+        shadow_w_before = callback.ema._shadow_params[0].detach().clone()
+
+        callback.copy_shadow_into(module.model)
+        live_w_after = module.model.weight.detach()
+        torch.testing.assert_close(live_w_after, shadow_w_before)
+
+    def test_copy_shadow_into_fails_loud_when_not_initialized(self) -> None:
+        """copy_shadow_into raises TypeError if the shadow was never built.
+
+        Test rationale
+        --------------
+        Per CLAUDE.md, the helper must fail loudly when called before
+        either ``on_fit_start`` (training path) or ``load_state_dict``
+        (eval path). Returning silently or zero-padding would mask
+        configuration bugs at the eval CLI boundary.
+        """
+        callback = EMACallback(decay=0.5)
+        model = nn.Linear(4, 1)
+        with pytest.raises(TypeError, match="copy_shadow_into called before"):
+            callback.copy_shadow_into(model)
+
     def test_callback_updates_shadow_during_training(self, tmp_path) -> None:
         """One epoch of training drives shadow weights away from live weights.
 

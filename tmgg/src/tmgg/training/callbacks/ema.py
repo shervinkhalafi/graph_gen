@@ -10,6 +10,14 @@ Mirrors upstream DiGress's gating pattern (``main.py:181-183``:
 ``cfg.train.ema_decay > 0``). Configure via ``ema_decay > 0`` in the
 trainer-side config; ``run_experiment.create_callbacks`` registers the
 callback only when the gate fires.
+
+Lightning auto-includes :meth:`Callback.state_dict` /
+:meth:`Callback.load_state_dict` outputs in the trainer checkpoint.
+The implementations below persist the shadow tensor list and the
+configured ``decay`` so an evaluation CLI can rebuild the callback,
+restore the shadow, and swap it into a freshly-loaded model -- the
+foundation of the ``--use_ema`` flag on
+``tmgg-discrete-eval-all`` (D-16c).
 """
 
 from __future__ import annotations
@@ -17,6 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, override
 
 from pytorch_lightning.callbacks import Callback
+from torch import Tensor, nn
 
 from tmgg.training.ema import ExponentialMovingAverage
 
@@ -123,3 +132,78 @@ class EMACallback(Callback):
             # to restore.
             return
         self.ema.restore(_require_backbone_parameters(pl_module))
+
+    @override
+    def state_dict(self) -> dict[str, Any]:
+        """Persist EMA shadow + decay so the checkpoint can restore them.
+
+        Lightning auto-includes ``Callback.state_dict()`` in the trainer
+        checkpoint when the method is defined. The decay is round-tripped
+        so the eval-time CLI can reconstruct the callback without parsing
+        the state-key string.
+        """
+        if self.ema is None:
+            # ``state_dict`` may be called before ``on_fit_start``
+            # (e.g. when Lightning persists callback state during a
+            # sanity-check pass). An empty shadow is safe; the matching
+            # ``load_state_dict`` rebuilds nothing.
+            return {"shadow_params": [], "decay": self.decay}
+        return {
+            "shadow_params": [
+                p.detach().cpu().clone() for p in self.ema._shadow_params
+            ],
+            "decay": self.decay,
+        }
+
+    @override
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        """Restore EMA shadow from a saved state dict.
+
+        Constructs a fresh :class:`ExponentialMovingAverage` shell when
+        none is yet present (Lightning may call ``load_state_dict``
+        before ``on_fit_start``), seeded with zero-tensors that the
+        loaded shadow then overwrites. ``ExponentialMovingAverage``
+        wants an iterable of ``nn.Parameter`` to seed its shadow list;
+        we wrap each saved tensor in a throwaway :class:`nn.Parameter`
+        with ``requires_grad=False`` to satisfy that contract without
+        creating actual trainable parameters. The constructor
+        immediately replaces the underlying shadow list with the saved
+        tensors, so the wrapper parameters are short-lived.
+        """
+        shadow: list[Tensor] = list(state_dict["shadow_params"])
+        decay: float = float(state_dict["decay"])
+        self.decay = decay  # honour the saved value
+        if self.ema is None:
+            # Seed with the saved tensors as throwaway parameters; the
+            # constructor clones them into the shadow list. ``requires_grad``
+            # stays False because these are not trainable parameters.
+            seed_params = [nn.Parameter(t.clone(), requires_grad=False) for t in shadow]
+            self.ema = ExponentialMovingAverage(seed_params, decay=decay)
+            return
+        # Replace the shadow tensors in place to keep object identity
+        # and tensor devices stable.
+        for current, restored in zip(self.ema._shadow_params, shadow, strict=True):
+            current.copy_(restored.to(current.device))
+
+    def copy_shadow_into(self, model: nn.Module) -> None:
+        """Swap EMA shadow weights into ``model`` in place.
+
+        Reuses the existing :meth:`ExponentialMovingAverage.copy_to`
+        machinery. Used by ``tmgg-discrete-eval-all`` after a checkpoint
+        load to evaluate against the smoothed weights rather than the
+        live training state.
+
+        Raises
+        ------
+        TypeError
+            The EMA shadow has not been initialised. Either run training
+            (``on_fit_start`` instantiates the EMA) or call
+            :meth:`load_state_dict` with a saved state first.
+        """
+        if self.ema is None:
+            raise TypeError(
+                "EMACallback.copy_shadow_into called before EMA shadow was "
+                "initialised. Either run training (on_fit_start instantiates "
+                "the EMA) or call load_state_dict with a saved state first."
+            )
+        self.ema.copy_to(model.parameters())

@@ -13,7 +13,11 @@ resolution Q11).
 The CLI delegates per-checkpoint work to
 :func:`tmgg.experiments.discrete_diffusion_generative.evaluate_cli.evaluate_checkpoint`
 so the load + sample + evaluate primitive is shared with the
-single-checkpoint CLI.
+single-checkpoint CLI. ``evaluate_checkpoint`` reconstructs the
+training-time datamodule from the sibling ``config.yaml`` to draw
+reference graphs, so ``--reference_set`` and ``--use_ema`` propagate
+through honestly: the CSV ``ema_active`` column reflects whether EMA
+weights were actually swapped in.
 
 Per spec resolutions (`docs/specs/2026-04-22-upstream-config-surface-c.md`):
 
@@ -73,14 +77,13 @@ def _checkpoint_has_ema_shadow(checkpoint: dict[str, Any]) -> bool:
     """Probe a loaded Lightning checkpoint for an EMA shadow.
 
     Lightning persists callback state under
-    ``checkpoint["callbacks"][<callback-state-key>]``. EMACallback
-    today does not implement ``state_dict`` (so no shadow is saved),
-    but a future revision will. The probe inspects the dict for any
-    callback whose state-key string contains ``"EMA"`` -- a heuristic
-    that matches Lightning's default state-key naming
-    (``"<ClassName>{init-args-repr}"``). Until EMACallback writes a
-    state_dict, this returns ``False`` and the CLI evaluates live
-    weights, which is the documented v1 behaviour.
+    ``checkpoint["callbacks"][<callback-state-key>]``. The probe
+    inspects the dict for any callback whose state-key string contains
+    ``"EMA"`` -- a heuristic that matches Lightning's default state-key
+    naming (``"<ClassName>{init-args-repr}"``). The actual shadow swap
+    is performed inside :func:`evaluate_checkpoint`; this probe lets
+    the CLI fail loudly on ``--use_ema true`` before paying the load
+    cost when no shadow exists.
     """
     callbacks = checkpoint.get("callbacks")
     if not isinstance(callbacks, dict):
@@ -91,51 +94,31 @@ def _checkpoint_has_ema_shadow(checkpoint: dict[str, Any]) -> bool:
 def _evaluate_one_checkpoint(
     checkpoint_path: Path,
     *,
-    dataset_type: str,
     num_samples: int,
-    num_nodes: int,
+    reference_set: Literal["val", "test"],
     mmd_kernel: Literal["gaussian", "gaussian_tv"],
     mmd_sigma: float,
     device: str,
-    seed: int,
     use_ema: Literal["auto", "true", "false"],
 ) -> dict[str, Any]:
     """Single-checkpoint evaluation row builder.
 
     Reuses :func:`evaluate_checkpoint` from ``evaluate_cli`` for the
-    actual load + sample + evaluate work. The EMA detection probe runs
-    independently (a quick ``torch.load`` of the checkpoint header), so
-    the row records ``ema_active`` for the user without forcing a
-    second model load.
+    actual load + sample + evaluate work. ``ema_active`` in the row
+    comes from the result dict that ``evaluate_checkpoint`` populates,
+    so the CSV column is truthful: it reflects whether EMA weights were
+    actually swapped in, not just whether a shadow was detected.
     """
     t0 = time.perf_counter()
 
-    # EMA detection: probe the checkpoint header for a shadow before
-    # the heavier load-and-sample path runs. The actual EMA swap
-    # remains a v2 follow-up (the EMACallback does not write its
-    # shadow into the checkpoint state_dict yet, so even auto mode
-    # currently evaluates live weights).
-    ema_active = False
-    if use_ema in ("auto", "true"):
-        ckpt_header = torch.load(
-            checkpoint_path, map_location="cpu", weights_only=False
-        )
-        ema_active = _checkpoint_has_ema_shadow(ckpt_header)
-        if use_ema == "true" and not ema_active:
-            raise RuntimeError(
-                f"--use_ema true requested but checkpoint {checkpoint_path} "
-                "carries no EMA shadow."
-            )
-
     raw = evaluate_checkpoint(
         checkpoint_path=checkpoint_path,
-        dataset_type=dataset_type,
         num_samples=num_samples,
-        num_nodes=num_nodes,
+        reference_set=reference_set,
+        use_ema=use_ema,
         mmd_kernel=mmd_kernel,
         mmd_sigma=mmd_sigma,
         device=device,
-        seed=seed,
     )
     eval_seconds = time.perf_counter() - t0
 
@@ -145,7 +128,8 @@ def _evaluate_one_checkpoint(
         "step": _parse_step_from_filename(checkpoint_path),
         "num_samples_generated": int(raw.get("num_generated", num_samples)),
         "eval_seconds": float(eval_seconds),
-        "ema_active": bool(ema_active),
+        "ema_active": bool(raw.get("ema_active", False)),
+        "reference_set": str(raw.get("reference_set", reference_set)),
     }
     # Flatten the metrics dict into the top-level row. Pandas's
     # union-of-keys handles future additions without code changes.
@@ -158,12 +142,10 @@ def evaluate_all_checkpoints(
     run_dir: Path,
     *,
     num_samples: int,
-    num_nodes: int = 20,
-    dataset_type: str = "sbm",
+    reference_set: Literal["val", "test"] = "val",
     mmd_kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
     mmd_sigma: float = 1.0,
     device: str = "cpu",
-    seed: int = 42,
     checkpoint_glob: str = "*.ckpt",
     output_csv: Path | None = None,
     skip_existing: bool = False,
@@ -206,13 +188,11 @@ def evaluate_all_checkpoints(
         try:
             row = _evaluate_one_checkpoint(
                 ckpt,
-                dataset_type=dataset_type,
                 num_samples=num_samples,
-                num_nodes=num_nodes,
+                reference_set=reference_set,
                 mmd_kernel=mmd_kernel,
                 mmd_sigma=mmd_sigma,
                 device=device,
-                seed=seed,
                 use_ema=use_ema,
             )
         except Exception as exc:  # noqa: BLE001 -- intentional per spec D-16c
@@ -231,6 +211,7 @@ def evaluate_all_checkpoints(
                 "num_samples_generated": 0,
                 "eval_seconds": 0.0,
                 "ema_active": False,
+                "reference_set": reference_set,
             }
         rows.append(row)
         # Flush after each checkpoint so an interrupted run leaves a
@@ -251,12 +232,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--run_dir", required=True, type=Path)
     parser.add_argument("--num_samples", required=True, type=int)
-    parser.add_argument("--num_nodes", type=int, default=20)
-    parser.add_argument(
-        "--dataset",
-        default="sbm",
-        choices=["sbm", "erdos_renyi", "er", "watts_strogatz", "ws", "regular", "tree"],
-    )
     parser.add_argument(
         "--kernel", default="gaussian_tv", choices=["gaussian", "gaussian_tv"]
     )
@@ -267,7 +242,6 @@ def main(argv: list[str] | None = None) -> int:
         choices=["auto", "cpu", "cuda"],
         help="auto = cuda when available, else cpu (spec D-16c Q10).",
     )
-    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoint_glob", default="*.ckpt")
     parser.add_argument("--output_csv", type=Path, default=None)
     parser.add_argument(
@@ -294,23 +268,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     device = _resolve_device(args.device)
 
-    # The reference_set knob is a flag for downstream consumers; the
-    # current evaluate_checkpoint only generates reference graphs
-    # synthetically (it does not consume the val/test split), so the
-    # value is recorded but not yet plumbed into the per-checkpoint
-    # evaluation. A v2 will route the flag into the evaluator's
-    # reference fetch.
-    _ = args.reference_set
-
     df = evaluate_all_checkpoints(
         run_dir=args.run_dir,
         num_samples=args.num_samples,
-        num_nodes=args.num_nodes,
-        dataset_type=args.dataset,
+        reference_set=args.reference_set,
         mmd_kernel=args.kernel,
         mmd_sigma=args.sigma,
         device=device,
-        seed=args.seed,
         checkpoint_glob=args.checkpoint_glob,
         output_csv=args.output_csv,
         skip_existing=args.skip_existing,

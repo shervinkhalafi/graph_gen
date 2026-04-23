@@ -170,34 +170,34 @@ def _stub_evaluate_checkpoint(
 ) -> Any:
     """Build a stub for evaluate_cli.evaluate_checkpoint.
 
-    The returned function records the calls in the closure-captured
-    list and returns a hand-built results dict mimicking the real
-    return shape.
+    Mirrors the post-D-16c-cleanup signature (no ``dataset_type`` /
+    ``num_nodes`` / ``seed``; reference_set + use_ema in their place).
+    The stub records every call's kwargs in a closure-captured list so
+    tests can assert on argument propagation.
     """
 
-    calls: list[Path] = []
+    calls: list[dict[str, Any]] = []
 
     def stub(
         checkpoint_path: Any,
-        dataset_type: str = "sbm",
         num_samples: int = 500,
-        num_nodes: int = 20,
+        reference_set: str = "val",
+        use_ema: str = "auto",
         mmd_kernel: str = "gaussian_tv",
         mmd_sigma: float = 1.0,
         device: str = "cpu",
-        seed: int = 42,
-        **dataset_kwargs: Any,
     ) -> dict[str, Any]:
-        _ = (
-            dataset_type,
-            mmd_kernel,
-            mmd_sigma,
-            device,
-            seed,
-            num_nodes,
-            dataset_kwargs,
+        calls.append(
+            {
+                "checkpoint_path": Path(checkpoint_path),
+                "num_samples": num_samples,
+                "reference_set": reference_set,
+                "use_ema": use_ema,
+                "mmd_kernel": mmd_kernel,
+                "mmd_sigma": mmd_sigma,
+                "device": device,
+            }
         )
-        calls.append(Path(checkpoint_path))
         if fail_with is not None:
             raise fail_with("simulated failure")
         metrics = {"degree_mmd": 0.1, "clustering_mmd": 0.2, "spectral_mmd": 0.3}
@@ -206,7 +206,9 @@ def _stub_evaluate_checkpoint(
         return {
             "checkpoint_path": str(Path(checkpoint_path).absolute()),
             "checkpoint_name": Path(checkpoint_path).name,
+            "reference_set": reference_set,
             "num_generated": num_samples,
+            "ema_active": use_ema == "true",
             "mmd_results": metrics,
         }
 
@@ -228,7 +230,6 @@ class TestEndToEndSmoke:
             df = evaluate_all_checkpoints(
                 run_dir,
                 num_samples=2,
-                num_nodes=4,
                 device="cpu",
                 use_ema="false",
             )
@@ -252,7 +253,6 @@ class TestEndToEndSmoke:
             evaluate_all_checkpoints(
                 run_dir,
                 num_samples=2,
-                num_nodes=4,
                 device="cpu",
                 use_ema="false",
             )
@@ -260,7 +260,6 @@ class TestEndToEndSmoke:
             evaluate_all_checkpoints(
                 run_dir,
                 num_samples=2,
-                num_nodes=4,
                 device="cpu",
                 use_ema="false",
                 skip_existing=True,
@@ -286,7 +285,6 @@ class TestEndToEndSmoke:
             df = evaluate_all_checkpoints(
                 run_dir,
                 num_samples=2,
-                num_nodes=4,
                 device="cpu",
                 use_ema="false",
             )
@@ -311,7 +309,6 @@ class TestEndToEndSmoke:
             evaluate_all_checkpoints(
                 run_dir,
                 num_samples=2,
-                num_nodes=4,
                 device="cpu",
                 use_ema="false",
             )
@@ -327,7 +324,6 @@ class TestEndToEndSmoke:
             evaluate_all_checkpoints(
                 run_dir,
                 num_samples=2,
-                num_nodes=4,
                 device="cpu",
                 use_ema="false",
                 skip_existing=True,
@@ -348,3 +344,111 @@ class TestEndToEndSmoke:
             assert value is None or (isinstance(value, float) and value != value)
         # Newly-added row has the populated value.
         assert by_step[30]["orbit_mmd"] == pytest.approx(0.05)
+
+
+# ---------------------------------------------------------------------------
+# Flag wiring (post D-16c cleanup)
+# ---------------------------------------------------------------------------
+
+
+class TestFlagWiring:
+    """The CLI must pass --reference_set and --use_ema through to evaluate_checkpoint."""
+
+    def test_default_reference_set_is_val(self, tmp_path: Path) -> None:
+        run_dir = tmp_path
+        _make_dummy_checkpoint(run_dir / "model-step=000010.ckpt")
+        stub = _stub_evaluate_checkpoint()
+        with patch(
+            "tmgg.experiments.discrete_diffusion_generative.evaluate_all_cli.evaluate_checkpoint",
+            stub,
+        ):
+            evaluate_all_checkpoints(
+                run_dir, num_samples=2, device="cpu", use_ema="false"
+            )
+        calls = stub.calls  # type: ignore[attr-defined]
+        assert len(calls) == 1
+        assert calls[0]["reference_set"] == "val"
+
+    def test_explicit_reference_set_test_propagates(self, tmp_path: Path) -> None:
+        run_dir = tmp_path
+        _make_dummy_checkpoint(run_dir / "model-step=000010.ckpt")
+        stub = _stub_evaluate_checkpoint()
+        with patch(
+            "tmgg.experiments.discrete_diffusion_generative.evaluate_all_cli.evaluate_checkpoint",
+            stub,
+        ):
+            evaluate_all_checkpoints(
+                run_dir,
+                num_samples=2,
+                reference_set="test",
+                device="cpu",
+                use_ema="false",
+            )
+        calls = stub.calls  # type: ignore[attr-defined]
+        assert calls[0]["reference_set"] == "test"
+
+    def test_use_ema_flag_propagates(self, tmp_path: Path) -> None:
+        run_dir = tmp_path
+        _make_dummy_checkpoint(run_dir / "model-step=000010.ckpt")
+        for use_ema_value in ("auto", "true", "false"):
+            stub = _stub_evaluate_checkpoint()
+            with patch(
+                "tmgg.experiments.discrete_diffusion_generative.evaluate_all_cli.evaluate_checkpoint",
+                stub,
+            ):
+                evaluate_all_checkpoints(
+                    run_dir,
+                    num_samples=2,
+                    device="cpu",
+                    use_ema=use_ema_value,  # type: ignore[arg-type]
+                )
+            calls = stub.calls  # type: ignore[attr-defined]
+            assert calls[-1]["use_ema"] == use_ema_value
+
+    def test_main_argv_passes_reference_set_to_evaluate_checkpoint(
+        self, tmp_path: Path
+    ) -> None:
+        """Hit the full argparse layer so the --reference_set flag is wired in."""
+        run_dir = tmp_path
+        _make_dummy_checkpoint(run_dir / "model-step=000010.ckpt")
+        stub = _stub_evaluate_checkpoint()
+        with patch(
+            "tmgg.experiments.discrete_diffusion_generative.evaluate_all_cli.evaluate_checkpoint",
+            stub,
+        ):
+            main(
+                [
+                    "--run_dir",
+                    str(run_dir),
+                    "--num_samples",
+                    "1",
+                    "--reference_set",
+                    "test",
+                    "--use_ema",
+                    "false",
+                    "--device",
+                    "cpu",
+                ]
+            )
+        calls = stub.calls  # type: ignore[attr-defined]
+        assert calls[0]["reference_set"] == "test"
+        assert calls[0]["use_ema"] == "false"
+
+    def test_ema_active_column_reflects_evaluator_result(self, tmp_path: Path) -> None:
+        """ema_active CSV column comes from the evaluator's own ema_active flag."""
+        run_dir = tmp_path
+        _make_dummy_checkpoint(run_dir / "model-step=000010.ckpt")
+        # Stub evaluator returns ema_active=True when use_ema=='true'.
+        stub = _stub_evaluate_checkpoint()
+        with patch(
+            "tmgg.experiments.discrete_diffusion_generative.evaluate_all_cli.evaluate_checkpoint",
+            stub,
+        ):
+            df = evaluate_all_checkpoints(
+                run_dir,
+                num_samples=2,
+                device="cpu",
+                use_ema="true",
+            )
+        assert len(df) == 1
+        assert bool(df.iloc[0]["ema_active"]) is True
