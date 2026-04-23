@@ -116,33 +116,21 @@ def create_callbacks(config: DictConfig) -> list[pl.Callback]:
 
     # Final-sample dump at fit-end (parity #46 / D-16b). Upstream
     # gates on final_model_samples_to_generate > 0; we mirror that
-    # exactly. Block reads from training.final_sample_dump.* (or the
-    # legacy top-level training.final_model_samples_to_generate, kept
-    # because parity wave configs use the flat name).
+    # exactly. Block reads exclusively from training.final_sample_dump.*;
+    # the legacy flat-key shim was removed per CLAUDE.md "no fallbacks,
+    # no transitions". Wave configs supply the block via Hydra defaults
+    # (training/final_sample_dump@training.final_sample_dump: default).
     training_cfg = config.get("training", {})
     fsd_cfg = training_cfg.get("final_sample_dump", {})
-    num_final_samples = int(
-        fsd_cfg.get(
-            "num_samples",
-            training_cfg.get("final_model_samples_to_generate", 0),
-        )
-    )
+    num_final_samples = int(fsd_cfg.get("num_samples", 0))
     if num_final_samples > 0:
         from tmgg.training.callbacks import FinalSampleDumpCallback
 
         callbacks.append(
             FinalSampleDumpCallback(
                 num_samples=num_final_samples,
-                sample_batch_size=int(
-                    fsd_cfg.get(
-                        "sample_batch_size",
-                        training_cfg.get("final_sample_batch_size", 64),
-                    )
-                ),
-                save_path=fsd_cfg.get(
-                    "save_path",
-                    training_cfg.get("final_samples_save_path", None),
-                ),
+                sample_batch_size=int(fsd_cfg.get("sample_batch_size", 64)),
+                save_path=fsd_cfg.get("save_path", None),
                 run_name=str(config.get("run_id", "run")),
             )
         )
