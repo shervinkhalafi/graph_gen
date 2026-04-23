@@ -81,9 +81,17 @@ class GraphDataModule(MultiGraphDataModule):
             / #42). When ``None``, falls back to
             ``graph_config["num_nodes"]``.
         """
+        if "num_nodes" not in graph_config:
+            raise KeyError(
+                "GraphDataModule.__init__: graph_config missing required key "
+                "'num_nodes'. Add it to the dataset config explicitly; the "
+                "previous magic-number default of 50 was a silent fallback "
+                "violating CLAUDE.md (no silent fallbacks)."
+            )
+        num_nodes_value = int(graph_config["num_nodes"])
         super().__init__(
             graph_type=graph_type,
-            num_nodes=graph_config.get("num_nodes", 50),
+            num_nodes=num_nodes_value,
             num_graphs=graph_config.get("num_graphs", 1000),
             train_ratio=train_ratio,
             val_ratio=val_ratio,
@@ -96,7 +104,7 @@ class GraphDataModule(MultiGraphDataModule):
         self.num_nodes_max_static = (
             num_nodes_max_static
             if num_nodes_max_static is not None
-            else int(graph_config.get("num_nodes", 50))
+            else num_nodes_value
         )
         self.save_hyperparameters()
 

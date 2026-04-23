@@ -7,6 +7,11 @@ _target_: tmgg.data.GraphDataModule
 graph_type: enzymes
 
 graph_config:
+  # Informational only for PyG datasets — the actual node count is determined
+  # per graph by the loaded dataset. Required by GraphDataModule.__init__
+  # since the silent ``num_nodes=50`` fallback was removed (CLAUDE.md "no
+  # silent fallbacks"). 126 is the published ENZYMES max.
+  num_nodes: 126
   # Root directory for PyG datasets (default: ~/.pyg_data)
   root: null
   # Maximum graphs to load (null = all)

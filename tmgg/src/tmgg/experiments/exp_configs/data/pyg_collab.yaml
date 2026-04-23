@@ -7,6 +7,11 @@ _target_: tmgg.data.GraphDataModule
 graph_type: collab
 
 graph_config:
+  # Informational only for PyG datasets — the actual node count is determined
+  # per graph by the loaded dataset. Required by GraphDataModule.__init__
+  # since the silent ``num_nodes=50`` fallback was removed (CLAUDE.md "no
+  # silent fallbacks"). 492 is the published COLLAB max.
+  num_nodes: 492
   # Root directory for PyG datasets (default: ~/.pyg_data)
   root: null
   # Maximum graphs to load (null = all)

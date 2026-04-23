@@ -390,11 +390,13 @@ class TestGraphDataModuleUnknownDataset:
 
         Rationale: Clear error message helps users identify typos
         or unsupported datasets. The error propagates from
-        SyntheticGraphDataset via _generate_adjacencies().
+        SyntheticGraphDataset via _generate_adjacencies(). Pass a
+        valid ``num_nodes`` so the constructor accepts the config and
+        the failure is raised by ``setup()`` (the path under test).
         """
         dm = GraphDataModule(
             graph_type="nonexistent_dataset",
-            graph_config={},
+            graph_config={"num_nodes": 8},
         )
         dm.prepare_data()  # No-op for non-wrapper types
 
