@@ -7,5 +7,6 @@ config.
 """
 
 from .ema import EMACallback
+from .final_sample_dump import FinalSampleDumpCallback
 
-__all__ = ["EMACallback"]
+__all__ = ["EMACallback", "FinalSampleDumpCallback"]
