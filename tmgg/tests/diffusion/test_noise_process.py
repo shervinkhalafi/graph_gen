@@ -15,6 +15,8 @@ masking), and satisfies the ``NoiseProcess`` ABC contract.
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 import torch
 from torch import Tensor
@@ -1104,3 +1106,88 @@ class TestNoisedBatchContract:
             out.alpha_s_bar.squeeze(-1),
             cosine_schedule.get_alpha_bar(t_int=s),
         )
+
+    def test_build_noised_batch_t_zero_returns_upstream_alpha_bar_T(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """At ``t = 0``, ``alpha_s_bar`` equals ``alpha_bar[T]``.
+
+        Test rationale (parity W2-2): upstream DiGress's
+        ``noise_schedule.py:75-79`` indexes ``alphas_bar`` with
+        ``t_int = -1`` at ``t = 0``, which Python negative-indexing
+        resolves to ``alphas_bar[T]``. Our ``_resolve_index`` rejects
+        negative indices, so :func:`_build_noised_batch` branches
+        explicitly: when any element of ``t_int`` is zero, the
+        corresponding ``s_int`` is forced to ``T`` so the schedule
+        lookup matches upstream. The previous clamp-to-zero behaviour
+        was the divergence flagged in the 2026-04-23 fix-parity
+        meta-synthesis. The warning suppression here keeps the test
+        focused on the value contract; a sibling test pins the warning.
+        """
+        monkeypatch.delenv("FAIL_STRICTLY", raising=False)
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="uniform",
+        )
+        t = torch.tensor([0, 5], dtype=torch.long)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            out = proc.forward_sample(categorical_graph_data, t)
+
+        timesteps = cosine_schedule.timesteps
+        expected_t_zero = cosine_schedule.get_alpha_bar(
+            t_int=torch.tensor([timesteps], dtype=torch.long)
+        )
+        torch.testing.assert_close(out.alpha_s_bar[0], expected_t_zero)
+        # Sanity: the ``t = 5`` element still uses the t-1 branch.
+        expected_t_five = cosine_schedule.get_alpha_bar(
+            t_int=torch.tensor([4], dtype=torch.long)
+        )
+        torch.testing.assert_close(out.alpha_s_bar[1], expected_t_five)
+
+    def test_build_noised_batch_t_zero_emits_warning(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ``t = 0`` element triggers the upstream-parity RuntimeWarning."""
+        monkeypatch.delenv("FAIL_STRICTLY", raising=False)
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="uniform",
+        )
+        t = torch.tensor([0, 5], dtype=torch.long)
+        with pytest.warns(RuntimeWarning, match=r"alpha_bar\[T\]"):
+            proc.forward_sample(categorical_graph_data, t)
+
+    def test_build_noised_batch_t_zero_fail_strictly_raises(
+        self,
+        cosine_schedule: NoiseSchedule,
+        categorical_graph_data: GraphData,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``FAIL_STRICTLY=1`` converts the warning into a hard error.
+
+        The env-var gate exists so a developer chasing a regression can
+        promote the warning to a stack-traceable exception without
+        editing source. The error text mirrors the warning so grep can
+        find both call sites.
+        """
+        monkeypatch.setenv("FAIL_STRICTLY", "1")
+        proc = CategoricalNoiseProcess(
+            schedule=cosine_schedule,
+            x_classes=3,
+            e_classes=2,
+            limit_distribution="uniform",
+        )
+        t = torch.tensor([0, 5], dtype=torch.long)
+        with pytest.raises(RuntimeError, match=r"alpha_bar\[T\]"):
+            proc.forward_sample(categorical_graph_data, t)

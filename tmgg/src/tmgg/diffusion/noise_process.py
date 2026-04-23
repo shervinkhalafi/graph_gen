@@ -18,6 +18,8 @@ stateful subcomponents follow device placement automatically.
 
 from __future__ import annotations
 
+import os
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -114,11 +116,36 @@ def _build_noised_batch(
             f"got {tuple(t_int.shape)}"
         )
 
-    s_int_b1 = (t_int_b1 - 1).clamp(min=0)
     timesteps = schedule.timesteps
     t_norm = t_int_b1.float() / timesteps
     beta_t = schedule(t_int=t_int_b1)
     alpha_t_bar = schedule.get_alpha_bar(t_int=t_int_b1)
+
+    # Upstream parity (DiGress noise_schedule.py:75-79): when ``t == 0``,
+    # ``s_int = -1`` and Python negative indexing returns ``alphas_bar[T]``.
+    # Our ``NoiseSchedule._resolve_index`` rejects negative indices, so we
+    # branch explicitly: per-element, fold ``s = -1`` into ``s = T``.
+    # Currently no consumer reads ``noised.alpha_s_bar`` at ``t = 0``; if
+    # this changes, the t=0 case must be handled explicitly. ``FAIL_STRICTLY``
+    # converts the warning into a hard error to surface the call site.
+    if (t_int_b1 == 0).any():
+        msg = (
+            "_build_noised_batch: s_int=-1 at t=0; returning alpha_bar[T] per "
+            "upstream DiGress's negative-index semantics (noise_schedule.py:75-79). "
+            "Currently no consumer reads noised.alpha_s_bar at t=0; if this changes, "
+            "the t=0 case must be handled explicitly. Set FAIL_STRICTLY=1 to crash "
+            "on this code path instead of warning."
+        )
+        if os.environ.get("FAIL_STRICTLY"):
+            raise RuntimeError(msg)
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
+
+    # Per-element s_int: t-1 normally, T at t=0 (= -1 mod (T+1)).
+    s_int_b1 = torch.where(
+        t_int_b1 == 0,
+        torch.full_like(t_int_b1, timesteps),
+        t_int_b1 - 1,
+    )
     alpha_s_bar = schedule.get_alpha_bar(t_int=s_int_b1)
     return NoisedBatch(
         z_t=z_t,
