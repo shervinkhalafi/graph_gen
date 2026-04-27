@@ -526,6 +526,52 @@ class DiffusionModule(BaseGraphModule):
                 )
             self._size_distribution = dm.get_size_distribution("train")
 
+        # Init-time invariant (2026-04-27 spec §5.6): assert that
+        # data.X_class.shape[-1], noise_process.x_classes, and
+        # model.output_dims_x_class agree. Same for C_e. Catches
+        # Hydra-config drift with a clear error message before the first
+        # training step (replaces a CUDA bmm shape error 5 layers deep).
+        # Only meaningful for categorical noise processes; continuous
+        # processes don't carry x_classes / e_classes.
+        if isinstance(self.noise_process, CategoricalNoiseProcess) and dm is not None:
+            try:
+                batch = next(iter(dm.train_dataloader()))  # pyright: ignore[reportUnknownMemberType]
+            except (StopIteration, AttributeError):
+                batch = None
+            if batch is not None:
+                materialised_x = _read_categorical_x(
+                    batch, x_classes=self.noise_process.x_classes
+                )
+                materialised_e = _read_categorical_e(
+                    batch, e_classes=self.noise_process.e_classes
+                )
+                assert materialised_x.shape[-1] == self.noise_process.x_classes, (
+                    f"Materialised X_class width {materialised_x.shape[-1]} "
+                    f"disagrees with noise_process.x_classes="
+                    f"{self.noise_process.x_classes}."
+                )
+                assert materialised_e.shape[-1] == self.noise_process.e_classes, (
+                    f"Materialised E_class width {materialised_e.shape[-1]} "
+                    f"disagrees with noise_process.e_classes="
+                    f"{self.noise_process.e_classes}."
+                )
+
+            model_c_x = getattr(self.model, "output_dims_x_class", None)
+            if model_c_x is not None:
+                assert model_c_x == self.noise_process.x_classes, (
+                    f"Model output_dims_x_class={model_c_x} disagrees with "
+                    f"noise_process.x_classes={self.noise_process.x_classes} "
+                    f"(canonical name C_x). Configure both via the same "
+                    f"Hydra source. See 2026-04-27 spec §5.6."
+                )
+            model_c_e = getattr(self.model, "output_dims_e_class", None)
+            if model_c_e is not None:
+                assert model_c_e == self.noise_process.e_classes, (
+                    f"Model output_dims_e_class={model_c_e} disagrees with "
+                    f"noise_process.e_classes={self.noise_process.e_classes} "
+                    f"(canonical name C_e)."
+                )
+
     @override
     def on_validation_epoch_start(self) -> None:
         """Clear VLB accumulators at the start of each validation epoch."""

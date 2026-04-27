@@ -1352,7 +1352,13 @@ class TestSetup:
 
         torch.testing.assert_close(module.noise_process._limit_x, original_x)
         torch.testing.assert_close(module.noise_process._limit_e, original_e)
-        mock_dm.train_dataloader.assert_not_called()
+        # The 2026-04-27 triplet invariant (spec §5.6) calls
+        # ``train_dataloader`` once to materialise a batch and verify
+        # C_x / C_e agreement; that's expected here. The marginal-
+        # counting code path (which is what this test was originally
+        # asserting against) uses ``train_dataloader_raw_pyg`` instead,
+        # so we assert that path is the one that stays untouched.
+        mock_dm.train_dataloader_raw_pyg.assert_not_called()
         mock_dm.get_size_distribution.assert_called_once_with("train")
 
     def test_setup_continuous_is_noop(self) -> None:
