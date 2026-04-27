@@ -939,13 +939,19 @@ class GraphTransformer(GraphModel):
             X = data.X_class
         else:
             # Structure-only graph: derive an X_class via the canonical
-            # helper. ``self.output_dims_x_class`` is the model's
-            # authoritative C_x (NOT ``input_dims["X"]``, which is the
-            # X_in aggregate of C_x + F_x + extras). See
-            # ``docs/specs/2026-04-27-x-class-synth-unification-spec.md
-            # §5.5`` for why output_dims_x_class is the right knob here.
+            # helper. ``self.input_dims["X"]`` is the input-side C_x —
+            # the configured class width before extras are concatenated
+            # at line 953. The post-extras width X_in lives in the
+            # local ``adjusted_input_dims`` (set in __init__) and isn't
+            # what the synth needs. ``self.output_dims_x_class`` is the
+            # OUTPUT-side C_x; for symmetric categorical-diffusion
+            # configs input C_x == output C_x and either works, but for
+            # asymmetric denoising configs they differ
+            # (e.g. digress_base.yaml: input_dims.X=2, output_dims_x_class=0)
+            # — the synth must use the INPUT C_x to match what the first
+            # projection expects.
             X = GraphData.synth_structure_only_x_class(
-                node_mask, self.output_dims_x_class
+                node_mask, self.input_dims["X"]
             ).to(device=E.device, dtype=E.dtype)
 
         if self.extra_features is not None:
