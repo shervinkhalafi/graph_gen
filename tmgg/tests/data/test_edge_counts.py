@@ -177,3 +177,46 @@ def test_count_node_classes_sparse_uses_x_when_present() -> None:
     torch.testing.assert_close(
         counts, torch.tensor([1.0, 1.0, 1.0], dtype=torch.float64)
     )
+
+
+def test_count_node_classes_sparse_single_class_structure_only() -> None:
+    """Abstract-graph datasets (SBM / Planar / Comm20 / Ego / Protein) have a
+    single node class: every node is simply a node. The "class 0 = no node"
+    convention from upstream DiGress's molecular datasets doesn't apply, so
+    all structure-only node mass lands on class 0 (the only class).
+
+    Regression test for the refusal that previously forced
+    :class:`CategoricalNoiseProcess.initialize_from_data` callers to
+    hand-roll the single-class stationary distribution. See
+    ``analysis/digress-loss-check/validate-gdpo-sbm/validate.py``'s
+    pre-fix ``init_noise_process`` helper for the dead bypass.
+    """
+    edge_index = torch.empty((2, 0), dtype=torch.long)
+    batch = Batch.from_data_list(
+        cast(
+            list[BaseData],
+            [
+                Data(edge_index=edge_index, num_nodes=3),
+                Data(edge_index=edge_index, num_nodes=2),
+            ],
+        )
+    )
+    counts = count_node_classes_sparse(batch, num_node_classes=1)
+    torch.testing.assert_close(counts, torch.tensor([5.0], dtype=torch.float64))
+
+
+def test_count_edge_classes_sparse_single_class_no_edge_attr() -> None:
+    """Single-class edge vocabularies: every node pair lands on class 0.
+
+    A 1-class edge space has no "present vs absent" distinction. The only
+    sensible count is ``all_pairs`` on the single class. Kept for symmetry
+    with the single-class node path; unlikely to appear in production
+    configs but well-defined if it does.
+    """
+    # Two nodes, one directed pair in each direction: all_pairs = 2.
+    edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+    batch = Batch.from_data_list(
+        cast(list[BaseData], [Data(edge_index=edge_index, num_nodes=2)])
+    )
+    counts = count_edge_classes_sparse(batch, num_edge_classes=1)
+    torch.testing.assert_close(counts, torch.tensor([2.0], dtype=torch.float64))

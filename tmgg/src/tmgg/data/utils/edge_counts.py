@@ -76,14 +76,19 @@ def count_edge_classes_sparse(
 
     edge_attr = getattr(pyg_batch, "edge_attr", None)
     if edge_attr is None:
-        # Binary-edge convention: every retained edge is class 1.
-        per_class = torch.zeros(num_edge_classes, dtype=torch.float64)
-        if num_edge_classes < 2:
+        # Binary-edge convention for K>=2: class 0 = no edge, class 1 = edge.
+        # Degenerate K==1 collapses both onto the single class, so the whole
+        # all_pairs count lands there (no present-vs-absent distinction).
+        if num_edge_classes < 1:
             raise ValueError(
                 "count_edge_classes_sparse with no edge_attr requires "
-                f"num_edge_classes>=2 (binary edges); got {num_edge_classes}."
+                f"num_edge_classes>=1; got {num_edge_classes}."
             )
-        per_class[1] = float(num_edges)
+        per_class = torch.zeros(num_edge_classes, dtype=torch.float64)
+        if num_edge_classes == 1:
+            per_class[0] = float(all_pairs)
+        else:
+            per_class[1] = float(num_edges)
     else:
         if edge_attr.shape[0] != edge_index.shape[1]:
             # Self-loop edges were removed above; if the dataset attaches
@@ -98,8 +103,13 @@ def count_edge_classes_sparse(
         per_class = edge_attr.sum(dim=0).to(torch.float64)
 
     counts_out = torch.zeros(num_edge_classes, dtype=torch.float64)
-    counts_out[0] = float(num_non_edges)
-    counts_out[1:] = per_class[1:]
+    if num_edge_classes == 1:
+        # K==1 has no "no-edge" slot; the per_class above already carries
+        # the full all_pairs mass on class 0.
+        counts_out[0] = per_class[0]
+    else:
+        counts_out[0] = float(num_non_edges)
+        counts_out[1:] = per_class[1:]
     return counts_out
 
 
@@ -135,14 +145,19 @@ def count_node_classes_sparse(
     x = getattr(pyg_batch, "x", None)
     counts_out = torch.zeros(num_node_classes, dtype=torch.float64)
     if x is None:
-        if num_node_classes < 2:
+        if num_node_classes < 1:
             raise ValueError(
                 "count_node_classes_sparse without per-node features requires "
-                f"num_node_classes>=2; got {num_node_classes}."
+                f"num_node_classes>=1; got {num_node_classes}."
             )
         batch_vec: Tensor = getattr(pyg_batch, "batch")  # noqa: B009
         num_nodes = int(batch_vec.numel())
-        counts_out[1] = float(num_nodes)
+        # For K>=2: upstream-parity convention puts every node on class 1
+        # (class 0 is reserved for "no node" in molecular datasets).
+        # For K==1: abstract graphs where every node is the sole class,
+        # so all mass lands on class 0.
+        target_class = 0 if num_node_classes == 1 else 1
+        counts_out[target_class] = float(num_nodes)
         return counts_out
     if x.shape[1] != num_node_classes:
         raise AssertionError(
