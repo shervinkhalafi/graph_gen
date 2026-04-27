@@ -487,6 +487,14 @@ class DiffusionModule(BaseGraphModule):
         # training step.
         self._train_batch_start_time: float = 0.0
 
+        # Diagnostics: current-batch batch_size for self.log calls.
+        # Lightning can't unambiguously infer batch_size from GraphData
+        # (multiple tensors with different leading dims) and warns on
+        # every self.log invocation. Stashed at training_step /
+        # validation_step / on_train_batch_start entry; threaded to all
+        # per-step / hook log calls via batch_size=self._cur_bs.
+        self._cur_bs: int = 0
+
         # VLB accumulators (only used when the process has exact densities)
         self._vlb_nll: list[torch.Tensor] = []
         self._vlb_kl_prior: list[torch.Tensor] = []
@@ -638,13 +646,25 @@ class DiffusionModule(BaseGraphModule):
         loss = self._combine_breakdown(breakdown)
 
         # ---- Tier 1: per-step health metrics ------------------------------
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        # batch_size=self._cur_bs threaded everywhere because Lightning
+        # can't unambiguously infer it from GraphData (warns once per
+        # log call). _cur_bs is stashed at on_train_batch_start /
+        # validation_step entry.
+        self.log(
+            "train/loss",
+            loss,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=self._cur_bs,
+        )
         for field, term in breakdown.items():
             self.log(
                 f"train/loss_{field}",
                 term,
                 on_step=True,
                 on_epoch=True,
+                batch_size=self._cur_bs,
             )
 
         # Learning rate. Lightning auto-logs LR only when a scheduler is
@@ -657,15 +677,20 @@ class DiffusionModule(BaseGraphModule):
             opt = self.optimizers()
             if isinstance(opt, list):
                 opt = opt[0]
-            self.log("train/lr", float(opt.param_groups[0]["lr"]), on_step=True)
+            self.log(
+                "train/lr",
+                float(opt.param_groups[0]["lr"]),
+                on_step=True,
+                batch_size=self._cur_bs,
+            )
         except (RuntimeError, AttributeError, IndexError):
             pass
 
         # Sampled timestep distribution per batch. Confirms the forward
         # noising is hitting the full schedule (uniform over [0, T]).
         t_float = t_int.float()
-        self.log("train/t_mean", t_float.mean(), on_step=True)
-        self.log("train/t_std", t_float.std(), on_step=True)
+        self.log("train/t_mean", t_float.mean(), on_step=True, batch_size=self._cur_bs)
+        self.log("train/t_std", t_float.std(), on_step=True, batch_size=self._cur_bs)
 
         # ---- Tier 2: stride-controlled training-dynamics metrics ----------
         # Logit max-abs as a saturation indicator. Soft-max output blows up
@@ -686,6 +711,7 @@ class DiffusionModule(BaseGraphModule):
                     f"train/logit_max_abs_{field}",
                     f_pred.detach().abs().max(),
                     on_step=True,
+                    batch_size=self._cur_bs,
                 )
 
         # ---- Tier 3 (selected): prediction entropy ------------------------
@@ -706,6 +732,7 @@ class DiffusionModule(BaseGraphModule):
                     f"train/entropy_{field}",
                     entropy,
                     on_step=True,
+                    batch_size=self._cur_bs,
                 )
 
         return loss
@@ -716,7 +743,8 @@ class DiffusionModule(BaseGraphModule):
 
     @override
     def on_train_batch_start(self, batch: GraphData, batch_idx: int) -> None:
-        """Wall-clock timer for ``train/step_time_s``."""
+        """Stash current batch_size + start the wall-clock timer."""
+        self._cur_bs = int(batch.node_mask.shape[0])
         self._train_batch_start_time = time.perf_counter()
 
     @override
@@ -728,7 +756,13 @@ class DiffusionModule(BaseGraphModule):
     ) -> None:
         """Per-step wall clock + stride-controlled weight-norm logging."""
         elapsed = time.perf_counter() - self._train_batch_start_time
-        self.log("train/step_time_s", elapsed, on_step=True, on_epoch=False)
+        self.log(
+            "train/step_time_s",
+            elapsed,
+            on_step=True,
+            on_epoch=False,
+            batch_size=self._cur_bs,
+        )
 
         # Weight norm (Tier 2). Stride-controlled to keep WandB cardinality
         # bounded; 500 steps gives ~3 samples per validation window.
@@ -739,12 +773,14 @@ class DiffusionModule(BaseGraphModule):
                     "train/weight_norm_total",
                     weight_norms.pop("__total__"),
                     on_step=True,
+                    batch_size=self._cur_bs,
                 )
                 for block_name, val in weight_norms.items():
                     self.log(
                         f"train/weight_norm/{block_name}",
                         val,
                         on_step=True,
+                        batch_size=self._cur_bs,
                     )
 
     @override
@@ -768,17 +804,32 @@ class DiffusionModule(BaseGraphModule):
         norms = grad_norm(self, norm_type=2)
         total_key = "grad_2.0_norm_total"
         if total_key in norms:
-            self.log("train/grad_norm_total", norms[total_key], on_step=True)
+            self.log(
+                "train/grad_norm_total",
+                norms[total_key],
+                on_step=True,
+                batch_size=self._cur_bs,
+            )
 
         if self.global_step % 500 == 0:
             block_norms = self._aggregate_grad_norms_by_block(norms)
             for block_name, val in block_norms.items():
-                self.log(f"train/grad_norm/{block_name}", val, on_step=True)
+                self.log(
+                    f"train/grad_norm/{block_name}",
+                    val,
+                    on_step=True,
+                    batch_size=self._cur_bs,
+                )
 
         if self.global_step % 5000 == 0 and self.global_step > 0:
             ratio = self._compute_adam_moment_ratio(optimizer)
             if ratio is not None:
-                self.log("train/adam_moment_ratio_mean", ratio, on_step=True)
+                self.log(
+                    "train/adam_moment_ratio_mean",
+                    ratio,
+                    on_step=True,
+                    batch_size=self._cur_bs,
+                )
 
     # ------------------------------------------------------------------
     # Diagnostic helpers
@@ -1078,6 +1129,7 @@ class DiffusionModule(BaseGraphModule):
             Index of the current batch (unused).
         """
         bs: int = int(batch.node_mask.shape[0])
+        self._cur_bs = bs
         device = batch.node_mask.device
 
         # Validation loss at a random timestep
@@ -1087,13 +1139,21 @@ class DiffusionModule(BaseGraphModule):
         pred = self.model(z_t, t=condition)
         breakdown = self._compute_loss_breakdown(pred, batch)
         loss = self._combine_breakdown(breakdown)
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "val/loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=self._cur_bs,
+        )
         for field, term in breakdown.items():
             self.log(
                 f"val/loss_{field}",
                 term,
                 on_step=False,
                 on_epoch=True,
+                batch_size=self._cur_bs,
             )
 
         # VLB estimation via single random timestep (standard DDPM
