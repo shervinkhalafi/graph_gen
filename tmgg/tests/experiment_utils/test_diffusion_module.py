@@ -1068,7 +1068,9 @@ class TestCategoricalReconstructionLogProb:
             X_class=X_soft,
             E_class=E_soft,
         )
-        result = _categorical_reconstruction_log_prob(batch, pred_probs)
+        result = _categorical_reconstruction_log_prob(
+            batch, pred_probs, x_classes=_DX, e_classes=_DE
+        )
         assert result.shape == (_BATCH_SIZE,)
 
     def test_perfect_prediction_near_zero(self) -> None:
@@ -1086,7 +1088,9 @@ class TestCategoricalReconstructionLogProb:
             X_class=x_safe,
             E_class=e_safe,
         )
-        result = _categorical_reconstruction_log_prob(batch, pred_probs)
+        result = _categorical_reconstruction_log_prob(
+            batch, pred_probs, x_classes=_DX, e_classes=_DE
+        )
         assert torch.isfinite(result).all()
         assert (result.abs() < 0.1).all()
 

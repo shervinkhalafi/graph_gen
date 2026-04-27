@@ -41,6 +41,8 @@ from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ExactDensityNoiseProcess,
     NoiseProcess,
+    _read_categorical_e,  # pyright: ignore[reportPrivateUsage]
+    _read_categorical_x,  # pyright: ignore[reportPrivateUsage]
 )
 from tmgg.diffusion.sampler import Sampler
 from tmgg.diffusion.schedule import NoiseSchedule
@@ -118,7 +120,7 @@ def _normalize_visualization_config(
     return {"enabled": enabled, "num_samples": num_samples}
 
 
-def _read_field(data: GraphData, field: FieldName, x_classes: int = 2) -> torch.Tensor:
+def _read_field(data: GraphData, field: FieldName, x_classes: int) -> torch.Tensor:
     """Read a split field from ``data`` or raise if unpopulated.
 
     Called from the per-field training / validation loop to fetch the
@@ -130,41 +132,20 @@ def _read_field(data: GraphData, field: FieldName, x_classes: int = 2) -> torch.
     ``x_classes`` controls structure-only ``X_class`` synthesis when
     ``data.X_class is None`` — must match the noise process's
     ``x_classes`` so the synthesised target shape is compatible with
-    the model output it will be compared against. Default ``2``
-    preserves the molecular ``[no-node, node]`` convention; SBM-style
-    upstream-DiGress configs pass ``1`` for the single abstract node
-    class.
+    the model output it will be compared against. The synthesis itself
+    is delegated to :func:`_read_categorical_x` (which in turn calls
+    :meth:`GraphData.synth_structure_only_x_class`); see
+    ``docs/specs/2026-04-27-x-class-synth-unification-spec.md §3`` for
+    the C_x regime table. ``x_classes`` is required (no default) per
+    spec §5.2.
     """
     if field == "X_class":
-        if data.X_class is None:
-            # Wave 9.3 (structure-only datasets): synthesise a degenerate
-            # X tensor from ``node_mask`` so categorical noise processes
-            # declaring ``X_class`` can operate on structure-only
-            # batches. See ``docs/specs/2026-04-15-unified-graph-features
-            # -spec.md §"Removed fields"`` for the architecture-internal-
-            # concern rationale.
-            #
-            # Padding positions emit an **all-zero** row so the
-            # ``(true != 0).any(-1)`` predicate inside
-            # :func:`masked_node_ce` correctly excludes them — matching
-            # upstream's convention that padding contributes nothing to
-            # the loss.
-            node_ind = data.node_mask.float()
-            if x_classes == 1:
-                # K=1 (single abstract node class): valid nodes get
-                # one-hot ``[1.0]``, padding gets ``[0.0]`` (zero-row,
-                # excluded by the loss predicate).
-                return node_ind.unsqueeze(-1)
-            if x_classes == 2:
-                synth = torch.stack([1.0 - node_ind, node_ind], dim=-1)
-                return synth * node_ind.unsqueeze(-1)
-            raise ValueError(
-                "_read_field: cannot synthesise X_class for "
-                f"x_classes={x_classes} > 2 on structure-only data. "
-                "Provide explicit X_class on the dataset or configure "
-                "the noise process with x_classes <= 2."
-            )
-        return data.X_class
+        # Wave 9.3 (structure-only datasets): structure-only X_class is
+        # synthesised from ``node_mask`` via the canonical helper; see
+        # ``docs/specs/2026-04-15-unified-graph-features-spec.md §"Removed
+        # fields"`` for the architecture-internal-concern rationale and
+        # the 2026-04-27 spec for the unification.
+        return _read_categorical_x(data, x_classes=x_classes)
     if field == "E_class":
         if data.E_class is None:
             raise ValueError(
@@ -238,32 +219,24 @@ def _continuous_target_edge_state(data: GraphData) -> torch.Tensor:
 def _categorical_reconstruction_log_prob(
     clean: GraphData,
     pred_probs: GraphData,
+    x_classes: int,
+    e_classes: int,
 ) -> torch.Tensor:
-    """Return masked categorical reconstruction log-probabilities per graph."""
+    """Return masked categorical reconstruction log-probabilities per graph.
+
+    Per 2026-04-27 spec §5.4: X synthesis on missing-X_class sides is
+    delegated to :func:`_read_categorical_x` (canonical helper). The
+    callers pass ``x_classes`` / ``e_classes`` from the noise process so
+    the synthesised side has compatible shapes with the populated side.
+    """
     node_mask = clean.node_mask
     inv = ~node_mask
     inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)
 
-    if clean.E_class is None or pred_probs.E_class is None:
-        raise ValueError(
-            "_categorical_reconstruction_log_prob requires E_class to be "
-            "populated on both `clean` and `pred_probs`."
-        )
-
-    # Wave 9.3: structure-only datasets carry X_class=None. Synthesise the
-    # degenerate "[no-node, node]" one-hot from node_mask on whichever side
-    # (clean or pred_probs) is missing so the reconstruction loss has
-    # compatible shapes.
-    def _synth_x_class(data: GraphData) -> torch.Tensor:
-        if data.X_class is not None:
-            return data.X_class
-        node_ind = data.node_mask.float()
-        return torch.stack([1.0 - node_ind, node_ind], dim=-1)
-
-    clean_x = _synth_x_class(clean).clone()
-    clean_e = clean.E_class.clone()
-    pred_x = _synth_x_class(pred_probs).clone()
-    pred_e = pred_probs.E_class.clone()
+    clean_x = _read_categorical_x(clean, x_classes=x_classes).clone()
+    clean_e = _read_categorical_e(clean, e_classes=e_classes).clone()
+    pred_x = _read_categorical_x(pred_probs, x_classes=x_classes).clone()
+    pred_e = _read_categorical_e(pred_probs, e_classes=e_classes).clone()
 
     clean_x[inv] = 0.0
     clean_e[inv_edge] = 0.0
@@ -997,7 +970,12 @@ class DiffusionModule(BaseGraphModule):
         recon_pmf = self.noise_process._posterior_probabilities_marginalised(  # pyright: ignore[reportPrivateUsage]
             z_1, x0_param, t_int, s_int
         )
-        return _categorical_reconstruction_log_prob(batch, recon_pmf)
+        return _categorical_reconstruction_log_prob(
+            batch,
+            recon_pmf,
+            x_classes=self.noise_process.x_classes,
+            e_classes=self.noise_process.e_classes,
+        )
 
     def _compute_reconstruction_upstream_style(self, batch: GraphData) -> torch.Tensor:
         """Reconstruction log-probability in upstream DiGress's form.
@@ -1031,7 +1009,12 @@ class DiffusionModule(BaseGraphModule):
         # ``model_output_to_posterior_parameter`` already applies softmax
         # along the class axis on both X_class and E_class.
         pred_probs = self.noise_process.model_output_to_posterior_parameter(pred_logits)
-        return _categorical_reconstruction_log_prob(batch, pred_probs)
+        return _categorical_reconstruction_log_prob(
+            batch,
+            pred_probs,
+            x_classes=self.noise_process.x_classes,
+            e_classes=self.noise_process.e_classes,
+        )
 
     @torch.no_grad()
     @override
