@@ -176,16 +176,33 @@ def _masked_graph_log_prob(sample: GraphData, probs: GraphData) -> Tensor:
 
     ``sample`` is typically a one-hot graph state and ``probs`` carries
     the corresponding categorical probabilities over the same support.
-    Reads ``X_class`` / ``E_class`` directly.
+    Reads ``X_class`` / ``E_class`` directly. Both inputs MUST carry
+    populated ``X_class`` / ``E_class`` already (this helper does not
+    synthesise) — the C_x / C_e values are recovered from the
+    populated tensors and forwarded to the readers as a defensive
+    contract check.
     """
     node_mask = sample.node_mask
     inv = ~node_mask
     inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)
 
-    sample_x = _read_categorical_x(sample).clone()
-    sample_e = _read_categorical_e(sample).clone()
-    prob_x = _read_categorical_x(probs).clone()
-    prob_e = _read_categorical_e(probs).clone()
+    if sample.X_class is None or probs.X_class is None:
+        raise ValueError(
+            "_masked_graph_log_prob: both sample.X_class and probs.X_class "
+            "must be populated; this helper does not synthesise."
+        )
+    if sample.E_class is None or probs.E_class is None:
+        raise ValueError(
+            "_masked_graph_log_prob: both sample.E_class and probs.E_class "
+            "must be populated; this helper does not synthesise."
+        )
+    x_classes = sample.X_class.shape[-1]
+    e_classes = sample.E_class.shape[-1]
+
+    sample_x = _read_categorical_x(sample, x_classes=x_classes).clone()
+    sample_e = _read_categorical_e(sample, e_classes=e_classes).clone()
+    prob_x = _read_categorical_x(probs, x_classes=x_classes).clone()
+    prob_e = _read_categorical_e(probs, e_classes=e_classes).clone()
 
     sample_x[inv] = 0.0
     sample_e[inv_edge] = 0.0
@@ -269,7 +286,7 @@ def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> Gr
     return data.replace(**replace_kwargs)
 
 
-def _read_categorical_x(data: GraphData, x_classes: int = 2) -> Tensor:
+def _read_categorical_x(data: GraphData, x_classes: int) -> Tensor:
     """Read ``X_class`` or synthesise a structure-only X tensor of width ``x_classes``.
 
     Per ``docs/specs/2026-04-15-unified-graph-features-spec.md §"Removed
@@ -280,37 +297,44 @@ def _read_categorical_x(data: GraphData, x_classes: int = 2) -> Tensor:
     degenerate encoding internally rather than forcing the data
     pipeline to carry it.
 
-    Synthesis cases (only triggered when ``data.X_class is None``):
-    * ``x_classes=1`` (upstream-DiGress / GDPO SBM convention): emit
-      ``(B, N, 1)`` ones at valid nodes, zeros at padding. Every node
-      is the single abstract node class; the noise process is
-      effectively identity on X.
-    * ``x_classes=2`` (default; molecular ``[no-node, node]``): emit
-      ``[1 - node_ind, node_ind]``.
-    * ``x_classes >= 3``: raise — synthesis is undefined for vocab
-      sizes that require real per-node features.
+    Synthesis is delegated to
+    :meth:`GraphData.synth_structure_only_x_class`; see
+    ``docs/specs/2026-04-27-x-class-synth-unification-spec.md §3`` for
+    the regime table:
+
+    * ``x_classes = 1`` is the canonical structure-only encoding
+      (ones at valid nodes); the noise process is identity on X.
+    * ``x_classes = 2`` is the legacy ``[no-node, node]`` encoding,
+      retained for backward compat with existing C_x = 2 model presets.
+    * ``x_classes >= 3`` raises — real categorical X must come from
+      the dataset.
+
+    ``x_classes`` is required (no default): every caller passes its
+    authoritative C_x explicitly. See spec §5.2.
     """
     if data.X_class is not None:
         return data.X_class
-    node_ind = data.node_mask.float()
-    if x_classes == 1:
-        return node_ind.unsqueeze(-1)
-    if x_classes == 2:
-        return torch.stack([1.0 - node_ind, node_ind], dim=-1)
-    raise ValueError(
-        "_read_categorical_x: cannot synthesise X for "
-        f"x_classes={x_classes} > 2 on structure-only data "
-        f"(data.X_class is None). Provide an explicit X_class on the "
-        f"dataset or configure x_classes <= 2."
-    )
+    return GraphData.synth_structure_only_x_class(data.node_mask, x_classes)
 
 
-def _read_categorical_e(data: GraphData) -> Tensor:
-    """Read ``E_class`` or raise if unpopulated."""
+def _read_categorical_e(data: GraphData, e_classes: int) -> Tensor:
+    """Read ``E_class`` or raise if unpopulated.
+
+    Unlike X, edges are an adjacency property orthogonal to
+    ``node_mask`` and synthesis from the mask alone is undefined for
+    any C_e. This raises with a clear message naming the X-vs-E
+    asymmetry. ``e_classes`` is required (no default) so the contract
+    is explicit at every call site; see
+    ``docs/specs/2026-04-27-x-class-synth-unification-spec.md §5.2``.
+    """
     if data.E_class is None:
         raise ValueError(
             "_read_categorical_e: data.E_class is None; categorical edge "
-            "features must be populated."
+            "features must be populated. Edges are an adjacency property "
+            "orthogonal to node_mask, so synthesis from the mask alone is "
+            f"undefined (C_e={e_classes} requested). See "
+            "2026-04-27-x-class-synth-unification-spec §5.2 for the "
+            "X-vs-E asymmetry rationale."
         )
     return data.E_class
 
@@ -1032,7 +1056,7 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
     def model_output_to_posterior_parameter(self, model_output: GraphData) -> GraphData:
         """Convert model logits into categorical probabilities."""
         x_logits = _read_categorical_x(model_output, x_classes=self.x_classes)
-        e_logits = _read_categorical_e(model_output)
+        e_logits = _read_categorical_e(model_output, e_classes=self.e_classes)
         return _categorical_graphdata(
             F.softmax(x_logits, dim=-1),
             F.softmax(e_logits, dim=-1),
@@ -1177,7 +1201,7 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         """
         x_limit, e_limit, _ = self._stationary_distribution()
         x_class = _read_categorical_x(data, x_classes=self.x_classes)
-        e_class = _read_categorical_e(data)
+        e_class = _read_categorical_e(data, e_classes=self.e_classes)
         prob_X = _mix_with_limit(x_class, noise_level, x_limit)
         prob_E = _mix_with_limit(e_class, noise_level, e_limit)
         # Per-position PMFs are NOT row-stochastic at padding/diagonal rows
@@ -1240,10 +1264,10 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         _assert_row_stochastic(qtb_x, "_posterior_probabilities.qtb_x")
         _assert_row_stochastic(qtb_e, "_posterior_probabilities.qtb_e")
 
-        x0_x = _read_categorical_x(x0_param)
-        x0_e = _read_categorical_e(x0_param)
-        zt_x = _read_categorical_x(z_t)
-        zt_e = _read_categorical_e(z_t)
+        x0_x = _read_categorical_x(x0_param, x_classes=self.x_classes)
+        x0_e = _read_categorical_e(x0_param, e_classes=self.e_classes)
+        zt_x = _read_categorical_x(z_t, x_classes=self.x_classes)
+        zt_e = _read_categorical_e(z_t, e_classes=self.e_classes)
         prob_X = compute_posterior_distribution(
             M=x0_x, M_t=zt_x, Qt_M=q_x, Qsb_M=qsb_x, Qtb_M=qtb_x, field="X_class"
         )
@@ -1280,8 +1304,8 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         """
         posterior = self._posterior_probabilities(z_t, x0_param, t, s)
         x_idx, e_idx = sample_discrete_features(
-            _read_categorical_x(posterior),
-            _read_categorical_e(posterior),
+            _read_categorical_x(posterior, x_classes=self.x_classes),
+            _read_categorical_e(posterior, e_classes=self.e_classes),
             node_mask=z_t.node_mask,
         )
         x_one_hot = F.one_hot(x_idx.long(), num_classes=self.x_classes).float()
@@ -1331,10 +1355,10 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         _assert_row_stochastic(qtb_x, "_posterior_probabilities_marginalised.qtb_x")
         _assert_row_stochastic(qtb_e, "_posterior_probabilities_marginalised.qtb_e")
 
-        zt_x = _read_categorical_x(z_t)
-        zt_e = _read_categorical_e(z_t)
-        x0_x = _read_categorical_x(x0_probs)
-        x0_e = _read_categorical_e(x0_probs)
+        zt_x = _read_categorical_x(z_t, x_classes=self.x_classes)
+        zt_e = _read_categorical_e(z_t, e_classes=self.e_classes)
+        x0_x = _read_categorical_x(x0_probs, x_classes=self.x_classes)
+        x0_e = _read_categorical_e(x0_probs, e_classes=self.e_classes)
 
         # Per-x0 posteriors: shape (bs, N, d_x0, d_z_s).
         per_x0_X = compute_posterior_distribution_per_x0(
@@ -1400,8 +1424,8 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         """
         posterior = self._posterior_probabilities_marginalised(z_t, x0_probs, t, s)
         x_idx, e_idx = sample_discrete_features(
-            _read_categorical_x(posterior),
-            _read_categorical_e(posterior),
+            _read_categorical_x(posterior, x_classes=self.x_classes),
+            _read_categorical_e(posterior, e_classes=self.e_classes),
             node_mask=z_t.node_mask,
         )
         x_one_hot = F.one_hot(x_idx.long(), num_classes=self.x_classes).float()
@@ -1462,8 +1486,12 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         """
         alpha_bar_t = self.noise_schedule.get_alpha_bar(t_int=t)
         x_limit, e_limit, _ = self._stationary_distribution()
-        prob_x = _mix_with_limit(_read_categorical_x(x_0), alpha_bar_t, x_limit)
-        prob_e = _mix_with_limit(_read_categorical_e(x_0), alpha_bar_t, e_limit)
+        prob_x = _mix_with_limit(
+            _read_categorical_x(x_0, x_classes=self.x_classes), alpha_bar_t, x_limit
+        )
+        prob_e = _mix_with_limit(
+            _read_categorical_e(x_0, e_classes=self.e_classes), alpha_bar_t, e_limit
+        )
         # Per-position PMFs are NOT row-stochastic at padding/diagonal rows;
         # see comment in _apply_noise above. Kernel-level invariant lives in
         # _posterior_probabilities*.
@@ -1513,8 +1541,8 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         """Return ``log p(z_T)`` under the stationary categorical prior."""
         x_limit, e_limit, _ = self._stationary_distribution()
 
-        x_class = _read_categorical_x(x)
-        e_class = _read_categorical_e(x)
+        x_class = _read_categorical_x(x, x_classes=self.x_classes)
+        e_class = _read_categorical_e(x, e_classes=self.e_classes)
         prob_x = x_limit.to(x_class.device).view(1, 1, -1).expand_as(x_class)
         prob_e = e_limit.to(e_class.device).view(1, 1, 1, -1).expand_as(e_class)
 

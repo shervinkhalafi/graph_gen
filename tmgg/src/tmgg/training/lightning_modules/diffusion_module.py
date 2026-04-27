@@ -200,6 +200,29 @@ def _read_field(data: GraphData, field: FieldName, x_classes: int = 2) -> torch.
     raise ValueError(f"_read_field does not support field {field!r}.")
 
 
+def _resolve_x_classes_for_loss(
+    noise_process: NoiseProcess, pred: GraphData, target: GraphData
+) -> int:
+    """Resolve C_x for the CE-loss path.
+
+    Per 2026-04-27 spec §5.6, a CategoricalNoiseProcess is the
+    authoritative C_x source. Tests sometimes drive the CE loss with a
+    non-categorical process when the data already carries X_class; in
+    that case we fall back to the populated tensor's last dimension on
+    either side. Raises if neither path resolves a width.
+    """
+    if isinstance(noise_process, CategoricalNoiseProcess):
+        return noise_process.x_classes
+    for candidate in (pred.X_class, target.X_class):
+        if candidate is not None:
+            return int(candidate.shape[-1])
+    raise ValueError(
+        "_resolve_x_classes_for_loss: no CategoricalNoiseProcess to source "
+        "C_x from and neither pred.X_class nor target.X_class is populated. "
+        "See 2026-04-27-x-class-synth-unification-spec §5.6."
+    )
+
+
 def _continuous_target_edge_state(data: GraphData) -> torch.Tensor:
     """Extract the dense target state for continuous losses.
 
@@ -628,34 +651,43 @@ class DiffusionModule(BaseGraphModule):
         # ---- Tier 2: stride-controlled training-dynamics metrics ----------
         # Logit max-abs as a saturation indicator. Soft-max output blows up
         # at |logit| ≈ 30+; healthy training keeps these in O(10).
-        x_classes_for_synth = getattr(self.noise_process, "x_classes", 2)
-        if self.global_step % 50 == 0:
-            for field in self.noise_process.fields:
-                if GRAPHDATA_LOSS_KIND[field] == "ce":
-                    f_pred = _read_field(pred, field, x_classes=x_classes_for_synth)
-                    self.log(
-                        f"train/logit_max_abs_{field}",
-                        f_pred.detach().abs().max(),
-                        on_step=True,
-                    )
+        # Resolve C_x lazily — only needed when at least one CE field is
+        # iterated, so non-CE training paths (MSE/BCE) don't pay the cost
+        # nor trigger the assertion.
+        ce_fields: list[FieldName] = [
+            f for f in self.noise_process.fields if GRAPHDATA_LOSS_KIND[f] == "ce"
+        ]
+        if ce_fields and self.global_step % 50 == 0:
+            x_classes_for_synth = _resolve_x_classes_for_loss(
+                self.noise_process, pred, pred
+            )
+            for field in ce_fields:
+                f_pred = _read_field(pred, field, x_classes=x_classes_for_synth)
+                self.log(
+                    f"train/logit_max_abs_{field}",
+                    f_pred.detach().abs().max(),
+                    on_step=True,
+                )
 
         # ---- Tier 3 (selected): prediction entropy ------------------------
         # Diverging entropy = collapse signal; rising entropy under noise =
         # underfit. Cheap to compute; logged at low cadence to limit wandb
         # cardinality.
-        if self.global_step % 1000 == 0:
-            for field in self.noise_process.fields:
-                if GRAPHDATA_LOSS_KIND[field] == "ce":
-                    f_pred = _read_field(
-                        pred, field, x_classes=x_classes_for_synth
-                    ).detach()
-                    log_p = F.log_softmax(f_pred, dim=-1)
-                    entropy = -(log_p.exp() * log_p).sum(dim=-1).mean()
-                    self.log(
-                        f"train/entropy_{field}",
-                        entropy,
-                        on_step=True,
-                    )
+        if ce_fields and self.global_step % 1000 == 0:
+            x_classes_for_synth = _resolve_x_classes_for_loss(
+                self.noise_process, pred, pred
+            )
+            for field in ce_fields:
+                f_pred = _read_field(
+                    pred, field, x_classes=x_classes_for_synth
+                ).detach()
+                log_p = F.log_softmax(f_pred, dim=-1)
+                entropy = -(log_p.exp() * log_p).sum(dim=-1).mean()
+                self.log(
+                    f"train/entropy_{field}",
+                    entropy,
+                    on_step=True,
+                )
 
         return loss
 
@@ -855,7 +887,18 @@ class DiffusionModule(BaseGraphModule):
         # upstream's ``dense_data.mask(node_mask)`` before ``train_loss``.
         target = target.mask()
 
-        x_classes_for_synth = getattr(self.noise_process, "x_classes", 2)
+        # Discrete branch: ``self._train_loss_discrete is not None``
+        # generally implies a CategoricalNoiseProcess owning the CE fields,
+        # though tests may compose CE loss atop a non-categorical noise
+        # process when the data already carries X_class. We pick C_x from
+        # the noise process when available, otherwise from the populated
+        # X_class on either pred or target (a defensive fallback used only
+        # in test fixtures; production configs always go through
+        # CategoricalNoiseProcess and the setup-time invariant in
+        # ``setup()`` guarantees consistency).
+        x_classes_for_synth = _resolve_x_classes_for_loss(
+            self.noise_process, pred, target
+        )
         breakdown: dict[str, torch.Tensor] = {}
         for field in sorted(self.noise_process.fields):
             pred_field = _read_field(pred, field, x_classes=x_classes_for_synth)
