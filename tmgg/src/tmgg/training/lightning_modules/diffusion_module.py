@@ -22,11 +22,14 @@ and a :class:`~tmgg.training.graph_evaluator.GraphEvaluator`
 
 from __future__ import annotations
 
+import time
 from typing import Any, override
 
 import networkx as nx
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from pytorch_lightning.utilities import grad_norm
 
 from tmgg.data.datasets.graph_data_fields import (
     GRAPHDATA_LOSS_KIND,
@@ -464,6 +467,12 @@ class DiffusionModule(BaseGraphModule):
         else:  # bce_logits
             self.criterion = nn.BCEWithLogitsLoss()
 
+        # Diagnostics: wall-clock timer for ``train/step_time_s``. Set in
+        # ``on_train_batch_start`` and read in ``on_train_batch_end``;
+        # initialized here so the attribute always exists before the first
+        # training step.
+        self._train_batch_start_time: float = 0.0
+
         # VLB accumulators (only used when the process has exact densities)
         self._vlb_nll: list[torch.Tensor] = []
         self._vlb_kl_prior: list[torch.Tensor] = []
@@ -562,74 +571,280 @@ class DiffusionModule(BaseGraphModule):
         # Model predicts clean data
         pred = self.model(z_t, t=condition)
 
-        # Loss against original clean data
-        loss = self._compute_loss(pred, batch)
+        # Per-component breakdown so we can log unweighted per-field losses
+        # alongside the combined scalar that drives backprop. Same forward
+        # pass; just keeps the intermediate terms instead of discarding them.
+        breakdown = self._compute_loss_breakdown(pred, batch)
+        loss = self._combine_breakdown(breakdown)
 
+        # ---- Tier 1: per-step health metrics ------------------------------
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        for field, term in breakdown.items():
+            self.log(
+                f"train/loss_{field}",
+                term,
+                on_step=True,
+                on_epoch=True,
+            )
+
+        # Learning rate. Lightning auto-logs LR only when a scheduler is
+        # attached; ours has none (upstream-parity flat LR), so emit it
+        # explicitly so the dashboard shows a non-empty trace. Guarded
+        # because ``self.optimizers()`` raises when called outside a
+        # ``Trainer`` (e.g. unit tests that exercise ``training_step``
+        # in isolation); diagnostics must never break the training path.
+        try:
+            opt = self.optimizers()
+            if isinstance(opt, list):
+                opt = opt[0]
+            self.log("train/lr", float(opt.param_groups[0]["lr"]), on_step=True)
+        except (RuntimeError, AttributeError, IndexError):
+            pass
+
+        # Sampled timestep distribution per batch. Confirms the forward
+        # noising is hitting the full schedule (uniform over [0, T]).
+        t_float = t_int.float()
+        self.log("train/t_mean", t_float.mean(), on_step=True)
+        self.log("train/t_std", t_float.std(), on_step=True)
+
+        # ---- Tier 2: stride-controlled training-dynamics metrics ----------
+        # Logit max-abs as a saturation indicator. Soft-max output blows up
+        # at |logit| ≈ 30+; healthy training keeps these in O(10).
+        if self.global_step % 50 == 0:
+            for field in self.noise_process.fields:
+                if GRAPHDATA_LOSS_KIND[field] == "ce":
+                    f_pred = _read_field(pred, field)
+                    self.log(
+                        f"train/logit_max_abs_{field}",
+                        f_pred.detach().abs().max(),
+                        on_step=True,
+                    )
+
+        # ---- Tier 3 (selected): prediction entropy ------------------------
+        # Diverging entropy = collapse signal; rising entropy under noise =
+        # underfit. Cheap to compute; logged at low cadence to limit wandb
+        # cardinality.
+        if self.global_step % 1000 == 0:
+            for field in self.noise_process.fields:
+                if GRAPHDATA_LOSS_KIND[field] == "ce":
+                    f_pred = _read_field(pred, field).detach()
+                    log_p = F.log_softmax(f_pred, dim=-1)
+                    entropy = -(log_p.exp() * log_p).sum(dim=-1).mean()
+                    self.log(
+                        f"train/entropy_{field}",
+                        entropy,
+                        on_step=True,
+                    )
+
         return loss
 
-    def _compute_loss(self, pred: GraphData, target: GraphData) -> torch.Tensor:
-        """Compute loss by iterating over ``self.noise_process.fields``.
+    # ------------------------------------------------------------------
+    # Diagnostic Lightning hooks
+    # ------------------------------------------------------------------
 
-        Wave 5.1 replaces the previous hardcoded ``batch.X`` / ``batch.E``
-        dual-field path with a per-field loop. For each declared field:
+    @override
+    def on_train_batch_start(self, batch: GraphData, batch_idx: int) -> None:
+        """Wall-clock timer for ``train/step_time_s``."""
+        self._train_batch_start_time = time.perf_counter()
 
-        * ``X_class`` / ``E_class`` (``GRAPHDATA_LOSS_KIND == "ce"``) use
-          masked cross-entropy on raw logits via :func:`masked_node_ce` /
-          :func:`masked_edge_ce`. Targets are zeroed at padding positions
-          first (matching upstream DiGress's
-          ``dense_data.mask(node_mask)`` step, see
-          ``digress-upstream-readonly/src/diffusion_model_discrete.py:108``)
-          so the ``(true != 0).any(-1)`` row predicate inside the helpers
-          drops padding and diagonal rows automatically.
-        * ``X_feat`` / ``E_feat`` (``GRAPHDATA_LOSS_KIND == "mse"``) use
-          masked MSE; these helpers consume ``node_mask`` directly.
+    @override
+    def on_train_batch_end(
+        self,
+        outputs: torch.Tensor | dict[str, Any],
+        batch: GraphData,
+        batch_idx: int,
+    ) -> None:
+        """Per-step wall clock + stride-controlled weight-norm logging."""
+        elapsed = time.perf_counter() - self._train_batch_start_time
+        self.log("train/step_time_s", elapsed, on_step=True, on_epoch=False)
 
-        Each term is weighted by ``self.lambda_per_field[field]``
-        (defaults give the DiGress ``lambda_E=5.0`` edge weighting) and
-        summed.
+        # Weight norm (Tier 2). Stride-controlled to keep WandB cardinality
+        # bounded; 500 steps gives ~3 samples per validation window.
+        if self.global_step % 500 == 0:
+            weight_norms = self._compute_weight_norms_by_block()
+            if weight_norms:
+                self.log(
+                    "train/weight_norm_total",
+                    weight_norms.pop("__total__"),
+                    on_step=True,
+                )
+                for block_name, val in weight_norms.items():
+                    self.log(
+                        f"train/weight_norm/{block_name}",
+                        val,
+                        on_step=True,
+                    )
 
-        When ``loss_type`` is ``"mse"`` or ``"bce_logits"`` the module
-        keeps its original dense-edge-state behaviour because those
-        single-channel continuous losses operate directly on the
-        dense scalar edge view from :meth:`GraphData.to_edge_scalar`.
+    @override
+    def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+        """Gradient-norm + Adam-moment diagnostics.
+
+        Three cadences:
+        * Total grad L2 norm — every step (highest-value diagnostic; cost
+          is one extra reduction over already-realised gradients).
+        * Per-block grad L2 norm — every 500 steps (per-layer view of
+          which transformer block is unstable).
+        * Adam moment ratio mean ``|m| / (sqrt(v) + eps)`` — every 5000
+          steps (effective per-parameter step magnitude; flags subspaces
+          where the optimiser has stalled).
+        """
+        # Lightning's grad_norm helper returns a dict including the
+        # ``grad_2.0_norm_total`` aggregate plus one ``grad_2.0_norm/<param>``
+        # entry per parameter. We log only the total at every step and
+        # collapse the per-parameter entries into per-block buckets at the
+        # 500-step stride.
+        norms = grad_norm(self, norm_type=2)
+        total_key = "grad_2.0_norm_total"
+        if total_key in norms:
+            self.log("train/grad_norm_total", norms[total_key], on_step=True)
+
+        if self.global_step % 500 == 0:
+            block_norms = self._aggregate_grad_norms_by_block(norms)
+            for block_name, val in block_norms.items():
+                self.log(f"train/grad_norm/{block_name}", val, on_step=True)
+
+        if self.global_step % 5000 == 0 and self.global_step > 0:
+            ratio = self._compute_adam_moment_ratio(optimizer)
+            if ratio is not None:
+                self.log("train/adam_moment_ratio_mean", ratio, on_step=True)
+
+    # ------------------------------------------------------------------
+    # Diagnostic helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _block_name(param_name: str) -> str:
+        """Group a parameter name into a block-level bucket.
+
+        Examples
+        --------
+        ``transformer.tf_layers.5.self_attn.weight`` → ``tf_layers_5``
+        ``transformer.mlp_in_X.0.weight`` → ``mlp_in_X``
+        ``transformer.mlp_out_E.0.bias`` → ``mlp_out_E``
+
+        Anything that doesn't match a known prefix lands in ``other``.
+        """
+        parts = param_name.split(".")
+        for idx, part in enumerate(parts):
+            if part == "tf_layers" and idx + 1 < len(parts):
+                return f"tf_layers_{parts[idx + 1]}"
+        for part in parts:
+            if part.startswith("mlp_in_") or part.startswith("mlp_out_"):
+                return part
+        return "other"
+
+    def _aggregate_grad_norms_by_block(
+        self, norms: dict[str, float]
+    ) -> dict[str, float]:
+        """Reduce per-parameter grad norms into per-block L2 norms.
+
+        Lightning's ``grad_norm`` returns one ``grad_2.0_norm/<param>``
+        entry per parameter plus a ``grad_2.0_norm_total`` aggregate
+        (values are Python floats, computed off-graph). We bucket the
+        per-parameter entries by :meth:`_block_name` and aggregate via
+        L2 (``sqrt(sum(n**2))``) to preserve the grad-norm semantics.
+        """
+        prefix = "grad_2.0_norm/"
+        squared_sums: dict[str, float] = {}
+        for key, val in norms.items():
+            if not key.startswith(prefix):
+                continue
+            param_name = key[len(prefix) :]
+            block = self._block_name(param_name)
+            squared_sums[block] = squared_sums.get(block, 0.0) + float(val) ** 2
+        return {block: sq**0.5 for block, sq in squared_sums.items()}
+
+    def _compute_weight_norms_by_block(self) -> dict[str, torch.Tensor]:
+        """L2 weight norms per block plus a ``__total__`` aggregate."""
+        squared_sums: dict[str, torch.Tensor] = {}
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            block = self._block_name(name)
+            sq = param.detach().pow(2).sum()
+            squared_sums[block] = (
+                sq if block not in squared_sums else squared_sums[block] + sq
+            )
+        if not squared_sums:
+            return {}
+        result: dict[str, torch.Tensor] = {
+            block: sq.sqrt() for block, sq in squared_sums.items()
+        }
+        total_sq = sum(squared_sums.values())
+        result["__total__"] = total_sq.sqrt()  # pyright: ignore[reportAttributeAccessIssue]
+        return result
+
+    def _compute_adam_moment_ratio(
+        self, optimizer: torch.optim.Optimizer
+    ) -> torch.Tensor | None:
+        """Mean ``|m| / (sqrt(v) + eps)`` over all params with Adam state.
+
+        Approximates the effective per-parameter step magnitude. Stable
+        well-trained networks settle into a narrow band; runaway values
+        signal optimiser instability. Returns ``None`` if no Adam moments
+        have been materialised yet (e.g. step 0 with a non-Adam optimizer).
+        """
+        # ``torch.optim.Optimizer``'s public ``defaults`` / ``param_groups`` /
+        # ``state`` attributes are not declared in the type stubs we have
+        # available; the runtime API is documented and stable.
+        eps_default = optimizer.defaults.get("eps", 1e-8)  # pyright: ignore[reportAttributeAccessIssue]
+        ratios: list[torch.Tensor] = []
+        for group in optimizer.param_groups:  # pyright: ignore[reportAttributeAccessIssue]
+            eps = group.get("eps", eps_default)
+            for param in group["params"]:
+                state = optimizer.state.get(param, {})  # pyright: ignore[reportAttributeAccessIssue]
+                m = state.get("exp_avg")
+                v = state.get("exp_avg_sq")
+                if m is None or v is None:
+                    continue
+                ratios.append((m.abs() / (v.sqrt() + eps)).mean())
+        if not ratios:
+            return None
+        return torch.stack(ratios).mean()
+
+    def _compute_loss_breakdown(
+        self, pred: GraphData, target: GraphData
+    ) -> dict[str, torch.Tensor]:
+        """Per-field unweighted losses keyed by field name.
+
+        Returns a dict whose values are the raw per-field terms before
+        ``self.lambda_per_field`` weighting. The combined scalar (the
+        thing actually backpropagated) is computed by :meth:`_compute_loss`
+        from this dict.
+
+        Splitting the breakdown lets ``training_step`` / ``validation_step``
+        log per-component losses (e.g. ``train/loss_X_class``,
+        ``train/loss_E_class``) without paying for two forward passes.
+
+        For non-CE losses (``loss_type='mse'`` / ``'bce_logits'``) the
+        breakdown has a single ``'edge_state'`` key.
         """
         if self._train_loss_discrete is None:
-            # MSE / BCE: compare dense edge states via the split edge
-            # fields. This path predates the per-field iteration and
-            # does not go through ``lambda_per_field``.
             if pred.E_feat is not None:
                 pred_edge_state = pred.to_edge_scalar(source="feat")
             else:
                 pred_edge_state = pred.to_edge_scalar(source="class")
             target_edge_state = _continuous_target_edge_state(target)
-            return self.criterion(pred_edge_state, target_edge_state.float())
+            return {
+                "edge_state": self.criterion(pred_edge_state, target_edge_state.float())
+            }
 
         # Zero padding rows in the target categorical fields so the row
         # predicate inside the CE helpers correctly excludes them. Matches
-        # upstream's ``dense_data.mask(node_mask)`` call that happens before
-        # ``train_loss(...)``.
+        # upstream's ``dense_data.mask(node_mask)`` before ``train_loss``.
         target = target.mask()
 
-        total: torch.Tensor | None = None
+        breakdown: dict[str, torch.Tensor] = {}
         for field in sorted(self.noise_process.fields):
             pred_field = _read_field(pred, field)
             target_field = _read_field(target, field)
             kind = GRAPHDATA_LOSS_KIND[field]
-            weight = self.lambda_per_field[field]
             if kind == "ce":
-                # Raw logits pass straight through: the fused log_softmax
-                # inside F.cross_entropy inside the helpers handles
-                # normalisation, matching upstream DiGress
-                # (`src/metrics/train_metrics.py:95-102`).
                 if field == "X_class":
                     term = masked_node_ce(pred_field, target_field, target.node_mask)
                 elif field == "E_class":
                     term = masked_edge_ce(pred_field, target_field, target.node_mask)
                 elif field == "y_class":
-                    # Graph-level CE — no spatial mask; mirrors upstream
-                    # ``loss_y`` in train_metrics.py:62-123. Weight is
-                    # ``lambda_y`` (default 0.0 ⇒ no contribution on SBM).
                     term = masked_y_ce(pred_field, target_field)
                 else:  # pragma: no cover - all CE fields handled above
                     raise NotImplementedError(
@@ -642,24 +857,45 @@ class DiffusionModule(BaseGraphModule):
                 elif field == "E_feat":
                     term = masked_edge_mse(pred_field, target_field, target.node_mask)
                 elif field == "y_feat":
-                    # Graph-level MSE — sister of ``masked_y_ce`` for
-                    # continuous global targets. Weight is ``lambda_y``
-                    # (default 0.0 ⇒ no contribution on SBM).
                     term = masked_y_mse(pred_field, target_field)
                 else:  # pragma: no cover - all MSE fields handled above
                     raise NotImplementedError(
                         f"No masked MSE helper registered for continuous field "
                         f"{field!r}."
                     )
-            contribution = weight * term
-            total = contribution if total is None else total + contribution
+            breakdown[field] = term
+        return breakdown
 
-        if total is None:  # pragma: no cover - fields is non-empty by invariant
+    def _combine_breakdown(self, breakdown: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Sum a per-field breakdown weighted by ``self.lambda_per_field``.
+
+        Shared by :meth:`_compute_loss`, :meth:`training_step`, and
+        :meth:`validation_step` so the weighted sum is computed once after
+        a single forward pass. Non-CE losses (``mse`` / ``bce_logits``)
+        return the single ``'edge_state'`` term unweighted.
+        """
+        if self._train_loss_discrete is None:
+            return breakdown["edge_state"]
+        total: torch.Tensor | None = None
+        for field, term in breakdown.items():
+            contribution = self.lambda_per_field[field] * term  # pyright: ignore[reportArgumentType]
+            total = contribution if total is None else total + contribution
+        if total is None:  # pragma: no cover - fields non-empty by invariant
             raise RuntimeError(
-                "DiffusionModule._compute_loss: noise_process.fields is empty; "
-                "cannot compute a cross-entropy loss."
+                "DiffusionModule._combine_breakdown: noise_process.fields is "
+                "empty; cannot compute a cross-entropy loss."
             )
         return total
+
+    def _compute_loss(self, pred: GraphData, target: GraphData) -> torch.Tensor:
+        """Compute the combined per-field loss for backprop.
+
+        Calls :meth:`_compute_loss_breakdown` to get unweighted per-field
+        terms, then sums them via :meth:`_combine_breakdown` weighted by
+        ``self.lambda_per_field`` (giving the upstream-DiGress
+        ``lambda_E=5.0`` edge weighting by default).
+        """
+        return self._combine_breakdown(self._compute_loss_breakdown(pred, target))
 
     def _compute_reconstruction(self, batch: GraphData) -> torch.Tensor:
         """Reconstruction log-probability ``log p(x_0 | z_1)``.
@@ -755,8 +991,16 @@ class DiffusionModule(BaseGraphModule):
         z_t = self.noise_process.forward_sample(batch, t_int).z_t
         condition = self.noise_process.process_state_condition_vector(t_int)
         pred = self.model(z_t, t=condition)
-        loss = self._compute_loss(pred, batch)
+        breakdown = self._compute_loss_breakdown(pred, batch)
+        loss = self._combine_breakdown(breakdown)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        for field, term in breakdown.items():
+            self.log(
+                f"val/loss_{field}",
+                term,
+                on_step=False,
+                on_epoch=True,
+            )
 
         # VLB estimation via single random timestep (standard DDPM
         # approach). Each batch samples one ``t`` and computes ``L_t``;
