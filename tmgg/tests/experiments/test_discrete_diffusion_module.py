@@ -53,12 +53,22 @@ def unified_schedule() -> NoiseSchedule:
 
 
 @pytest.fixture()
+def c_x(request: pytest.FixtureRequest) -> int:
+    """Parametrizable C_x. Tests that need to exercise both the canonical
+    structure-only encoding (C_x=1) and the legacy [no-node, node] encoding
+    (C_x=2) parametrize this fixture indirectly. Tests that don't parametrize
+    inherit the default ``_DX``."""
+    return getattr(request, "param", _DX)
+
+
+@pytest.fixture()
 def noise_process(
     unified_schedule: NoiseSchedule,
+    c_x: int,
 ) -> CategoricalNoiseProcess:
     return CategoricalNoiseProcess(
         schedule=unified_schedule,
-        x_classes=_DX,
+        x_classes=c_x,
         e_classes=_DE,
         limit_distribution="empirical_marginal",
     )
@@ -90,15 +100,16 @@ def lightning_module(
     sampler: CategoricalSampler,
     unified_schedule: NoiseSchedule,
     evaluator: GraphEvaluator,
+    c_x: int,
 ) -> DiffusionModule:
     from tmgg.models.digress.transformer_model import GraphTransformer
 
     model = GraphTransformer(
         n_layers=2,
-        input_dims={"X": _DX, "E": _DE, "y": 0},
+        input_dims={"X": c_x, "E": _DE, "y": 0},
         hidden_mlp_dims={"X": 16, "E": 16, "y": 16},
         hidden_dims={"dx": 16, "de": 16, "dy": 16, "n_head": 2},
-        output_dims={"X": _DX, "E": _DE, "y": _DY},
+        output_dims={"X": c_x, "E": _DE, "y": _DY},
         use_timestep=True,
     )
     return DiffusionModule(
@@ -178,16 +189,20 @@ class TestSetup:
 class TestForward:
     """Verify the forward pass through the model returns sensible output."""
 
+    @pytest.mark.parametrize("c_x", [1, 2], indirect=True)
     def test_output_shapes(
         self,
         lightning_module: DiffusionModule,
         datamodule: SyntheticCategoricalDataModule,
+        c_x: int,
     ) -> None:
         """Forward output has correct shapes.
 
         Starting state: noisy batch from noise process (structure-only, so
         ``X_class`` is ``None`` and the architecture synthesises a
-        degenerate one internally per Wave 9.3).
+        degenerate one internally per Wave 9.3). Parametrized over
+        ``c_x ∈ {1, 2}`` per 2026-04-27 spec §3 so we lock in both
+        the canonical structure-only (C_x=1) and legacy (C_x=2) encodings.
         Invariant: ``pred.X_class`` and ``pred.E_class`` match the expected
         node/edge extents derived from ``node_mask``.
         """
@@ -204,10 +219,10 @@ class TestForward:
         t_norm = t_int.float() / _T
         pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
-        # The GraphTransformer synthesises the degenerate X_class internally
-        # with dx_class=2 so its output carries X_class of shape (bs, n, 2).
+        # The GraphTransformer synthesises the degenerate X_class internally;
+        # output X_class width equals the configured C_x (output_dims_x_class).
         assert pred.X_class is not None  # pyright: ignore[reportUnknownMemberType]
-        assert pred.X_class.shape == (bs, n, 2)  # pyright: ignore[reportUnknownMemberType]
+        assert pred.X_class.shape == (bs, n, c_x)  # pyright: ignore[reportUnknownMemberType]
         assert pred.E_class is not None  # pyright: ignore[reportUnknownMemberType]
         assert pred.E_class.shape == batch.E_class.shape  # pyright: ignore[reportUnknownMemberType]
 
@@ -334,14 +349,17 @@ class TestDiGressAlignment:
     for degenerate size distributions all work correctly.
     """
 
+    @pytest.mark.parametrize("c_x", [1, 2], indirect=True)
     def test_training_loss_uses_train_loss_discrete(
         self,
         lightning_module: DiffusionModule,
         datamodule: SyntheticCategoricalDataModule,
+        c_x: int,
     ) -> None:
         """_compute_loss delegates to TrainLossDiscrete for the categorical path.
 
         Starting state: set-up module, one batch from train dataloader.
+        Parametrized over ``c_x ∈ {1, 2}`` per 2026-04-27 spec §3.
         Invariant: loss from _compute_loss matches a manual TrainLossDiscrete
         call with the same raw logits. Post the 2026-04-21 upstream-parity
         refactor, both the module and the direct wrapper feed raw logits to
@@ -369,28 +387,34 @@ class TestDiGressAlignment:
         tld = TrainLossDiscrete(lambda_E=5.0)
         pred_X = pred.X_class.clone()  # pyright: ignore[reportUnknownMemberType]
         pred_E = pred.E_class.clone()  # pyright: ignore[reportUnknownMemberType]
-        # Wave 9.3: structure-only batches carry X_class=None; synthesise the
-        # degenerate "[no-node, node]" one-hot from node_mask for the direct
-        # TrainLossDiscrete comparison.
+        # Wave 9.3 + 2026-04-27 spec §5.1: structure-only batches carry
+        # X_class=None; the canonical helper materialises the synthesis
+        # so this test agrees with whatever C_x the noise process is
+        # configured with (no inline duplication of synth logic).
         if batch.X_class is None:
-            node_ind = batch.node_mask.float()
-            true_X = torch.stack([1.0 - node_ind, node_ind], dim=-1)
+            true_X = GraphData.synth_structure_only_x_class(batch.node_mask, c_x)
         else:
             true_X = batch.X_class
         loss_direct = tld(pred_X, pred_E, true_X, batch.E_class, batch.node_mask)
 
         assert torch.allclose(loss_module, loss_direct, atol=1e-6)  # pyright: ignore[reportUnknownMemberType]
 
+    @pytest.mark.parametrize("c_x", [1, 2], indirect=True)
     def test_training_loss_masks_padding(
         self,
         lightning_module: DiffusionModule,
         datamodule: SyntheticCategoricalDataModule,
+        c_x: int,
     ) -> None:
         """Padding positions do not contribute to the training loss.
 
         Starting state: set-up module, batch with last 2 nodes masked as padding.
+        Parametrized over ``c_x ∈ {1, 2}`` per 2026-04-27 spec §3 to
+        confirm the synthesis path inside ``_read_field`` agrees with
+        whichever C_x the noise process is configured with.
         Invariant: corrupting predictions at padding positions does not change the loss.
         """
+        del c_x  # used only for fixture parametrization
         _attach_trainer_and_setup(lightning_module, datamodule)
         batch = next(iter(datamodule.train_dataloader()))
 

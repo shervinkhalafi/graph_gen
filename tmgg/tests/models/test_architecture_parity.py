@@ -24,6 +24,7 @@ commits.
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from tmgg.data.datasets.graph_types import GraphData
@@ -91,15 +92,27 @@ class TestDigressGraphTransformerParity:
         assert out.X_feat is None
         assert out.E_feat is None
 
-    def test_structure_only_input_synthesises_node_features(self) -> None:
+    @pytest.mark.parametrize("c_x", [1, 2])
+    def test_structure_only_input_synthesises_node_features(self, c_x: int) -> None:
         """Structure-only input (X_class=None) still runs: the architecture
         synthesises a per-node feature from node_mask internally.
+
+        Parametrized over ``c_x ∈ {1, 2}`` per 2026-04-27 spec §3:
+        - C_x = 1 is the canonical structure-only encoding (one class).
+        - C_x = 2 is the legacy ``[no-node, node]`` encoding.
+        Both paths must produce a valid model output of width ``c_x``.
         """
-        model = self._build()
+        model = GraphTransformer(
+            n_layers=2,
+            input_dims={"X": c_x, "E": DE, "y": DY},
+            hidden_mlp_dims={"X": 16, "E": 16, "y": 16},
+            hidden_dims={"dx": 16, "de": 8, "dy": 8, "n_head": 2},
+            output_dims={"X": c_x, "E": DE, "y": DY},
+        )
         E = torch.randn(BS, N, N, DE)
         E = 0.5 * (E + E.transpose(1, 2))
         # GraphTransformer's extra_features is None here; synth yields
-        # a width-2 X. Since model expects width DX (=2), it still runs.
+        # an X tensor of width ``c_x`` per the canonical helper.
         data = GraphData(
             E_class=E,
             y=torch.randn(BS, DY),
@@ -108,8 +121,30 @@ class TestDigressGraphTransformerParity:
         out = model(data)
         assert out.X_class is not None
         assert out.E_class is not None
-        assert out.X_class.shape == (BS, N, DX)
+        assert out.X_class.shape == (BS, N, c_x)
         assert out.E_class.shape == (BS, N, N, DE)
+
+    def test_structure_only_input_raises_for_c_x_geq_3(self) -> None:
+        """C_x>=3 with X_class=None must raise — real categorical X must
+        come from the dataset (2026-04-27 spec §3).
+        """
+        c_x = 3
+        model = GraphTransformer(
+            n_layers=2,
+            input_dims={"X": c_x, "E": DE, "y": DY},
+            hidden_mlp_dims={"X": 16, "E": 16, "y": 16},
+            hidden_dims={"dx": 16, "de": 8, "dy": 8, "n_head": 2},
+            output_dims={"X": c_x, "E": DE, "y": DY},
+        )
+        E = torch.randn(BS, N, N, DE)
+        E = 0.5 * (E + E.transpose(1, 2))
+        data = GraphData(
+            E_class=E,
+            y=torch.randn(BS, DY),
+            node_mask=torch.ones(BS, N, dtype=torch.bool),
+        )
+        with pytest.raises(ValueError, match=r"C_x"):
+            model(data)
 
     def test_output_dims_constructor_params_accepted(self) -> None:
         """Wave 7 contract: output_dims_{x,e}_{class,feat} are constructor params."""
