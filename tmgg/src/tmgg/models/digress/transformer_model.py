@@ -938,12 +938,15 @@ class GraphTransformer(GraphModel):
         if data.X_class is not None:
             X = data.X_class
         else:
-            # Structure-only graph: synthesise a degenerate
-            # "node-absent / node-present" one-hot from node_mask.
-            node_ind = node_mask.float()
-            X = torch.stack([1.0 - node_ind, node_ind], dim=-1).to(
-                device=E.device, dtype=E.dtype
-            )
+            # Structure-only graph: derive an X_class via the canonical
+            # helper. ``self.output_dims_x_class`` is the model's
+            # authoritative C_x (NOT ``input_dims["X"]``, which is the
+            # X_in aggregate of C_x + F_x + extras). See
+            # ``docs/specs/2026-04-27-x-class-synth-unification-spec.md
+            # §5.5`` for why output_dims_x_class is the right knob here.
+            X = GraphData.synth_structure_only_x_class(
+                node_mask, self.output_dims_x_class
+            ).to(device=E.device, dtype=E.dtype)
 
         if self.extra_features is not None:
             extra_X, extra_E, extra_y = self.extra_features(X, E, y, node_mask)
