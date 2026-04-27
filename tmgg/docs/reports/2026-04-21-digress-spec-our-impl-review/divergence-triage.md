@@ -545,6 +545,19 @@ grounds but the case for A is "reviewers shouldn't have to translate."
   to constant class-1 prediction and the loss floor is ~0. Contributes
   nothing to gradient on E. No induced bug. **NO-OP**.
 
+  **Superseded 2026-04-27.** The `NO-OP` verdict was wrong: the synthesis
+  was sound for C_x = 2 configs but **buggy on C_x = 1 configs**. Three
+  separate consumer sites (noise process, loss helpers, model input
+  projection) each carried independent copies of the synth that
+  hardcoded C_x = 2 — so a config setting `noise_process.x_classes = 1`
+  silently emitted C_x = 2 tensors and crashed at `_posterior_probabilities`
+  (CUDA bmm shape mismatch) when the Vignac SBM repro was launched on
+  Modal. The fix consolidates synth into a single canonical helper
+  (`GraphData.synth_structure_only_x_class`) called by each consumer
+  with its own authoritative C_x; an init-time triplet invariant in
+  `DiffusionModule.setup` catches drift before the first training step.
+  See `docs/specs/2026-04-27-x-class-synth-unification-spec.md`.
+
 ### 2. `remove_self_loops` sparse vs post-densification `adj[diag]=0` — \*
 
 - **Divergence**: Upstream removes self-loops in the sparse representation

@@ -130,6 +130,24 @@ GraphData:
   node_mask:  Tensor            # (bs, n)                     — boolean validity (unchanged)
 ```
 
+**Vocabulary alignment with the canonical-name spec.** The
+`docs/specs/2026-04-27-x-class-synth-unification-spec.md` introduces
+canonical names for the channel widths used here:
+
+| Pseudo-schema name | Canonical name | Meaning |
+|---|---|---|
+| `dx_class` | **C_x** | Node categorical-class width (incl. structural-filler slot) |
+| `dx_feat`  | **F_x** | Node continuous-feature width (incl. extras at input) |
+| `de_class` | **C_e** | Edge categorical-class width |
+| `de_feat`  | **F_e** | Edge continuous-feature width |
+| `dy`       | C_y / F_y | Graph-level alphabet / continuous-feature width |
+
+The aggregate model-input concatenations (`C + F` per side) are
+written **X_in / E_in / y_in** in the canonical-name spec; here they
+appear as `input_dims["X"]`, `input_dims["E"]`, `input_dims["y"]` in
+code. Codebase variable names are unchanged — the canonical names
+are spec-level vocabulary only.
+
 **Semantic invariants** (RFC 2119):
 
 - `node_mask` MUST be non-`None` and carries node existence. This is
@@ -177,6 +195,15 @@ data model's job stops at "here is the graph, here is which
 positions are real." Datasets MUST NOT re-encode `node_mask` as a
 degenerate `X_class` just to feed architectures that currently
 assume one.
+
+The canonical derivation is
+`GraphData.synth_structure_only_x_class(node_mask, C_x)` (see
+`docs/specs/2026-04-27-x-class-synth-unification-spec.md`); each
+consumer (model, noise process, loss) calls it with its own
+authoritative C_x. C_x = 1 is the canonical structure-only encoding;
+C_x = 2 (`[no-node, node]`) is retained for backward compat with
+existing C_x = 2 model presets; C_x ≥ 3 is real categorical and MUST
+come from the dataset.
 
 ### Removed fields
 
@@ -524,6 +551,8 @@ loading go wrong:
 | Pre-refactor checkpoint loaded post-refactor | Lightning checkpoint load | Raise `RuntimeError` with message "pre-unified-schema checkpoint; load a post-refactor checkpoint or retrain." Loader is not expected to migrate old `state_dict` keys. |
 | Dataset emits degenerate `X_class` duplicating `node_mask` | Dataset validation in tests only | Spec violation; test asserts dataset SHALL NOT re-encode node existence. No runtime check — too expensive per batch. |
 | `E_class` and `E_feat` disagree above `disagreement_warn_threshold` | Evaluator at `on_validation_epoch_end` | Log `WARNING` once per validation pass with the measured rate. Does not fail the run. |
+| `_read_categorical_e` invoked with `E_class=None` | Noise process / loss helpers | Raise `ValueError` (E is never synthesised — edges are an adjacency property orthogonal to `node_mask`; see `2026-04-27-x-class-synth-unification-spec.md` §3 for the X-vs-E asymmetry rationale). |
+| `GraphData.synth_structure_only_x_class` invoked with C_x ≥ 3 | Helper itself | Raise `ValueError`; real categorical X must come from the dataset, not synthesis. See `2026-04-27-x-class-synth-unification-spec.md` §3. |
 
 Checkpoint compatibility is deliberately narrow: the refactor breaks
 `.ckpt` files written before it lands. This is acceptable because

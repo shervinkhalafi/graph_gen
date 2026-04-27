@@ -9,6 +9,9 @@ The pipeline composes three kinds of object:
   reverse-process math directly.
 - **Sampler** runs the reverse diffusion loop, denoising from the limit
   distribution back to clean graphs.
+
+X_class / E_class synthesis convention: see
+``docs/specs/2026-04-27-x-class-synth-unification-spec.md``.
 """
 
 from .collectors import DiffusionLikelihoodCollector, StepMetricCollector
