@@ -67,13 +67,16 @@ def test_run_import_preflight_reports_failing_module(
         return next(responses)
 
     monkeypatch.setattr("subprocess.run", _run)
+    # Patch graph_tool as required=True for this specific test so the
+    # raise-path is exercised. Production config has graph_tool optional
+    # (Modal worker CPUs may lack the AVX-512 the bundled binary uses).
     monkeypatch.setattr(
         modal_functions,
         "IMPORT_PREFLIGHTS",
         (
-            ("torch", "import torch"),
-            ("ot", "import ot"),
-            ("graph_tool", "import graph_tool.all as gt"),
+            ("torch", "import torch", True),
+            ("ot", "import ot", True),
+            ("graph_tool", "import graph_tool.all as gt", True),
         ),
     )
 

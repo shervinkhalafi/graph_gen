@@ -66,11 +66,19 @@ wandb_secret = modal.Secret.from_name(
     required_keys=["WANDB_API_KEY"],
 )
 
-IMPORT_PREFLIGHTS: tuple[tuple[str, str], ...] = (
-    ("torch", "import torch"),
-    ("torch_geometric", "import torch_geometric"),
-    ("ot", "import ot"),
-    ("graph_tool", "import graph_tool.all as gt"),
+#: Preflight imports as ``(module_name, import_stmt, required)`` triples.
+#: ``required=False`` modules log a warning and continue on failure;
+#: ``required=True`` modules raise a clear ``RuntimeError`` so the run
+#: aborts before the CLI launches. ``graph_tool`` is optional because
+#: ``GraphEvaluator`` already degrades gracefully when it's missing
+#: (``sbm_accuracy`` becomes ``None``); the worker CPU may lack the
+#: AVX-512 instructions the bundled binary uses, triggering ``SIGILL``
+#: at import time on otherwise-fine A100 hosts.
+IMPORT_PREFLIGHTS: tuple[tuple[str, str, bool], ...] = (
+    ("torch", "import torch", True),
+    ("torch_geometric", "import torch_geometric", True),
+    ("ot", "import ot", True),
+    ("graph_tool", "import graph_tool.all as gt", False),
 )
 CONFIG_PREFLIGHT_SNIPPET = """
 from pathlib import Path
@@ -338,7 +346,7 @@ def _run_import_preflight() -> None:
     _append_preflight(log_path, "=== preflight start ===")
     _run_host_diagnostics(log_path)
 
-    for module_name, import_stmt in IMPORT_PREFLIGHTS:
+    for module_name, import_stmt, required in IMPORT_PREFLIGHTS:
         print(f"Preflight import check: {module_name}", flush=True)
         _append_preflight(log_path, f"ATTEMPT: {module_name} :: {import_stmt}")
         # Commit before each risky import so even a SIGILL next leaves the
@@ -357,6 +365,24 @@ def _run_import_preflight() -> None:
         output = (result.stdout or "") + (result.stderr or "")
         output_tail = output[-1000:] if output else "<no output>"
         exit_description = _format_return_code(result.returncode)
+        if not required:
+            # Optional dep — log a clear warning and continue. Downstream
+            # code that uses this module must already handle absence
+            # gracefully (e.g. GraphEvaluator falls back to
+            # ``sbm_accuracy=None`` when graph_tool is unavailable).
+            print(
+                f"Preflight import WARNING (optional): {module_name} "
+                f"failed with exit={exit_description}; continuing.",
+                flush=True,
+            )
+            _append_preflight(
+                log_path,
+                f"SKIP (optional): {module_name} exit={exit_description}\n"
+                f"STATEMENT: {import_stmt}\nTAIL:\n{output_tail}",
+            )
+            _commit_outputs_volume()
+            continue
+
         _append_preflight(
             log_path,
             f"FAIL: {module_name} exit={exit_description}\nSTATEMENT: {import_stmt}\n"
