@@ -269,21 +269,40 @@ def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> Gr
     return data.replace(**replace_kwargs)
 
 
-def _read_categorical_x(data: GraphData) -> Tensor:
-    """Read ``X_class`` or synthesise a degenerate ``[no-node, node]`` one-hot.
+def _read_categorical_x(data: GraphData, x_classes: int = 2) -> Tensor:
+    """Read ``X_class`` or synthesise a structure-only X tensor of width ``x_classes``.
 
     Per ``docs/specs/2026-04-15-unified-graph-features-spec.md §"Removed
     fields"`` (architecture-internal concern): structure-only datasets
     emit ``X_class=None`` and architectures that need a per-node feature
     derive one from ``node_mask``. ``CategoricalNoiseProcess`` is part
     of the DiGress-family architecture, so it synthesises the
-    degenerate two-channel encoding internally rather than forcing the
-    data pipeline to carry it.
+    degenerate encoding internally rather than forcing the data
+    pipeline to carry it.
+
+    Synthesis cases (only triggered when ``data.X_class is None``):
+    * ``x_classes=1`` (upstream-DiGress / GDPO SBM convention): emit
+      ``(B, N, 1)`` ones at valid nodes, zeros at padding. Every node
+      is the single abstract node class; the noise process is
+      effectively identity on X.
+    * ``x_classes=2`` (default; molecular ``[no-node, node]``): emit
+      ``[1 - node_ind, node_ind]``.
+    * ``x_classes >= 3``: raise — synthesis is undefined for vocab
+      sizes that require real per-node features.
     """
-    if data.X_class is None:
-        node_ind = data.node_mask.float()
+    if data.X_class is not None:
+        return data.X_class
+    node_ind = data.node_mask.float()
+    if x_classes == 1:
+        return node_ind.unsqueeze(-1)
+    if x_classes == 2:
         return torch.stack([1.0 - node_ind, node_ind], dim=-1)
-    return data.X_class
+    raise ValueError(
+        "_read_categorical_x: cannot synthesise X for "
+        f"x_classes={x_classes} > 2 on structure-only data "
+        f"(data.X_class is None). Provide an explicit X_class on the "
+        f"dataset or configure x_classes <= 2."
+    )
 
 
 def _read_categorical_e(data: GraphData) -> Tensor:
@@ -1012,7 +1031,7 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
 
     def model_output_to_posterior_parameter(self, model_output: GraphData) -> GraphData:
         """Convert model logits into categorical probabilities."""
-        x_logits = _read_categorical_x(model_output)
+        x_logits = _read_categorical_x(model_output, x_classes=self.x_classes)
         e_logits = _read_categorical_e(model_output)
         return _categorical_graphdata(
             F.softmax(x_logits, dim=-1),
@@ -1157,7 +1176,7 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         disjoint fields (Wave 2.4) does not drop their payload.
         """
         x_limit, e_limit, _ = self._stationary_distribution()
-        x_class = _read_categorical_x(data)
+        x_class = _read_categorical_x(data, x_classes=self.x_classes)
         e_class = _read_categorical_e(data)
         prob_X = _mix_with_limit(x_class, noise_level, x_limit)
         prob_E = _mix_with_limit(e_class, noise_level, e_limit)

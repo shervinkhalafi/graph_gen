@@ -118,7 +118,7 @@ def _normalize_visualization_config(
     return {"enabled": enabled, "num_samples": num_samples}
 
 
-def _read_field(data: GraphData, field: FieldName) -> torch.Tensor:
+def _read_field(data: GraphData, field: FieldName, x_classes: int = 2) -> torch.Tensor:
     """Read a split field from ``data`` or raise if unpopulated.
 
     Called from the per-field training / validation loop to fetch the
@@ -126,26 +126,44 @@ def _read_field(data: GraphData, field: FieldName) -> torch.Tensor:
     ``"E_feat"`` we additionally allow lifting an ``E_class`` view into
     a single-channel scalar edge so Gaussian processes on ``E_feat``
     can still operate on categorical batches.
+
+    ``x_classes`` controls structure-only ``X_class`` synthesis when
+    ``data.X_class is None`` — must match the noise process's
+    ``x_classes`` so the synthesised target shape is compatible with
+    the model output it will be compared against. Default ``2``
+    preserves the molecular ``[no-node, node]`` convention; SBM-style
+    upstream-DiGress configs pass ``1`` for the single abstract node
+    class.
     """
     if field == "X_class":
         if data.X_class is None:
             # Wave 9.3 (structure-only datasets): synthesise a degenerate
-            # "[no-node, node]" one-hot from ``node_mask`` so categorical
-            # noise processes declaring ``X_class`` can still operate on
-            # structure-only batches. See
-            # ``docs/specs/2026-04-15-unified-graph-features-spec.md
-            # §"Removed fields"`` — this is the "architecture-internal
-            # concern" synthesis applied at the training-loop boundary
-            # rather than at the dataset boundary.
+            # X tensor from ``node_mask`` so categorical noise processes
+            # declaring ``X_class`` can operate on structure-only
+            # batches. See ``docs/specs/2026-04-15-unified-graph-features
+            # -spec.md §"Removed fields"`` for the architecture-internal-
+            # concern rationale.
             #
-            # Padding positions emit an **all-zero** row rather than
-            # ``[1, 0]`` so the ``(true != 0).any(-1)`` predicate inside
+            # Padding positions emit an **all-zero** row so the
+            # ``(true != 0).any(-1)`` predicate inside
             # :func:`masked_node_ce` correctly excludes them — matching
             # upstream's convention that padding contributes nothing to
             # the loss.
             node_ind = data.node_mask.float()
-            synth = torch.stack([1.0 - node_ind, node_ind], dim=-1)
-            return synth * node_ind.unsqueeze(-1)
+            if x_classes == 1:
+                # K=1 (single abstract node class): valid nodes get
+                # one-hot ``[1.0]``, padding gets ``[0.0]`` (zero-row,
+                # excluded by the loss predicate).
+                return node_ind.unsqueeze(-1)
+            if x_classes == 2:
+                synth = torch.stack([1.0 - node_ind, node_ind], dim=-1)
+                return synth * node_ind.unsqueeze(-1)
+            raise ValueError(
+                "_read_field: cannot synthesise X_class for "
+                f"x_classes={x_classes} > 2 on structure-only data. "
+                "Provide explicit X_class on the dataset or configure "
+                "the noise process with x_classes <= 2."
+            )
         return data.X_class
     if field == "E_class":
         if data.E_class is None:
@@ -610,10 +628,11 @@ class DiffusionModule(BaseGraphModule):
         # ---- Tier 2: stride-controlled training-dynamics metrics ----------
         # Logit max-abs as a saturation indicator. Soft-max output blows up
         # at |logit| ≈ 30+; healthy training keeps these in O(10).
+        x_classes_for_synth = getattr(self.noise_process, "x_classes", 2)
         if self.global_step % 50 == 0:
             for field in self.noise_process.fields:
                 if GRAPHDATA_LOSS_KIND[field] == "ce":
-                    f_pred = _read_field(pred, field)
+                    f_pred = _read_field(pred, field, x_classes=x_classes_for_synth)
                     self.log(
                         f"train/logit_max_abs_{field}",
                         f_pred.detach().abs().max(),
@@ -627,7 +646,9 @@ class DiffusionModule(BaseGraphModule):
         if self.global_step % 1000 == 0:
             for field in self.noise_process.fields:
                 if GRAPHDATA_LOSS_KIND[field] == "ce":
-                    f_pred = _read_field(pred, field).detach()
+                    f_pred = _read_field(
+                        pred, field, x_classes=x_classes_for_synth
+                    ).detach()
                     log_p = F.log_softmax(f_pred, dim=-1)
                     entropy = -(log_p.exp() * log_p).sum(dim=-1).mean()
                     self.log(
@@ -834,10 +855,11 @@ class DiffusionModule(BaseGraphModule):
         # upstream's ``dense_data.mask(node_mask)`` before ``train_loss``.
         target = target.mask()
 
+        x_classes_for_synth = getattr(self.noise_process, "x_classes", 2)
         breakdown: dict[str, torch.Tensor] = {}
         for field in sorted(self.noise_process.fields):
-            pred_field = _read_field(pred, field)
-            target_field = _read_field(target, field)
+            pred_field = _read_field(pred, field, x_classes=x_classes_for_synth)
+            target_field = _read_field(target, field, x_classes=x_classes_for_synth)
             kind = GRAPHDATA_LOSS_KIND[field]
             if kind == "ce":
                 if field == "X_class":
