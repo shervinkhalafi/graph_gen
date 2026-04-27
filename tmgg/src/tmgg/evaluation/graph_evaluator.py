@@ -192,7 +192,13 @@ def compute_orbit_mmd(
     if not ref_counts or not gen_counts:
         return 0.0
 
-    return compute_mmd(ref_counts, gen_counts, kernel=kernel, sigma=sigma)
+    # Orbit counts are raw graphlet counts, not histograms — magnitude is the
+    # signal. Upstream DiGress's ``orbit_stats_all`` calls compute_mmd with
+    # is_hist=False, sigma=30.0 (digress-upstream-readonly/src/analysis/
+    # spectre_utils.py:490). Matching that here.
+    return compute_mmd(
+        ref_counts, gen_counts, kernel=kernel, sigma=sigma, is_hist=False
+    )
 
 
 # Ported from DiGress (Vignac et al., ICLR 2023) / SPECTRE (Martinkus et al.,

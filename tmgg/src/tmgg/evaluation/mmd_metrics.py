@@ -317,22 +317,15 @@ def gaussian_tv_kernel(x: np.ndarray, y: np.ndarray, sigma: float = 1.0) -> floa
     float
         Kernel value in (0, 1].
     """
-    # Pad to same length
+    # Pad to same length. No PMF normalisation here: matches upstream
+    # ``gaussian_tv`` (digress-upstream-readonly/src/analysis/dist_helper.py).
+    # Normalisation is the caller's job via ``compute_mmd(is_hist=True)``.
     max_len = max(len(x), len(y))
     x_padded = np.zeros(max_len)
     y_padded = np.zeros(max_len)
     x_padded[: len(x)] = x
     y_padded[: len(y)] = y
 
-    # Normalize to PMF
-    x_sum = x_padded.sum()
-    y_sum = y_padded.sum()
-    if x_sum > 0:
-        x_padded = x_padded / x_sum
-    if y_sum > 0:
-        y_padded = y_padded / y_sum
-
-    # TV distance = 0.5 * L1 distance for probability distributions
     tv = 0.5 * np.sum(np.abs(x_padded - y_padded))
     return float(np.exp(-(tv**2) / (2 * sigma**2)))
 
@@ -395,6 +388,7 @@ def compute_mmd(
     kernel: Literal["gaussian", "gaussian_tv", "gaussian_emd"] = "gaussian_tv",
     sigma: float = 1.0,
     distance_scaling: float = 1.0,
+    is_hist: bool = True,
 ) -> float:
     """Compute the **biased V-statistic** MMD between two sample sets.
 
@@ -423,6 +417,12 @@ def compute_mmd(
         Scale factor for the EMD distance matrix. Only used with
         ``"gaussian_emd"``; upstream DiGress uses ``bins`` (e.g. 100
         for clustering).
+    is_hist
+        If ``True`` (default), PMF-normalise each sample (``s / sum(s)``)
+        before computing kernel values. Matches upstream's contract:
+        histogram metrics (degree/clustering/spectral) use ``is_hist=True``;
+        raw-count metrics (orbit, motif graphlet counts) must pass
+        ``is_hist=False`` so magnitude information is preserved.
 
     Returns
     -------
@@ -431,6 +431,10 @@ def compute_mmd(
     """
     if len(samples1) < 2 or len(samples2) < 2:
         return float("inf")
+
+    if is_hist:
+        samples1 = [s / (np.sum(s) + 1e-6) for s in samples1]
+        samples2 = [s / (np.sum(s) + 1e-6) for s in samples2]
 
     def kernel_fn(x: np.ndarray, y: np.ndarray) -> float:
         if kernel == "gaussian":
