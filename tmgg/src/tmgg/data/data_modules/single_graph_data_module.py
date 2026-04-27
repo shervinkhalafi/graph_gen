@@ -115,7 +115,16 @@ class SingleGraphDataModule(BaseGraphDataModule):
         train_seed: int = 42,
         val_test_seed: int = 123,
         same_graph_all_splits: bool = False,
+        eval_meta: object = None,
     ):
+        # ``eval_meta`` is informational metadata (typically ``{p_intra,
+        # p_inter}`` for SBM evaluators) attached to the data namespace by
+        # upstream config blocks for Hydra interpolation. Accepted as an
+        # explicit parameter (rather than ``**kwargs``) so the
+        # legacy-kwarg rejection contract stays intact: unknown kwargs
+        # like ``noise_levels`` / ``noise_type`` still raise ``TypeError``.
+        # Captured into ``self.hparams`` by ``save_hyperparameters()`` below.
+        _ = eval_meta
         super().__init__(
             batch_size=batch_size,
             num_workers=num_workers,

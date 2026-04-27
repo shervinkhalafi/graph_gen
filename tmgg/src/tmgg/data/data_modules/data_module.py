@@ -45,6 +45,7 @@ class GraphDataModule(MultiGraphDataModule):
         val_ratio: float = 0.2,
         seed: int = 42,
         num_nodes_max_static: int | None = None,
+        eval_meta: object = None,
     ):
         """Initialize the GraphDataModule.
 
@@ -80,7 +81,18 @@ class GraphDataModule(MultiGraphDataModule):
             silently drift with the data preset (parity audit D-11
             / #42). When ``None``, falls back to
             ``graph_config["num_nodes"]``.
+        eval_meta
+            Informational metadata (typically ``{p_intra, p_inter}`` for
+            SBM evaluators) attached to the data namespace by upstream
+            config blocks for downstream Hydra interpolation. Has no
+            runtime effect on the datamodule itself; accepting it as an
+            explicit parameter keeps the legacy-kwarg rejection contract
+            intact (unknown kwargs like ``noise_levels`` / ``noise_type``
+            still raise ``TypeError``).
         """
+        # ``eval_meta`` is captured into ``self.hparams`` by
+        # ``save_hyperparameters()`` below; not used directly here.
+        _ = eval_meta
         if "num_nodes" not in graph_config:
             raise KeyError(
                 "GraphDataModule.__init__: graph_config missing required key "
