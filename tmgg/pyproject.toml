@@ -154,6 +154,11 @@ pythonVersion = "3.12"
 typeCheckingMode = "basic"
 include = ["src/tmgg", "tests"]
 exclude = ["**/__pycache__", "**/typings", "tests/archived", "src/tmgg/experiments/_scaffold"]
+# Point pyright at the uv-managed venv so ad-hoc scripts outside `include`
+# (e.g. analysis/**) can still resolve project deps when the pre-commit hook
+# or the live harness scans them on edit.
+venvPath = "."
+venv = ".venv"
 reportMissingImports = true
 reportMissingTypeStubs = false  # Don't complain about missing stubs for torch etc.
 reportConstantRedefinition = false  # Allow uppercase tensor vars (X, E, Q, K, V) to be reassigned
