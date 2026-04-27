@@ -88,3 +88,9 @@ uv run --with modal --with click python \
     analysis/digress-loss-check/validate-gdpo-sbm/client.py spawn \
     --gpu a100 --num-samples 40 --batch-size 40
 """
+
+# Vignac / GDPO SBM pretraining reproduction on Modal (A100-40GB, bf16-mixed)
+
+[tasks.train-sbm-vignac-repro]
+description = "Launch the Vignac/GDPO SBM pretraining reproduction on Modal A100 (~6-8 h bf16, ~550k steps). Parity knobs live in configs/experiment/discrete_sbm_vignac_repro.yaml."
+run = "./run-discrete-sbm-vignac-repro-modal-a100.zsh"
