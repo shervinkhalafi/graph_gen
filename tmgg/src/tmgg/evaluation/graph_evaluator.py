@@ -594,6 +594,18 @@ class GraphEvaluator:
         """
         dtype = torch.float32
         if data.E_class is not None:
+            c_e = data.E_class.shape[-1]
+            if c_e == 1:
+                raise ValueError(
+                    "GraphEvaluator: E_class with C_e=1 has no implicit "
+                    "no-edge class; adjacency cannot be inferred from "
+                    "argmax (which is always 0). Use C_e>=2 for "
+                    "evaluation, or override the evaluator's "
+                    "adjacency-recovery rule. See "
+                    "docs/specs/2026-04-27-x-class-synth-unification-"
+                    "spec.md §7.1."
+                )
+            # C_e >= 2: class 0 is no-edge by upstream convention.
             adj = (data.E_class.argmax(dim=-1) != 0).to(dtype)
         elif data.E_feat is not None:
             e_feat = data.E_feat
@@ -651,6 +663,16 @@ class GraphEvaluator:
         if data.E_class is None or data.E_feat is None:
             return None
 
+        c_e = data.E_class.shape[-1]
+        if c_e == 1:
+            raise ValueError(
+                "GraphEvaluator: E_class with C_e=1 has no implicit "
+                "no-edge class; adjacency cannot be inferred from "
+                "argmax (which is always 0). Use C_e>=2 for "
+                "evaluation. See "
+                "docs/specs/2026-04-27-x-class-synth-unification-"
+                "spec.md §7.1."
+            )
         class_edges = data.E_class.argmax(dim=-1) != 0
         e_feat = data.E_feat
         if e_feat.dim() == data.node_mask.dim() + 1:
