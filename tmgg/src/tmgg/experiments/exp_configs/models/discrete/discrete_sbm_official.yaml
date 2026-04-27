@@ -14,7 +14,7 @@ model_name: graph_transformer
 model:
   _target_: tmgg.models.digress.transformer_model.GraphTransformer
   n_layers: 8
-  input_dims: { X: 2, E: 2, y: 0 }   # y=0 because use_timestep adds +1 internally
+  input_dims: { X: 2, E: 2, y: 0 }   # X=2 is C_x=2 (legacy [no-node, node]); y=0 because use_timestep adds +1; F_x extras adjusted at runtime via extra_features.adjust_dims. See 2026-04-27 spec §3.
   hidden_mlp_dims: { X: 128, E: 64, y: 128 }
   use_timestep: true
   hidden_dims:
