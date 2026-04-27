@@ -74,3 +74,17 @@ run = "uv run tmgg-modal aggregate --output results/mmd_results.parquet --cache-
 [tasks.aggregate-mmd-dry]
 description = "Preview MMD evaluation files without downloading"
 run = "uv run tmgg-modal aggregate --dry-run"
+
+# GDPO-SBM sanity check on Modal (deployed app + client-side spawn)
+
+[tasks.validate-gdpo-sbm-deploy]
+description = "Deploy the tmgg-validate-gdpo-sbm Modal app (re-run after validate.py or checkpoint changes)"
+run = "uv run modal deploy analysis/digress-loss-check/validate-gdpo-sbm/modal_app.py"
+
+[tasks.validate-gdpo-sbm-run]
+description = "Spawn an A100 sanity-check call (paper-matching 40 samples); outputs samples.jsonl + metrics.json + report.md + PNG on the tmgg-outputs volume"
+run = """
+uv run --with modal --with click python \
+    analysis/digress-loss-check/validate-gdpo-sbm/client.py spawn \
+    --gpu a100 --num-samples 40 --batch-size 40
+"""
