@@ -499,6 +499,52 @@ class GraphData:
         return adj * mask_2d.float()
 
     @classmethod
+    def synth_structure_only_x_class(cls, node_mask: Tensor, c_x: int) -> Tensor:
+        """Derive a structure-only X_class tensor from node_mask alone.
+
+        Synthesis convention (spec 2026-04-27-x-class-synth-unification):
+        - C_x = 1: ones at valid nodes, zeros at padding. Canonical
+          structure-only encoding; noise process is identity on X.
+        - C_x = 2: [1 - node_ind, node_ind] one-hot (legacy [no-node,
+          node]). Kept for backward compat with existing C_x=2 model
+          presets.
+        - C_x >= 3: raise — real categorical X must be populated by
+          the dataset.
+
+        E has no symmetric helper: edges are an adjacency property
+        orthogonal to node_mask, so synthesis from node_mask alone is
+        undefined for any C_e. ``_read_categorical_e`` raises when
+        E_class is None.
+
+        Parameters
+        ----------
+        node_mask
+            Boolean mask of valid nodes, shape ``(B, N)``.
+        c_x
+            Categorical class width including any structural-filler
+            slot. See spec §3 for the regime table.
+
+        Returns
+        -------
+        Tensor
+            Shape ``(B, N, c_x)``, dtype ``float32``, on the same
+            device as ``node_mask``.
+        """
+        node_ind = node_mask.float()
+        if c_x == 1:
+            return node_ind.unsqueeze(-1)
+        if c_x == 2:
+            synth = torch.stack([1.0 - node_ind, node_ind], dim=-1)
+            # Zero padding rows so loss predicates exclude them
+            return synth * node_ind.unsqueeze(-1)
+        raise ValueError(
+            "GraphData.synth_structure_only_x_class: synthesis is only "
+            f"defined for C_x in {{1, 2}}; got C_x={c_x}. C_x>=3 implies "
+            "real categorical content; the dataset MUST populate "
+            "X_class. See 2026-04-27-x-class-synth-unification-spec §3."
+        )
+
+    @classmethod
     def from_pyg_batch(cls, batch: Batch) -> GraphData:
         """Convert a PyG Batch to a dense, structure-only GraphData.
 
