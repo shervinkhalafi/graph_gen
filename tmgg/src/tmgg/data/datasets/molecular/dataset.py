@@ -170,7 +170,8 @@ class MolecularGraphDataset(Dataset[GraphData], abc.ABC):
 
     def setup(self) -> None:
         """Populate ``self._graphs`` for the configured split."""
-        self._codec = self.make_codec()
+        codec = self.make_codec()
+        self._codec = codec
         shard_dir = self._shard_dir()
         if shard_dir.exists() and any(shard_dir.iterdir()):
             self._graphs = self._load_shards()
@@ -183,7 +184,7 @@ class MolecularGraphDataset(Dataset[GraphData], abc.ABC):
             shard_dir,
         )
         smiles = self.download_smiles_split(self.split)
-        graphs, counters = self._codec.encode_dataset_with_stats(smiles)
+        graphs, counters = codec.encode_dataset_with_stats(smiles)
         logger.info(
             "%s/%s: preprocessed; counters=%s",
             self.DATASET_NAME,
