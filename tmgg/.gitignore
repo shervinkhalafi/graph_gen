@@ -62,3 +62,6 @@ analysis/digress-loss-check/validate-gdpo-sbm/__pycache__/
 # the discrete_sbm_vignac_repro investigation; see
 # 2026-04-28-working-runs-analysis/README.md).
 2026-04-28-working-runs-analysis/
+
+# Multi-agent coordination files (this orchestrator + sibling agent).
+Agent[1-9]-comms.md
