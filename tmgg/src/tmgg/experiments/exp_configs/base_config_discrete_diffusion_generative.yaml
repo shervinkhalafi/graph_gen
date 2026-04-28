@@ -51,6 +51,7 @@ data:
   val_ratio: 0.1
   batch_size: 32
   num_workers: ${num_workers}
+  prefetch_factor: ${prefetch_factor}
   seed: ${seed}
   graph_config:
     num_blocks: 2

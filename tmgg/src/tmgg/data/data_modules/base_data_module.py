@@ -38,6 +38,12 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         Number of dataloader worker processes.
     pin_memory
         Whether to pin memory in DataLoaders for faster GPU transfer.
+    prefetch_factor
+        Per-worker batches to prefetch ahead. PyTorch default is 2;
+        4 hides typical step latency without much memory overhead. Has
+        no effect when ``num_workers == 0`` (PyTorch ignores it). See
+        ``analysis/digress-loss-check/vignac-repro-health-check/
+        speedup-options.md §A``.
     seed
         Random seed for graph generation and splitting.
     """
@@ -45,6 +51,7 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
     batch_size: int
     num_workers: int
     pin_memory: bool
+    prefetch_factor: int
     seed: int
     graph_type: str
     num_nodes: int
@@ -54,12 +61,14 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         batch_size: int = 32,
         num_workers: int = 0,
         pin_memory: bool = True,
+        prefetch_factor: int = 4,
         seed: int = 42,
     ) -> None:
         super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.prefetch_factor = prefetch_factor
         self.seed = seed
 
     # ------------------------------------------------------------------
@@ -89,10 +98,11 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         DataLoader
             Configured with ``self.batch_size``, ``self.num_workers``,
             ``self.pin_memory``, and ``persistent_workers`` when workers
-            are present.
+            are present. ``prefetch_factor`` only forwarded when workers
+            are spawned (PyTorch raises if you pass it with
+            ``num_workers == 0``).
         """
-        return DataLoader(
-            dataset,
+        kwargs: dict[str, Any] = dict(
             batch_size=self.batch_size,
             shuffle=shuffle,
             num_workers=self.num_workers,
@@ -100,6 +110,9 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
             persistent_workers=self.num_workers > 0,
             collate_fn=collate_fn,
         )
+        if self.num_workers > 0:
+            kwargs["prefetch_factor"] = self.prefetch_factor
+        return DataLoader(dataset, **kwargs)
 
     # ------------------------------------------------------------------
     # Abstract interface

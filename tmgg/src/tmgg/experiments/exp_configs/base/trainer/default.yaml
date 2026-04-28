@@ -10,7 +10,13 @@ max_epochs: -1                # Disable epoch-based termination
 # Hardware
 accelerator: "auto"
 devices: "auto"
-precision: 32
+# bf16-mixed by default: A100 native, ~2x speedup over fp32 with no
+# loss-scaling needed (bf16 keeps fp32's exponent range). Override to
+# ``32`` for byte-exact fp32 reproduction or environments without bf16
+# tensor cores; override to ``16-mixed`` for older GPUs that need fp16.
+# See ``analysis/digress-loss-check/vignac-repro-health-check/
+# speedup-options.md`` for the rationale.
+precision: bf16-mixed
 
 # Checkpointing
 enable_checkpointing: true

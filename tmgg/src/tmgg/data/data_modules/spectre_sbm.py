@@ -71,6 +71,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         batch_size: int = 12,
         num_workers: int = 0,
         pin_memory: bool = True,
+        prefetch_factor: int = 4,
         seed: int = 42,
         cache_dir: str | None = None,
         fixture_path: str | None = None,
@@ -87,6 +88,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
             batch_size=batch_size,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
             seed=seed,
         )
         # Parity #42 / D-11: safe upper bound on node count, exposed

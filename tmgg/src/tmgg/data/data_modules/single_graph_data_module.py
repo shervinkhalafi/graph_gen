@@ -112,6 +112,7 @@ class SingleGraphDataModule(BaseGraphDataModule):
         num_test_samples: int = 100,
         batch_size: int = 16,
         num_workers: int = 0,
+        prefetch_factor: int = 4,
         train_seed: int = 42,
         val_test_seed: int = 123,
         same_graph_all_splits: bool = False,
@@ -129,6 +130,7 @@ class SingleGraphDataModule(BaseGraphDataModule):
             batch_size=batch_size,
             num_workers=num_workers,
             pin_memory=True,
+            prefetch_factor=prefetch_factor,
             seed=train_seed,
         )
         self.save_hyperparameters()

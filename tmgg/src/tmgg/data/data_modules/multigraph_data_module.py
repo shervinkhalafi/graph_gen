@@ -143,12 +143,14 @@ class MultiGraphDataModule(BaseGraphDataModule):
         batch_size: int = 32,
         num_workers: int = 0,
         pin_memory: bool = True,
+        prefetch_factor: int = 4,
         seed: int = 42,
     ) -> None:
         super().__init__(
             batch_size=batch_size,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
             seed=seed,
         )
         self.graph_type = graph_type

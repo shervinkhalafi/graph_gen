@@ -296,7 +296,10 @@ def _is_training_complete(checkpoint_path: Path | None, max_steps: int) -> bool:
 def run_experiment(config: DictConfig) -> dict[str, Any]:
     # Set random seed and GPU matmul precision
     set_seed(config.seed)
-    configure_matmul_precision()
+    # Defaults to "high" (TF32 on Ampere+) but configurable via base_infra.
+    # Set to "highest" to disable TF32 for byte-exact fp32 reproducibility.
+    matmul_prec = str(config.get("matmul_precision", "high"))
+    configure_matmul_precision(matmul_prec)
 
     # Auto-generate run_id if not set
     if config.get("run_id") is None:

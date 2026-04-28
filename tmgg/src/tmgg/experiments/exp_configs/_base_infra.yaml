@@ -54,6 +54,21 @@ spectral_k: 4  # Number of top eigenvectors for subspace comparison
 # both local and cloud; Modal containers can override higher via CLI)
 num_workers: 4
 
+# Per-worker prefetch buffer depth for DataLoader. PyTorch's default is 2;
+# raising to 4 hides ~370 ms/step worth of data-prep latency at the cost of
+# a few extra batches buffered in worker memory. Has no effect when
+# ``num_workers == 0``. See ``analysis/digress-loss-check/
+# vignac-repro-health-check/speedup-options.md §A``. Set to ``2`` to revert
+# to PyTorch default.
+prefetch_factor: 4
+
+# float32 matmul precision for Ampere+ Tensor Cores. ``"high"`` enables TF32
+# for ~2x speedup on residual fp32 matmuls (those not under bf16-mixed
+# autocast) with minimal accuracy loss. ``"highest"`` disables TF32 for
+# byte-exact fp32 reproducibility. ``"medium"`` is bfloat16-flavoured and
+# generally not what you want here. See speedup-options.md §B.
+matmul_precision: "high"
+
 # Random seed for reproducibility
 seed: 42
 

@@ -18,6 +18,7 @@ _target_: tmgg.data.data_modules.spectre_sbm.SpectreSBMDataModule
 batch_size: 12            # Upstream DiGress SBM batch size
 num_workers: ${num_workers}
 pin_memory: true
+prefetch_factor: ${prefetch_factor}
 seed: ${seed}
 
 # Optional: pre-downloaded fixture path. When null the datamodule

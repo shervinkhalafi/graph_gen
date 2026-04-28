@@ -41,6 +41,7 @@ class GraphDataModule(MultiGraphDataModule):
         batch_size: int = 100,
         num_workers: int = 4,
         pin_memory: bool = True,
+        prefetch_factor: int = 4,
         train_ratio: float = 0.6,
         val_ratio: float = 0.2,
         seed: int = 42,
@@ -111,6 +112,7 @@ class GraphDataModule(MultiGraphDataModule):
             batch_size=batch_size,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
             seed=seed,
         )
         self.num_nodes_max_static = (
