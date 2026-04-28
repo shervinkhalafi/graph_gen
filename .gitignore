@@ -9,3 +9,7 @@ outputs/*
 *.pyd
 secrets.json
 typings/
+
+# External upstream snapshot and worktrees of this repo
+digress-upstream-readonly/
+merge-main/
