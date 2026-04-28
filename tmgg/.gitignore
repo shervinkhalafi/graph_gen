@@ -36,3 +36,24 @@ src/tmgg/evaluation/orca/orca
 # Staging area for the 2026-04-18 cruft review — files pending user-approved
 # deletion after verification. Kept on disk, out of the index.
 to_delete/
+
+# Local agent / IDE state
+.claude/
+.codex
+.local-storage/
+
+# Working notes, pickup docs, internal review reports — kept on disk only
+docs/superpowers/
+docs/reports/
+pickup-*.md
+next_steps.md
+
+# Reference paper PDF (source lives elsewhere)
+_NeurIPS_2026__Understanding_Graph_Denoising.pdf
+
+# Analysis scratch — heavy run dumps and prose audits kept local;
+# only validate-gdpo-sbm/ code is committable.
+analysis/digress-loss-check/*
+!analysis/digress-loss-check/validate-gdpo-sbm/
+analysis/digress-loss-check/validate-gdpo-sbm/outputs/
+analysis/digress-loss-check/validate-gdpo-sbm/__pycache__/
