@@ -190,12 +190,19 @@ class NoiseSchedule(nn.Module):
         """
         original_shape = t_int.shape
         flat = t_int.reshape(-1).long()
-        lo, hi = int(flat.min().item()), int(flat.max().item())
-        if lo < 0 or hi > self._timesteps:
-            raise ValueError(
-                f"Timestep indices must be in [0, {self._timesteps}], "
-                f"got values in [{lo}, {hi}]"
-            )
+        # Range-check sanity assert. ``_resolve_index`` is hit 4× per
+        # training step, and each ``.item()`` syncs the GPU stream.
+        # Guarded by ``__debug__`` so production runs (Python -O /
+        # PYTHONOPTIMIZE=1) skip the four syncs. Indices come from
+        # ``torch.randint(0, T+1, ...)`` upstream, so the range is
+        # mathematically guaranteed; this catches caller bugs only.
+        if __debug__:
+            lo, hi = int(flat.min().item()), int(flat.max().item())
+            if lo < 0 or hi > self._timesteps:
+                raise ValueError(
+                    f"Timestep indices must be in [0, {self._timesteps}], "
+                    f"got values in [{lo}, {hi}]"
+                )
         return flat, original_shape
 
     def get_beta(

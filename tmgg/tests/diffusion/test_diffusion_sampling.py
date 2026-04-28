@@ -89,6 +89,14 @@ class TestSampleFromUnnormalisedPosterior:
         assert int(sampled.min().item()) >= 0
         assert int(sampled.max().item()) < k
 
+    @pytest.mark.skipif(
+        not __debug__,
+        reason=(
+            "Non-negativity check is __debug__-guarded so production runs "
+            "(PYTHONOPTIMIZE=1) skip the per-step bool(.all()) sync; see "
+            "docs/reports/2026-04-28-sync-review/."
+        ),
+    )
     def test_negative_input_raises(self) -> None:
         """Negative probability mass surfaces as a clear ValueError."""
         unnorm = torch.tensor([[[0.5, -0.1, 0.6]]])
@@ -204,6 +212,14 @@ class TestComputePosteriorDistributionMaskAware:
 
         torch.testing.assert_close(out, expected)
 
+    @pytest.mark.skipif(
+        not __debug__,
+        reason=(
+            "Degenerate-denominator assert is __debug__-guarded so "
+            "production runs (PYTHONOPTIMIZE=1) skip the bool(.all()) sync; "
+            "see docs/reports/2026-04-28-sync-review/."
+        ),
+    )
     def test_zero_denom_at_valid_position_raises(self) -> None:
         """Construct a degenerate valid-position scenario; guard asserts loudly.
 

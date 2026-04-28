@@ -101,6 +101,62 @@ class TestGenerateRunId:
         result = generate_run_id(config)
         assert result == "my_custom_id"
 
+    def test_force_fresh_appends_timestamp_suffix(self):
+        """``force_fresh=True`` without explicit run_id appends a UTC timestamp.
+
+        Without this suffix, ``force_fresh`` would only bypass the
+        Lightning checkpoint resume but still write into the same
+        directory (``outputs/<exp>/<deterministic_id>/``) as a prior
+        run with identical hyperparams, risking checkpoint clobbering.
+        """
+        config = OmegaConf.create(
+            {
+                "experiment_name": "exp",
+                "model": {"_target_": "tmgg.models.Foo"},
+                "learning_rate": 1e-3,
+                "seed": 1,
+                "force_fresh": True,
+            }
+        )
+        result = generate_run_id(config)
+        # Base parts still present
+        assert result.startswith("exp_Foo_lr1e-3_s1_fresh_")
+        # Timestamp suffix is 15 chars: YYYYmmddTHHMMSS
+        suffix = result.split("_fresh_", 1)[1]
+        assert len(suffix) == 15
+        assert "T" in suffix
+
+    def test_force_fresh_does_not_override_explicit_run_id(self):
+        """An explicit run_id wins over ``force_fresh``'s auto-suffix.
+
+        ``force_fresh=True`` only fires when ``run_id`` is unset; an
+        explicit override takes precedence so users who pass
+        ``+run_id=...`` (e.g. via the panel runner) get exactly that id.
+        """
+        config = OmegaConf.create(
+            {
+                "run_id": "explicit_id",
+                "force_fresh": True,
+                "seed": 1,
+            }
+        )
+        result = generate_run_id(config)
+        assert result == "explicit_id"
+
+    def test_force_fresh_false_no_suffix(self):
+        """``force_fresh=False`` (default) leaves the deterministic id alone."""
+        config = OmegaConf.create(
+            {
+                "experiment_name": "exp",
+                "model": {"_target_": "tmgg.models.Foo"},
+                "seed": 1,
+                "force_fresh": False,
+            }
+        )
+        result = generate_run_id(config)
+        assert "_fresh_" not in result
+        assert result == "exp_Foo_s1"
+
 
 class TestCheckWandbRunExists:
     """Tests for check_wandb_run_exists().

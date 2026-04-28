@@ -18,6 +18,12 @@ set -euo pipefail
 : "${SEED:=1}"
 : "${WANDB_ENTITY:=graph_denoise_team}"
 : "${WANDB_PROJECT:=discrete-diffusion}"
+# MODAL_DEBUG=0 (default) → container sets PYTHONOPTIMIZE=1 inside the
+# training subprocess, stripping ``assert`` and ``if __debug__:`` blocks
+# from the hot path (~50 host-side syncs/step removed; see
+# docs/reports/2026-04-28-sync-review/99-synthesis.md).
+# MODAL_DEBUG=1 → asserts active, for numerical investigation only.
+: "${MODAL_DEBUG:=0}"
 : "${MPLCONFIGDIR:=${TMPDIR:-/tmp}/tmgg-mpl-cache}"
 
 mkdir -p "${MPLCONFIGDIR}"
@@ -36,6 +42,12 @@ if [[ "${DEPLOY_FIRST}" == "1" ]]; then
   run_prefixed mise run modal-deploy
 fi
 
+if [[ "${MODAL_DEBUG}" == "1" ]]; then
+  modal_debug_override=true
+else
+  modal_debug_override=false
+fi
+
 typeset -a cmd
 cmd=(
   uv
@@ -45,6 +57,7 @@ cmd=(
   tmgg-discrete-gen
   models/discrete@model=discrete_sbm_official
   +data=spectre_sbm
+  modal_debug="${modal_debug_override}"
   # The base config carries inline synthetic-only keys (``graph_type``,
   # ``num_nodes``, ``num_graphs``, ``train_ratio``, ``val_ratio``,
   # ``graph_config``). They are absorbed by

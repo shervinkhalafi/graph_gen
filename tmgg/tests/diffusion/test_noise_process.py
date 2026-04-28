@@ -1150,6 +1150,14 @@ class TestNoisedBatchContract:
         )
         torch.testing.assert_close(out.alpha_s_bar[1], expected_t_five)
 
+    @pytest.mark.skipif(
+        not __debug__,
+        reason=(
+            "t=0 warning emission is __debug__-guarded so production runs "
+            "(PYTHONOPTIMIZE=1) skip the per-step bool(.any()) sync; see "
+            "docs/reports/2026-04-28-sync-review/."
+        ),
+    )
     def test_build_noised_batch_t_zero_emits_warning(
         self,
         cosine_schedule: NoiseSchedule,
@@ -1168,6 +1176,14 @@ class TestNoisedBatchContract:
         with pytest.warns(RuntimeWarning, match=r"alpha_bar\[T\]"):
             proc.forward_sample(categorical_graph_data, t)
 
+    @pytest.mark.skipif(
+        not __debug__,
+        reason=(
+            "FAIL_STRICTLY raise sits inside the t=0 __debug__-guarded "
+            "branch so production runs (PYTHONOPTIMIZE=1) skip both; see "
+            "docs/reports/2026-04-28-sync-review/."
+        ),
+    )
     def test_build_noised_batch_t_zero_fail_strictly_raises(
         self,
         cosine_schedule: NoiseSchedule,

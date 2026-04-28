@@ -57,6 +57,14 @@ class TestGraphDataMask:
         result = data.mask()
         assert result is not data
 
+    @pytest.mark.skipif(
+        not __debug__,
+        reason=(
+            "Symmetry assert is __debug__-guarded so production runs "
+            "(PYTHONOPTIMIZE=1) skip the per-step bool(allclose) sync; "
+            "see docs/reports/2026-04-28-sync-review/."
+        ),
+    )
     def test_asymmetric_edges_raise(self) -> None:
         """Asymmetric E triggers AssertionError after masking."""
         bs, n, dx, de = 1, 4, 3, 2

@@ -33,6 +33,12 @@ set -euo pipefail
 : "${GPU_TIER:=standard}"
 : "${WANDB_ENTITY:=graph_denoise_team}"
 : "${WANDB_PROJECT:=digress-arch-panel}"
+# MODAL_DEBUG=0 (default) → container sets PYTHONOPTIMIZE=1 inside the
+# training subprocess, stripping ``assert`` and ``if __debug__:`` blocks
+# from the hot path (~50 host-side syncs/step removed; see
+# docs/reports/2026-04-28-sync-review/99-synthesis.md).
+# MODAL_DEBUG=1 → asserts active, for numerical investigation only.
+: "${MODAL_DEBUG:=0}"
 : "${MPLCONFIGDIR:=${TMPDIR:-/tmp}/tmgg-mpl-cache}"
 
 mkdir -p "${MPLCONFIGDIR}"
@@ -57,6 +63,12 @@ fi
 # CSV versions, or test_results.json. Override via ``PANEL_TAG=<name>``
 # (e.g. ``PANEL_TAG=no-xf`` for a no-extra-features ablation).
 : "${PANEL_TAG:=$(date -u +%Y%m%dT%H%M%SZ)}"
+
+if [[ "${MODAL_DEBUG}" == "1" ]]; then
+  modal_debug_override=true
+else
+  modal_debug_override=false
+fi
 
 print -r -- "Panel launch tag: ${PANEL_TAG}"
 
@@ -92,6 +104,7 @@ for entry in "${panel[@]}"; do
     "models/discrete@model=${override}"
     +data=spectre_sbm
     "+run_id=${run_id}"
+    modal_debug="${modal_debug_override}"
     seed="${seed}"
     trainer.max_steps=2000
     trainer.val_check_interval=500

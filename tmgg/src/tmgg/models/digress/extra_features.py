@@ -446,17 +446,25 @@ class KNodeCycles:
         """
         d, _k1, k2, k3, k4, k5, k6 = self._compute_powers(adj_matrix)
 
+        # Cycle-count non-negativity asserts. ``k_x >= -0.1`` allows for
+        # numerical noise from float32 matmuls (upstream DiGress uses the
+        # same -0.1 floor). Guarded by ``__debug__`` so production runs
+        # (Python -O / PYTHONOPTIMIZE=1) skip the four bool(.all()) syncs.
         k3x, k3y = self._k3_cycle(k3)
-        assert (k3x >= -0.1).all()
+        if __debug__:
+            assert (k3x >= -0.1).all()
 
         k4x, k4y = self._k4_cycle(adj_matrix, d, k4)
-        assert (k4x >= -0.1).all()
+        if __debug__:
+            assert (k4x >= -0.1).all()
 
         k5x, k5y = self._k5_cycle(adj_matrix, d, k3, k5)
-        assert (k5x >= -0.1).all(), k5x
+        if __debug__:
+            assert (k5x >= -0.1).all(), k5x
 
         _, k6y = self._k6_cycle(adj_matrix, k2, k3, k4, k6)
-        assert (k6y >= -0.1).all()
+        if __debug__:
+            assert (k6y >= -0.1).all()
 
         kcyclesx = torch.cat([k3x, k4x, k5x], dim=-1)
         kcyclesy = torch.cat([k3y, k4y, k5y, k6y], dim=-1)

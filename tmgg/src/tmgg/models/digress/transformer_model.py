@@ -23,10 +23,19 @@ from .layers import Etoy, Xtoy
 
 
 def _assert_correctly_masked(variable: torch.Tensor, node_mask: torch.Tensor) -> None:
-    """Verify that masked positions are near-zero."""
-    max_val = (variable * (1 - node_mask.long())).abs().max().item()
-    if not max_val < 1e-4:
-        raise AssertionError("Variables not masked properly.")
+    """Verify that masked positions are near-zero.
+
+    The body fires 32× per training step (4 call sites × 8 transformer
+    layers) and each ``.item()`` syncs the GPU stream. Wrapped in
+    ``if __debug__:`` so production runs (Python -O / PYTHONOPTIMIZE=1)
+    elide the entire check at bytecode-compile time, removing the largest
+    sync source in the model body. See
+    ``docs/reports/2026-04-28-sync-review/04-transformer_forward.md``.
+    """
+    if __debug__:
+        max_val = (variable * (1 - node_mask.long())).abs().max().item()
+        if not max_val < 1e-4:
+            raise AssertionError("Variables not masked properly.")
 
 
 class XEyTransformerLayer(nn.Module):

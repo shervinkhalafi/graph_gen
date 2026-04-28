@@ -16,6 +16,7 @@ subclassed when a different data representation is needed.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, override
 
 import numpy as np
@@ -53,31 +54,123 @@ def _adjacencies_to_pyg(adjs: np.ndarray) -> list[Data]:
     return result
 
 
-def _collate_pyg_to_graphdata(data_list: list[Data]) -> GraphData:
-    """Collate PyG Data objects into a dense GraphData batch."""
-    from typing import cast
+@dataclass(frozen=True)
+class GraphDataCollator:
+    """Hot-path collator producing dense ``GraphData`` batches.
 
-    from torch_geometric.data import Batch
-    from torch_geometric.data.data import BaseData
+    Wired into every ``train_dataloader`` / ``val_dataloader`` /
+    ``test_dataloader`` across all datamodules. Fires once per batch on
+    the worker side, returns the dense representation the model + noise
+    process + loss all consume:
 
-    batch = Batch.from_data_list(cast(list[BaseData], data_list))
-    return GraphData.from_pyg_batch(batch)
+    - ``GraphData.E_class`` — one-hot edge tensor ``(bs, n, n, 2)``
+      ``[no-edge, edge]``.
+    - ``GraphData.node_mask`` — ``(bs, n)`` bool, ``True`` on real
+      nodes and ``False`` on padded positions.
+    - ``GraphData.X_class`` — ``None`` for structure-only inputs (the
+      current SBM path); populated by datamodules that carry node
+      categorical labels.
 
+    The dense view exists because the GraphTransformer attends over
+    every ``(i, j)`` edge token; an ``(n, n)`` representation maps
+    one-to-one onto the model's attention grid. Upstream DiGress uses
+    the same dense representation for the same reason.
 
-def _collate_pyg_raw(data_list: list[Data]):
-    """Collate PyG Data objects into a raw PyG Batch (no densification).
+    Pickles cleanly across multi-worker DataLoader subprocesses
+    (module-level ``frozen=True`` dataclass with primitive fields).
 
-    Used by ``train_dataloader_raw_pyg`` to expose the sparse PyG view
-    that sits one layer below the dense ``GraphData`` collator. The
-    upstream-parity edge / node count helpers in
-    :mod:`tmgg.data.utils.edge_counts` consume the result directly.
+    Parameters
+    ----------
+    n_max_static
+        Optional static node-count ceiling. When set, the collator
+        pads ``(bs, n, n)`` adjacency and downstream tensors to this
+        ceiling so every batch emerges at the same shape (precondition
+        for ``torch.compile`` / ``cuda.graph`` capture downstream).
+        When ``None`` (default) ``n_max`` is the largest graph in the
+        current batch — legacy variable-shape behaviour. ``node_mask``
+        zeros padded positions either way, so numerics on real
+        positions are bit-identical between the two modes. See
+        ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
+        for the design rationale and the per-step compute tradeoff.
+
+    See Also
+    --------
+    RawPyGCollator
+        Sparse counterpart used once at training start by the noise
+        process's empirical-marginals estimator. Different consumer,
+        different representation, intentionally not unified — see that
+        class's docstring for the parity-port reasoning.
     """
-    from typing import cast
 
-    from torch_geometric.data import Batch
-    from torch_geometric.data.data import BaseData
+    n_max_static: int | None = None
 
-    return Batch.from_data_list(cast(list[BaseData], data_list))
+    def __call__(self, data_list: list[Data]) -> GraphData:
+        from typing import cast
+
+        from torch_geometric.data import Batch
+        from torch_geometric.data.data import BaseData
+
+        batch = Batch.from_data_list(cast(list[BaseData], data_list))
+        return GraphData.from_pyg_batch(batch, n_max_static=self.n_max_static)
+
+
+@dataclass(frozen=True)
+class RawPyGCollator:
+    """Preprocessing-pass collator returning the sparse PyG ``Batch``.
+
+    Off the hot training path. Wired into ``train_dataloader_raw_pyg``
+    on every datamodule and consumed exactly once per run before
+    training starts, by the noise process's empirical-stationary-
+    marginals estimator (:meth:`NoiseProcess.initialize_from_data`,
+    ``noise_process.py:1089``). That method walks the training set
+    once, summing per-class node and edge counts via the sparse
+    helpers in :mod:`tmgg.data.utils.edge_counts`, then sets the
+    noise process's limit distribution to the empirical π.
+
+    Why sparse rather than dense:
+
+    - The π estimator counts entries in the explicit edge list. The
+      densified ``E_class`` would force it to deduce edges from
+      one-hot indicators, with a per-position lookup overhead and an
+      ambiguous treatment of padded positions.
+    - Upstream parity: this is a direct port of DiGress's
+      ``AbstractDatasetInfos.edge_counts`` / ``node_types``
+      (``digress-upstream-readonly/src/datasets/abstract_dataset.py:34-72``),
+      which operates on the sparse representation. Mirroring the
+      shape of computation makes parity audits tractable.
+    - When :class:`GraphDataCollator` runs in static-pad mode
+      (``n_max_static=200`` on SPECTRE), padded zero-edges would
+      pollute the empirical edge histogram if the estimator went
+      through the dense view. The sparse view is naturally
+      pad-invariant.
+
+    Two call sites today:
+
+    - ``DiffusionModule.setup`` (``diffusion_module.py:525``) — fires
+      once per fit cycle when the noise process needs data init.
+    - ``modal/_functions.py:122`` — the Modal config-preflight
+      subprocess, which sanity-checks that init succeeds inside the
+      container before launching the real run.
+
+    Stateless today; kept as a ``frozen=True`` dataclass so every
+    datamodule's dataloader-construction site uses a uniform
+    ``collate_fn=SomeCollator()`` idiom rather than a function-or-
+    instance mix. Future state (e.g. a "skip empty batches" parity
+    flag) can be added as fields without changing call sites.
+
+    See Also
+    --------
+    GraphDataCollator
+        Dense counterpart used on the hot training path.
+    """
+
+    def __call__(self, data_list: list[Data]):
+        from typing import cast
+
+        from torch_geometric.data import Batch
+        from torch_geometric.data.data import BaseData
+
+        return Batch.from_data_list(cast(list[BaseData], data_list))
 
 
 class _ListDataset(Dataset[Data]):
@@ -238,7 +331,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._train_data),
             shuffle=True,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -249,7 +342,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._val_data),
             shuffle=False,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -260,7 +353,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._test_data),
             shuffle=False,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -277,5 +370,5 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._train_data),
             shuffle=False,
-            collate_fn=_collate_pyg_raw,
+            collate_fn=RawPyGCollator(),
         )

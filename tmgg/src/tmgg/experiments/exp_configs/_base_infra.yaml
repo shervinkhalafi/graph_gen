@@ -69,6 +69,22 @@ prefetch_factor: 4
 # generally not what you want here. See speedup-options.md §B.
 matmul_precision: "high"
 
+# Debug mode for Modal-launched experiments.
+#
+# Off by default. When ``false`` (production), the Modal container launches
+# the training subprocess with ``PYTHONOPTIMIZE=1``, which strips ``assert``
+# statements and the contents of ``if __debug__:`` blocks at bytecode-compile
+# time. Stripping removes ~50 host-side ``bool(Tensor)`` syncs/step from the
+# hot path (defensive asserts in extras, mask-symmetry checks, masked-softmax
+# guards, etc.) that are otherwise CUDA-graph / ``torch.compile`` blockers.
+# See ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` for the full
+# inventory.
+#
+# Set ``modal_debug=true`` (or ``MODAL_DEBUG=1`` in the wrapper env) to keep
+# asserts active when investigating numerical issues on Modal. Has no effect
+# on local runs — those follow the parent shell's ``PYTHONOPTIMIZE``.
+modal_debug: false
+
 # Random seed for reproducibility
 seed: 42
 

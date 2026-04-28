@@ -175,6 +175,15 @@ def generate_run_id(config: DictConfig) -> str:
     key hyperparameters, and seed. Small float values use scientific notation
     (e.g. ``lr1e-4``), matching the convention of the former ``run_id_template``.
 
+    When ``force_fresh=true`` is set without an explicit ``run_id``
+    override, the auto-generated id gets a ``_fresh_<UTC-timestamp>``
+    suffix so the output directory (computed downstream as
+    ``outputs/<experiment_name>/<run_id>/``) is guaranteed unique. Without
+    this suffix, ``force_fresh`` would only bypass the Lightning
+    checkpoint resume but would still write into the same directory as a
+    prior run with identical hyperparams, risking checkpoint clobbering
+    in ``ModelCheckpoint``'s ``last.ckpt`` slot.
+
     Parameters
     ----------
     config : DictConfig
@@ -183,7 +192,9 @@ def generate_run_id(config: DictConfig) -> str:
     Returns
     -------
     str
-        Run identifier like ``stage1_SpectralArch_lr1e-4_wd1e-2_k8_s1``.
+        Run identifier like ``stage1_SpectralArch_lr1e-4_wd1e-2_k8_s1`` or,
+        under ``force_fresh=true``, the same id with a
+        ``_fresh_<YYYYmmddTHHMMSS>`` suffix.
     """
     existing = config.get("run_id")
     if existing is not None:
@@ -222,7 +233,15 @@ def generate_run_id(config: DictConfig) -> str:
     if seed is not None:
         parts.append(f"s{seed}")
 
-    return "_".join(parts)
+    base = "_".join(parts)
+
+    if config.get("force_fresh", False):
+        from datetime import UTC, datetime
+
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        return f"{base}_fresh_{stamp}"
+
+    return base
 
 
 def check_wandb_run_exists(entity: str, project: str, run_name: str) -> bool:

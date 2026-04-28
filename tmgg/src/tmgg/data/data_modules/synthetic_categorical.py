@@ -33,7 +33,7 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
     ``_generate_adjacencies()`` from ``MultiGraphDataModule``, converts
     each to a PyG ``Data`` object, and splits into train/val/test sets.
     DataLoaders collate into dense ``GraphData`` batches via the parent's
-    ``_collate_pyg_to_graphdata`` collation.
+    :class:`~tmgg.data.data_modules.multigraph_data_module.GraphDataCollator`.
 
     The categorical representation uses ``dx=2`` (node present / absent)
     and ``de=2`` (edge present / absent), matching the DiGress convention

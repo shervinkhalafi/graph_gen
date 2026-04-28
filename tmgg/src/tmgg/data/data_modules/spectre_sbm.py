@@ -8,8 +8,15 @@ fixed in both graph count (200) and per-graph node count (variable in
 
 Downstream wiring is identical to the synthetic path: every dataloader
 yields dense :class:`~tmgg.data.datasets.graph_types.GraphData` batches
-via the shared :func:`_collate_pyg_to_graphdata` collator, so
-``DiffusionModule`` picks this datamodule up unchanged.
+via :class:`~tmgg.data.data_modules.multigraph_data_module.GraphDataCollator`,
+so ``DiffusionModule`` picks this datamodule up unchanged.
+
+Static-pad opt-in: set ``pad_to_static_n_max=True`` on the datamodule
+to have the collator pad every batch to ``num_nodes_max_static`` (200
+by default for the SPECTRE fixture). This unlocks ``torch.compile``
+and ``cuda.graph`` capture downstream by removing the variable
+per-batch ``n_max``. Off by default; see
+``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6.
 
 See :mod:`tmgg.data.datasets.spectre_sbm` for the load/split helpers
 and ``docs/reports/2026-04-15-upstream-digress-parity-audit.md`` for
@@ -26,8 +33,8 @@ from torch_geometric.data import Data
 
 from tmgg.data.data_modules.base_data_module import BaseGraphDataModule
 from tmgg.data.data_modules.multigraph_data_module import (
-    _collate_pyg_raw,
-    _collate_pyg_to_graphdata,
+    GraphDataCollator,
+    RawPyGCollator,
     _ListDataset,
 )
 from tmgg.data.datasets.graph_types import GraphData
@@ -76,6 +83,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         cache_dir: str | None = None,
         fixture_path: str | None = None,
         num_nodes_max_static: int = 200,
+        pad_to_static_n_max: bool = False,
         **_metadata: object,
     ) -> None:
         # ``**_metadata`` swallows informational keys (notably
@@ -96,6 +104,14 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         # ``max_n_nodes``. Default 200 covers the SPECTRE SBM fixture's
         # observed maximum of 187.
         self.num_nodes_max_static = num_nodes_max_static
+        # Off by default: when ``True``, the collator pads every batch
+        # to ``num_nodes_max_static`` so downstream tensors emerge at a
+        # single fixed shape, unlocking ``torch.compile`` and
+        # ``cuda.graph`` capture. Costs extra padded compute on
+        # average-sized batches; only flip on once the Tier 3 capture
+        # work is ready to use the shape stability. See
+        # ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6.
+        self.pad_to_static_n_max = pad_to_static_n_max
         self._cache_dir: Path | None = Path(cache_dir) if cache_dir else None
         self._fixture_path: Path | None = Path(fixture_path) if fixture_path else None
 
@@ -149,6 +165,12 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         ]
         self.num_nodes = int(max(train_val_node_counts))
 
+    def _dense_collator(self) -> GraphDataCollator:
+        """Build the dense GraphData collator with the configured pad mode."""
+        return GraphDataCollator(
+            n_max_static=self.num_nodes_max_static if self.pad_to_static_n_max else None
+        )
+
     @override
     def train_dataloader(self) -> DataLoader[GraphData]:
         if self._train_data is None:
@@ -156,7 +178,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._train_data),
             shuffle=True,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=self._dense_collator(),
         )
 
     @override
@@ -166,7 +188,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._val_data),
             shuffle=False,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=self._dense_collator(),
         )
 
     @override
@@ -176,7 +198,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._test_data),
             shuffle=False,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=self._dense_collator(),
         )
 
     @override
@@ -187,7 +209,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._train_data),
             shuffle=False,
-            collate_fn=_collate_pyg_raw,
+            collate_fn=RawPyGCollator(),
         )
 
     @override

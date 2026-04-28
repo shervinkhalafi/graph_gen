@@ -17,9 +17,9 @@ from tmgg.data.datasets.graph_types import GraphData
 from .base_data_module import BaseGraphDataModule
 from .graph_generation import generate_single_graph
 from .multigraph_data_module import (
+    GraphDataCollator,
+    RawPyGCollator,
     _adjacencies_to_pyg,
-    _collate_pyg_raw,
-    _collate_pyg_to_graphdata,
     _ListDataset,
 )
 
@@ -227,7 +227,7 @@ class SingleGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._train_data),
             shuffle=True,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -238,7 +238,7 @@ class SingleGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._val_data),
             shuffle=False,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -249,7 +249,7 @@ class SingleGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._test_data),
             shuffle=False,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -260,5 +260,5 @@ class SingleGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._train_data),
             shuffle=False,
-            collate_fn=_collate_pyg_raw,
+            collate_fn=RawPyGCollator(),
         )
