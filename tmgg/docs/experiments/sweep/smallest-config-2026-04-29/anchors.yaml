@@ -1,0 +1,75 @@
+# Pinned dataset thresholds for the smallest-config sweep.
+# Provenance lives next to each metric. Edit ONLY when a paper number
+# is found wrong; re-run check_threshold over rounds.jsonl on edit.
+#
+# Reconciliation note (2026-04-29):
+#   The DiGress paper (Vignac et al. 2022, ICLR 2023, arXiv:2209.14734v3)
+#   Table 1 reports SBM "Deg/Clus/Orb" as MMD-ratios r = MMD(gen,test)^2 /
+#   MMD(train,test)^2 -- not raw MMD. Quote from Appendix F.1: "We do not
+#   report raw numbers but ratios computed as follows: r = MMD(generated,
+#   test)^2 / MMD(training, test)^2". The DiGress paper's own SBM row is
+#   "DiGress 1.6 1.5 1.7 74%". HiGen Table 1 reports raw MMD values
+#   (degree=0.0013, clustering=0.0498, orbit=0.0433), which match the
+#   units our in-house GraphGen evaluation pipeline emits. We therefore
+#   anchor on HiGen's raw MMD numbers (paper > HiGen for raw values is
+#   not applicable -- the paper does not report raw values for SBM), and
+#   keep the DiGress-paper VUN/ratio as a secondary cross-check below.
+
+spectre_sbm:
+  degree_mmd:
+    target: 0.0013
+    tolerance_x: 1.5
+    direction: smaller_is_better
+    source: "HiGen Table 1 (raw MMD). DiGress paper (arXiv:2209.14734v3 Table 1) reports the MMD-ratio r=1.6 not raw MMD; ratio not directly comparable to in-house pipeline outputs."
+    source_quote: "We do not report raw numbers but ratios computed as follows: r = MMD(generated, test)^2 / MMD(training, test)^2"
+    note: "Paper reports ratio (1.6); HiGen reports raw MMD (0.0013). We anchor on raw MMD because that is what tmgg's evaluation emits."
+  clustering_mmd:
+    target: 0.0498
+    tolerance_x: 1.5
+    direction: smaller_is_better
+    source: "HiGen Table 1 (raw MMD). DiGress paper Table 1 reports MMD-ratio r=1.5 not raw MMD."
+    note: "Paper reports ratio (1.5); HiGen reports raw MMD (0.0498). We anchor on raw MMD."
+  orbit_mmd:
+    target: 0.0433
+    tolerance_x: 1.5
+    direction: smaller_is_better
+    source: "HiGen Table 1 (raw MMD). DiGress paper Table 1 reports MMD-ratio r=1.7 not raw MMD."
+    note: "Paper reports ratio (1.7); HiGen reports raw MMD (0.0433). We anchor on raw MMD."
+  spectral_mmd:
+    target: 0.01
+    tolerance_x: 1.0
+    direction: smaller_is_better
+    source: "Conservative ceiling. DiGress paper Table 1 omits spectral_mmd entirely. HiGen Table 1 also omits DiGress's spectral_mmd. HiGen itself reports 0.0046 for SBM, so 0.01 is loose enough to absorb DiGress reproduction noise."
+    note: "Neither the DiGress paper nor HiGen's reproduction reports spectral_mmd for DiGress on SBM; ceiling is heuristic until Phase 1 step 1.3 anchor run pins it from in-house data."
+  sbm_accuracy:
+    target: 0.8
+    tolerance_x: 1.0
+    direction: larger_is_better
+    source: "Spec §3 default. DiGress paper Table 1 reports V.U.N. (valid+unique+novel SBM-distinguishable) of 74%; spec target 80% is the round-up of paper's reported 0.74."
+    source_quote: "Table 1: Unconditional generation on SBM and planar graphs. VUN: valid, unique & novel graphs. ... DiGress 1.6 1.5 1.7 74%"
+  modularity_q:
+    target: 0.3
+    tolerance_x: 1.0
+    direction: larger_is_better
+    source: "Spec §3 default; structural-quality continuous proxy for sbm_accuracy. Not reported by DiGress paper or HiGen."
+
+pyg_enzymes:
+  degree_mmd:
+    target: 0.004
+    tolerance_x: 1.5
+    direction: smaller_is_better
+    source: "HiGen Table (ENZYME row): DiGress 0.004. The DiGress paper does NOT evaluate on ENZYMES -- its general-graph experiments cover only SBM, planar, and Community-20. ENZYMES anchor is therefore HiGen-only."
+    note: "DiGress paper has no ENZYMES table; HiGen reproduction is the sole source for this anchor."
+  clustering_mmd:
+    target: 0.083
+    tolerance_x: 1.5
+    direction: smaller_is_better
+    source: "HiGen Table (ENZYME row): DiGress 0.083"
+    note: "DiGress paper has no ENZYMES table; HiGen reproduction is the sole source."
+  orbit_mmd:
+    target: 0.002
+    tolerance_x: 1.5
+    direction: smaller_is_better
+    source: "HiGen Table (ENZYME row): DiGress 0.002"
+    note: "DiGress paper has no ENZYMES table; HiGen reproduction is the sole source."
+  # spectral_mmd: pinned later by Phase 1 step 1.3 in-house anchor run (path D)
