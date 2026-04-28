@@ -569,21 +569,40 @@ def get_eigenvalues_features(eigenvalues: Tensor, k: int = 5) -> tuple[Tensor, T
     tuple[Tensor, Tensor]
         ``(n_connected_components, first_k_ev)`` with shapes ``(bs, 1)``
         and ``(bs, k)``.
+
+    Notes
+    -----
+    The eigenvalue tensor is unconditionally extended by ``k`` sentinel
+    slots (value ``2.0``, well above any normalised eigenvalue) before
+    the gather. Upstream DiGress conditionally extended only by
+    ``max(n_connected_components) + k - n`` slots, but reading the max
+    triggers a CUDA host-device sync at every training step. Since
+    ``n_connected_components`` is bounded above by ``n``, the unconditional
+    pad of width ``k`` is always sufficient — the gather still reads
+    only ``[n_components, ..., n_components + k - 1]`` per row, indices
+    that depend solely on ``n_connected_components`` and never address
+    positions beyond what we just guaranteed exist. Output is bitwise
+    identical to the conditional formulation.
     """
     ev = eigenvalues
     bs, n = ev.shape
     n_connected_components = (ev < 1e-5).sum(dim=-1)
-    assert (n_connected_components > 0).all(), (n_connected_components, ev)
+    if __debug__:
+        # Sanity check: a Laplacian always has at least one zero eigenvalue
+        # per connected component, plus one per padding row, so the count
+        # is strictly positive on any valid input. Guarded by ``__debug__``
+        # so production runs (Python -O) skip the bool(.all()) sync.
+        assert (n_connected_components > 0).all(), (n_connected_components, ev)
 
-    to_extend = int(n_connected_components.max().item()) + k - n
-    if to_extend > 0:
-        eigenvalues = torch.hstack(
-            (eigenvalues, 2 * torch.ones(bs, to_extend).type_as(eigenvalues))
-        )
-    indices = torch.arange(k).type_as(eigenvalues).long().unsqueeze(
+    # Always pad by k. Bounded sufficient (see Notes); removes the
+    # ``.item()``-driven host-device sync that fired every step.
+    eigenvalues_padded = torch.cat(
+        [eigenvalues, eigenvalues.new_full((bs, k), 2.0)], dim=1
+    )
+    indices = torch.arange(k, device=eigenvalues.device, dtype=torch.long).unsqueeze(
         0
     ) + n_connected_components.unsqueeze(1)
-    first_k_ev = torch.gather(eigenvalues, dim=1, index=indices)
+    first_k_ev = torch.gather(eigenvalues_padded, dim=1, index=indices)
     return n_connected_components.unsqueeze(-1), first_k_ev
 
 
@@ -622,17 +641,19 @@ def get_eigenvectors_features(
     mask = ~(first_ev == most_common.unsqueeze(1))
     not_lcc_indicator = (mask * node_mask).unsqueeze(-1).float()
 
-    # Eigenvectors for the first nonzero eigenvalues (Fiedler vector etc.)
-    to_extend = int(n_connected.max().item()) + k - n
-    if to_extend > 0:
-        vectors = torch.cat(
-            (vectors, torch.zeros(bs, n, to_extend).type_as(vectors)), dim=2
-        )
-    indices = torch.arange(k).type_as(vectors).long().unsqueeze(0).unsqueeze(
+    # Eigenvectors for the first nonzero eigenvalues (Fiedler vector etc.).
+    # Unconditional pad by k along the eigenvector axis (dim=2). Same
+    # rationale as `get_eigenvalues_features`: removes the host-device
+    # sync from `.item()`. Sentinel value here is 0.0 — never gets
+    # gathered when `n_connected + k <= n`, and when it does, it
+    # represents a degenerate "no eigenvector here" slot consistent
+    # with masking padding positions to 0 below.
+    vectors_padded = torch.cat([vectors, vectors.new_zeros(bs, n, k)], dim=2)
+    indices = torch.arange(k, device=vectors.device, dtype=torch.long).unsqueeze(
         0
-    ) + n_connected.unsqueeze(2)  # (bs, 1, k)
+    ).unsqueeze(0) + n_connected.unsqueeze(2)  # (bs, 1, k)
     indices = indices.expand(-1, n, -1)  # (bs, n, k)
-    first_k_ev = torch.gather(vectors, dim=2, index=indices)
+    first_k_ev = torch.gather(vectors_padded, dim=2, index=indices)
     first_k_ev = first_k_ev * node_mask.unsqueeze(2)
 
     return not_lcc_indicator, first_k_ev
