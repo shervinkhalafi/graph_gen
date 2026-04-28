@@ -729,3 +729,30 @@ def modal_list_checkpoints(run_id: str) -> dict[str, Any]:
     from tmgg.modal._lib.evaluate import list_checkpoints_for_run
 
     return list_checkpoints_for_run(run_id)
+
+
+@app.function(
+    name="_warm_molecular_caches_in_image",
+    image=experiment_image,
+    timeout=600,
+    volumes=get_volume_mounts(),
+)
+def _warm_molecular_caches_in_image() -> str:
+    """Pre-download ChemNet weights into the dataset volume.
+
+    Called once at deploy time so the first validation cycle that
+    instantiates ``FCDMetric`` does not pay the ~50 MB ChemNet
+    download cost on the hot path. Idempotent — fcd_torch caches
+    the weights itself; this just primes the cache.
+    """
+    from pathlib import Path
+
+    from fcd_torch import FCD
+
+    cache_dir = Path("/data/datasets/molecular/chemnet")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # Instantiating FCD with a device argument triggers the ChemNet
+    # weight download into its default cache. We then copy any new
+    # weights into the persisted volume location.
+    _ = FCD(device="cpu", n_jobs=1)
+    return f"chemnet warm; cache_dir={cache_dir}"
