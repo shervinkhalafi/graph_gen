@@ -1,0 +1,44 @@
+dataset: spectre_sbm
+source_csv: 2026-04-28-working-runs-analysis/modal_volume/discrete_sbm_vignac_repro/discrete_sbm_vignac_repro_DiffusionModule_lr1e-3_wd1e-4_s666/csv/discrete_sbm_vignac_repro/version_1/metrics.csv
+s_star: null
+s_star_status: nll-fallback-only
+s_star_fraction: 0.95
+fractions:
+- 0.9
+- 0.95
+- 0.99
+gen_val_sample_counts:
+  val/gen/sbm_accuracy: 3
+  val/gen/spectral_mmd: 3
+  val/gen/degree_mmd: 3
+  val/gen/clustering_mmd: 3
+  val/gen/orbit_mmd: 3
+per_metric: {}
+s_star_operational: 100000
+s_star_nll_upper_bound: null
+nll_fit_status: degenerate-fit-nll-too-noisy
+nll_per_metric:
+  val/epoch_NLL:
+    a: 3.779209040308702
+    tau: -47534.389158437196
+    c: -4182.283243401523
+    s_at_0.90: -109451.97588079527
+    s_at_0.95: -142400.30370560518
+    s_at_0.99: -218903.95176159052
+nll_sample_count: 46
+s_star_nll_caveat: "NLL-derived S* is an upper bound only.\nPer README docs/reports/2026-04-28-hp-tuning-and-knee-identification\n\
+  section 'Pitfall to design around': NLL plateaus do not always\ncorrespond to sample-quality\
+  \ plateaus in this regime \u2014 the model\ncan match marginal degree/spectrum statistics\
+  \ without recovering\nblock structure. Treat s_star_nll_upper_bound as a soft ceiling\n\
+  on training horizon; the structural-quality S* (gen-val/*) is\nwhat actually governs\
+  \ the sweep, and is generally smaller.\nReplace with a full gen-val/* fit once a\
+  \ v1-equivalent run with\neval_every_n_steps <= 10000 is available."
+sanity_check: "If s_star_nll_upper_bound > 1.5 * s_star_operational, escalate.\nEither\
+  \ the operational cap is too aggressive, or NLL is\nsaturating much later than the\
+  \ structural metrics \u2014 both\nwarrant a re-think before launching the sweep."
+insufficient_metrics:
+  val/gen/sbm_accuracy: '''need at least 8 finite points; got 3'''
+  val/gen/spectral_mmd: '''need at least 8 finite points; got 3'''
+  val/gen/degree_mmd: '''need at least 8 finite points; got 3'''
+  val/gen/clustering_mmd: '''need at least 8 finite points; got 3'''
+  val/gen/orbit_mmd: '''need at least 8 finite points; got 3'''
