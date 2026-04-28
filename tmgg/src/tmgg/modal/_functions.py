@@ -460,8 +460,11 @@ def _run_cli_impl(
     dict
         ``{"status": "completed"|"failed", "run_id": ..., ...}``
     """
+    import os
     import subprocess
     import tempfile
+
+    from omegaconf import OmegaConf
 
     from tmgg.modal._lib.confirmation import (
         DEFAULT_CONFIRMATION_PATH,
@@ -507,12 +510,29 @@ def _run_cli_impl(
     if overrides:
         cli_args.extend(overrides)
 
+    # Build subprocess env. Default: ``modal_debug=false`` → set
+    # ``PYTHONOPTIMIZE=1`` so the training process skips ``assert`` and
+    # ``if __debug__:`` blocks. This strips ~50 host-side ``bool(Tensor)``
+    # syncs/step from the hot path (extras, mask-symmetry checks,
+    # masked-softmax guards) per the 2026-04-28 sync review. Setting
+    # ``modal_debug=true`` keeps asserts active for numerical investigation.
+    cfg = OmegaConf.create(config_yaml)
+    modal_debug = bool(cfg.get("modal_debug", False))
+    cli_env = dict(os.environ)
+    if not modal_debug:
+        cli_env["PYTHONOPTIMIZE"] = "1"
+        print("[modal] modal_debug=false → PYTHONOPTIMIZE=1", flush=True)
+    else:
+        cli_env.pop("PYTHONOPTIMIZE", None)
+        print("[modal] modal_debug=true → asserts active", flush=True)
+
     process = subprocess.Popen(
         cli_args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=cli_env,
     )
     assert process.stdout is not None
 

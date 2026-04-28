@@ -22,6 +22,12 @@ set -euo pipefail
 : "${DRY_RUN:=0}"
 : "${GPU_TIER:=fast}"            # A100-40GB
 : "${PRECISION:=bf16-mixed}"     # set to 32 for byte-faithful fp32
+# MODAL_DEBUG=0 (default) → container sets PYTHONOPTIMIZE=1 inside the
+# training subprocess, stripping ``assert`` and ``if __debug__:`` blocks
+# from the hot path (~50 host-side syncs/step removed; see
+# docs/reports/2026-04-28-sync-review/99-synthesis.md).
+# MODAL_DEBUG=1 → asserts active, for numerical investigation only.
+: "${MODAL_DEBUG:=0}"
 : "${MPLCONFIGDIR:=${TMPDIR:-/tmp}/tmgg-mpl-cache}"
 
 mkdir -p "${MPLCONFIGDIR}"
@@ -40,11 +46,18 @@ if [[ "${DEPLOY_FIRST}" == "1" ]]; then
   run_prefixed mise run modal-deploy
 fi
 
+if [[ "${MODAL_DEBUG}" == "1" ]]; then
+  modal_debug_override=true
+else
+  modal_debug_override=false
+fi
+
 typeset -a cmd
 cmd=(
   uv run tmgg-modal run tmgg-discrete-gen
   +experiment=discrete_sbm_vignac_repro
   trainer.precision="${PRECISION}"
+  modal_debug="${modal_debug_override}"
   --gpu "${GPU_TIER}"
 )
 
