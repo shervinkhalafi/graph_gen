@@ -598,6 +598,15 @@ class DiffusionModule(BaseGraphModule):
         # logging steps.
         self._prev_grad_by_block: dict[str, torch.Tensor] | None = None
         self._prev_weights_snapshot: dict[str, torch.Tensor] | None = None
+        # Computed in ``on_before_optimizer_step`` (gradients alive), drained
+        # by ``on_train_batch_end`` (logger flush boundary). Keys are the
+        # final ``train/...`` metric names; values are scalar Tensors or
+        # Python floats. ``self.log`` is intentionally NOT called from
+        # ``on_before_optimizer_step`` because Lightning's per-epoch
+        # ``reset_results()`` wipes that hook's cache before
+        # ``log_every_n_steps`` reaches a flush boundary in our regime
+        # (~11 batches per epoch). See ``tests/training/test_optimizer_health.py``.
+        self._opt_health_payload: dict[str, torch.Tensor | float] | None = None
         # Marker set in ``on_before_optimizer_step`` so the trailing
         # ``on_train_batch_end`` knows to compute Δθ on this step.
         self._opt_health_pending: bool = False
@@ -1023,6 +1032,23 @@ class DiffusionModule(BaseGraphModule):
             # via ``_block_name`` to share the cadence + naming with
             # ``train/weight_norm/{block}``.
             self._log_update_to_weight(weight_norms)
+
+            # Drain the grad-derived payload that ``on_before_optimizer_step``
+            # stashed for this iter. Logging from this hook (post-step,
+            # iter aligned with the ``log_every_n_steps`` flush boundary)
+            # avoids the epoch-reset wipeout that drops calls made from
+            # ``on_before_optimizer_step``.
+            if self._opt_health_payload is not None:
+                for key, value in self._opt_health_payload.items():
+                    self.log(
+                        key,
+                        value,
+                        on_step=True,
+                        on_epoch=False,
+                        batch_size=self._cur_bs,
+                    )
+                self._opt_health_payload = None
+
             self._prev_weights_snapshot = None  # free
             self._opt_health_pending = False
 
@@ -1076,26 +1102,34 @@ class DiffusionModule(BaseGraphModule):
                 batch_size=self._cur_bs,
             )
 
-        if self.global_step % self.log_optimizer_health_every_n_steps == 0:
+        # Cadence: trigger so that the *next* hook in the same iteration
+        # (``on_train_batch_end``) sees ``global_step`` divisible by the
+        # cadence — i.e. fire here when ``global_step + 1`` is divisible.
+        # Lightning increments ``global_step`` between ``on_before_optimizer_step``
+        # and ``on_train_batch_end`` (the optimizer step runs in between).
+        # Our paired ``on_train_batch_end`` cadence is ``% N == 0``, so this
+        # one is ``(N) % N == 0`` after the step. This alignment matters
+        # because Lightning's ``log_every_n_steps`` flush boundary coincides
+        # with the cadence iter on the post-step side; logs written from
+        # ``on_before_optimizer_step`` at any other iter would be wiped by
+        # the next ``reset_results()`` (called on every epoch boundary,
+        # which fires every ~11 iters in our SBM regime). See bug repro
+        # at ``2026-04-28`` smoke-run analysis.
+        #
+        # Strategy: compute grad-derived stats here (gradients are alive),
+        # stash them in ``_opt_health_payload``, and let
+        # ``on_train_batch_end`` drain + ``self.log(...)`` them on the iter
+        # that *does* flush.
+        if (self.global_step + 1) % self.log_optimizer_health_every_n_steps == 0:
             block_norms = self._aggregate_grad_norms_by_block(norms)
+            grad_health = self._compute_grad_health_by_block(optimizer)
+            payload: dict[str, torch.Tensor | float] = {}
             for block_name, val in block_norms.items():
-                self.log(
-                    f"train/grad_norm/{block_name}",
-                    val,
-                    on_step=True,
-                    batch_size=self._cur_bs,
-                )
-
-            # Stage 2: cheap optimizer-health metrics. All on the same
-            # cadence as the per-block weight/grad norms; reuses
-            # ``_block_name`` for bucketing so the dashboard prefixes
-            # line up. Computed before ``optimizer.step()`` so we
-            # observe the gradient that's about to be applied.
-            self._log_grad_health_by_block(optimizer)
-            # Stash θ_before so the trailing ``on_train_batch_end`` can
-            # subtract it from the live weights to recover Δθ. Cloned
-            # detached so the autograd tape doesn't extend into the
-            # next step.
+                payload[f"train/grad_norm/{block_name}"] = val
+            payload.update(grad_health)
+            self._opt_health_payload = payload
+            # Stash θ_before so ``on_train_batch_end`` can subtract it
+            # from the live (post-step) weights to recover Δθ.
             self._prev_weights_snapshot = {
                 name: p.detach().clone()
                 for name, p in self.named_parameters()
@@ -1113,30 +1147,25 @@ class DiffusionModule(BaseGraphModule):
                     batch_size=self._cur_bs,
                 )
 
-    def _log_grad_health_by_block(self, optimizer: torch.optim.Optimizer) -> None:
+    def _compute_grad_health_by_block(
+        self, optimizer: torch.optim.Optimizer
+    ) -> dict[str, torch.Tensor | float]:
         """Per-block grad cosine, grad SNR, and global effective LR.
 
-        Walks ``self.named_parameters()`` once and accumulates the four
-        statistics needed to derive:
+        Returns a dict ``{"train/grad_snr/<block>": Tensor, ...}`` so
+        the caller (``on_before_optimizer_step``) can stash it for the
+        post-step ``on_train_batch_end`` hook to drain. ``self.log`` is
+        deliberately NOT called from here — see
+        ``_opt_health_payload`` rationale.
 
         * ``train/grad_snr/{block}`` — first/second-moment SNR of the
-          gradient elements in the block, ``mean(g)² / var(g)``. Low
-          SNR means noise dominates, high SNR means consistent
-          direction.
+          gradient elements in the block, ``mean(g)² / var(g)``.
         * ``train/grad_cosine/{block}`` — cosine of the current
           per-block flat gradient against the previous step's stored
-          flat gradient. Approaches 0 when training bounces in a
-          basin; stays near 1 when descending consistently.
-        * ``train/effective_lr`` — ``lr × ‖∇‖_total / ‖θ‖_total``,
-          a single scalar. Reads the live LR from the active
-          ``param_groups[0]`` so it reflects scheduler state, not the
-          configured base.
-
-        All accumulation stays on-device; one ``self.log`` call per
-        block per cadence step. Buffers for the previous-step gradient
-        are held in ``_prev_grad_by_block`` and live on the parameter
-        device.
+          flat gradient.
+        * ``train/effective_lr`` — ``lr × ‖∇‖_total / ‖θ‖_total``.
         """
+        out: dict[str, torch.Tensor | float] = {}
         grad_sq: dict[str, torch.Tensor] = {}
         grad_sum: dict[str, torch.Tensor] = {}
         grad_n: dict[str, int] = {}
@@ -1154,32 +1183,25 @@ class DiffusionModule(BaseGraphModule):
             flat_chunks.setdefault(block, []).append(g.flatten())
 
         if not grad_sq:
-            return
+            return out
 
         new_flat: dict[str, torch.Tensor] = {
             block: torch.cat(chunks).detach() for block, chunks in flat_chunks.items()
         }
 
-        # Grad SNR per block. ``mean²/var`` is undefined for n=1; the
-        # ``var.clamp(min=eps)`` guard yields a finite, large value
-        # there which is the right qualitative signal (constant grad ⇒
-        # high SNR).
+        # Grad SNR per block. ``var.clamp(min=eps)`` yields a finite,
+        # large value when the gradient is constant (which is the right
+        # qualitative signal: consistent direction → high SNR).
         for block, sq in grad_sq.items():
             n = grad_n[block]
             mean = grad_sum[block] / float(n)
             var = sq / float(n) - mean.pow(2)
             snr = mean.pow(2) / var.clamp(min=1e-12)
-            self.log(
-                f"train/grad_snr/{block}",
-                snr.detach(),
-                on_step=True,
-                batch_size=self._cur_bs,
-            )
+            out[f"train/grad_snr/{block}"] = snr.detach()
 
-        # Grad cosine vs previous step. First step has no reference, so
-        # we just stash and skip. Cosine of zero-norm vectors is
-        # undefined; clamp denom at 1e-12 to avoid NaN spikes when a
-        # block briefly has all-zero grads.
+        # Grad cosine vs previous-cadence step. First trigger has no
+        # reference; we stash and skip. ``denom.clamp(min=1e-12)``
+        # avoids NaN if a block briefly has all-zero grads.
         if self._prev_grad_by_block is not None:
             for block, flat in new_flat.items():
                 prev = self._prev_grad_by_block.get(block)
@@ -1188,24 +1210,15 @@ class DiffusionModule(BaseGraphModule):
                 num = (flat * prev).sum()
                 denom = flat.norm() * prev.norm()
                 cos = num / denom.clamp(min=1e-12)
-                self.log(
-                    f"train/grad_cosine/{block}",
-                    cos.detach(),
-                    on_step=True,
-                    batch_size=self._cur_bs,
-                )
+                out[f"train/grad_cosine/{block}"] = cos.detach()
         self._prev_grad_by_block = new_flat
 
-        # Effective LR: lr × ‖∇‖ / ‖θ‖. Single scalar, no per-block.
-        # Pulled from the optimizer's first param-group so it reflects
-        # the scheduler's current LR rather than the configured base.
+        # Effective LR: lr × ‖∇‖ / ‖θ‖. Pull live LR from
+        # ``param_groups[0]`` so it reflects scheduler state.
         try:
             lr = float(optimizer.param_groups[0]["lr"])  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
         except (KeyError, IndexError, AttributeError):
-            return
-        # ``sum()`` starts at int 0, which loses the device when the
-        # iterable is empty; seed with a zero tensor on the gradient
-        # device instead.
+            return out
         grad_total_sq = next(iter(grad_sq.values())).clone()
         for v in list(grad_sq.values())[1:]:
             grad_total_sq = grad_total_sq + v
@@ -1214,12 +1227,8 @@ class DiffusionModule(BaseGraphModule):
             if p.requires_grad:
                 param_sq = param_sq + p.detach().pow(2).sum()
         eff = lr * grad_total_sq.sqrt() / param_sq.sqrt().clamp(min=1e-12)
-        self.log(
-            "train/effective_lr",
-            eff.detach(),
-            on_step=True,
-            batch_size=self._cur_bs,
-        )
+        out["train/effective_lr"] = eff.detach()
+        return out
 
     def _log_update_to_weight(self, weight_norms: dict[str, torch.Tensor]) -> None:
         """Per-block ``‖Δθ‖ / ‖θ‖`` after the optimizer has stepped.

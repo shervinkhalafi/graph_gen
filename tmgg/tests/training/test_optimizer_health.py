@@ -95,3 +95,120 @@ def test_effective_lr_formula_matches_documented_definition() -> None:
     theta = torch.tensor([0.0, 1.0, 0.0, 0.0])  # ‖θ‖ = 1
     eff = lr * g.norm() / theta.norm().clamp(min=1e-12)
     assert torch.isclose(eff, torch.tensor(0.05))
+
+
+def test_optimizer_health_metrics_survive_short_epochs() -> None:
+    """End-to-end: short epochs (11 batches) + cadence=5 + log_every_n_steps=2.
+
+    Regression test for the bug where logs written from
+    ``on_before_optimizer_step`` got wiped by ``reset_results()`` at
+    every epoch boundary because the cadence iter (one past the
+    flush boundary) never coincided with a flush before the next reset.
+
+    Fix: ``DiffusionModule`` computes grad-derived stats in
+    ``on_before_optimizer_step`` but stashes them in
+    ``_opt_health_payload``; ``on_train_batch_end`` (whose cadence iter
+    *does* coincide with a flush boundary) drains the payload via
+    ``self.log``.
+
+    This test instantiates a minimal ``LightningModule`` that mirrors
+    the same stash/drain pattern and verifies that all expected keys
+    show up in the logger's records across at least one cadence
+    boundary that crosses an epoch end.
+    """
+    import pytorch_lightning as pl
+
+    class _Model(pl.LightningModule):
+        def __init__(self) -> None:
+            super().__init__()
+            self.linear = torch.nn.Linear(4, 1)
+            self._opt_health_payload: dict[str, torch.Tensor] | None = None
+            self._cadence = 5
+
+        def training_step(
+            self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int
+        ) -> torch.Tensor:
+            x, y = batch
+            loss = ((self.linear(x) - y) ** 2).mean()
+            self.log("train/loss", loss, on_step=True)
+            return loss
+
+        def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+            # Mirror the production cadence trigger.
+            if (self.global_step + 1) % self._cadence == 0:
+                self._opt_health_payload = {
+                    "train/grad_snr/_total": torch.tensor(2.0 + self.global_step),
+                    "train/effective_lr": torch.tensor(0.001 + self.global_step / 1000),
+                }
+
+        def on_train_batch_end(
+            self,
+            outputs: object,
+            batch: object,
+            batch_idx: int,
+        ) -> None:
+            if self.global_step % self._cadence == 0 and self._opt_health_payload:
+                for k, v in self._opt_health_payload.items():
+                    self.log(k, v, on_step=True)
+                self._opt_health_payload = None
+
+        def configure_optimizers(self) -> torch.optim.Optimizer:
+            return torch.optim.Adam(self.parameters(), lr=1e-3)
+
+    from pytorch_lightning.loggers import Logger as _PLLogger
+
+    class _Capture(_PLLogger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.records: list[tuple[int | None, dict[str, float]]] = []
+
+        @property
+        def name(self) -> str:
+            return "capture"
+
+        @property
+        def version(self) -> str:
+            return "1"
+
+        def log_metrics(
+            self,
+            metrics: dict[str, float] | None = None,
+            step: int | None = None,
+            **kw: object,
+        ) -> None:
+            assert metrics is not None
+            self.records.append((step, dict(metrics)))
+
+        def log_hyperparams(self, *a: object, **k: object) -> None:
+            pass
+
+        def save(self) -> None:
+            pass
+
+    torch.manual_seed(0)
+    # 33 samples / batch_size 3 = 11 batches per epoch — same as production
+    # smoke-run dataset, where the bug originally manifested.
+    ds = torch.utils.data.TensorDataset(torch.randn(33, 4), torch.randn(33, 1))
+    dl = torch.utils.data.DataLoader(ds, batch_size=3)
+    cap = _Capture()
+    trainer = pl.Trainer(
+        max_steps=33,
+        log_every_n_steps=2,
+        logger=cap,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    trainer.fit(_Model(), train_dataloaders=dl)
+
+    # Cadence triggers at global_step ∈ {5, 10, 15, 20, 25, 30}.
+    # Each one should appear in at least one flush event.
+    flushed_keys = {k for _, m in cap.records for k in m}
+    assert "train/grad_snr/_total" in flushed_keys, (
+        "regression: grad_snr metric was wiped by reset_results between "
+        "the cadence trigger and the next log_every_n_steps flush"
+    )
+    assert "train/effective_lr" in flushed_keys, (
+        "regression: effective_lr metric was wiped by reset_results "
+        "between the cadence trigger and the next log_every_n_steps flush"
+    )
