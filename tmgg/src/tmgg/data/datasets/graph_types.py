@@ -554,13 +554,26 @@ class GraphData:
         )
 
     @classmethod
-    def from_pyg_batch(cls, batch: Batch) -> GraphData:
+    def from_pyg_batch(
+        cls, batch: Batch, *, n_max_static: int | None = None
+    ) -> GraphData:
         """Convert a PyG Batch to a dense, structure-only GraphData.
 
         Parameters
         ----------
         batch
             PyG Batch from ``Batch.from_data_list()``.
+        n_max_static
+            Optional static node-count ceiling. When set, the dense
+            adjacency and downstream tensors are padded to this width
+            so every batch emerges at the same shape (unlocking
+            ``torch.compile`` and ``cuda.graph`` capture downstream).
+            When ``None`` (default) ``n_max`` is the largest graph in
+            the current batch, preserving the legacy variable-shape
+            behaviour. ``node_mask`` zeros padded positions either way,
+            so numerics on real positions are bit-identical. See
+            ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
+            for the design rationale.
 
         Returns
         -------
@@ -576,6 +589,7 @@ class GraphData:
             positions are marked ``False`` and are the single source of
             truth for which rows correspond to real nodes.
         """
+        import torch.nn.functional as F
         from torch_geometric.utils import remove_self_loops, to_dense_adj
 
         bs = int(batch.num_graphs)
@@ -588,7 +602,20 @@ class GraphData:
         # ``to_dense_adj`` accumulation.
         edge_index, _ = remove_self_loops(edge_index)
         adj = to_dense_adj(edge_index, batch_vec)
-        n_max = adj.shape[1]
+        n_packed = adj.shape[1]
+
+        # Static-pad opt-in: when ``n_max_static`` exceeds the current
+        # batch's packed n, pad ``adj`` with zeros so downstream
+        # tensors have a fixed shape. ``node_mask`` zeros the padded
+        # rows/cols so attention/loss/etc. exclude them; real-position
+        # numerics are unchanged. Falls back to ``n_packed`` when the
+        # ceiling is None or smaller (preserves variable-shape default).
+        if n_max_static is not None and n_max_static > n_packed:
+            pad = n_max_static - n_packed
+            adj = F.pad(adj, (0, pad, 0, pad), value=0.0)
+            n_max = n_max_static
+        else:
+            n_max = n_packed
 
         # Node mask from batch vector
         node_counts = torch.bincount(batch_vec, minlength=bs)

@@ -16,6 +16,7 @@ subclassed when a different data representation is needed.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, override
 
 import numpy as np
@@ -53,31 +54,62 @@ def _adjacencies_to_pyg(adjs: np.ndarray) -> list[Data]:
     return result
 
 
-def _collate_pyg_to_graphdata(data_list: list[Data]) -> GraphData:
-    """Collate PyG Data objects into a dense GraphData batch."""
-    from typing import cast
+@dataclass(frozen=True)
+class GraphDataCollator:
+    """Stateful collator producing dense ``GraphData`` batches.
 
-    from torch_geometric.data import Batch
-    from torch_geometric.data.data import BaseData
+    Pickles cleanly across multi-worker DataLoader subprocesses
+    (module-level ``frozen=True`` dataclass with primitive fields). All
+    datamodules that produce dense batches construct one of these
+    rather than passing a bare function reference.
 
-    batch = Batch.from_data_list(cast(list[BaseData], data_list))
-    return GraphData.from_pyg_batch(batch)
+    Parameters
+    ----------
+    n_max_static
+        Optional static node-count ceiling. When set, the collator
+        pads ``(bs, n, n)`` adjacency and downstream tensors to this
+        ceiling so every batch emerges at the same shape (unlocking
+        ``torch.compile`` and ``cuda.graph`` capture downstream). When
+        ``None`` (default) the collator falls back to variable-shape
+        behaviour: ``n_max`` is the largest graph in the current
+        batch. ``node_mask`` zeros padded positions either way, so
+        numerics on real positions are unchanged. See
+        ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
+        for the design rationale.
+    """
+
+    n_max_static: int | None = None
+
+    def __call__(self, data_list: list[Data]) -> GraphData:
+        from typing import cast
+
+        from torch_geometric.data import Batch
+        from torch_geometric.data.data import BaseData
+
+        batch = Batch.from_data_list(cast(list[BaseData], data_list))
+        return GraphData.from_pyg_batch(batch, n_max_static=self.n_max_static)
 
 
-def _collate_pyg_raw(data_list: list[Data]):
-    """Collate PyG Data objects into a raw PyG Batch (no densification).
+@dataclass(frozen=True)
+class RawPyGCollator:
+    """Stateful collator returning a raw PyG ``Batch`` (no densification).
 
     Used by ``train_dataloader_raw_pyg`` to expose the sparse PyG view
-    that sits one layer below the dense ``GraphData`` collator. The
+    that sits one layer below ``GraphDataCollator``. The
     upstream-parity edge / node count helpers in
     :mod:`tmgg.data.utils.edge_counts` consume the result directly.
+    Stateless today; kept symmetric with ``GraphDataCollator`` so the
+    constructor stays a uniform "build a collator instance" idiom
+    across all datamodules.
     """
-    from typing import cast
 
-    from torch_geometric.data import Batch
-    from torch_geometric.data.data import BaseData
+    def __call__(self, data_list: list[Data]):
+        from typing import cast
 
-    return Batch.from_data_list(cast(list[BaseData], data_list))
+        from torch_geometric.data import Batch
+        from torch_geometric.data.data import BaseData
+
+        return Batch.from_data_list(cast(list[BaseData], data_list))
 
 
 class _ListDataset(Dataset[Data]):
@@ -238,7 +270,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._train_data),
             shuffle=True,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -249,7 +281,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._val_data),
             shuffle=False,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -260,7 +292,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._test_data),
             shuffle=False,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
     @override
@@ -277,5 +309,5 @@ class MultiGraphDataModule(BaseGraphDataModule):
         return self._make_dataloader(
             _ListDataset(self._train_data),
             shuffle=False,
-            collate_fn=_collate_pyg_raw,
+            collate_fn=RawPyGCollator(),
         )

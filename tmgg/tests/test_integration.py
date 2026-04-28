@@ -11,8 +11,8 @@ from torch.utils.data import DataLoader
 from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
 from tmgg.data import generate_sbm_adjacency
 from tmgg.data.data_modules.multigraph_data_module import (
+    GraphDataCollator,
     _adjacencies_to_pyg,
-    _collate_pyg_to_graphdata,
     _ListDataset,
 )
 from tmgg.data.datasets.graph_types import GraphData
@@ -52,7 +52,7 @@ class TestEndToEndTraining:
             _ListDataset(data_list),
             batch_size=10,
             shuffle=True,
-            collate_fn=_collate_pyg_to_graphdata,
+            collate_fn=GraphDataCollator(),
         )
 
         return dataloader, adjacency_matrices
