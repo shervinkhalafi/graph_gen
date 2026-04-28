@@ -245,6 +245,96 @@ def masked_edge_mse(
     return per_graph.mean()
 
 
+def per_graph_node_ce(
+    pred_X_logits: Tensor,
+    true_X: Tensor,
+    node_mask: Tensor,
+) -> Tensor:
+    """Per-graph masked cross-entropy over a node-shaped categorical field.
+
+    Returns ``(bs,)`` mean CE per graph (averaged over its valid node
+    positions). The valid-row predicate matches :func:`masked_node_ce`
+    (``(true != 0).any(-1)``) so padding rows that are encoded as
+    all-zero contribute zero. Used by the per-timestep telemetry path
+    in ``DiffusionModule``: per-graph loss + per-graph ``t`` lets the
+    training-step scatter into ``t``-binned accumulators without
+    losing batch-level resolution.
+    """
+    log_probs = F.log_softmax(pred_X_logits, dim=-1)  # (bs, n, dx)
+    targets = true_X.argmax(dim=-1)  # (bs, n)
+    nll = -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)  # (bs, n)
+    valid_row = (true_X != 0).any(dim=-1) & node_mask  # (bs, n)
+    nll = nll * valid_row.to(nll.dtype)
+    count = valid_row.sum(dim=-1).clamp(min=1).to(nll.dtype)  # (bs,)
+    return nll.sum(dim=-1) / count
+
+
+def per_graph_edge_ce(
+    pred_E_logits: Tensor,
+    true_E: Tensor,
+    node_mask: Tensor,
+) -> Tensor:
+    """Per-graph masked cross-entropy over an edge-shaped categorical field.
+
+    Returns ``(bs,)`` mean CE per graph. The valid-row predicate
+    ``(true != 0).any(-1)`` already excludes the diagonal and padding
+    pairs (encoded as all-zero rows by ``encode_no_edge``).
+    """
+    log_probs = F.log_softmax(pred_E_logits, dim=-1)  # (bs, n, n, de)
+    targets = true_E.argmax(dim=-1)  # (bs, n, n)
+    nll = -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)  # (bs, n, n)
+    valid_row = (true_E != 0).any(dim=-1)  # (bs, n, n)
+    valid_row = valid_row & (node_mask.unsqueeze(1) & node_mask.unsqueeze(2))
+    nll = nll * valid_row.to(nll.dtype)
+    count = valid_row.sum(dim=(-1, -2)).clamp(min=1).to(nll.dtype)
+    return nll.sum(dim=(-1, -2)) / count
+
+
+def per_graph_y_ce(pred_y_logits: Tensor, true_y: Tensor) -> Tensor:
+    """Per-graph cross-entropy over a graph-level categorical field.
+
+    Returns ``(bs,)``. Empty-class inputs return a zero tensor of the
+    right shape (matches the upstream guard in :func:`masked_y_ce`).
+    """
+    bs = pred_y_logits.shape[0]
+    if true_y.numel() == 0:
+        return pred_y_logits.new_zeros((bs,))
+    log_probs = F.log_softmax(pred_y_logits, dim=-1)  # (bs, dy)
+    targets = true_y.argmax(dim=-1)
+    return -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+
+
+def per_graph_node_mse(pred_X: Tensor, true_X: Tensor, node_mask: Tensor) -> Tensor:
+    """Per-graph masked MSE over a node-shaped continuous field, ``(bs,)``."""
+    diff_sq = (pred_X - true_X) ** 2  # (bs, n, d)
+    diff_sum = diff_sq.sum(dim=-1)  # (bs, n)
+    num_nodes = node_mask.sum(dim=-1).clamp(min=1).to(diff_sum.dtype)
+    return (diff_sum * node_mask.to(diff_sum.dtype)).sum(dim=-1) / num_nodes
+
+
+def per_graph_edge_mse(pred_E: Tensor, true_E: Tensor, node_mask: Tensor) -> Tensor:
+    """Per-graph masked MSE over an edge-shaped continuous field, ``(bs,)``."""
+    diff_sq = (pred_E - true_E) ** 2  # (bs, n, n, d)
+    diff_sum = diff_sq.sum(dim=-1)
+    diag_mask = ~torch.eye(
+        node_mask.size(1), device=node_mask.device, dtype=torch.bool
+    ).unsqueeze(0)
+    edge_mask = (node_mask.unsqueeze(1) * node_mask.unsqueeze(2) * diag_mask).to(
+        diff_sum.dtype
+    )
+    num_edges = edge_mask.sum(dim=(-1, -2)).clamp(min=1)
+    return (diff_sum * edge_mask).sum(dim=(-1, -2)) / num_edges
+
+
+def per_graph_y_mse(pred_y: Tensor, true_y: Tensor) -> Tensor:
+    """Per-graph MSE over a graph-level continuous field, ``(bs,)``."""
+    bs = pred_y.shape[0]
+    if true_y.numel() == 0:
+        return pred_y.new_zeros((bs,))
+    diff_sq = (pred_y - true_y) ** 2  # (bs, dy)
+    return diff_sq.mean(dim=-1)
+
+
 class TrainLossDiscrete:
     """Masked cross-entropy loss for dual-field discrete diffusion training.
 

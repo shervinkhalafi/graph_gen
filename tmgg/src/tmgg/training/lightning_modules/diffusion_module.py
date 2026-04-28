@@ -64,6 +64,12 @@ from tmgg.training.lightning_modules.train_loss_discrete import (
     masked_node_mse,
     masked_y_ce,
     masked_y_mse,
+    per_graph_edge_ce,
+    per_graph_edge_mse,
+    per_graph_node_ce,
+    per_graph_node_mse,
+    per_graph_y_ce,
+    per_graph_y_mse,
 )
 from tmgg.training.logging import log_figures
 from tmgg.utils.noising.size_distribution import SizeDistribution
@@ -413,6 +419,8 @@ class DiffusionModule(BaseGraphModule):
         visualization: dict[str, Any] | None = None,
         use_marginalised_vlb_kl: bool = False,
         use_upstream_reconstruction: bool = True,
+        n_t_bins: int = 10,
+        log_optimizer_health_every_n_steps: int = 500,
     ) -> None:
         super().__init__(
             model=model,
@@ -446,6 +454,19 @@ class DiffusionModule(BaseGraphModule):
         )
         self.use_marginalised_vlb_kl: bool = bool(use_marginalised_vlb_kl)
         self.use_upstream_reconstruction: bool = bool(use_upstream_reconstruction)
+
+        if n_t_bins < 1:
+            raise ValueError(f"n_t_bins must be a positive integer; got {n_t_bins}.")
+        self.n_t_bins: int = int(n_t_bins)
+
+        if log_optimizer_health_every_n_steps < 1:
+            raise ValueError(
+                "log_optimizer_health_every_n_steps must be a positive integer; "
+                f"got {log_optimizer_health_every_n_steps}."
+            )
+        self.log_optimizer_health_every_n_steps: int = int(
+            log_optimizer_health_every_n_steps
+        )
 
         # Per-field loss weights: start from the DiGress-compatible default
         # table, merge any user overrides, then have ``lambda_E`` override
@@ -501,7 +522,85 @@ class DiffusionModule(BaseGraphModule):
         self._vlb_kl_diffusion: list[torch.Tensor] = []
         self._vlb_reconstruction: list[torch.Tensor] = []
         self._vlb_log_pn: list[torch.Tensor] = []
+        # Bits-per-edge accumulators: stored as (sum_nll, sum_edges,
+        # sum_potential_edges) so the epoch-end normalisation is the
+        # exact total-NLL / total-edges ratio rather than the noisier
+        # mean-of-ratios. ``_vlb_nll_sum`` carries each batch's NLL × bs
+        # so the eventual sum equals total NLL across the val set.
+        self._vlb_nll_sum: list[torch.Tensor] = []
+        self._vlb_edge_count: list[torch.Tensor] = []
+        self._vlb_potential_count: list[torch.Tensor] = []
         self._size_distribution: SizeDistribution | None = None
+
+        # Per-timestep bin accumulators (Stage 1 telemetry). Buffers stay
+        # on the module device; they do NOT participate in autograd. The
+        # train pair logs every ``eval_every_n_steps`` (then resets);
+        # the four val pairs log on each ``on_validation_epoch_end``.
+        # Each ``register_buffer`` is followed by an explicit type
+        # annotation: ``LightningModule.register_buffer`` is typed as
+        # storing ``Tensor | Module``, but in our use the values are
+        # always plain tensors and this re-statement lets pyright check
+        # ``.zero_()`` / ``.scatter_add_()`` etc. without false positives.
+        self.register_buffer(
+            "_train_loss_t_sum", torch.zeros(self.n_t_bins), persistent=False
+        )
+        self._train_loss_t_sum: torch.Tensor
+        self.register_buffer(
+            "_train_loss_t_count",
+            torch.zeros(self.n_t_bins, dtype=torch.long),
+            persistent=False,
+        )
+        self._train_loss_t_count: torch.Tensor
+        self.register_buffer(
+            "_val_loss_t_sum", torch.zeros(self.n_t_bins), persistent=False
+        )
+        self._val_loss_t_sum: torch.Tensor
+        self.register_buffer(
+            "_val_loss_t_count",
+            torch.zeros(self.n_t_bins, dtype=torch.long),
+            persistent=False,
+        )
+        self._val_loss_t_count: torch.Tensor
+        self.register_buffer(
+            "_val_kl_diff_t_sum", torch.zeros(self.n_t_bins), persistent=False
+        )
+        self._val_kl_diff_t_sum: torch.Tensor
+        self.register_buffer(
+            "_val_kl_diff_t_count",
+            torch.zeros(self.n_t_bins, dtype=torch.long),
+            persistent=False,
+        )
+        self._val_kl_diff_t_count: torch.Tensor
+        self.register_buffer(
+            "_val_kl_prior_t_sum", torch.zeros(self.n_t_bins), persistent=False
+        )
+        self._val_kl_prior_t_sum: torch.Tensor
+        self.register_buffer(
+            "_val_kl_prior_t_count",
+            torch.zeros(self.n_t_bins, dtype=torch.long),
+            persistent=False,
+        )
+        self._val_kl_prior_t_count: torch.Tensor
+        self.register_buffer(
+            "_val_recon_t_sum", torch.zeros(self.n_t_bins), persistent=False
+        )
+        self._val_recon_t_sum: torch.Tensor
+        self.register_buffer(
+            "_val_recon_t_count",
+            torch.zeros(self.n_t_bins, dtype=torch.long),
+            persistent=False,
+        )
+        self._val_recon_t_count: torch.Tensor
+
+        # Optimizer-health state (Stage 2 telemetry). Allocated lazily on
+        # the every-Nth-step cadence and freed in the trailing
+        # ``on_train_batch_end`` hook so memory peak ≈ 2× params only on
+        # logging steps.
+        self._prev_grad_by_block: dict[str, torch.Tensor] | None = None
+        self._prev_weights_snapshot: dict[str, torch.Tensor] | None = None
+        # Marker set in ``on_before_optimizer_step`` so the trailing
+        # ``on_train_batch_end`` knows to compute Δθ on this step.
+        self._opt_health_pending: bool = False
 
     @property
     def T(self) -> int:
@@ -588,6 +687,109 @@ class DiffusionModule(BaseGraphModule):
         self._vlb_kl_diffusion.clear()
         self._vlb_reconstruction.clear()
         self._vlb_log_pn.clear()
+        self._vlb_nll_sum.clear()
+        self._vlb_edge_count.clear()
+        self._vlb_potential_count.clear()
+        self._val_loss_t_sum.zero_()
+        self._val_loss_t_count.zero_()
+        self._val_kl_diff_t_sum.zero_()
+        self._val_kl_diff_t_count.zero_()
+        self._val_kl_prior_t_sum.zero_()
+        self._val_kl_prior_t_count.zero_()
+        self._val_recon_t_sum.zero_()
+        self._val_recon_t_count.zero_()
+
+    def _t_bin_idx(self, t_int: torch.Tensor) -> torch.Tensor:
+        """Map per-graph timesteps ``t ∈ [0, T]`` to bin indices ``[0, n_t_bins)``.
+
+        Detached integer tensor; safe for ``scatter_add_`` indexing
+        regardless of training/eval mode.
+        """
+        # T+1 distinct timesteps {0,...,T}; bin width = (T+1) / n_t_bins.
+        bin_idx = (t_int.detach() * self.n_t_bins) // (self.T + 1)
+        return bin_idx.clamp_(max=self.n_t_bins - 1).long()
+
+    def _per_graph_loss(self, pred: GraphData, target: GraphData) -> torch.Tensor:
+        """Per-graph total loss matching ``_compute_loss`` semantics.
+
+        Returns ``(bs,)`` so the per-step / per-validation scatter into
+        ``t``-bins has graph-level resolution. Mirrors
+        :meth:`_compute_loss_breakdown` but uses the per-graph helpers
+        in ``train_loss_discrete``: same valid-row predicate, same
+        ``lambda_per_field`` weighting, same field iteration order.
+        Result is ``.detach()``-ed at the call site (the binning path
+        is purely diagnostic and must not contribute gradients).
+        """
+        bs = int(target.node_mask.shape[0])
+        device = target.node_mask.device
+
+        if self._train_loss_discrete is None:
+            # Continuous path: single ``edge_state`` field, dense MSE/BCE.
+            if pred.E_feat is not None:
+                pred_edge_state = pred.to_edge_scalar(source="feat")
+            else:
+                pred_edge_state = pred.to_edge_scalar(source="class")
+            target_edge_state = _continuous_target_edge_state(target).float()
+            # Dense per-position squared error → per-graph mean over the
+            # masked off-diagonal positions. Matches ``masked_edge_mse``
+            # reduction granularity but at per-graph resolution.
+            diff_sq = (pred_edge_state - target_edge_state) ** 2
+            node_mask = target.node_mask
+            n = node_mask.size(1)
+            diag_mask = ~torch.eye(n, device=device, dtype=torch.bool).unsqueeze(0)
+            edge_mask = (node_mask.unsqueeze(1) & node_mask.unsqueeze(2)) & diag_mask
+            edge_mask_f = edge_mask.to(diff_sq.dtype)
+            num_edges = edge_mask_f.sum(dim=(-1, -2)).clamp(min=1)
+            return (diff_sq * edge_mask_f).sum(dim=(-1, -2)) / num_edges
+
+        # Discrete branch: walk the same fields the loss does.
+        target_masked = target.mask()
+        x_classes_for_synth = _resolve_x_classes_for_loss(
+            self.noise_process, pred, target_masked
+        )
+
+        total: torch.Tensor | None = None
+        for field in sorted(self.noise_process.fields):
+            pred_field = _read_field(pred, field, x_classes=x_classes_for_synth)
+            target_field = _read_field(
+                target_masked, field, x_classes=x_classes_for_synth
+            )
+            kind = GRAPHDATA_LOSS_KIND[field]
+            if kind == "ce":
+                if field == "X_class":
+                    term = per_graph_node_ce(
+                        pred_field, target_field, target_masked.node_mask
+                    )
+                elif field == "E_class":
+                    term = per_graph_edge_ce(
+                        pred_field, target_field, target_masked.node_mask
+                    )
+                elif field == "y_class":
+                    term = per_graph_y_ce(pred_field, target_field)
+                else:  # pragma: no cover - all CE fields handled above
+                    raise NotImplementedError(
+                        f"No per-graph CE helper registered for {field!r}."
+                    )
+            else:  # mse
+                if field == "X_feat":
+                    term = per_graph_node_mse(
+                        pred_field, target_field, target_masked.node_mask
+                    )
+                elif field == "E_feat":
+                    term = per_graph_edge_mse(
+                        pred_field, target_field, target_masked.node_mask
+                    )
+                elif field == "y_feat":
+                    term = per_graph_y_mse(pred_field, target_field)
+                else:  # pragma: no cover
+                    raise NotImplementedError(
+                        f"No per-graph MSE helper registered for {field!r}."
+                    )
+            contribution = self.lambda_per_field[field] * term  # pyright: ignore[reportArgumentType]
+            total = contribution if total is None else total + contribution
+        if total is None:
+            return torch.zeros(bs, device=device)
+        return total
 
     @override
     def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
@@ -644,6 +846,19 @@ class DiffusionModule(BaseGraphModule):
         # pass; just keeps the intermediate terms instead of discarding them.
         breakdown = self._compute_loss_breakdown(pred, batch)
         loss = self._combine_breakdown(breakdown)
+
+        # ---- Per-timestep loss bin scatter (Stage 1 telemetry) ------------
+        # Detached: the binning path is diagnostic only and must not
+        # introduce gradient flow back through ``pred`` a second time.
+        # ``no_grad`` keeps the autograd machinery from tracking the
+        # per-graph helper ops at all.
+        with torch.no_grad():
+            per_graph = self._per_graph_loss(pred, batch).detach()
+            bin_idx = self._t_bin_idx(t_int)
+            self._train_loss_t_sum.scatter_add_(0, bin_idx, per_graph)
+            self._train_loss_t_count.scatter_add_(
+                0, bin_idx, torch.ones_like(bin_idx, dtype=torch.long)
+            )
 
         # ---- Tier 1: per-step health metrics ------------------------------
         # batch_size=self._cur_bs threaded everywhere because Lightning
@@ -764,9 +979,28 @@ class DiffusionModule(BaseGraphModule):
             batch_size=self._cur_bs,
         )
 
+        # Per-t train-loss bins (Stage 1 telemetry). Logged on the
+        # validation cadence so the train and val per-t panels share the
+        # same x-axis and so the train accumulator covers a meaningful
+        # window (eval_every_n_steps × bs samples ≫ n_t_bins).
+        if self.global_step > 0 and self.global_step % self.eval_every_n_steps == 0:
+            for i in range(self.n_t_bins):
+                count = int(self._train_loss_t_count[i].item())
+                if count == 0:
+                    continue
+                self.log(
+                    f"train/loss_per_t/bin_{i}",
+                    self._train_loss_t_sum[i] / float(count),
+                    on_step=True,
+                    on_epoch=False,
+                    batch_size=self._cur_bs,
+                )
+            self._train_loss_t_sum.zero_()
+            self._train_loss_t_count.zero_()
+
         # Weight norm (Tier 2). Stride-controlled to keep WandB cardinality
         # bounded; 500 steps gives ~3 samples per validation window.
-        if self.global_step % 500 == 0:
+        if self.global_step % self.log_optimizer_health_every_n_steps == 0:
             weight_norms = self._compute_weight_norms_by_block()
             if weight_norms:
                 self.log(
@@ -782,6 +1016,37 @@ class DiffusionModule(BaseGraphModule):
                         on_step=True,
                         batch_size=self._cur_bs,
                     )
+
+            # Stage 2: optimizer-health update-to-weight ratio. Computed
+            # post-step so we can subtract the stashed θ_before snapshot
+            # against the live (post-optimizer) weights. Block-bucketed
+            # via ``_block_name`` to share the cadence + naming with
+            # ``train/weight_norm/{block}``.
+            self._log_update_to_weight(weight_norms)
+            self._prev_weights_snapshot = None  # free
+            self._opt_health_pending = False
+
+    def _log_val_t_bins(
+        self,
+        prefix: str,
+        sum_buf: torch.Tensor,
+        count_buf: torch.Tensor,
+    ) -> None:
+        """Log per-bin averages for a validation-side scatter accumulator.
+
+        Empty bins (count == 0) are skipped — they would otherwise log
+        ``0.0`` and hide a "bin never sampled" condition behind a
+        plausible-looking value.
+        """
+        for i in range(self.n_t_bins):
+            count = int(count_buf[i].item())
+            if count == 0:
+                continue
+            self.log(
+                f"{prefix}/bin_{i}",
+                sum_buf[i] / float(count),
+                on_epoch=True,
+            )
 
     @override
     def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
@@ -811,7 +1076,7 @@ class DiffusionModule(BaseGraphModule):
                 batch_size=self._cur_bs,
             )
 
-        if self.global_step % 500 == 0:
+        if self.global_step % self.log_optimizer_health_every_n_steps == 0:
             block_norms = self._aggregate_grad_norms_by_block(norms)
             for block_name, val in block_norms.items():
                 self.log(
@@ -820,6 +1085,23 @@ class DiffusionModule(BaseGraphModule):
                     on_step=True,
                     batch_size=self._cur_bs,
                 )
+
+            # Stage 2: cheap optimizer-health metrics. All on the same
+            # cadence as the per-block weight/grad norms; reuses
+            # ``_block_name`` for bucketing so the dashboard prefixes
+            # line up. Computed before ``optimizer.step()`` so we
+            # observe the gradient that's about to be applied.
+            self._log_grad_health_by_block(optimizer)
+            # Stash θ_before so the trailing ``on_train_batch_end`` can
+            # subtract it from the live weights to recover Δθ. Cloned
+            # detached so the autograd tape doesn't extend into the
+            # next step.
+            self._prev_weights_snapshot = {
+                name: p.detach().clone()
+                for name, p in self.named_parameters()
+                if p.requires_grad
+            }
+            self._opt_health_pending = True
 
         if self.global_step % 5000 == 0 and self.global_step > 0:
             ratio = self._compute_adam_moment_ratio(optimizer)
@@ -830,6 +1112,146 @@ class DiffusionModule(BaseGraphModule):
                     on_step=True,
                     batch_size=self._cur_bs,
                 )
+
+    def _log_grad_health_by_block(self, optimizer: torch.optim.Optimizer) -> None:
+        """Per-block grad cosine, grad SNR, and global effective LR.
+
+        Walks ``self.named_parameters()`` once and accumulates the four
+        statistics needed to derive:
+
+        * ``train/grad_snr/{block}`` — first/second-moment SNR of the
+          gradient elements in the block, ``mean(g)² / var(g)``. Low
+          SNR means noise dominates, high SNR means consistent
+          direction.
+        * ``train/grad_cosine/{block}`` — cosine of the current
+          per-block flat gradient against the previous step's stored
+          flat gradient. Approaches 0 when training bounces in a
+          basin; stays near 1 when descending consistently.
+        * ``train/effective_lr`` — ``lr × ‖∇‖_total / ‖θ‖_total``,
+          a single scalar. Reads the live LR from the active
+          ``param_groups[0]`` so it reflects scheduler state, not the
+          configured base.
+
+        All accumulation stays on-device; one ``self.log`` call per
+        block per cadence step. Buffers for the previous-step gradient
+        are held in ``_prev_grad_by_block`` and live on the parameter
+        device.
+        """
+        grad_sq: dict[str, torch.Tensor] = {}
+        grad_sum: dict[str, torch.Tensor] = {}
+        grad_n: dict[str, int] = {}
+        flat_chunks: dict[str, list[torch.Tensor]] = {}
+        for name, p in self.named_parameters():
+            if not p.requires_grad or p.grad is None:
+                continue
+            block = self._block_name(name)
+            g = p.grad.detach()
+            sq = g.pow(2).sum()
+            sm = g.sum()
+            grad_sq[block] = sq if block not in grad_sq else grad_sq[block] + sq
+            grad_sum[block] = sm if block not in grad_sum else grad_sum[block] + sm
+            grad_n[block] = grad_n.get(block, 0) + g.numel()
+            flat_chunks.setdefault(block, []).append(g.flatten())
+
+        if not grad_sq:
+            return
+
+        new_flat: dict[str, torch.Tensor] = {
+            block: torch.cat(chunks).detach() for block, chunks in flat_chunks.items()
+        }
+
+        # Grad SNR per block. ``mean²/var`` is undefined for n=1; the
+        # ``var.clamp(min=eps)`` guard yields a finite, large value
+        # there which is the right qualitative signal (constant grad ⇒
+        # high SNR).
+        for block, sq in grad_sq.items():
+            n = grad_n[block]
+            mean = grad_sum[block] / float(n)
+            var = sq / float(n) - mean.pow(2)
+            snr = mean.pow(2) / var.clamp(min=1e-12)
+            self.log(
+                f"train/grad_snr/{block}",
+                snr.detach(),
+                on_step=True,
+                batch_size=self._cur_bs,
+            )
+
+        # Grad cosine vs previous step. First step has no reference, so
+        # we just stash and skip. Cosine of zero-norm vectors is
+        # undefined; clamp denom at 1e-12 to avoid NaN spikes when a
+        # block briefly has all-zero grads.
+        if self._prev_grad_by_block is not None:
+            for block, flat in new_flat.items():
+                prev = self._prev_grad_by_block.get(block)
+                if prev is None or prev.shape != flat.shape:
+                    continue
+                num = (flat * prev).sum()
+                denom = flat.norm() * prev.norm()
+                cos = num / denom.clamp(min=1e-12)
+                self.log(
+                    f"train/grad_cosine/{block}",
+                    cos.detach(),
+                    on_step=True,
+                    batch_size=self._cur_bs,
+                )
+        self._prev_grad_by_block = new_flat
+
+        # Effective LR: lr × ‖∇‖ / ‖θ‖. Single scalar, no per-block.
+        # Pulled from the optimizer's first param-group so it reflects
+        # the scheduler's current LR rather than the configured base.
+        try:
+            lr = float(optimizer.param_groups[0]["lr"])  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
+        except (KeyError, IndexError, AttributeError):
+            return
+        # ``sum()`` starts at int 0, which loses the device when the
+        # iterable is empty; seed with a zero tensor on the gradient
+        # device instead.
+        grad_total_sq = next(iter(grad_sq.values())).clone()
+        for v in list(grad_sq.values())[1:]:
+            grad_total_sq = grad_total_sq + v
+        param_sq = torch.zeros((), device=grad_total_sq.device)
+        for p in self.parameters():
+            if p.requires_grad:
+                param_sq = param_sq + p.detach().pow(2).sum()
+        eff = lr * grad_total_sq.sqrt() / param_sq.sqrt().clamp(min=1e-12)
+        self.log(
+            "train/effective_lr",
+            eff.detach(),
+            on_step=True,
+            batch_size=self._cur_bs,
+        )
+
+    def _log_update_to_weight(self, weight_norms: dict[str, torch.Tensor]) -> None:
+        """Per-block ``‖Δθ‖ / ‖θ‖`` after the optimizer has stepped.
+
+        Requires that ``on_before_optimizer_step`` stashed
+        ``_prev_weights_snapshot`` on this step. Skipped silently when
+        the snapshot is missing (covers the very first step on a fresh
+        module and any path that bypassed the cadence guard).
+        """
+        if not self._opt_health_pending or self._prev_weights_snapshot is None:
+            return
+        prev = self._prev_weights_snapshot
+        update_sq: dict[str, torch.Tensor] = {}
+        for name, p in self.named_parameters():
+            if not p.requires_grad or name not in prev:
+                continue
+            block = self._block_name(name)
+            delta = p.detach() - prev[name]
+            sq = delta.pow(2).sum()
+            update_sq[block] = sq if block not in update_sq else update_sq[block] + sq
+        for block, sq in update_sq.items():
+            update_norm = sq.sqrt()
+            wn = weight_norms.get(block)
+            if wn is None:
+                continue
+            ratio = update_norm / wn.clamp(min=1e-12)
+            self.log(
+                f"train/update_to_weight/{block}",
+                ratio.detach(),
+                on_step=True,
+                batch_size=self._cur_bs,
+            )
 
     # ------------------------------------------------------------------
     # Diagnostic helpers
@@ -1156,6 +1578,18 @@ class DiffusionModule(BaseGraphModule):
                 batch_size=self._cur_bs,
             )
 
+        # Per-timestep validation loss scatter. Mirrors the train-side
+        # binning so the val/loss panel can be split by t. ``no_grad`` is
+        # redundant under the ``@torch.no_grad`` decorator on this method
+        # but kept explicit for clarity at the binning insertion point.
+        with torch.no_grad():
+            per_graph_val = self._per_graph_loss(pred, batch).detach()
+            bin_idx = self._t_bin_idx(t_int)
+            self._val_loss_t_sum.scatter_add_(0, bin_idx, per_graph_val)
+            self._val_loss_t_count.scatter_add_(
+                0, bin_idx, torch.ones_like(bin_idx, dtype=torch.long)
+            )
+
         # VLB estimation via single random timestep (standard DDPM
         # approach). Each batch samples one ``t`` and computes ``L_t``;
         # the epoch-end average gives an estimate of ``E_t[L_t]`` that
@@ -1237,6 +1671,30 @@ class DiffusionModule(BaseGraphModule):
             self._vlb_kl_diffusion.append(kl_diffusion.mean().detach())
             self._vlb_reconstruction.append(reconstruction.mean().detach())
             self._vlb_log_pn.append(log_pn.detach())
+
+            # Per-timestep ELBO-component bin scatter. The three terms
+            # are already per-graph ``(bs,)`` tensors at this point.
+            # ``detach`` is defensive — every accumulator path here is
+            # under the @torch.no_grad on validation_step, so autograd
+            # is already off, but the explicit detach guarantees the
+            # buffer never grows a tape if upstream behaviour changes.
+            bin_idx_vlb = self._t_bin_idx(t_int)
+            ones_long = torch.ones_like(bin_idx_vlb, dtype=torch.long)
+            self._val_kl_diff_t_sum.scatter_add_(0, bin_idx_vlb, kl_diffusion.detach())
+            self._val_kl_diff_t_count.scatter_add_(0, bin_idx_vlb, ones_long)
+            self._val_kl_prior_t_sum.scatter_add_(0, bin_idx_vlb, kl_prior.detach())
+            self._val_kl_prior_t_count.scatter_add_(0, bin_idx_vlb, ones_long)
+            self._val_recon_t_sum.scatter_add_(0, bin_idx_vlb, reconstruction.detach())
+            self._val_recon_t_count.scatter_add_(0, bin_idx_vlb, ones_long)
+
+            # Bits-per-edge: total NLL across the val set / total edges.
+            # ``nll`` here is the batch-mean; multiply by bs to recover
+            # the batch sum so the eventual sum across batches equals the
+            # set-level NLL total.
+            edge_count, potential_count = self._batch_edge_counts(batch)
+            self._vlb_nll_sum.append(nll.detach() * float(bs))
+            self._vlb_edge_count.append(edge_count.detach())
+            self._vlb_potential_count.append(potential_count.detach())
         elif isinstance(self.noise_process, ExactDensityNoiseProcess):
             # Continuous (Gaussian) noise processes still use the
             # log-prob-on-sample VLB; the analytic categorical-KL path
@@ -1273,6 +1731,58 @@ class DiffusionModule(BaseGraphModule):
             self._vlb_kl_prior.append(kl_prior.mean().detach())
             self._vlb_kl_diffusion.append(kl_diffusion.mean().detach())
             self._vlb_log_pn.append(log_pn.detach())
+
+            # Continuous branch: per-t bins for kl_diffusion and kl_prior
+            # only (no reconstruction term — Wave 5 will close that).
+            bin_idx_vlb = self._t_bin_idx(t_int)
+            ones_long = torch.ones_like(bin_idx_vlb, dtype=torch.long)
+            self._val_kl_diff_t_sum.scatter_add_(0, bin_idx_vlb, kl_diffusion.detach())
+            self._val_kl_diff_t_count.scatter_add_(0, bin_idx_vlb, ones_long)
+            self._val_kl_prior_t_sum.scatter_add_(0, bin_idx_vlb, kl_prior.detach())
+            self._val_kl_prior_t_count.scatter_add_(0, bin_idx_vlb, ones_long)
+
+            edge_count, potential_count = self._batch_edge_counts(batch)
+            self._vlb_nll_sum.append(nll.detach() * float(bs))
+            self._vlb_edge_count.append(edge_count.detach())
+            self._vlb_potential_count.append(potential_count.detach())
+
+    @staticmethod
+    def _batch_edge_counts(
+        batch: GraphData,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sum-over-batch (edge_count, potential_edge_count) as scalar tensors.
+
+        ``edge_count`` is the number of present undirected edges (sum of
+        the upper triangle of the binarised adjacency, masked by
+        ``node_mask``). ``potential_edge_count`` is :math:`\\sum_g n_g
+        (n_g - 1)/2`, the maximum number of undirected edges given each
+        graph's node count. Both are returned without the leading
+        graph axis so the validation accumulator collapses cleanly.
+        """
+        node_mask = batch.node_mask
+        device = node_mask.device
+        n = node_mask.size(1)
+
+        if batch.E_class is not None and batch.E_class.shape[-1] >= 2:
+            adj = (batch.E_class.argmax(dim=-1) != 0).to(torch.float32)
+        elif batch.E_feat is not None:
+            e_feat = batch.E_feat
+            scalar = e_feat if e_feat.dim() == node_mask.dim() + 1 else e_feat[..., 0]
+            adj = (scalar > 0.5).to(torch.float32)
+        else:
+            return (
+                torch.zeros((), device=device),
+                torch.zeros((), device=device),
+            )
+
+        diag_mask = ~torch.eye(n, device=device, dtype=torch.bool).unsqueeze(0)
+        mask_2d = (node_mask.unsqueeze(1) & node_mask.unsqueeze(2) & diag_mask).to(
+            adj.dtype
+        )
+        edges = (adj * mask_2d).sum() / 2  # undirected
+        node_counts = node_mask.sum(dim=-1).to(adj.dtype)
+        potential = (node_counts * (node_counts - 1) / 2).sum()
+        return edges.detach(), potential.detach()
 
     @torch.no_grad()
     @override
@@ -1341,11 +1851,59 @@ class DiffusionModule(BaseGraphModule):
                     on_epoch=True,
                 )
             self.log("val/log_pN", torch.stack(self._vlb_log_pn).mean(), on_epoch=True)
+
+            # Bits-per-edge: aggregate-then-divide across the val set so
+            # the ratio is exact (sum_NLL / sum_edges) rather than the
+            # noisier mean-of-ratios. ``log(2)`` converts nats → bits.
+            if self._vlb_edge_count:
+                total_nll = torch.stack(self._vlb_nll_sum).sum()
+                total_edges = torch.stack(self._vlb_edge_count).sum()
+                total_potential = torch.stack(self._vlb_potential_count).sum()
+                # ``log(2.0)`` as a tensor on the same device avoids a
+                # spurious device transfer when computing the ratio.
+                ln2 = torch.log(torch.tensor(2.0, device=total_nll.device))
+                self.log(
+                    "val/bits_per_edge",
+                    total_nll / (total_edges.clamp(min=1.0) * ln2),
+                    on_epoch=True,
+                )
+                self.log(
+                    "val/bits_per_potential_edge",
+                    total_nll / (total_potential.clamp(min=1.0) * ln2),
+                    on_epoch=True,
+                )
+
+            # Per-t bins. Empty bins (count==0) are skipped silently so
+            # the dashboard doesn't grow ghost entries when n_t_bins
+            # exceeds the per-epoch ``t`` coverage. ``count.clamp(min=1)``
+            # would log a zero average for empty bins which is misleading.
+            self._log_val_t_bins(
+                "val/kl_diffusion_per_t",
+                self._val_kl_diff_t_sum,
+                self._val_kl_diff_t_count,
+            )
+            self._log_val_t_bins(
+                "val/kl_prior_per_t",
+                self._val_kl_prior_t_sum,
+                self._val_kl_prior_t_count,
+            )
+            self._log_val_t_bins(
+                "val/reconstruction_per_t",
+                self._val_recon_t_sum,
+                self._val_recon_t_count,
+            )
+            self._log_val_t_bins(
+                "val/loss_per_t", self._val_loss_t_sum, self._val_loss_t_count
+            )
+
             self._vlb_nll.clear()
             self._vlb_kl_prior.clear()
             self._vlb_kl_diffusion.clear()
             self._vlb_reconstruction.clear()
             self._vlb_log_pn.clear()
+            self._vlb_nll_sum.clear()
+            self._vlb_edge_count.clear()
+            self._vlb_potential_count.clear()
 
         if self.evaluator is None or self.sampler is None:
             return

@@ -335,6 +335,11 @@ class TestEvaluationResultsToDict:
             "planarity_accuracy",
             "uniqueness",
             "novelty",
+            # Stage 3 telemetry: dataset-agnostic block-structure metrics.
+            "modularity_q",
+            "spectral_gap_l2",
+            "empirical_p_in",
+            "empirical_p_out",
         }
         assert set(d.keys()) == expected_keys
 

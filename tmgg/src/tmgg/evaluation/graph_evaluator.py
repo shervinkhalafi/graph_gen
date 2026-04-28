@@ -125,6 +125,14 @@ class EvaluationResults:
     planarity_accuracy: float | None
     uniqueness: float | None
     novelty: float | None
+    # Block-structure metrics (Stage 3 telemetry). All four are mean
+    # values over generated graphs; ``modularity_q`` and the
+    # ``empirical_p_*`` come from a 2-block spectral partition (sign of
+    # the Fiedler vector of the symmetric normalised Laplacian).
+    modularity_q: float | None = None
+    spectral_gap_l2: float | None = None
+    empirical_p_in: float | None = None
+    empirical_p_out: float | None = None
 
     def to_dict(self) -> dict[str, float | None]:
         """Return a flat dictionary of all metrics, suitable for logging."""
@@ -137,6 +145,10 @@ class EvaluationResults:
             "planarity_accuracy": self.planarity_accuracy,
             "uniqueness": self.uniqueness,
             "novelty": self.novelty,
+            "modularity_q": self.modularity_q,
+            "spectral_gap_l2": self.spectral_gap_l2,
+            "empirical_p_in": self.empirical_p_in,
+            "empirical_p_out": self.empirical_p_out,
         }
 
 
@@ -423,6 +435,161 @@ def compute_uniqueness(graphs: list[nx.Graph[Any]]) -> float:
             evaluated.append(g)
 
     return (len(graphs) - count_non_unique) / len(graphs)
+
+
+def compute_block_structure_metrics(
+    graphs: list[nx.Graph[Any]],
+    *,
+    device: torch.device | str | None = None,
+) -> dict[str, float | None]:
+    """Mean modularity Q, λ₂ spectral gap, and (p̂_in, p̂_out) over a sample.
+
+    Cheap dataset-agnostic block-structure proxies. The 2-block partition
+    is recovered from the sign of the Fiedler vector (eigenvector
+    associated with the second-smallest eigenvalue of the symmetric
+    normalised Laplacian). Modularity Q and (p̂_in, p̂_out) are
+    computed against that partition. The spectral gap reuses
+    :func:`tmgg.experiments.eigenstructure_study.analyzer.compute_spectral_gap`
+    on the *adjacency* eigenvalues.
+
+    All four metrics are means across the input batch. Graphs with
+    fewer than 2 nodes contribute nothing (skipped). Empty inputs
+    return ``None`` for every key.
+
+    Parameters
+    ----------
+    graphs
+        Generated NetworkX graphs (already binarised by
+        :meth:`GraphEvaluator.to_networkx_graphs`).
+    device
+        Optional torch device. Defaults to CPU; passing ``"cuda"``
+        runs the batched eigendecompositions on GPU. The conversion
+        from NetworkX still happens on CPU regardless — the eigh
+        call dominates cost only for ``n`` ≳ 100.
+
+    Returns
+    -------
+    dict[str, float | None]
+        ``modularity_q``, ``spectral_gap_l2``, ``empirical_p_in``,
+        ``empirical_p_out``. Each value is a Python float or ``None``
+        when no graph contributed (e.g. all inputs had < 2 nodes).
+    """
+    if not graphs:
+        return {
+            "modularity_q": None,
+            "spectral_gap_l2": None,
+            "empirical_p_in": None,
+            "empirical_p_out": None,
+        }
+
+    target_device = torch.device(device) if device is not None else torch.device("cpu")
+
+    # Pad each graph to a common ``n_max`` so the batched eigh / Q
+    # formula run as a single tensor op. ``node_mask`` carries which
+    # rows/cols are real for that graph.
+    valid_graphs: list[nx.Graph[Any]] = [g for g in graphs if g.number_of_nodes() >= 2]
+    if not valid_graphs:
+        return {
+            "modularity_q": None,
+            "spectral_gap_l2": None,
+            "empirical_p_in": None,
+            "empirical_p_out": None,
+        }
+    n_max = max(g.number_of_nodes() for g in valid_graphs)
+    bs = len(valid_graphs)
+
+    A = torch.zeros((bs, n_max, n_max), dtype=torch.float32)
+    node_mask = torch.zeros((bs, n_max), dtype=torch.bool)
+    for i, g in enumerate(valid_graphs):
+        a = nx.to_numpy_array(g, dtype=np.dtype(np.float32))
+        n_i = a.shape[0]
+        # Symmetrise + zero diagonal defensively (the binarised
+        # adjacency from ``GraphEvaluator.to_networkx_graphs`` is
+        # already simple-undirected, but cheap to enforce).
+        a = 0.5 * (a + a.T)
+        np.fill_diagonal(a, 0.0)
+        A[i, :n_i, :n_i] = torch.from_numpy(a)
+        node_mask[i, :n_i] = True
+
+    A = A.to(target_device)
+    node_mask = node_mask.to(target_device)
+    mask_2d = node_mask.unsqueeze(1) & node_mask.unsqueeze(2)
+
+    # Second-largest adjacency eigenvalue λ₂. For an SBM with two
+    # roughly equal blocks, λ_max ≈ (p_in + p_out) * n / 2 (the
+    # all-ones direction) and λ₂ ≈ (p_in - p_out) * n / 2 (the
+    # block-contrast direction); ER graphs have λ₂ near the bulk
+    # so the metric separates them cleanly. The eigh call's
+    # ascending order means index ``-2`` is the second-largest.
+    # Fully padded rows produce trailing zero eigenvalues, so the
+    # top-2 picks the real-graph signal regardless of padding.
+    eigvals_A = torch.linalg.eigvalsh(A)  # ascending, (B, n_max)
+    spectral_gap_mean = eigvals_A[:, -2].mean().item()
+
+    # Symmetric normalised Laplacian L_norm = I - D^{-1/2} A D^{-1/2}.
+    # Mask padding rows/cols by zeroing both A and the corresponding
+    # I rows so they yield trivial zero eigenvalues that we discard.
+    deg = (A * mask_2d).sum(dim=-1)  # (B, n_max)
+    deg_inv_sqrt = torch.where(deg > 0, deg.pow(-0.5), torch.zeros_like(deg))
+    eye = torch.eye(n_max, device=target_device).unsqueeze(0).expand(bs, -1, -1)
+    norm_factor = deg_inv_sqrt.unsqueeze(-1) * deg_inv_sqrt.unsqueeze(-2)
+    L_sym = (eye - A * norm_factor) * mask_2d.to(A.dtype)
+
+    # Padding rows produce extra zero eigenvalues that would confuse
+    # the Fiedler-vector pick if we ran a single batched eigh. Cheaper
+    # and clearer to run eigh per graph on the live submatrix:
+    # O(n³) per graph but ``n`` is small in our regime (≤ 100), and
+    # the call is dwarfed by NetworkX conversion.
+    fiedler = torch.zeros((bs, n_max), device=target_device)
+    for i, g in enumerate(valid_graphs):
+        n_i = g.number_of_nodes()
+        sub = L_sym[i, :n_i, :n_i]
+        _, vec_sub = torch.linalg.eigh(sub)
+        # eigvals[0] ≈ 0 for a connected block; pick index 1
+        # (Fiedler). For a 2-node graph we still pick index 1.
+        idx = 1 if n_i >= 2 else 0
+        fiedler[i, :n_i] = vec_sub[:, idx]
+
+    # 2-block partition from sign of Fiedler vector. Pad rows
+    # (already 0) get cluster 0; that's harmless because their
+    # contribution is masked out everywhere downstream.
+    cluster = (fiedler >= 0).to(A.dtype)  # (B, n_max), 0/1
+
+    # Modularity Q = (1/2m) Σ_ij (A_ij - d_i d_j / 2m) δ(c_i, c_j),
+    # restricted to real positions. ``2m`` is the sum of A over the
+    # masked region (each undirected edge counted twice).
+    same_cluster = (cluster.unsqueeze(-1) == cluster.unsqueeze(-2)).to(A.dtype)
+    same_cluster = same_cluster * mask_2d.to(A.dtype)
+    deg_outer = deg.unsqueeze(-1) * deg.unsqueeze(-2)  # (B, n_max, n_max)
+    two_m = deg.sum(dim=-1).clamp(min=1e-12)  # (B,)
+    q_terms = (A - deg_outer / two_m.view(-1, 1, 1)) * same_cluster
+    q = q_terms.sum(dim=(-1, -2)) / two_m
+    modularity_q = float(q.mean().item())
+
+    # Empirical (p̂_in, p̂_out): block-pair edge densities. ``intra``
+    # already incorporates ``mask_2d`` via ``same_cluster``; ``inter``
+    # adds the mask explicitly. Diagonal is zero in A so intra-pair
+    # counts naturally exclude self-pairs from the edge sum, but we
+    # subtract n_i from the pair count (one diagonal per node) so the
+    # density denominator matches the off-diagonal numerator.
+    intra = same_cluster
+    inter = mask_2d.to(A.dtype) * (cluster.unsqueeze(-1) != cluster.unsqueeze(-2)).to(
+        A.dtype
+    )
+    intra_edges = (A * intra).sum(dim=(-1, -2))
+    inter_edges = (A * inter).sum(dim=(-1, -2))
+    n_real = node_mask.sum(dim=-1).to(A.dtype)
+    intra_pairs = (intra.sum(dim=(-1, -2)) - n_real).clamp(min=1.0)
+    inter_pairs = inter.sum(dim=(-1, -2)).clamp(min=1.0)
+    p_in = (intra_edges / intra_pairs).mean().item()
+    p_out = (inter_edges / inter_pairs).mean().item()
+
+    return {
+        "modularity_q": modularity_q,
+        "spectral_gap_l2": spectral_gap_mean,
+        "empirical_p_in": p_in,
+        "empirical_p_out": p_out,
+    }
 
 
 def compute_novelty(
@@ -823,6 +990,20 @@ class GraphEvaluator:
         if "novelty" not in self.skip_metrics and self._train_graphs_set:
             novelty = compute_novelty(generated, self.train_graphs)
 
+        # --- Block-structure metrics (Stage 3 telemetry, skippable) ---
+        # ``modularity_q``, ``spectral_gap_l2``, and the empirical
+        # (p_in, p_out) recovered from a 2-block spectral partition.
+        # All four are dataset-agnostic; they smooth out the
+        # binary-saturated ``sbm_accuracy`` signal.
+        block_metrics: dict[str, float | None] = {
+            "modularity_q": None,
+            "spectral_gap_l2": None,
+            "empirical_p_in": None,
+            "empirical_p_out": None,
+        }
+        if "block_structure" not in self.skip_metrics:
+            block_metrics = compute_block_structure_metrics(generated)
+
         return EvaluationResults(
             degree_mmd=mmd_results.degree_mmd,
             clustering_mmd=mmd_results.clustering_mmd,
@@ -832,4 +1013,8 @@ class GraphEvaluator:
             planarity_accuracy=planarity_accuracy,
             uniqueness=uniqueness,
             novelty=novelty,
+            modularity_q=block_metrics["modularity_q"],
+            spectral_gap_l2=block_metrics["spectral_gap_l2"],
+            empirical_p_in=block_metrics["empirical_p_in"],
+            empirical_p_out=block_metrics["empirical_p_out"],
         )
