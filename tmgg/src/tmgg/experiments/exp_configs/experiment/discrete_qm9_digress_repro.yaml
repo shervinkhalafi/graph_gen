@@ -1,0 +1,31 @@
+# @package _global_
+# DiGress QM9 reproduction (Vignac et al., ICLR 2023, Table 4).
+
+defaults:
+  - /data: qm9_digress
+  - override /models/discrete@model: discrete_sbm_official
+  - _self_
+
+experiment_name: discrete_qm9_digress_repro
+wandb_project: discrete-qm9-digress-repro
+
+seed: 0
+
+trainer:
+  max_steps: 50000
+  val_check_interval: 1000
+  check_val_every_n_epoch: null
+  gradient_clip_val: null
+
+model:
+  eval_every_n_steps: 5000
+  num_nodes: 9
+  evaluator:
+    _target_: tmgg.evaluation.molecular.MolecularEvaluator.for_qm9
+  model:
+    input_dims: { X: 4, E: 5, y: 0 }
+    output_dims: { X: 4, E: 5, y: 0 }
+    output_dims_x_class: 4
+    output_dims_x_feat: null
+    output_dims_e_class: 5
+    output_dims_e_feat: null

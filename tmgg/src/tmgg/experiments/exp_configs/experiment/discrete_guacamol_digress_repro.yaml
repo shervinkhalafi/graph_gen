@@ -1,0 +1,31 @@
+# @package _global_
+# DiGress GuacaMol reproduction (Vignac et al., ICLR 2023, Table 6).
+
+defaults:
+  - /data: guacamol_digress
+  - override /models/discrete@model: discrete_sbm_official
+  - _self_
+
+experiment_name: discrete_guacamol_digress_repro
+wandb_project: discrete-guacamol-digress-repro
+
+seed: 0
+
+trainer:
+  max_steps: 500000
+  val_check_interval: 10000
+  check_val_every_n_epoch: null
+  gradient_clip_val: null
+
+model:
+  eval_every_n_steps: 50000
+  num_nodes: 88
+  evaluator:
+    _target_: tmgg.evaluation.molecular.MolecularEvaluator.for_guacamol
+  model:
+    input_dims: { X: 12, E: 5, y: 0 }
+    output_dims: { X: 12, E: 5, y: 0 }
+    output_dims_x_class: 12
+    output_dims_x_feat: null
+    output_dims_e_class: 5
+    output_dims_e_feat: null

@@ -1,0 +1,31 @@
+# @package _global_
+# DiGress MOSES reproduction (Vignac et al., ICLR 2023, Table 5).
+
+defaults:
+  - /data: moses_digress
+  - override /models/discrete@model: discrete_sbm_official
+  - _self_
+
+experiment_name: discrete_moses_digress_repro
+wandb_project: discrete-moses-digress-repro
+
+seed: 0
+
+trainer:
+  max_steps: 200000
+  val_check_interval: 5000
+  check_val_every_n_epoch: null
+  gradient_clip_val: null
+
+model:
+  eval_every_n_steps: 25000
+  num_nodes: 30
+  evaluator:
+    _target_: tmgg.evaluation.molecular.MolecularEvaluator.for_moses
+  model:
+    input_dims: { X: 8, E: 5, y: 0 }
+    output_dims: { X: 8, E: 5, y: 0 }
+    output_dims_x_class: 8
+    output_dims_x_feat: null
+    output_dims_e_class: 5
+    output_dims_e_feat: null
