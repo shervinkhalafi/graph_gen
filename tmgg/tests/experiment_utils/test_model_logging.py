@@ -108,7 +108,7 @@ class TestFigureLogging:
         """CSV figure logging should support slash-separated tags.
 
         Starting state: a CSV logger and a simple matplotlib figure.
-        Invariant: logging ``val/gen/...`` creates the nested directory path
+        Invariant: logging ``gen-val/...`` creates the nested directory path
         and writes the image without raising.
         """
         logger = CSVLogger(save_dir=str(tmp_path), name="figures")
@@ -116,7 +116,7 @@ class TestFigureLogging:
 
         log_figure(
             logger,
-            "val/gen/graph_samples",
+            "gen-val/graph_samples",
             fig,
             global_step=7,
         )
@@ -126,7 +126,6 @@ class TestFigureLogging:
             / "figures"
             / "version_0"
             / "figures"
-            / "val"
-            / "gen"
+            / "gen-val"
             / "graph_samples_step_7.png"
         ).exists()

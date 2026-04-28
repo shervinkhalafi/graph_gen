@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 
-_GRAPH_TAG = "val/gen/graph_samples"
-_ADJACENCY_TAG = "val/gen/adjacency_samples"
+_GRAPH_TAG = "gen-val/graph_samples"
+_ADJACENCY_TAG = "gen-val/adjacency_samples"
 _LAYOUT_SEED = 0
 
 

@@ -913,8 +913,18 @@ class DiffusionModule(BaseGraphModule):
         # Sampled timestep distribution per batch. Confirms the forward
         # noising is hitting the full schedule (uniform over [0, T]).
         t_float = t_int.float()
-        self.log("train/t_mean", t_float.mean(), on_step=True, batch_size=self._cur_bs)
-        self.log("train/t_std", t_float.std(), on_step=True, batch_size=self._cur_bs)
+        self.log(
+            "diagnostics-train/progress/t_mean",
+            t_float.mean(),
+            on_step=True,
+            batch_size=self._cur_bs,
+        )
+        self.log(
+            "diagnostics-train/progress/t_std",
+            t_float.std(),
+            on_step=True,
+            batch_size=self._cur_bs,
+        )
 
         # ---- Tier 2: stride-controlled training-dynamics metrics ----------
         # Logit max-abs as a saturation indicator. Soft-max output blows up
@@ -932,7 +942,7 @@ class DiffusionModule(BaseGraphModule):
             for field in ce_fields:
                 f_pred = _read_field(pred, field, x_classes=x_classes_for_synth)
                 self.log(
-                    f"train/logit_max_abs_{field}",
+                    f"diagnostics-train/progress/logit_max_abs_{field}",
                     f_pred.detach().abs().max(),
                     on_step=True,
                     batch_size=self._cur_bs,
@@ -953,7 +963,7 @@ class DiffusionModule(BaseGraphModule):
                 log_p = F.log_softmax(f_pred, dim=-1)
                 entropy = -(log_p.exp() * log_p).sum(dim=-1).mean()
                 self.log(
-                    f"train/entropy_{field}",
+                    f"diagnostics-train/progress/entropy_{field}",
                     entropy,
                     on_step=True,
                     batch_size=self._cur_bs,
@@ -981,7 +991,7 @@ class DiffusionModule(BaseGraphModule):
         """Per-step wall clock + stride-controlled weight-norm logging."""
         elapsed = time.perf_counter() - self._train_batch_start_time
         self.log(
-            "train/step_time_s",
+            "impl-perf/train/step_time_s",
             elapsed,
             on_step=True,
             on_epoch=False,
@@ -1013,14 +1023,14 @@ class DiffusionModule(BaseGraphModule):
             weight_norms = self._compute_weight_norms_by_block()
             if weight_norms:
                 self.log(
-                    "train/weight_norm_total",
+                    "diagnostics-train/opt-health/weight_norm_total",
                     weight_norms.pop("__total__"),
                     on_step=True,
                     batch_size=self._cur_bs,
                 )
                 for block_name, val in weight_norms.items():
                     self.log(
-                        f"train/weight_norm/{block_name}",
+                        f"diagnostics-train/opt-health/weight_norm/{block_name}",
                         val,
                         on_step=True,
                         batch_size=self._cur_bs,
@@ -1096,7 +1106,7 @@ class DiffusionModule(BaseGraphModule):
         total_key = "grad_2.0_norm_total"
         if total_key in norms:
             self.log(
-                "train/grad_norm_total",
+                "diagnostics-train/opt-health/grad_norm_total",
                 norms[total_key],
                 on_step=True,
                 batch_size=self._cur_bs,
@@ -1141,7 +1151,7 @@ class DiffusionModule(BaseGraphModule):
             ratio = self._compute_adam_moment_ratio(optimizer)
             if ratio is not None:
                 self.log(
-                    "train/adam_moment_ratio_mean",
+                    "diagnostics-train/opt-health/adam_moment_ratio_mean",
                     ratio,
                     on_step=True,
                     batch_size=self._cur_bs,
@@ -1941,24 +1951,14 @@ class DiffusionModule(BaseGraphModule):
 
         results = self.evaluator.evaluate(refs=refs, generated=generated_graphs)
         if results is not None:
-            # Block-structure metrics (Stage 3 telemetry) live under
-            # ``diagnostics-val/block-structure/<name>`` so the cluttered
-            # per-graph diagnostic view is separated from the headline
-            # ``val/gen/{degree_mmd, sbm_accuracy, ...}`` namespace.
-            block_structure_keys = {
-                "modularity_q",
-                "spectral_gap_l2",
-                "empirical_p_in",
-                "empirical_p_out",
-            }
+            # All sample-quality metrics — including the new block-structure
+            # ones (modularity_q, spectral_gap_l2, empirical_p_in/p_out) —
+            # live under the top-level ``gen-val/`` group so the W&B view
+            # cleanly separates "core training/loss" from "what does the
+            # generated sample distribution look like".
             for key, value in results.to_dict().items():
-                if value is None:
-                    continue
-                if key in block_structure_keys:
-                    metric_name = f"diagnostics-val/block-structure/{key}"
-                else:
-                    metric_name = f"val/gen/{key}"
-                self.log(metric_name, value, on_epoch=True)
+                if value is not None:
+                    self.log(f"gen-val/{key}", value, on_epoch=True)
             if self.visualization["enabled"]:
                 figures = build_validation_visualizations(
                     refs=refs,
@@ -1979,9 +1979,9 @@ class DiffusionModule(BaseGraphModule):
         num_vlb_graphs = min(len(refs), 16)
         self.generate_graphs(num_vlb_graphs, collector=collector)
         vlb_results = collector.results()
-        self.log("val/gen/full_chain_vlb", vlb_results["vlb"], on_epoch=True)
+        self.log("gen-val/full_chain_vlb", vlb_results["vlb"], on_epoch=True)
         if "mean_kl" in vlb_results:
-            self.log("val/gen/mean_step_kl", vlb_results["mean_kl"], on_epoch=True)
+            self.log("gen-val/mean_step_kl", vlb_results["mean_kl"], on_epoch=True)
 
     def generate_graphs(
         self,

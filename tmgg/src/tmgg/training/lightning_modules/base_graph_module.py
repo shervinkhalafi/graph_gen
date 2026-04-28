@@ -178,9 +178,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
             return
         self.log_dict(
             {
-                "train/diagnostics/grad_norm_l2": grad_sq_sum.sqrt(),
-                "train/diagnostics/grad_norm_preclip_max": grad_max,
-                "train/diagnostics/param_norm_l2": param_sq_sum.sqrt(),
+                "diagnostics-train/opt-health/grad_norm_l2": grad_sq_sum.sqrt(),
+                "diagnostics-train/opt-health/grad_norm_preclip_max": grad_max,
+                "diagnostics-train/opt-health/param_norm_l2": param_sq_sum.sqrt(),
             },
             on_step=True,
             on_epoch=False,

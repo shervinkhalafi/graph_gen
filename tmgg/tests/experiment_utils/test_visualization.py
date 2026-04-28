@@ -55,11 +55,11 @@ class TestBuildValidationVisualizations:
         )
 
         assert set(figures) == {
-            "val/gen/graph_samples",
-            "val/gen/adjacency_samples",
+            "gen-val/graph_samples",
+            "gen-val/adjacency_samples",
         }
-        assert len(figures["val/gen/graph_samples"].axes) == 8
-        assert len(figures["val/gen/adjacency_samples"].axes) == 8
+        assert len(figures["gen-val/graph_samples"].axes) == 8
+        assert len(figures["gen-val/adjacency_samples"].axes) == 8
 
     def test_truncates_to_available_reference_generated_pairs(self) -> None:
         """Requested sample count should cap at available paired graphs."""
@@ -71,8 +71,8 @@ class TestBuildValidationVisualizations:
             num_samples=8,
         )
 
-        assert len(figures["val/gen/graph_samples"].axes) == 4
-        assert len(figures["val/gen/adjacency_samples"].axes) == 4
+        assert len(figures["gen-val/graph_samples"].axes) == 4
+        assert len(figures["gen-val/adjacency_samples"].axes) == 4
 
     @pytest.mark.parametrize("num_samples", [0, -2, 3, 5])
     def test_rejects_non_positive_or_odd_sample_counts(

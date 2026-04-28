@@ -607,8 +607,8 @@ class TestOnValidationEpochEnd:
         refs = [nx.path_graph(5) for _ in range(4)]
         generated = [nx.cycle_graph(5) for _ in range(4)]
         figures = {
-            "val/gen/graph_samples": MagicMock(),
-            "val/gen/adjacency_samples": MagicMock(),
+            "gen-val/graph_samples": MagicMock(),
+            "gen-val/adjacency_samples": MagicMock(),
         }
 
         mock_dm = MagicMock()
