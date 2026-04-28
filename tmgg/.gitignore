@@ -57,3 +57,8 @@ analysis/digress-loss-check/*
 !analysis/digress-loss-check/validate-gdpo-sbm/
 analysis/digress-loss-check/validate-gdpo-sbm/outputs/
 analysis/digress-loss-check/validate-gdpo-sbm/__pycache__/
+
+# Working-runs analysis dump (W&B history + Modal volume artefacts for
+# the discrete_sbm_vignac_repro investigation; see
+# 2026-04-28-working-runs-analysis/README.md).
+2026-04-28-working-runs-analysis/
