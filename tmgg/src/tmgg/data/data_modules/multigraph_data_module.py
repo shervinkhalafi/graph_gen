@@ -56,26 +56,50 @@ def _adjacencies_to_pyg(adjs: np.ndarray) -> list[Data]:
 
 @dataclass(frozen=True)
 class GraphDataCollator:
-    """Stateful collator producing dense ``GraphData`` batches.
+    """Hot-path collator producing dense ``GraphData`` batches.
+
+    Wired into every ``train_dataloader`` / ``val_dataloader`` /
+    ``test_dataloader`` across all datamodules. Fires once per batch on
+    the worker side, returns the dense representation the model + noise
+    process + loss all consume:
+
+    - ``GraphData.E_class`` — one-hot edge tensor ``(bs, n, n, 2)``
+      ``[no-edge, edge]``.
+    - ``GraphData.node_mask`` — ``(bs, n)`` bool, ``True`` on real
+      nodes and ``False`` on padded positions.
+    - ``GraphData.X_class`` — ``None`` for structure-only inputs (the
+      current SBM path); populated by datamodules that carry node
+      categorical labels.
+
+    The dense view exists because the GraphTransformer attends over
+    every ``(i, j)`` edge token; an ``(n, n)`` representation maps
+    one-to-one onto the model's attention grid. Upstream DiGress uses
+    the same dense representation for the same reason.
 
     Pickles cleanly across multi-worker DataLoader subprocesses
-    (module-level ``frozen=True`` dataclass with primitive fields). All
-    datamodules that produce dense batches construct one of these
-    rather than passing a bare function reference.
+    (module-level ``frozen=True`` dataclass with primitive fields).
 
     Parameters
     ----------
     n_max_static
         Optional static node-count ceiling. When set, the collator
         pads ``(bs, n, n)`` adjacency and downstream tensors to this
-        ceiling so every batch emerges at the same shape (unlocking
-        ``torch.compile`` and ``cuda.graph`` capture downstream). When
-        ``None`` (default) the collator falls back to variable-shape
-        behaviour: ``n_max`` is the largest graph in the current
-        batch. ``node_mask`` zeros padded positions either way, so
-        numerics on real positions are unchanged. See
+        ceiling so every batch emerges at the same shape (precondition
+        for ``torch.compile`` / ``cuda.graph`` capture downstream).
+        When ``None`` (default) ``n_max`` is the largest graph in the
+        current batch — legacy variable-shape behaviour. ``node_mask``
+        zeros padded positions either way, so numerics on real
+        positions are bit-identical between the two modes. See
         ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
-        for the design rationale.
+        for the design rationale and the per-step compute tradeoff.
+
+    See Also
+    --------
+    RawPyGCollator
+        Sparse counterpart used once at training start by the noise
+        process's empirical-marginals estimator. Different consumer,
+        different representation, intentionally not unified — see that
+        class's docstring for the parity-port reasoning.
     """
 
     n_max_static: int | None = None
@@ -92,15 +116,52 @@ class GraphDataCollator:
 
 @dataclass(frozen=True)
 class RawPyGCollator:
-    """Stateful collator returning a raw PyG ``Batch`` (no densification).
+    """Preprocessing-pass collator returning the sparse PyG ``Batch``.
 
-    Used by ``train_dataloader_raw_pyg`` to expose the sparse PyG view
-    that sits one layer below ``GraphDataCollator``. The
-    upstream-parity edge / node count helpers in
-    :mod:`tmgg.data.utils.edge_counts` consume the result directly.
-    Stateless today; kept symmetric with ``GraphDataCollator`` so the
-    constructor stays a uniform "build a collator instance" idiom
-    across all datamodules.
+    Off the hot training path. Wired into ``train_dataloader_raw_pyg``
+    on every datamodule and consumed exactly once per run before
+    training starts, by the noise process's empirical-stationary-
+    marginals estimator (:meth:`NoiseProcess.initialize_from_data`,
+    ``noise_process.py:1089``). That method walks the training set
+    once, summing per-class node and edge counts via the sparse
+    helpers in :mod:`tmgg.data.utils.edge_counts`, then sets the
+    noise process's limit distribution to the empirical π.
+
+    Why sparse rather than dense:
+
+    - The π estimator counts entries in the explicit edge list. The
+      densified ``E_class`` would force it to deduce edges from
+      one-hot indicators, with a per-position lookup overhead and an
+      ambiguous treatment of padded positions.
+    - Upstream parity: this is a direct port of DiGress's
+      ``AbstractDatasetInfos.edge_counts`` / ``node_types``
+      (``digress-upstream-readonly/src/datasets/abstract_dataset.py:34-72``),
+      which operates on the sparse representation. Mirroring the
+      shape of computation makes parity audits tractable.
+    - When :class:`GraphDataCollator` runs in static-pad mode
+      (``n_max_static=200`` on SPECTRE), padded zero-edges would
+      pollute the empirical edge histogram if the estimator went
+      through the dense view. The sparse view is naturally
+      pad-invariant.
+
+    Two call sites today:
+
+    - ``DiffusionModule.setup`` (``diffusion_module.py:525``) — fires
+      once per fit cycle when the noise process needs data init.
+    - ``modal/_functions.py:122`` — the Modal config-preflight
+      subprocess, which sanity-checks that init succeeds inside the
+      container before launching the real run.
+
+    Stateless today; kept as a ``frozen=True`` dataclass so every
+    datamodule's dataloader-construction site uses a uniform
+    ``collate_fn=SomeCollator()`` idiom rather than a function-or-
+    instance mix. Future state (e.g. a "skip empty batches" parity
+    flag) can be added as fields without changing call sites.
+
+    See Also
+    --------
+    GraphDataCollator
+        Dense counterpart used on the hot training path.
     """
 
     def __call__(self, data_list: list[Data]):
