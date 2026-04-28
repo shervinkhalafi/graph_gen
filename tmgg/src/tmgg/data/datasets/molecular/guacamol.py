@@ -6,8 +6,6 @@ Atom decoder: (C, N, O, F, B, Br, Cl, I, P, S, Se, Si).
 
 from __future__ import annotations
 
-from typing import override
-
 from tmgg.data.datasets.molecular.codec import SMILESCodec
 from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
 from tmgg.data.datasets.molecular.vocabulary import AtomBondVocabulary
@@ -29,7 +27,6 @@ class GuacaMolDataset(MolecularGraphDataset):
     RAW_FILES = _GUACAMOL_URLS
 
     @classmethod
-    @override
     def make_codec(cls) -> SMILESCodec:
         return SMILESCodec(
             vocab=AtomBondVocabulary.guacamol(),
@@ -38,7 +35,6 @@ class GuacaMolDataset(MolecularGraphDataset):
             max_atoms=cls.DEFAULT_MAX_ATOMS,
         )
 
-    @override
     def download_smiles_split(self, split: str) -> list[str]:
         path = self._default_download(split)
         with path.open("r") as f:

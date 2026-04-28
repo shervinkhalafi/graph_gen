@@ -10,7 +10,6 @@ from __future__ import annotations
 import csv
 import random
 from pathlib import Path
-from typing import override
 
 from tmgg.data.datasets.molecular.codec import SMILESCodec
 from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
@@ -33,7 +32,6 @@ class QM9Dataset(MolecularGraphDataset):
     RAW_FILES: dict[str, str] = {}
 
     @classmethod
-    @override
     def make_codec(cls) -> SMILESCodec:
         return SMILESCodec(
             vocab=AtomBondVocabulary.qm9(remove_h=True),
@@ -42,7 +40,6 @@ class QM9Dataset(MolecularGraphDataset):
             max_atoms=cls.DEFAULT_MAX_ATOMS,
         )
 
-    @override
     def download_smiles_split(self, split: str) -> list[str]:
         """Read all SMILES from the QM9 CSV and return the requested split."""
         raw_path = self._raw_dir() / "qm9.csv"

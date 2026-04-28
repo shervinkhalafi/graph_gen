@@ -8,8 +8,6 @@ MOSES train/test/scaffold split; we mirror the package's
 
 from __future__ import annotations
 
-from typing import override
-
 from tmgg.data.datasets.molecular.codec import SMILESCodec
 from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
 from tmgg.data.datasets.molecular.vocabulary import AtomBondVocabulary
@@ -29,7 +27,6 @@ class MOSESDataset(MolecularGraphDataset):
     RAW_FILES: dict[str, str] = {}
 
     @classmethod
-    @override
     def make_codec(cls) -> SMILESCodec:
         return SMILESCodec(
             vocab=AtomBondVocabulary.moses(),
@@ -38,7 +35,6 @@ class MOSESDataset(MolecularGraphDataset):
             max_atoms=cls.DEFAULT_MAX_ATOMS,
         )
 
-    @override
     def download_smiles_split(self, split: str) -> list[str]:
         """Pull SMILES from the ``moses`` package."""
         import moses

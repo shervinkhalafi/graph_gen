@@ -17,7 +17,6 @@ import abc
 import logging
 import urllib.request
 from pathlib import Path
-from typing import override
 
 import torch
 from torch.utils.data import Dataset
@@ -227,7 +226,6 @@ class MolecularGraphDataset(Dataset[GraphData], abc.ABC):
             raise RuntimeError(f"{type(self).__name__} not set up. Call setup() first.")
         return len(self._graphs)
 
-    @override
     def __getitem__(self, idx: int) -> GraphData:
         if self._graphs is None:
             raise RuntimeError(f"{type(self).__name__} not set up. Call setup() first.")
