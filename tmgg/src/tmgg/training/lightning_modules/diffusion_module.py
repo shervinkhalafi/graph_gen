@@ -998,7 +998,7 @@ class DiffusionModule(BaseGraphModule):
                 if count == 0:
                     continue
                 self.log(
-                    f"train/loss_per_t/bin_{i}",
+                    f"diagnostics-train/progress/loss_per_t/bin_{i}",
                     self._train_loss_t_sum[i] / float(count),
                     on_step=True,
                     on_epoch=False,
@@ -1125,7 +1125,7 @@ class DiffusionModule(BaseGraphModule):
             grad_health = self._compute_grad_health_by_block(optimizer)
             payload: dict[str, torch.Tensor | float] = {}
             for block_name, val in block_norms.items():
-                payload[f"train/grad_norm/{block_name}"] = val
+                payload[f"diagnostics-train/opt-health/grad_norm/{block_name}"] = val
             payload.update(grad_health)
             self._opt_health_payload = payload
             # Stash θ_before so ``on_train_batch_end`` can subtract it
@@ -1152,7 +1152,7 @@ class DiffusionModule(BaseGraphModule):
     ) -> dict[str, torch.Tensor | float]:
         """Per-block grad cosine, grad SNR, and global effective LR.
 
-        Returns a dict ``{"train/grad_snr/<block>": Tensor, ...}`` so
+        Returns a dict ``{"diagnostics-train/opt-health/grad_snr/<block>": Tensor, ...}`` so
         the caller (``on_before_optimizer_step``) can stash it for the
         post-step ``on_train_batch_end`` hook to drain. ``self.log`` is
         deliberately NOT called from here — see
@@ -1197,7 +1197,7 @@ class DiffusionModule(BaseGraphModule):
             mean = grad_sum[block] / float(n)
             var = sq / float(n) - mean.pow(2)
             snr = mean.pow(2) / var.clamp(min=1e-12)
-            out[f"train/grad_snr/{block}"] = snr.detach()
+            out[f"diagnostics-train/opt-health/grad_snr/{block}"] = snr.detach()
 
         # Grad cosine vs previous-cadence step. First trigger has no
         # reference; we stash and skip. ``denom.clamp(min=1e-12)``
@@ -1210,7 +1210,7 @@ class DiffusionModule(BaseGraphModule):
                 num = (flat * prev).sum()
                 denom = flat.norm() * prev.norm()
                 cos = num / denom.clamp(min=1e-12)
-                out[f"train/grad_cosine/{block}"] = cos.detach()
+                out[f"diagnostics-train/opt-health/grad_cosine/{block}"] = cos.detach()
         self._prev_grad_by_block = new_flat
 
         # Effective LR: lr × ‖∇‖ / ‖θ‖. Pull live LR from
@@ -1227,7 +1227,7 @@ class DiffusionModule(BaseGraphModule):
             if p.requires_grad:
                 param_sq = param_sq + p.detach().pow(2).sum()
         eff = lr * grad_total_sq.sqrt() / param_sq.sqrt().clamp(min=1e-12)
-        out["train/effective_lr"] = eff.detach()
+        out["diagnostics-train/opt-health/effective_lr"] = eff.detach()
         return out
 
     def _log_update_to_weight(self, weight_norms: dict[str, torch.Tensor]) -> None:
@@ -1256,7 +1256,7 @@ class DiffusionModule(BaseGraphModule):
                 continue
             ratio = update_norm / wn.clamp(min=1e-12)
             self.log(
-                f"train/update_to_weight/{block}",
+                f"diagnostics-train/opt-health/update_to_weight/{block}",
                 ratio.detach(),
                 on_step=True,
                 batch_size=self._cur_bs,
@@ -1872,12 +1872,12 @@ class DiffusionModule(BaseGraphModule):
                 # spurious device transfer when computing the ratio.
                 ln2 = torch.log(torch.tensor(2.0, device=total_nll.device))
                 self.log(
-                    "val/bits_per_edge",
+                    "diagnostics-val/progress/bits_per_edge",
                     total_nll / (total_edges.clamp(min=1.0) * ln2),
                     on_epoch=True,
                 )
                 self.log(
-                    "val/bits_per_potential_edge",
+                    "diagnostics-val/progress/bits_per_potential_edge",
                     total_nll / (total_potential.clamp(min=1.0) * ln2),
                     on_epoch=True,
                 )
@@ -1887,22 +1887,24 @@ class DiffusionModule(BaseGraphModule):
             # exceeds the per-epoch ``t`` coverage. ``count.clamp(min=1)``
             # would log a zero average for empty bins which is misleading.
             self._log_val_t_bins(
-                "val/kl_diffusion_per_t",
+                "diagnostics-val/progress/kl_diffusion_per_t",
                 self._val_kl_diff_t_sum,
                 self._val_kl_diff_t_count,
             )
             self._log_val_t_bins(
-                "val/kl_prior_per_t",
+                "diagnostics-val/progress/kl_prior_per_t",
                 self._val_kl_prior_t_sum,
                 self._val_kl_prior_t_count,
             )
             self._log_val_t_bins(
-                "val/reconstruction_per_t",
+                "diagnostics-val/progress/reconstruction_per_t",
                 self._val_recon_t_sum,
                 self._val_recon_t_count,
             )
             self._log_val_t_bins(
-                "val/loss_per_t", self._val_loss_t_sum, self._val_loss_t_count
+                "diagnostics-val/progress/loss_per_t",
+                self._val_loss_t_sum,
+                self._val_loss_t_count,
             )
 
             self._vlb_nll.clear()
@@ -1939,9 +1941,24 @@ class DiffusionModule(BaseGraphModule):
 
         results = self.evaluator.evaluate(refs=refs, generated=generated_graphs)
         if results is not None:
+            # Block-structure metrics (Stage 3 telemetry) live under
+            # ``diagnostics-val/block-structure/<name>`` so the cluttered
+            # per-graph diagnostic view is separated from the headline
+            # ``val/gen/{degree_mmd, sbm_accuracy, ...}`` namespace.
+            block_structure_keys = {
+                "modularity_q",
+                "spectral_gap_l2",
+                "empirical_p_in",
+                "empirical_p_out",
+            }
             for key, value in results.to_dict().items():
-                if value is not None:
-                    self.log(f"val/gen/{key}", value, on_epoch=True)
+                if value is None:
+                    continue
+                if key in block_structure_keys:
+                    metric_name = f"diagnostics-val/block-structure/{key}"
+                else:
+                    metric_name = f"val/gen/{key}"
+                self.log(metric_name, value, on_epoch=True)
             if self.visualization["enabled"]:
                 figures = build_validation_visualizations(
                     refs=refs,
