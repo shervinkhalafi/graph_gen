@@ -26,6 +26,10 @@ dependencies = [
   "safetensors>=0.4.0",      # Fast tensor serialization for eigenstructure study
   "polars>=1.0.0",           # Used by tmgg-modal aggregate
   "pot>=0.9.0",              # Python Optimal Transport (EMD kernel for MMD metrics)
+  "rdkit>=2024.3",
+  "fcd-torch>=1.0.7",
+  "moses>=0.4",
+  "guacamol>=0.5",
 ]
 
 [project.optional-dependencies]
