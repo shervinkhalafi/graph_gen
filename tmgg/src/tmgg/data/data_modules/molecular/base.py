@@ -92,15 +92,17 @@ class MolecularDataModule(BaseGraphDataModule):
     def setup(self, stage: str | None = None) -> None:
         if self._train_dataset is not None:
             return
-        self._train_dataset = self._make(split="train")
-        self._val_dataset = self._make(split="val")
-        self._test_dataset = self._make(split="test")
+        train_ds = self._make(split="train")
+        val_ds = self._make(split="val")
+        test_ds = self._make(split="test")
+        self._train_dataset = train_ds
+        self._val_dataset = val_ds
+        self._test_dataset = test_ds
         # Refresh num_nodes from the largest observed graph (overrides
         # the constructor-time default of DEFAULT_MAX_ATOMS).
         all_n = [
             int(g.node_mask.sum().item())
-            for g in (self._train_dataset._graphs or [])
-            + (self._val_dataset._graphs or [])
+            for g in (train_ds._graphs or []) + (val_ds._graphs or [])
         ]
         if all_n:
             self.num_nodes = max(all_n)
