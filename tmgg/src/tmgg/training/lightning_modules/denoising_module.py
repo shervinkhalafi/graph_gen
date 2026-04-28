@@ -625,6 +625,17 @@ class SingleStepDenoisingModule(DiffusionModule):
         if self.evaluator is None and not self.log_validation_adjacency_images:
             return
 
+        # SingleStepDenoisingModule's distributional evaluation is
+        # GraphEvaluator-only; the molecular path is wired up in a later
+        # phase. Fail loudly if a MolecularEvaluator slips in early.
+        if self.evaluator is not None and not isinstance(
+            self.evaluator, GraphEvaluator
+        ):
+            raise NotImplementedError(
+                "SingleStepDenoisingModule does not yet wire up "
+                "MolecularEvaluator; only GraphEvaluator is supported here."
+            )
+
         dm = self.trainer.datamodule  # pyright: ignore[reportAttributeAccessIssue]
         num_reference_graphs = self.evaluator.eval_num_samples if self.evaluator else 2
         ref_graphs: list[nx.Graph[Any]] = dm.get_reference_graphs(

@@ -49,6 +49,7 @@ from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.evaluation.graph_evaluator import (
     GraphEvaluator,
 )
+from tmgg.evaluation.molecular import MolecularEvaluator
 from tmgg.evaluation.visualization import (
     build_validation_visualizations,
 )
@@ -409,7 +410,7 @@ class DiffusionModule(BaseGraphModule):
         noise_process: NoiseProcess,
         sampler: Sampler | None = None,
         noise_schedule: NoiseSchedule,
-        evaluator: GraphEvaluator | None = None,
+        evaluator: GraphEvaluator | MolecularEvaluator | None = None,
         loss_type: str = "cross_entropy",
         lambda_E: float = 5.0,
         lambda_y: float = 0.0,
@@ -445,7 +446,7 @@ class DiffusionModule(BaseGraphModule):
         self.noise_process: NoiseProcess = noise_process
         self.sampler: Sampler | None = sampler
         self.noise_schedule: NoiseSchedule = noise_schedule
-        self.evaluator: GraphEvaluator | None = evaluator
+        self.evaluator: GraphEvaluator | MolecularEvaluator | None = evaluator
 
         self.num_nodes: int = num_nodes
         self.eval_every_n_steps: int = eval_every_n_steps
@@ -1941,6 +1942,16 @@ class DiffusionModule(BaseGraphModule):
         if self.global_step % self.eval_every_n_steps != 0:
             return
 
+        # The GraphEvaluator-vs-MolecularEvaluator branching for the
+        # validation loop lands in a later phase; until then this path
+        # only handles GraphEvaluator. Fail loudly if a MolecularEvaluator
+        # slips in before that wiring exists.
+        if not isinstance(self.evaluator, GraphEvaluator):
+            raise NotImplementedError(
+                "Validation-loop wiring for MolecularEvaluator is not yet "
+                "implemented; only GraphEvaluator is supported here."
+            )
+
         refs = self.trainer.datamodule.get_reference_graphs(  # pyright: ignore[reportAttributeAccessIssue]
             "val", self.evaluator.eval_num_samples
         )
@@ -2059,5 +2070,11 @@ class DiffusionModule(BaseGraphModule):
                 "to derive a binary adjacency from sampled GraphData. "
                 "Configure ``evaluator`` on the module (see Wave 6.1 of "
                 "docs/specs/2026-04-15-unified-graph-features-spec.md)."
+            )
+        if not isinstance(self.evaluator, GraphEvaluator):
+            raise NotImplementedError(
+                "to_networkx_graphs is GraphEvaluator-specific; the "
+                "MolecularEvaluator path uses SMILES decoding directly and "
+                "is wired up in a later phase."
             )
         return self.evaluator.to_networkx_graphs(graph_data_list)
