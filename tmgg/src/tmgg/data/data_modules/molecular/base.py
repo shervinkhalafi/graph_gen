@@ -1,31 +1,27 @@
 """Base molecular DataModule. Subclasses pin ``dataset_cls``.
 
 Mirrors :class:`tmgg.data.data_modules.spectre_sbm.SpectreSBMDataModule`
-in dataloader plumbing but reads :class:`MolecularGraphDataset`
-subclasses (which already produce :class:`GraphData` objects) so the
-collator becomes the identity over a list of single-graph
-:class:`GraphData` instances stitched into a batch by
-:class:`GraphDataCollator`.
+in dataloader plumbing. The underlying :class:`MolecularGraphDataset`
+exposes single-graph PyG :class:`~torch_geometric.data.Data` objects
+on ``__getitem__``; :class:`GraphDataCollator` then assembles the
+dense :class:`GraphData` batch — same code path as the SPECTRE
+datamodules — and densifies each graph's atom-class indices into a
+``X_class`` one-hot whose width is fixed by
+``num_atom_types_x = codec.vocab.num_atom_types``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, cast, override
+from typing import override
 
 from torch.utils.data import DataLoader
 
 from tmgg.data.data_modules.base_data_module import BaseGraphDataModule
-from tmgg.data.data_modules.multigraph_data_module import (
-    GraphDataCollator,
-    _ListDataset,
-)
+from tmgg.data.data_modules.multigraph_data_module import GraphDataCollator
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
 from tmgg.utils.noising.size_distribution import SizeDistribution
-
-if TYPE_CHECKING:
-    from torch_geometric.data import Data
 
 
 class MolecularDataModule(BaseGraphDataModule):
@@ -117,8 +113,14 @@ class MolecularDataModule(BaseGraphDataModule):
     # ------------------------------------------------------------------
 
     def _dense_collator(self) -> GraphDataCollator:
+        # Pin the X_class width to the codec's vocabulary so every batch
+        # emerges with the same (bs, n_max, num_atom_types) shape, even
+        # when a batch happens to miss one of the rarer atom classes.
         return GraphDataCollator(
-            n_max_static=self.num_nodes_max_static if self.pad_to_static_n_max else None
+            n_max_static=self.num_nodes_max_static
+            if self.pad_to_static_n_max
+            else None,
+            num_atom_types_x=self.dataset_cls.make_codec().vocab.num_atom_types,
         )
 
     @override
@@ -126,7 +128,7 @@ class MolecularDataModule(BaseGraphDataModule):
         if self._train_dataset is None:
             raise RuntimeError(f"{type(self).__name__} not setup. Call setup() first.")
         return self._make_dataloader(
-            _ListDataset(cast("list[Data]", list(self._train_dataset._graphs or []))),
+            self._train_dataset,
             shuffle=True,
             collate_fn=self._dense_collator(),
         )
@@ -136,7 +138,7 @@ class MolecularDataModule(BaseGraphDataModule):
         if self._val_dataset is None:
             raise RuntimeError(f"{type(self).__name__} not setup. Call setup() first.")
         return self._make_dataloader(
-            _ListDataset(cast("list[Data]", list(self._val_dataset._graphs or []))),
+            self._val_dataset,
             shuffle=False,
             collate_fn=self._dense_collator(),
         )
@@ -146,7 +148,7 @@ class MolecularDataModule(BaseGraphDataModule):
         if self._test_dataset is None:
             raise RuntimeError(f"{type(self).__name__} not setup. Call setup() first.")
         return self._make_dataloader(
-            _ListDataset(cast("list[Data]", list(self._test_dataset._graphs or []))),
+            self._test_dataset,
             shuffle=False,
             collate_fn=self._dense_collator(),
         )

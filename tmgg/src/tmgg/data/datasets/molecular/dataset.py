@@ -20,6 +20,8 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import Dataset
+from torch_geometric.data import Data
+from torch_geometric.utils import dense_to_sparse
 
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.molecular.codec import SMILESCodec
@@ -45,7 +47,7 @@ def _local_cache_root() -> Path:
     return Path.home() / ".cache" / "tmgg"
 
 
-class MolecularGraphDataset(Dataset[GraphData], abc.ABC):
+class MolecularGraphDataset(Dataset[Data], abc.ABC):
     """ABC for the three molecular datasets.
 
     Subclasses provide:
@@ -60,9 +62,17 @@ class MolecularGraphDataset(Dataset[GraphData], abc.ABC):
 
     1. ``prepare_data()`` is called by the matching DataModule and
        downloads raw SMILES. Idempotent.
-    2. ``setup(split)`` populates ``self._graphs`` from the cached
-       shards, preprocessing on first call.
-    3. ``__getitem__`` returns ``GraphData`` — no RDKit calls.
+    2. ``setup(split)`` populates ``self._graphs`` (a list of
+       single-graph :class:`GraphData`) from the cached shards,
+       preprocessing on first call.
+    3. ``__getitem__`` returns a sparse PyG :class:`~torch_geometric.data.Data`
+       carrying ``edge_index``, ``num_nodes`` and ``x`` (integer
+       atom-class indices). The :class:`GraphData` shards are kept in
+       memory and converted on demand so the ``DataLoader`` worker
+       feeds :class:`GraphDataCollator` (which expects PyG ``Data``)
+       directly. The collator then reassembles the dense
+       :class:`GraphData` batch — a single source of densification
+       on the hot path. No RDKit calls.
     """
 
     DATASET_NAME: str = ""  # subclass override
@@ -226,7 +236,56 @@ class MolecularGraphDataset(Dataset[GraphData], abc.ABC):
             raise RuntimeError(f"{type(self).__name__} not set up. Call setup() first.")
         return len(self._graphs)
 
-    def __getitem__(self, idx: int) -> GraphData:
+    def __getitem__(self, idx: int) -> Data:
         if self._graphs is None:
             raise RuntimeError(f"{type(self).__name__} not set up. Call setup() first.")
-        return self._graphs[idx]
+        return self._graphdata_to_pyg(self._graphs[idx])
+
+    @staticmethod
+    def _graphdata_to_pyg(gd: GraphData) -> Data:
+        """Convert a single-graph codec :class:`GraphData` to PyG :class:`Data`.
+
+        The codec emits a leading batch dim of 1 plus the dense
+        categorical fields ``X_class`` (atom one-hot,
+        ``(1, n, num_atom_types)``) and ``E_class`` (bond one-hot,
+        ``(1, n, n, num_bond_types)`` with channel 0 = NONE). This
+        helper extracts:
+
+        - ``edge_index``: COO indices for every edge with
+          ``argmax_E_class != 0`` (i.e. any non-NONE bond), via
+          :func:`torch_geometric.utils.dense_to_sparse`. Bond-type
+          information is intentionally dropped — :class:`GraphDataCollator`
+          re-derives the binary ``E_class`` ``[no-edge, edge]`` from the
+          adjacency, mirroring the SPECTRE-SBM / SPECTRE-Planar path.
+          (Multi-class bond labels are out of scope until the molecular
+          model wires the wider ``de_class`` through; see
+          :class:`GraphData.from_pyg_batch`.)
+        - ``num_nodes``: real atom count, taken from ``node_mask.sum()``.
+        - ``x``: integer atom-class indices, shape ``(n_real,)``.
+          :class:`GraphData.from_pyg_batch` densifies this back into
+          ``X_class`` on the collator side.
+
+        Parameters
+        ----------
+        gd
+            Single-graph :class:`GraphData` produced by
+            :class:`SMILESCodec.encode_smiles`. ``X_class`` and
+            ``E_class`` MUST be populated; ``node_mask`` shape
+            ``(1, n)``.
+
+        Returns
+        -------
+        torch_geometric.data.Data
+            Sparse representation suitable for PyG batching.
+        """
+        if gd.X_class is None or gd.E_class is None:
+            raise ValueError(
+                "MolecularGraphDataset._graphdata_to_pyg requires X_class "
+                "and E_class to be populated by the codec."
+            )
+        n = int(gd.node_mask[0].sum().item())
+        e_argmax = gd.E_class[0, :n, :n].argmax(dim=-1)
+        adj = (e_argmax != 0).to(torch.float32)
+        edge_index, _ = dense_to_sparse(adj)
+        x = gd.X_class[0, :n].argmax(dim=-1).long()
+        return Data(edge_index=edge_index, num_nodes=n, x=x)
