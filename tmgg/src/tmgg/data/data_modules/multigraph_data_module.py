@@ -92,6 +92,16 @@ class GraphDataCollator:
         positions are bit-identical between the two modes. See
         ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
         for the design rationale and the per-step compute tradeoff.
+    num_atom_types_x
+        Optional explicit width for the one-hot ``X_class`` densified
+        from each ``Data.x`` (integer atom-class indices). Forwarded
+        verbatim to :meth:`GraphData.from_pyg_batch`. Required for
+        molecular-path correctness — without it, batches that miss a
+        rare atom class end up with a narrower ``X_class`` than batches
+        that include it. ``None`` (default) preserves the structural
+        SPECTRE-SBM / SPECTRE-Planar behaviour and lets
+        :meth:`from_pyg_batch` infer the width from data when ``x`` is
+        present.
 
     See Also
     --------
@@ -103,6 +113,7 @@ class GraphDataCollator:
     """
 
     n_max_static: int | None = None
+    num_atom_types_x: int | None = None
 
     def __call__(self, data_list: list[Data]) -> GraphData:
         from typing import cast
@@ -111,7 +122,11 @@ class GraphDataCollator:
         from torch_geometric.data.data import BaseData
 
         batch = Batch.from_data_list(cast(list[BaseData], data_list))
-        return GraphData.from_pyg_batch(batch, n_max_static=self.n_max_static)
+        return GraphData.from_pyg_batch(
+            batch,
+            n_max_static=self.n_max_static,
+            num_atom_types_x=self.num_atom_types_x,
+        )
 
 
 @dataclass(frozen=True)

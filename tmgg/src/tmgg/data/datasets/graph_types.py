@@ -555,9 +555,13 @@ class GraphData:
 
     @classmethod
     def from_pyg_batch(
-        cls, batch: Batch, *, n_max_static: int | None = None
+        cls,
+        batch: Batch,
+        *,
+        n_max_static: int | None = None,
+        num_atom_types_x: int | None = None,
     ) -> GraphData:
-        """Convert a PyG Batch to a dense, structure-only GraphData.
+        """Convert a PyG Batch to a dense GraphData.
 
         Parameters
         ----------
@@ -574,20 +578,34 @@ class GraphData:
             so numerics on real positions are bit-identical. See
             ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
             for the design rationale.
+        num_atom_types_x
+            Optional explicit width for the densified ``X_class`` one-hot
+            when the input ``batch`` carries a per-graph ``x`` attribute
+            of integer atom-class indices (shape ``(sum_n,)``). When
+            ``None`` and ``x`` is present, the width is inferred from
+            ``int(x.max()) + 1`` — adequate for tests but underspecified
+            for production datasets that may not see every class in a
+            given batch (callers MUST pass the codec's
+            ``vocab.num_atom_types`` to guarantee consistent widths
+            across batches; see the molecular collator wiring in
+            ``data_modules/molecular/base.py``). When ``x`` is absent
+            and this kwarg is ``None``, ``X_class`` is left ``None`` to
+            preserve the structure-only path used by SPECTRE-SBM /
+            SPECTRE-Planar.
 
         Returns
         -------
         GraphData
             Dense batched representation with ``E_class`` (``de_class=2``
-            one-hot ``[no-edge, edge]``) populated; ``X_class`` is ``None``
-            because the spec forbids datasets emitting a degenerate
+            one-hot ``[no-edge, edge]``) always populated. ``X_class`` is
+            populated when the input batch carries a per-graph ``x``
+            attribute of integer atom-class indices; otherwise ``None``
+            (the spec forbids datasets emitting a degenerate
             "node-present / node-absent" one-hot that merely re-encodes
-            ``node_mask`` (see
+            ``node_mask`` — see
             ``docs/specs/2026-04-15-unified-graph-features-spec.md
-            §"Removed fields"`` — "architecture-internal concern").
-            ``node_mask`` reflects actual node counts per graph; padded
-            positions are marked ``False`` and are the single source of
-            truth for which rows correspond to real nodes.
+            §"Removed fields"``). ``node_mask`` reflects actual node
+            counts per graph; padded positions are marked ``False``.
         """
         import torch.nn.functional as F
         from torch_geometric.utils import remove_self_loops, to_dense_adj
@@ -656,7 +674,58 @@ class GraphData:
 
         y = torch.zeros(bs, 0, device=adj.device)
 
-        return cls(y=y, node_mask=node_mask, E_class=E_class)
+        # Optional per-graph node-class densification. Datasets that
+        # carry integer atom-class indices on each PyG ``Data.x`` (e.g.
+        # the molecular path) get a dense one-hot ``X_class`` here;
+        # purely structural datasets (SPECTRE-SBM / SPECTRE-Planar) leave
+        # ``batch.x`` unset and we fall through with ``X_class=None``.
+        x_attr: Tensor | None = getattr(batch, "x", None)
+        X_class: Tensor | None = None
+        if x_attr is not None:
+            if x_attr.dim() != 1:
+                raise ValueError(
+                    "from_pyg_batch: batch.x must be 1D integer atom-class "
+                    f"indices of shape (sum_n,); got shape {tuple(x_attr.shape)}."
+                )
+            if not torch.is_floating_point(x_attr):
+                idx_long = x_attr.long()
+            else:
+                raise ValueError(
+                    "from_pyg_batch: batch.x must be an integer dtype "
+                    f"(atom-class indices); got dtype {x_attr.dtype}. Pass a "
+                    "one-hot via a separate field if you need continuous "
+                    "node features."
+                )
+            if num_atom_types_x is None:
+                num_atom_types = int(idx_long.max().item()) + 1
+            else:
+                num_atom_types = int(num_atom_types_x)
+                observed_max = int(idx_long.max().item())
+                if observed_max >= num_atom_types:
+                    raise ValueError(
+                        "from_pyg_batch: observed atom-class index "
+                        f"{observed_max} exceeds num_atom_types_x="
+                        f"{num_atom_types}."
+                    )
+            # Per-row index within the row's graph: subtract the
+            # cumulative node count of all preceding graphs from the
+            # global row id. Equivalent to upstream's
+            # ``to_dense_batch`` row-position calculation but spelled
+            # out to avoid pulling in another PyG helper.
+            cum_counts = torch.zeros(bs + 1, dtype=torch.long, device=adj.device)
+            cum_counts[1:] = torch.cumsum(node_counts, dim=0)
+            pos_in_graph = (
+                torch.arange(idx_long.shape[0], device=adj.device)
+                - cum_counts[batch_vec]
+            )
+            X_class = torch.zeros(
+                (bs, n_max, num_atom_types),
+                dtype=torch.float32,
+                device=adj.device,
+            )
+            X_class[batch_vec, pos_in_graph, idx_long] = 1.0
+
+        return cls(y=y, node_mask=node_mask, E_class=E_class, X_class=X_class)
 
     def to_pyg(self) -> Data:
         """Convert this (unbatched) GraphData to a PyG Data object.
