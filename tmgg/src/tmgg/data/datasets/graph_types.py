@@ -197,12 +197,20 @@ class GraphData:
                 X_class_masked = self.X_class * x_mask
             if self.E_class is not None:
                 E_class_masked = self.E_class * e_mask1 * e_mask2
-                assert torch.allclose(
-                    E_class_masked, torch.transpose(E_class_masked, -3, -2)
-                ), (
-                    "Edge features E_class must be symmetric after masking. "
-                    f"Max asymmetry: {(E_class_masked - torch.transpose(E_class_masked, -3, -2)).abs().max().item():.2e}"
-                )
+                # Symmetry sanity check. ``mask()`` is hit ≥3× per training
+                # step (forward noise, transformer output, loss target);
+                # ``bool(allclose(...))`` syncs the GPU stream every call.
+                # Guarded by ``__debug__`` so production runs (Python -O /
+                # PYTHONOPTIMIZE=1) skip it. Symmetry is a math identity
+                # of the producer (multiplying a symmetric input by
+                # ``e_mask1 * e_mask2`` preserves symmetry).
+                if __debug__:
+                    assert torch.allclose(
+                        E_class_masked, torch.transpose(E_class_masked, -3, -2)
+                    ), (
+                        "Edge features E_class must be symmetric after masking. "
+                        f"Max asymmetry: {(E_class_masked - torch.transpose(E_class_masked, -3, -2)).abs().max().item():.2e}"
+                    )
 
         # Continuous fields are always zeroed at masked positions; collapse
         # only affects the categorical (one-hot) split.
@@ -210,13 +218,14 @@ class GraphData:
         E_feat_masked: Tensor | None = None
         if self.E_feat is not None:
             E_feat_masked = self.E_feat * e_mask1 * e_mask2
-            if not collapse:
-                assert torch.allclose(
-                    E_feat_masked, torch.transpose(E_feat_masked, -3, -2)
-                ), (
-                    "Edge features E_feat must be symmetric after masking. "
-                    f"Max asymmetry: {(E_feat_masked - torch.transpose(E_feat_masked, -3, -2)).abs().max().item():.2e}"
-                )
+            if not collapse:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+                if __debug__:
+                    assert torch.allclose(
+                        E_feat_masked, torch.transpose(E_feat_masked, -3, -2)
+                    ), (
+                        "Edge features E_feat must be symmetric after masking. "
+                        f"Max asymmetry: {(E_feat_masked - torch.transpose(E_feat_masked, -3, -2)).abs().max().item():.2e}"
+                    )
 
         return GraphData(
             y=self.y,
@@ -590,12 +599,19 @@ class GraphData:
         diag = torch.arange(n_max, device=adj.device)
         adj = (adj + adj.transpose(1, 2)).clamp(max=1.0)
 
-        if not torch.allclose(adj, adj.transpose(-2, -1)):
-            max_asym = (adj - adj.transpose(-2, -1)).abs().max().item()
-            raise AssertionError(
-                f"from_pyg_batch produced asymmetric adjacency: "
-                f"shape={tuple(adj.shape)}, max|adj - adj.T|={max_asym:.3e}"
-            )
+        # Symmetry sanity assert. Runs on CPU worker tensors during
+        # collation, so it does NOT block the GPU stream — listed for
+        # completeness. Guarded by ``__debug__`` so production runs
+        # (Python -O / PYTHONOPTIMIZE=1) skip the O(N²) ``allclose`` per
+        # batch on workers. Symmetry is mathematically forced two lines
+        # above (``adj + adj.transpose``).
+        if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+            if not torch.allclose(adj, adj.transpose(-2, -1)):
+                max_asym = (adj - adj.transpose(-2, -1)).abs().max().item()
+                raise AssertionError(
+                    f"from_pyg_batch produced asymmetric adjacency: "
+                    f"shape={tuple(adj.shape)}, max|adj - adj.T|={max_asym:.3e}"
+                )
 
         # One-hot edge features (bs, n, n, 2): [no-edge, edge]
         E_class = torch.stack([1.0 - adj, adj], dim=-1)

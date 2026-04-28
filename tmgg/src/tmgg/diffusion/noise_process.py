@@ -129,17 +129,22 @@ def _build_noised_batch(
     # Currently no consumer reads ``noised.alpha_s_bar`` at ``t = 0``; if
     # this changes, the t=0 case must be handled explicitly. ``FAIL_STRICTLY``
     # converts the warning into a hard error to surface the call site.
-    if (t_int_b1 == 0).any():
-        msg = (
-            "_build_noised_batch: s_int=-1 at t=0; returning alpha_bar[T] per "
-            "upstream DiGress's negative-index semantics (noise_schedule.py:75-79). "
-            "Currently no consumer reads noised.alpha_s_bar at t=0; if this changes, "
-            "the t=0 case must be handled explicitly. Set FAIL_STRICTLY=1 to crash "
-            "on this code path instead of warning."
-        )
-        if os.environ.get("FAIL_STRICTLY"):
-            raise RuntimeError(msg)
-        warnings.warn(msg, RuntimeWarning, stacklevel=2)
+    # Dev-only warning: the ``where`` below already handles ``t=0``
+    # numerically. Guarded by ``__debug__`` so production runs
+    # (Python -O / PYTHONOPTIMIZE=1) skip the per-step ``bool(.any())``
+    # sync. ``FAIL_STRICTLY`` continues to crash in debug.
+    if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+        if (t_int_b1 == 0).any():
+            msg = (
+                "_build_noised_batch: s_int=-1 at t=0; returning alpha_bar[T] per "
+                "upstream DiGress's negative-index semantics (noise_schedule.py:75-79). "
+                "Currently no consumer reads noised.alpha_s_bar at t=0; if this changes, "
+                "the t=0 case must be handled explicitly. Set FAIL_STRICTLY=1 to crash "
+                "on this code path instead of warning."
+            )
+            if os.environ.get("FAIL_STRICTLY"):
+                raise RuntimeError(msg)
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
 
     # Per-element s_int: t-1 normally, T at t=0 (= -1 mod (T+1)).
     s_int_b1 = torch.where(
@@ -388,15 +393,22 @@ def _assert_row_stochastic(t: Tensor, name: str, atol: float = 1e-5) -> None:
     algebraically; this runtime check guards against future refactors
     silently breaking it. Skips empty tensors (``numel == 0``), which
     are valid for empty-class edge fields.
+
+    Body wrapped in ``if __debug__:`` so production runs
+    (Python -O / PYTHONOPTIMIZE=1) skip the ``.item()`` + ``allclose``
+    syncs. Hit 6× per call inside posterior helpers; per the 2026-04-28
+    sync review (region 02) these are validation-only path, but the
+    host syncs still cost during val.
     """
-    if t.numel() == 0:
-        return
-    sums = t.sum(dim=-1)
-    deviation = (sums - 1.0).abs().max().item()
-    assert torch.allclose(sums, torch.ones_like(sums), atol=atol), (
-        f"{name} not row-stochastic: max|row_sum - 1| = {deviation:.3e}, "
-        f"shape={tuple(t.shape)}"
-    )
+    if __debug__:
+        if t.numel() == 0:
+            return
+        sums = t.sum(dim=-1)
+        deviation = (sums - 1.0).abs().max().item()
+        assert torch.allclose(sums, torch.ones_like(sums), atol=atol), (
+            f"{name} not row-stochastic: max|row_sum - 1| = {deviation:.3e}, "
+            f"shape={tuple(t.shape)}"
+        )
 
 
 class NoiseProcess(ABC, nn.Module):

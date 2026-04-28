@@ -54,11 +54,17 @@ def _normalise_unnormalised_posterior(
         Normalised PMF with the same shape as ``unnorm``; every row
         sums to ``1`` modulo float roundoff.
     """
-    if not (unnorm >= 0).all():
-        raise ValueError(
-            "_normalise_unnormalised_posterior: input contains negative "
-            "probability mass; cannot sample. Check upstream computation."
-        )
+    # Non-negativity sanity check. Functionally an assert: the producer
+    # (``_mix_with_limit`` and the marginalised-KL path) is provably
+    # non-negative, so this only fires on a real upstream bug. Guarded by
+    # ``__debug__`` so production runs (Python -O / PYTHONOPTIMIZE=1) skip
+    # the bool(.all()) sync that fires twice per step (X, E).
+    if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+        if not (unnorm >= 0).all():
+            raise ValueError(
+                "_normalise_unnormalised_posterior: input contains negative "
+                "probability mass; cannot sample. Check upstream computation."
+            )
     # Upstream uniform-fallback for zero-mass rows (parity #28 / D-5).
     fixed = unnorm.clone()
     row_sum = fixed.sum(dim=-1)
@@ -289,15 +295,22 @@ def compute_posterior_distribution(
     #     replace denom with 1 so the division yields 0 (since product is
     #     also zero there) instead of NaN. Downstream masking discards them.
     valid = (M.sum(dim=-1) > 0) & (M_t.sum(dim=-1) > 0)  # (bs, N)
-    if valid.any():
-        valid_denom = denom[valid]
-        assert (valid_denom > 0).all(), (
-            f"compute_posterior_distribution: degenerate posterior denominator "
-            f"at valid (non-masked) position (field={field}, "
-            f"min_at_valid={valid_denom.min().item():.3e}, "
-            f"valid_count={int(valid.sum().item())}, "
-            f"zero_at_valid={int((valid_denom == 0).sum().item())})"
-        )
+    # Degenerate-denominator sanity assert. Validation-only path
+    # (every val_check_interval), but the ``valid.any()`` host branch
+    # plus inner ``.item()`` calls each sync the GPU stream. Guarded by
+    # ``__debug__`` so production runs (Python -O / PYTHONOPTIMIZE=1)
+    # skip the check; ``torch.where`` below already neutralises masked
+    # positions.
+    if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+        if valid.any():
+            valid_denom = denom[valid]
+            assert (valid_denom > 0).all(), (
+                f"compute_posterior_distribution: degenerate posterior denominator "
+                f"at valid (non-masked) position (field={field}, "
+                f"min_at_valid={valid_denom.min().item():.3e}, "
+                f"valid_count={int(valid.sum().item())}, "
+                f"zero_at_valid={int((valid_denom == 0).sum().item())})"
+            )
     denom = torch.where(valid, denom, torch.ones_like(denom))
 
     prob = product / denom.unsqueeze(-1)  # (bs, N, d)
