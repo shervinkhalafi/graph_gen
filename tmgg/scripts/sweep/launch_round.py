@@ -106,7 +106,7 @@ def build_wrapper_invocation(
     """
     wrapper = WRAPPER_BY_DATASET[dataset]
     cmd: list[str] = [f"./{wrapper}"]
-    cmd += [f"seed={seed}", f"wandb_name={run_uid}"]
+    cmd += [f"seed={seed}", f"+wandb_name={run_uid}"]
     for k, v in overrides.items():
         cmd.append(f"{k}={v}")
     if async_eval_schedule_path is not None:

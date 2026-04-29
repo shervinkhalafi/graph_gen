@@ -54,7 +54,7 @@ def test_build_wrapper_invocation_includes_overrides() -> None:
     )
     assert cmd[0] == "./run-upstream-digress-sbm-modal-a100.zsh"
     assert "seed=0" in cmd
-    assert "wandb_name=smallest-cfg/spectre_sbm/r2/dx/deadbeef" in cmd
+    assert "+wandb_name=smallest-cfg/spectre_sbm/r2/dx/deadbeef" in cmd
     assert "model.model.hidden_dims.dx=128" in cmd
     assert "trainer.max_steps=100000" in cmd
 
@@ -194,6 +194,5 @@ def test_legacy_launch_omits_async_eval_fields(tmp_path: Path) -> None:
     # Either absent entirely or explicitly false — both are acceptable.
     assert not row.get("async_eval_enabled", False)
     assert (
-        "async_eval_schedule_path" not in row
-        or row["async_eval_schedule_path"] is None
+        "async_eval_schedule_path" not in row or row["async_eval_schedule_path"] is None
     )
