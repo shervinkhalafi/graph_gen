@@ -253,13 +253,17 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
 
         - ``edge_index``: COO indices for every edge with
           ``argmax_E_class != 0`` (i.e. any non-NONE bond), via
-          :func:`torch_geometric.utils.dense_to_sparse`. Bond-type
-          information is intentionally dropped — :class:`GraphDataCollator`
-          re-derives the binary ``E_class`` ``[no-edge, edge]`` from the
-          adjacency, mirroring the SPECTRE-SBM / SPECTRE-Planar path.
-          (Multi-class bond labels are out of scope until the molecular
-          model wires the wider ``de_class`` through; see
-          :class:`GraphData.from_pyg_batch`.)
+          :func:`torch_geometric.utils.dense_to_sparse`.
+        - ``edge_attr``: per-edge bond-class indices aligned with
+          ``edge_index``, integer dtype. Mirrors the ``x`` plumbing
+          for atom classes — :class:`GraphData.from_pyg_batch`
+          densifies these into a multi-class ``E_class`` of width
+          ``num_bond_types_e`` so that bond multiplicity (NONE /
+          SINGLE / DOUBLE / TRIPLE / AROMATIC) survives the
+          dataset → collator boundary instead of collapsing to
+          binary edge presence. See the diagnosis in
+          ``docs/reports/2026-04-29-dataset-shims-and-hacks/README.md``
+          item #3.3.
         - ``num_nodes``: real atom count, taken from ``node_mask.sum()``.
         - ``x``: integer atom-class indices, shape ``(n_real,)``.
           :class:`GraphData.from_pyg_batch` densifies this back into
@@ -284,8 +288,22 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
                 "and E_class to be populated by the codec."
             )
         n = int(gd.node_mask[0].sum().item())
+        # Per-position bond-class argmax over the codec's one-hot E_class.
+        # 0 = NONE; 1+ = present bond types.
         e_argmax = gd.E_class[0, :n, :n].argmax(dim=-1)
+        # Adjacency: any non-NONE bond counts as an edge for edge_index
+        # extraction. dense_to_sparse builds the COO index from this.
         adj = (e_argmax != 0).to(torch.float32)
         edge_index, _ = dense_to_sparse(adj)
+        # Pull the bond class out of e_argmax for each retained edge so it
+        # rides alongside edge_index as edge_attr. Integer dtype because
+        # GraphData.from_pyg_batch's edge_attr branch refuses floats.
+        src, dst = edge_index[0], edge_index[1]
+        edge_attr = e_argmax[src, dst].long()
         x = gd.X_class[0, :n].argmax(dim=-1).long()
-        return Data(edge_index=edge_index, num_nodes=n, x=x)
+        return Data(
+            edge_index=edge_index,
+            num_nodes=n,
+            x=x,
+            edge_attr=edge_attr,
+        )

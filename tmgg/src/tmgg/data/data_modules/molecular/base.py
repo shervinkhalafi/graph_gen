@@ -113,14 +113,18 @@ class MolecularDataModule(BaseGraphDataModule):
     # ------------------------------------------------------------------
 
     def _dense_collator(self) -> GraphDataCollator:
-        # Pin the X_class width to the codec's vocabulary so every batch
-        # emerges with the same (bs, n_max, num_atom_types) shape, even
-        # when a batch happens to miss one of the rarer atom classes.
+        # Pin both class widths to the codec's vocabulary so every batch
+        # emerges with the same (bs, n_max, num_atom_types) and
+        # (bs, n_max, n_max, num_bond_types) shapes, even when a batch
+        # happens to miss one of the rarer atom or bond classes (e.g. a
+        # QM9 minibatch with no AROMATIC ring).
+        codec = self.dataset_cls.make_codec()
         return GraphDataCollator(
             n_max_static=self.num_nodes_max_static
             if self.pad_to_static_n_max
             else None,
-            num_atom_types_x=self.dataset_cls.make_codec().vocab.num_atom_types,
+            num_atom_types_x=codec.vocab.num_atom_types,
+            num_bond_types_e=codec.vocab.num_bond_types,
         )
 
     @override
