@@ -29,7 +29,6 @@ from typing import Any
 
 import numpy as np
 import pytest
-
 from scripts.sweep.watch_runs import (
     FlowchartInput,
     apply_flowchart,
@@ -132,7 +131,9 @@ def _make_input(
         step_cap=step_cap,
         anchor_nll=anchor_nll,
         wall_time_ratio=wall_time_ratio,
-        nll_history=nll_history if nll_history is not None else [3000.0, 2900.0, 2800.0],
+        nll_history=nll_history
+        if nll_history is not None
+        else [3000.0, 2900.0, 2800.0],
         samples_degenerate_count=samples_degenerate_count,
         grad_cosine_blocks=grad_cosine_blocks or {},
         update_to_weight_blocks=update_to_weight_blocks or {},
@@ -309,3 +310,163 @@ def test_read_watches_returns_empty_when_file_missing(tmp_path: Path) -> None:
     """Missing watches.jsonl -> empty list (not raised)."""
     p = tmp_path / "does-not-exist.jsonl"
     assert read_watches(p) == []
+
+
+# ---------------------------------------------------------------------------
+# Async-eval manifest integration (plan: compressed-tumbling-whale, Step 7)
+# ---------------------------------------------------------------------------
+#
+# The async-eval architecture writes a JSONL manifest at
+# /data/outputs/<run_id>/eval_manifest.jsonl. ``watch_runs`` reads it to
+# compute ``evals_lag = scheduled_steps_passed - completed_evals``. Two
+# behavioural changes follow:
+#
+# 1. When ``evals_lag > 3``, the saturation-kill path is suppressed in
+#    favour of ``extend_watch``: a saturation fit on starved data has too
+#    few completed-eval points to be defensible.
+# 2. A new ``kill: eval_starvation`` reason fires when the eval system
+#    is so starved we cannot judge quality: ``evals_lag >= 5`` AND
+#    ``len(completed_evals) <= 1`` AND ``watch_count >= 3``.
+
+
+def _make_input_for_starvation(
+    *,
+    evals_lag: int | None = None,
+    watch_count: int = 0,
+    completed_eval_count: int = 0,
+    quality_history: tuple[list[float], list[float]] | None = None,
+    current_step: int = 30000,
+    step_cap: int = 100000,
+) -> FlowchartInput:
+    """Build a FlowchartInput exercising the eval-starvation/lag fields."""
+    return FlowchartInput(
+        run_uid="test-starvation",
+        current_step=current_step,
+        step_cap=step_cap,
+        anchor_nll=1000.0,
+        wall_time_ratio=0.5,
+        nll_history=[3000.0, 2950.0, 2900.0],
+        samples_degenerate_count=0,
+        grad_cosine_blocks={},
+        update_to_weight_blocks={},
+        quality_history=quality_history,
+        quality_flat_count=0,
+        modularity_rising=False,
+        bits_per_edge_descending=False,
+        extension_count=0,
+        peer_quality_quantile=None,
+        peer_count=0,
+        evals_lag=evals_lag,
+        watch_count=watch_count,
+        completed_eval_count=completed_eval_count,
+    )
+
+
+def test_watch_emits_evals_lag_field(tmp_path: Path) -> None:
+    """Snapshot building sets ``evals_lag`` from manifest + schedule.
+
+    Schedule = [100, 200, 300, 400], current_step = 350. Three schedule
+    entries are at-or-below 350 ({100, 200, 300}); the manifest has a
+    single ``completed`` row at 100. Lag = 3 - 1 = 2.
+    """
+    from scripts.sweep.watch_runs import compute_evals_lag_from_manifest
+
+    manifest_path = tmp_path / "eval_manifest.jsonl"
+    manifest_path.write_text(
+        '{"kind":"schema","version":1}\n'
+        '{"kind":"eval_event","run_uid":"r","wandb_run_id":"w","scheduled_step":100,"global_step":100,"ts_utc":"2026-04-29T00:00:00+00:00","status":"completed","modal_call_id":"fc-1","checkpoint_path":"/c.ckpt","metrics":{"gen-val/sbm_accuracy":0.5},"error_tail":null}\n'
+    )
+    lag = compute_evals_lag_from_manifest(
+        manifest_path=manifest_path,
+        schedule=[100, 200, 300, 400],
+        current_step=350,
+    )
+    assert lag == 2
+
+
+def test_extend_watch_when_evals_lag_blocks_saturation_kill() -> None:
+    """A run that would saturation-kill becomes ``extend_watch`` when lag > 3.
+
+    Synthesise a saturating quality curve (12 points, terminal predicted
+    within 3% of the last value) — the bare flowchart would emit
+    ``kill: saturation_heuristic``. With ``evals_lag = 4`` set, the
+    saturation path is suppressed and we recommend ``extend_watch``.
+    """
+    steps = list(np.linspace(5000, 60000, 12).tolist())
+    values = list((0.85 * (1.0 - np.exp(-np.array(steps) / 8000.0)) + 0.05).tolist())
+    inp = _make_input_for_starvation(
+        quality_history=(steps, values),
+        evals_lag=4,
+        watch_count=2,
+        completed_eval_count=8,
+    )
+    rec = apply_flowchart(inp)
+    assert rec["recommendation"] == "extend_watch"
+    assert rec["reason"] is None
+
+
+def test_eval_starvation_kill_when_evals_lag_high_and_few_completed() -> None:
+    """High lag + <=1 completed + >=3 watches triggers ``kill: eval_starvation``.
+
+    Mimics the "eval system is broken AND we cannot tell quality" branch:
+    the trainer has rolled past 10 of 12 schedule points, only 1 eval
+    has completed, and the watcher has already extended several times.
+    """
+    inp = _make_input_for_starvation(
+        evals_lag=9,
+        watch_count=4,
+        completed_eval_count=1,
+        current_step=80000,
+    )
+    rec = apply_flowchart(inp)
+    assert rec["recommendation"] == "kill"
+    assert rec["reason"] == "eval_starvation"
+
+
+def test_evals_lag_zero_for_in_band_legacy_run() -> None:
+    """Legacy in-band runs (no manifest) yield ``evals_lag is None``.
+
+    No manifest path means we cannot judge eval-lag, so the saturation-
+    kill path must not be blocked. The synthesised saturating curve
+    should still produce a ``kill: saturation_heuristic`` recommendation.
+    """
+    steps = list(np.linspace(5000, 60000, 12).tolist())
+    values = list((0.85 * (1.0 - np.exp(-np.array(steps) / 8000.0)) + 0.05).tolist())
+    inp = _make_input_for_starvation(
+        quality_history=(steps, values),
+        evals_lag=None,
+        watch_count=2,
+        completed_eval_count=0,
+    )
+    rec = apply_flowchart(inp)
+    assert rec["recommendation"] == "kill"
+    assert rec["reason"] == "saturation_heuristic"
+
+    # And the recommendation row mirrors the missing manifest as None.
+    rec_row = build_recommendation(
+        run_uid="legacy",
+        flowchart_input=inp,
+        observed_metrics={"gen-val/sbm_accuracy": 0.9},
+        observed_diagnostics={},
+        snapshot_sha256="abc",
+        previous_decision_ref=None,
+    )
+    assert rec_row["evals_lag"] is None
+
+
+def test_no_starvation_kill_below_threshold() -> None:
+    """``evals_lag = 2`` is below the threshold of 5; no starvation kill.
+
+    Even with high watch_count and <=1 completed eval, the lag must be
+    >= 5 for the starvation branch to fire. With lag = 2 the run falls
+    through to ``keep``.
+    """
+    inp = _make_input_for_starvation(
+        evals_lag=2,
+        watch_count=5,
+        completed_eval_count=1,
+        current_step=30000,
+    )
+    rec = apply_flowchart(inp)
+    assert rec["recommendation"] == "keep"
+    assert rec["reason"] is None

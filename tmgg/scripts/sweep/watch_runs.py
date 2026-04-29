@@ -63,7 +63,15 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
+from scripts.sweep._eval_manifest import (
+    evals_lag as _evals_lag_from_rows,
+)
+from scripts.sweep._eval_manifest import (
+    latest_status_per_step as _latest_status_per_step,
+)
+from scripts.sweep._eval_manifest import (
+    read_manifest as _read_manifest,
+)
 from scripts.sweep.compute_s_star import (
     MIN_POINTS_FOR_FIT,
     fit_saturating_exponential,
@@ -82,6 +90,21 @@ GRAD_COSINE_DEAD = 0.1
 UPDATE_TO_WEIGHT_DEAD = 1e-4
 # Cost-cap wall-time multiplier.
 COST_CAP_MULTIPLIER = 1.5
+
+# Async-eval starvation thresholds (plan: compressed-tumbling-whale §7).
+# When ``evals_lag`` (scheduled-and-passed minus completed evals) exceeds
+# ``EVALS_LAG_BLOCKS_SATURATION``, the saturation-kill path is suppressed
+# in favour of ``extend_watch`` — the saturation fit on starved data has
+# too few completed-eval points to be defensible.
+EVALS_LAG_BLOCKS_SATURATION = 3
+# When the eval system is so starved we cannot judge quality, the
+# watcher gives up: a high lag, at-most-one completed eval, AND the
+# watcher has already extended several times. The thresholds are
+# deliberately conservative so a single slow batch of evals does not
+# trigger the kill.
+EVAL_STARVATION_LAG_THRESHOLD = 5
+EVAL_STARVATION_MAX_COMPLETED = 1
+EVAL_STARVATION_MIN_WATCH_COUNT = 3
 
 
 def read_watches(path: Path) -> list[dict[str, Any]]:
@@ -193,6 +216,10 @@ class FlowchartInput:
     peer_quality_quantile: float | None
     peer_count: int
     fit: dict[str, float] | None = field(default=None)
+    # Async-eval signals (None for legacy in-band runs without a manifest).
+    evals_lag: int | None = field(default=None)
+    completed_eval_count: int = field(default=0)
+    watch_count: int = field(default=0)
 
 
 def _is_diverged(inp: FlowchartInput) -> bool:
@@ -214,20 +241,19 @@ def _is_diverged(inp: FlowchartInput) -> bool:
     # Stuck-at-init: NLL non-decreasing for 5 cycles AND above anchor.
     if len(nll) >= 5:
         last5 = nll[-5:]
-        if all(math.isfinite(v) for v in last5) and all(
-            last5[i + 1] >= last5[i] - 1e-9 for i in range(4)
+        if (
+            all(math.isfinite(v) for v in last5)
+            and all(last5[i + 1] >= last5[i] - 1e-9 for i in range(4))
+            and last > inp.anchor_nll
         ):
-            if last > inp.anchor_nll:
-                return True
+            return True
     return False
 
 
 def _all_blocks_dead(inp: FlowchartInput) -> bool:
     if not inp.grad_cosine_blocks or not inp.update_to_weight_blocks:
         return False
-    cosine_dead = all(
-        v < GRAD_COSINE_DEAD for v in inp.grad_cosine_blocks.values()
-    )
+    cosine_dead = all(v < GRAD_COSINE_DEAD for v in inp.grad_cosine_blocks.values())
     update_dead = all(
         v < UPDATE_TO_WEIGHT_DEAD for v in inp.update_to_weight_blocks.values()
     )
@@ -240,12 +266,27 @@ def apply_flowchart(inp: FlowchartInput) -> dict[str, Any]:
     The recommendation is one of ``keep``, ``kill``, ``extend_watch``.
     For ``kill``, ``reason`` is one of ``diverged``, ``cost_cap``,
     ``samples_degenerate``, ``opt_health_confluence``,
-    ``saturation_heuristic``, ``hyperband_relative``. For other
-    recommendations, ``reason`` is ``None``.
+    ``saturation_heuristic``, ``hyperband_relative``,
+    ``eval_starvation``. For other recommendations, ``reason`` is
+    ``None``.
 
     Order is fixed: cheapest / highest-confidence kills first, then
-    dynamics-side kills, then phase-transition guard, then saturation,
-    then relative.
+    dynamics-side kills, then phase-transition guard, then the async-
+    eval guards (saturation broadening + starvation kill), then
+    saturation, then relative.
+
+    Async-eval interaction (plan: compressed-tumbling-whale §7)
+    -----------------------------------------------------------
+    When ``evals_lag`` is known (i.e. the run has a manifest), two
+    branches engage. First, ``evals_lag > EVALS_LAG_BLOCKS_SATURATION``
+    suppresses the saturation-kill path: a saturation fit on starved
+    data has too few completed-eval points to defensibly mark
+    saturation. Second, the dedicated ``kill: eval_starvation`` branch
+    fires when the eval system is broken AND we cannot tell quality —
+    the run has been watched several cycles, has at most one completed
+    eval, and the lag has grown past the threshold. Both branches
+    require a non-``None`` ``evals_lag``: legacy in-band runs without a
+    manifest skip them and follow the original flowchart unchanged.
     """
     if _is_diverged(inp):
         return {"recommendation": "kill", "reason": "diverged"}
@@ -255,9 +296,23 @@ def apply_flowchart(inp: FlowchartInput) -> dict[str, Any]:
         return {"recommendation": "kill", "reason": "samples_degenerate"}
     if _all_blocks_dead(inp) and inp.quality_flat_count >= 3:
         return {"recommendation": "kill", "reason": "opt_health_confluence"}
-    if (inp.modularity_rising or inp.bits_per_edge_descending) and inp.extension_count < 1:
+    # Eval-starvation kill: the eval system is broken AND we cannot
+    # tell quality. Conservative thresholds so a single slow batch of
+    # evals does not trigger.
+    if (
+        inp.evals_lag is not None
+        and inp.evals_lag >= EVAL_STARVATION_LAG_THRESHOLD
+        and inp.completed_eval_count <= EVAL_STARVATION_MAX_COMPLETED
+        and inp.watch_count >= EVAL_STARVATION_MIN_WATCH_COUNT
+    ):
+        return {"recommendation": "kill", "reason": "eval_starvation"}
+    if (
+        inp.modularity_rising or inp.bits_per_edge_descending
+    ) and inp.extension_count < 1:
         return {"recommendation": "extend_watch", "reason": None}
-    # Saturation heuristic.
+    # Saturation heuristic. If async-eval lag exceeds the threshold,
+    # broaden to ``extend_watch`` rather than kill — the fit cannot be
+    # trusted with that many missing eval points.
     fit = inp.fit
     if fit is None and inp.quality_history is not None:
         steps_list, values_list = inp.quality_history
@@ -272,6 +327,14 @@ def apply_flowchart(inp: FlowchartInput) -> dict[str, Any]:
             if current_value > 0.0:
                 gap = abs(fit["q_infinity_hat"] - current_value) / current_value
                 if gap < SATURATION_TOLERANCE:
+                    if (
+                        inp.evals_lag is not None
+                        and inp.evals_lag > EVALS_LAG_BLOCKS_SATURATION
+                    ):
+                        # Starved evals block saturation kill — broaden
+                        # to extend_watch so we accumulate more eval
+                        # points before deciding.
+                        return {"recommendation": "extend_watch", "reason": None}
                     return {
                         "recommendation": "kill",
                         "reason": "saturation_heuristic",
@@ -286,6 +349,54 @@ def apply_flowchart(inp: FlowchartInput) -> dict[str, Any]:
     if at_late_stage and bottom_quantile and inp.quality_flat_count >= 3:
         return {"recommendation": "kill", "reason": "hyperband_relative"}
     return {"recommendation": "keep", "reason": None}
+
+
+def compute_evals_lag_from_manifest(
+    *,
+    manifest_path: Path | None,
+    schedule: list[int],
+    current_step: int,
+) -> int | None:
+    """Compute ``evals_lag`` from a per-run async-eval manifest.
+
+    Returns ``None`` for legacy in-band runs that have no manifest
+    (either ``manifest_path`` is ``None`` or the file does not exist).
+    A ``None`` lag tells the flowchart to skip the async-eval branches
+    so existing behaviour is preserved.
+
+    Parameters
+    ----------
+    manifest_path
+        Path to ``eval_manifest.jsonl`` for the run. ``None`` for runs
+        that never opted into async-eval.
+    schedule
+        Integer training-step schedule the trainer was given. Empty
+        schedule yields ``0`` lag (nothing to be late on).
+    current_step
+        The trainer's current ``global_step``. Schedule entries past
+        this step are not yet expected.
+    """
+    if manifest_path is None or not manifest_path.exists():
+        return None
+    rows = _read_manifest(manifest_path)
+    return _evals_lag_from_rows(rows, schedule, current_step)
+
+
+def count_completed_evals_from_manifest(
+    *,
+    manifest_path: Path | None,
+) -> int:
+    """Count distinct ``scheduled_step``s with a terminal ``completed`` row.
+
+    Returns ``0`` when the manifest does not exist (legacy in-band).
+    Used by the eval-starvation branch alongside ``evals_lag`` and the
+    watcher's ``watch_count``.
+    """
+    if manifest_path is None or not manifest_path.exists():
+        return 0
+    rows = _read_manifest(manifest_path)
+    latest = _latest_status_per_step(rows)
+    return sum(1 for r in latest.values() if r.get("status") == "completed")
 
 
 def build_recommendation(
@@ -303,6 +414,12 @@ def build_recommendation(
     relevant fields verbatim into the watch entry. The ``kind`` here is
     ``watch_recommendation`` (advisory) so it cannot be confused with a
     ``watch`` row that Claude actually committed.
+
+    The ``evals_lag`` field is propagated from the flowchart input so
+    downstream readers (and Claude's review) can see the async-eval
+    state at-a-glance. ``None`` means a legacy in-band run with no
+    manifest — the saturation broadening/starvation-kill branches did
+    not engage.
     """
     decision = apply_flowchart(flowchart_input)
     return {
@@ -318,6 +435,7 @@ def build_recommendation(
         "recommendation": decision["recommendation"],
         "reason": decision["reason"],
         "fit_diagnostics": flowchart_input.fit,
+        "evals_lag": flowchart_input.evals_lag,
     }
 
 
@@ -349,9 +467,7 @@ def fetch_snapshot_from_wandb(  # pragma: no cover — wraps live W&B API
     if not run_list:
         raise LookupError(f"no W&B run named {run_name!r} in {entity}/{project}")
     if len(run_list) > 1:
-        raise LookupError(
-            f"ambiguous: {len(run_list)} W&B runs named {run_name!r}"
-        )
+        raise LookupError(f"ambiguous: {len(run_list)} W&B runs named {run_name!r}")
     run = run_list[0]
     summary = dict(run.summary)
     history_keys = [
@@ -362,13 +478,9 @@ def fetch_snapshot_from_wandb(  # pragma: no cover — wraps live W&B API
         "gen-val/clustering_mmd",
         "diagnostics-val/progress/bits_per_edge",
     ]
-    raw_history = list(
-        run.scan_history(keys=["_step", *history_keys], page_size=200)
-    )
+    raw_history = list(run.scan_history(keys=["_step", *history_keys], page_size=200))
     # Truncate to last k validation cycles (those with any gen-val/* key).
-    val_records = [
-        r for r in raw_history if any(k.startswith("gen-val/") for k in r)
-    ]
+    val_records = [r for r in raw_history if any(k.startswith("gen-val/") for k in r)]
     history_subset = val_records[-last_k_validations:]
     return summary, dict(run.summary), history_subset
 
@@ -418,7 +530,30 @@ def _parse_args() -> argparse.Namespace:
         default=30,
         help="How many trailing validation cycles to fetch per run.",
     )
+    _ = p.add_argument(
+        "--outputs-root",
+        type=Path,
+        default=None,
+        help=(
+            "Root of the per-run outputs tree (mirrors the Modal "
+            "tmgg-outputs volume layout: ``<root>/<run_id>/eval_manifest.jsonl``). "
+            "When set, the watcher reads each run's manifest to compute "
+            "``evals_lag``. Legacy in-band runs without a manifest are "
+            "treated as ``evals_lag=None``."
+        ),
+    )
     return p.parse_args()
+
+
+def _manifest_path_for_run(*, outputs_root: Path | None, run_uid: str) -> Path | None:
+    """Derive ``<outputs_root>/<run_uid>/eval_manifest.jsonl``.
+
+    Returns ``None`` when ``outputs_root`` is unset; callers then treat
+    the run as a legacy in-band run (no manifest).
+    """
+    if outputs_root is None:
+        return None
+    return outputs_root / run_uid / "eval_manifest.jsonl"
 
 
 def _read_rounds(rounds_jsonl: Path) -> list[dict[str, Any]]:
@@ -473,9 +608,7 @@ def main() -> None:  # pragma: no cover — CLI driver, exercised by integration
             for r in history
             if "gen-val/sbm_accuracy" in r
         ]
-        quality_history = (
-            (quality_steps, quality_values) if quality_steps else None
-        )
+        quality_history = (quality_steps, quality_values) if quality_steps else None
         fit = (
             saturation_fit_partial(
                 steps=np.asarray(quality_steps, dtype=float),
@@ -483,6 +616,23 @@ def main() -> None:  # pragma: no cover — CLI driver, exercised by integration
             )
             if quality_history is not None
             else None
+        )
+        # Read the per-run async-eval manifest. ``manifest_path`` is
+        # ``None`` when ``--outputs-root`` is unset or when the run
+        # never opted into async-eval; both paths yield ``evals_lag =
+        # None`` and skip the async-eval branches of the flowchart.
+        manifest_path = _manifest_path_for_run(
+            outputs_root=args.outputs_root, run_uid=run_uid
+        )
+        eval_schedule_raw = launched.get("eval_schedule") or []
+        eval_schedule: list[int] = [int(s) for s in eval_schedule_raw]
+        evals_lag_value = compute_evals_lag_from_manifest(
+            manifest_path=manifest_path,
+            schedule=eval_schedule,
+            current_step=current_step,
+        )
+        completed_eval_count = count_completed_evals_from_manifest(
+            manifest_path=manifest_path
         )
         flowchart_input = FlowchartInput(
             run_uid=run_uid,
@@ -502,6 +652,9 @@ def main() -> None:  # pragma: no cover — CLI driver, exercised by integration
             peer_quality_quantile=None,
             peer_count=0,
             fit=fit,
+            evals_lag=evals_lag_value,
+            completed_eval_count=completed_eval_count,
+            watch_count=len(prior),
         )
         snapshot_payload = {"summary": summary, "history": history}
         snapshot_sha = hash_snapshot(snapshot_payload)
