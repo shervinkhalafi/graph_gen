@@ -116,13 +116,67 @@ def _cuda_available() -> bool:
         return False
 
 
+def _detect_eval_cli_module(config: dict[str, Any]) -> str:
+    """Pick the evaluate-CLI module path matching the trained run's diffusion family.
+
+    The smoke run in 2026-04-29 wired a DiscreteDiffusion (``CategoricalNoiseProcess``)
+    DiffusionModule but the eval dispatch hard-coded the (deleted)
+    ``gaussian_diffusion_generative.evaluate_checkpoint`` module. The empty-metrics
+    bug surfaced because the subprocess crashed silently and we wrapped the failure
+    as a "completed" eval. This helper inspects the saved config and routes to the
+    matching CLI; we only support discrete today (gaussian's CLI was removed in
+    79428caa) so a non-categorical noise process is a hard error.
+
+    Parameters
+    ----------
+    config
+        Resolved config dict (``OmegaConf.to_container(load(config.yaml))``).
+
+    Returns
+    -------
+    str
+        Importable module path suitable for ``python -m``.
+
+    Raises
+    ------
+    RuntimeError
+        ``model.noise_process._target_`` is missing or is not a recognised
+        diffusion family.
+    """
+    model_cfg = config.get("model", {})
+    if not isinstance(model_cfg, dict):
+        raise TypeError(f"Expected dict for config['model']; got {type(model_cfg)}")
+    noise_cfg = model_cfg.get("noise_process", {})
+    if not isinstance(noise_cfg, dict):
+        raise TypeError(
+            f"Expected dict for config['model']['noise_process']; got {type(noise_cfg)}"
+        )
+    noise_target = noise_cfg.get("_target_")
+    if not isinstance(noise_target, str):
+        raise RuntimeError(
+            "Cannot route eval CLI: model.noise_process._target_ missing or non-string "
+            f"(got {noise_target!r}). Trained config must declare a noise process."
+        )
+    if "Categorical" in noise_target:
+        return "tmgg.experiments.discrete_diffusion_generative.evaluate_cli"
+    raise RuntimeError(
+        "Async-eval has no CLI for this diffusion family. "
+        f"model.noise_process._target_={noise_target!r}. "
+        "Only CategoricalNoiseProcess (discrete) is supported; the gaussian "
+        "evaluate_checkpoint CLI was removed in 79428caa."
+    )
+
+
 def run_mmd_evaluation(task_dict: dict[str, Any]) -> dict[str, Any]:
     """Evaluate checkpoint MMD metrics via CLI subprocess.
 
     Mirrors the training dispatch pattern in ``_functions.py:modal_run_cli``:
     builds CLI arguments from the evaluation parameters and calls the
-    ``evaluate_checkpoint`` CLI as a subprocess. The subprocess handles
-    model loading, data reconstruction, sampling, and MMD computation.
+    matching evaluate-CLI as a subprocess. The subprocess handles model
+    loading, data reconstruction, sampling, and MMD computation. The CLI
+    module is selected by inspecting ``config['model']['noise_process']._target_``
+    in the run's saved ``config.yaml`` -- there is one CLI per diffusion
+    family (currently only the discrete one).
 
     Parameters
     ----------
@@ -160,7 +214,9 @@ def run_mmd_evaluation(task_dict: dict[str, Any]) -> dict[str, Any]:
         )
 
     # ------------------------------------------------------------------
-    # Read dataset config for CLI args
+    # Read trained config so we can route to the right CLI per diffusion
+    # family (discrete vs gaussian). Empty-metrics bug surfaced because
+    # the previous hard-coded path called a deleted module.
     # ------------------------------------------------------------------
     raw_config = OmegaConf.load(config_path)
     config = OmegaConf.to_container(raw_config, resolve=True)
@@ -168,11 +224,11 @@ def run_mmd_evaluation(task_dict: dict[str, Any]) -> dict[str, Any]:
         raise TypeError(
             f"Expected dict from OmegaConf.to_container, got {type(config)}"
         )
-    data_cfg = config.get("data", {})
-    if not isinstance(data_cfg, dict):
-        raise TypeError(f"Expected dict for config['data'], got {type(data_cfg)}")
-    dataset_type = data_cfg.get("graph_type", "sbm")
-    num_nodes = data_cfg.get("num_nodes", 20)
+    # OmegaConf.to_container returns a Dict[DictKeyType, Any]; the keys are
+    # always strings on a real config but pyright cannot prove that, so we
+    # narrow with an explicit cast.
+    config_typed: dict[str, Any] = {str(k): v for k, v in config.items()}
+    eval_cli_module = _detect_eval_cli_module(config_typed)
 
     device = "cuda" if _cuda_available() else "cpu"
 
@@ -181,26 +237,24 @@ def run_mmd_evaluation(task_dict: dict[str, Any]) -> dict[str, Any]:
     result_path = Path(tempfile.mktemp(suffix=".json", prefix="mmd_eval_"))
 
     try:
+        # The discrete evaluate_cli exposes a small surface intentionally:
+        # ``--checkpoint``, ``--num-samples``, ``--kernel``, ``--sigma``,
+        # ``--device``, ``--output`` (optionally ``--reference_set``,
+        # ``--use_ema``). It pulls dataset/num_nodes back from the sibling
+        # config.yaml itself, so we don't pass --dataset/--num-nodes here
+        # the way the legacy gaussian CLI required.
         cli_args = [
             "python",
             "-m",
-            "tmgg.experiments.gaussian_diffusion_generative.evaluate_checkpoint",
+            eval_cli_module,
             "--checkpoint",
             str(checkpoint_path),
-            "--dataset",
-            str(dataset_type),
             "--num-samples",
             str(task.num_samples),
-            "--num-nodes",
-            str(num_nodes),
-            "--num-steps",
-            str(task.num_steps),
-            "--mmd-kernel",
+            "--kernel",
             task.mmd_kernel,
-            "--mmd-sigma",
+            "--sigma",
             str(task.mmd_sigma),
-            "--seed",
-            str(task.seed),
             "--device",
             device,
             "--output",

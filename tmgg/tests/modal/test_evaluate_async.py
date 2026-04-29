@@ -103,18 +103,18 @@ class TestAsyncEvalLogsAtTrainerStep:
         ):
             evaluate_async.evaluate_mmd_async(task)
 
-        assert (
-            mock_log.call_count == 1
-        ), f"wandb.log must be called exactly once; got {mock_log.call_count}"
+        assert mock_log.call_count == 1, (
+            f"wandb.log must be called exactly once; got {mock_log.call_count}"
+        )
         call_args = mock_log.call_args
         # The single positional arg is the metrics dict
         logged_dict = (
             call_args.args[0] if call_args.args else call_args.kwargs.get("data")
         )
         assert logged_dict is not None
-        assert (
-            logged_dict["trainer/global_step"] == 5240
-        ), "trainer/global_step must equal the task's global_step"
+        assert logged_dict["trainer/global_step"] == 5240, (
+            "trainer/global_step must equal the task's global_step"
+        )
         assert "gen-val/sbm_accuracy" in logged_dict
         assert logged_dict["gen-val/sbm_accuracy"] == 0.62
         assert "gen-val/degree_mmd" in logged_dict
@@ -266,6 +266,290 @@ class TestAsyncEvalDoesNotDefineMetric:
         ):
             evaluate_async.evaluate_mmd_async(task)
 
+        assert mock_dm.call_count == 0, (
+            "Eval worker must not call define_metric; trainer owns that contract."
+        )
+
+
+class TestAsyncEvalPrefixesUnqualifiedMetricNames:
+    """Bug #1 regression: the discrete eval CLI emits flat metric names
+    (``degree_mmd`` etc.); the worker must prefix them with ``gen-val/``
+    so they hit the trainer's W&B group, and the manifest row carries
+    the prefixed names."""
+
+    def test_unqualified_metrics_get_gen_val_prefix(self, tmp_path: Path) -> None:
+        from tmgg.modal._lib import evaluate_async
+
+        task = _make_task(tmp_path)
+        eval_output = {
+            "run_id": task["run_id"],
+            "checkpoint_name": "step_5240",
+            "status": "completed",
+            "results": {
+                "eval": {
+                    "degree_mmd": 0.012,
+                    "clustering_mmd": 0.034,
+                    "spectral_mmd": 0.056,
+                    "sbm_accuracy": 0.85,
+                }
+            },
+            "error_message": None,
+            "evaluation_params": {},
+            "timestamp": "2026-04-29T12:00:00",
+        }
+
+        with (
+            patch.object(
+                evaluate_async, "run_mmd_evaluation", return_value=eval_output
+            ),
+            patch("tmgg.modal._lib.evaluate_async.wandb.init"),
+            patch("tmgg.modal._lib.evaluate_async.wandb.log") as mock_log,
+            patch("tmgg.modal._lib.evaluate_async.wandb.finish"),
+        ):
+            evaluate_async.evaluate_mmd_async(task)
+
+        logged_dict = mock_log.call_args.args[0]
+        # Every flat metric name picks up the gen-val/ prefix, original keys gone.
+        for metric in (
+            "gen-val/degree_mmd",
+            "gen-val/clustering_mmd",
+            "gen-val/spectral_mmd",
+            "gen-val/sbm_accuracy",
+        ):
+            assert metric in logged_dict, f"missing prefixed key {metric!r}"
+        for unprefixed in (
+            "degree_mmd",
+            "clustering_mmd",
+            "spectral_mmd",
+            "sbm_accuracy",
+        ):
+            assert unprefixed not in logged_dict, (
+                f"unprefixed key {unprefixed!r} leaked"
+            )
+        assert logged_dict["gen-val/sbm_accuracy"] == 0.85
+        assert logged_dict["trainer/global_step"] == task["global_step"]
+
+        # Manifest row must carry the prefixed names too -- this is what
+        # the smoke verification scripts grep for.
+        manifest = Path(task["manifest_path"])
+        rows = [json.loads(line) for line in manifest.read_text().splitlines() if line]
+        assert len(rows) == 1
+        assert rows[0]["status"] == "completed"
+        assert "gen-val/degree_mmd" in rows[0]["metrics"]
+        assert rows[0]["metrics"]["gen-val/sbm_accuracy"] == 0.85
+
+    def test_already_prefixed_metrics_pass_through_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        """Future CLIs that emit already-namespaced keys must not get double-prefixed."""
+        from tmgg.modal._lib import evaluate_async
+
+        task = _make_task(tmp_path)
+        eval_output = _success_eval_output(task)
+
+        with (
+            patch.object(
+                evaluate_async, "run_mmd_evaluation", return_value=eval_output
+            ),
+            patch("tmgg.modal._lib.evaluate_async.wandb.init"),
+            patch("tmgg.modal._lib.evaluate_async.wandb.log") as mock_log,
+            patch("tmgg.modal._lib.evaluate_async.wandb.finish"),
+        ):
+            evaluate_async.evaluate_mmd_async(task)
+
+        logged_dict = mock_log.call_args.args[0]
+        # Sanity: no "gen-val/gen-val/..." double-prefix.
+        for key in logged_dict:
+            assert not key.startswith("gen-val/gen-val/"), key
+
+
+class TestAsyncEvalSurfacesCliFailures:
+    """Bug #1 regression: ``run_mmd_evaluation`` wraps subprocess crashes
+    in ``status="failed"`` dicts and never raises. The async worker
+    previously logged those as "completed" with an empty metrics dict --
+    masking the gaussian-CLI dispatch bug for an entire smoke run.
+    Now the worker must raise and write a ``failed`` manifest row."""
+
+    def test_failed_eval_output_produces_failed_row_and_raises(
+        self, tmp_path: Path
+    ) -> None:
+        import pytest
+
+        from tmgg.modal._lib import evaluate_async
+
+        task = _make_task(tmp_path)
+        manifest_path = Path(task["manifest_path"])
+        # run_mmd_evaluation wraps subprocess crashes here -- no exception,
+        # but status="failed" + empty results.
+        failed_output = {
+            "run_id": task["run_id"],
+            "checkpoint_name": "step_5240",
+            "status": "failed",
+            "results": {},
+            "error_message": "CLI exited with code 1: ModuleNotFoundError",
+            "evaluation_params": {},
+            "timestamp": "2026-04-29T12:00:00",
+        }
+
+        with (
+            patch.object(
+                evaluate_async, "run_mmd_evaluation", return_value=failed_output
+            ),
+            patch("tmgg.modal._lib.evaluate_async.wandb.init") as mock_init,
+            patch("tmgg.modal._lib.evaluate_async.wandb.log") as mock_log,
+            patch("tmgg.modal._lib.evaluate_async.wandb.finish"),
+            pytest.raises(RuntimeError, match="ModuleNotFoundError"),
+        ):
+            evaluate_async.evaluate_mmd_async(task)
+
+        # No W&B attach should fire -- the failed eval has nothing to log.
+        assert mock_init.call_count == 0
+        assert mock_log.call_count == 0
+
+        # Manifest must record the failure.
+        rows = [
+            json.loads(line) for line in manifest_path.read_text().splitlines() if line
+        ]
+        assert len(rows) == 1
+        assert rows[0]["status"] == "failed"
+        assert rows[0]["error_tail"] is not None
+        assert "ModuleNotFoundError" in rows[0]["error_tail"]
+
+
+class TestRunMmdEvaluationDispatchesByDiffusionFamily:
+    """Bug #1 regression: ``run_mmd_evaluation`` must route to the eval
+    CLI matching the trained run's diffusion family. The previous build
+    hard-coded the deleted ``gaussian_diffusion_generative.evaluate_checkpoint``
+    module, which silently exit-1'd for every discrete-diffusion smoke."""
+
+    def test_categorical_noise_routes_to_discrete_evaluate_cli(
+        self, tmp_path: Path
+    ) -> None:
+        import subprocess
+
+        import yaml
+
+        from tmgg.modal._lib import evaluate as evaluate_mod
+
+        # Stage a fake run dir on the volume mount: config.yaml + ckpt.
+        run_id = "fake-run/discrete-smoke"
+        run_dir = tmp_path / run_id
+        (run_dir / "checkpoints").mkdir(parents=True)
+        ckpt = run_dir / "checkpoints" / "step_200.ckpt"
+        ckpt.write_bytes(b"")  # presence is enough; subprocess is mocked
+        config_yaml = run_dir / "config.yaml"
+        config_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "model": {
+                        "_target_": "tmgg.training.lightning_modules.diffusion_module.DiffusionModule",
+                        "noise_process": {
+                            "_target_": "tmgg.diffusion.noise_process.CategoricalNoiseProcess"
+                        },
+                    },
+                    "data": {"graph_type": "sbm", "num_nodes": 20},
+                }
+            )
+        )
+
+        # Capture the cli_args that run_mmd_evaluation tries to subprocess.
+        captured: dict[str, Any] = {}
+
+        class _DummyCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cli_args, capture_output=True, text=True):  # noqa: ARG001
+            captured["cli_args"] = list(cli_args)
+            # Write the JSON the real CLI would produce.
+            output_idx = cli_args.index("--output")
+            output_path = Path(cli_args[output_idx + 1])
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "mmd_results": {
+                            "degree_mmd": 0.01,
+                            "clustering_mmd": 0.02,
+                            "spectral_mmd": 0.03,
+                        }
+                    }
+                )
+            )
+            return _DummyCompleted()
+
+        with (
+            patch.object(evaluate_mod, "OUTPUTS_MOUNT", str(tmp_path)),
+            patch.object(subprocess, "run", side_effect=fake_run),
+        ):
+            result = evaluate_mod.run_mmd_evaluation(
+                {
+                    "run_id": run_id,
+                    "checkpoint_path": str(ckpt),
+                    "num_samples": 40,
+                    "num_steps": 100,
+                    "mmd_kernel": "gaussian_tv",
+                    "mmd_sigma": 1.0,
+                    "seed": 42,
+                }
+            )
+
+        # Routed to the discrete CLI module, not the deleted gaussian one.
         assert (
-            mock_dm.call_count == 0
-        ), "Eval worker must not call define_metric; trainer owns that contract."
+            "tmgg.experiments.discrete_diffusion_generative.evaluate_cli"
+            in captured["cli_args"]
+        )
+        assert (
+            "tmgg.experiments.gaussian_diffusion_generative.evaluate_checkpoint"
+            not in captured["cli_args"]
+        )
+        # And the result reflects the populated mmd_results, not an empty dict.
+        assert result["status"] == "completed"
+        assert result["results"] == {
+            "eval": {
+                "degree_mmd": 0.01,
+                "clustering_mmd": 0.02,
+                "spectral_mmd": 0.03,
+            }
+        }
+
+    def test_unknown_diffusion_family_raises_loudly(self, tmp_path: Path) -> None:
+        import pytest
+        import yaml
+
+        from tmgg.modal._lib import evaluate as evaluate_mod
+
+        run_id = "fake-run/gaussian"
+        run_dir = tmp_path / run_id
+        (run_dir / "checkpoints").mkdir(parents=True)
+        ckpt = run_dir / "checkpoints" / "step_200.ckpt"
+        ckpt.write_bytes(b"")
+        config_yaml = run_dir / "config.yaml"
+        config_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "model": {
+                        "noise_process": {
+                            "_target_": "tmgg.diffusion.noise_process.GaussianNoiseProcess"
+                        }
+                    },
+                    "data": {"graph_type": "sbm"},
+                }
+            )
+        )
+
+        with (
+            patch.object(evaluate_mod, "OUTPUTS_MOUNT", str(tmp_path)),
+            pytest.raises(RuntimeError, match="diffusion family"),
+        ):
+            evaluate_mod.run_mmd_evaluation(
+                {
+                    "run_id": run_id,
+                    "checkpoint_path": str(ckpt),
+                    "num_samples": 1,
+                    "num_steps": 1,
+                    "mmd_kernel": "gaussian_tv",
+                    "mmd_sigma": 1.0,
+                    "seed": 0,
+                }
+            )

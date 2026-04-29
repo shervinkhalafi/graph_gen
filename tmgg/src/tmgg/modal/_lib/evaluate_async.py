@@ -125,15 +125,52 @@ def evaluate_mmd_async(task: dict[str, Any]) -> dict[str, Any]:
         raise
 
     # ------------------------------------------------------------------
+    # Surface CLI-level failures as exceptions: ``run_mmd_evaluation``
+    # never raises -- it wraps subprocess crashes into a dict with
+    # ``status="failed"``. The previous code path silently treated this
+    # as a "completed" run and logged empty metrics, masking the
+    # gaussian-CLI dispatch bug end-to-end.
+    # ------------------------------------------------------------------
+    if eval_output.get("status") != "completed":
+        error_message = eval_output.get("error_message") or "unknown failure"
+        failed_row = {
+            "kind": "eval_event",
+            "run_uid": run_uid,
+            "wandb_run_id": wandb_run_id,
+            "scheduled_step": scheduled_step,
+            "global_step": global_step,
+            "ts_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+            "status": "failed",
+            "modal_call_id": None,
+            "checkpoint_path": checkpoint_path,
+            "metrics": None,
+            "error_tail": str(error_message)[:1000],
+        }
+        _append_manifest_row(manifest_path, failed_row)
+        raise RuntimeError(
+            f"run_mmd_evaluation reported status={eval_output.get('status')!r}: "
+            f"{error_message}"
+        )
+
+    # ------------------------------------------------------------------
     # Attach to the trainer's W&B run and log under the custom step axis.
     # ------------------------------------------------------------------
-    # Flatten the nested ``results`` dict from EvaluationOutput. The CLI
-    # subprocess returns ``{"eval": {metric_name: value, ...}}``; we keep
-    # metric names as-is (callers already prefix with ``gen-val/``).
+    # Flatten the nested ``results`` dict from EvaluationOutput. The
+    # discrete eval CLI returns flat metric names (``degree_mmd``,
+    # ``clustering_mmd``, ``spectral_mmd``, optionally ``sbm_accuracy``),
+    # which we prefix with ``gen-val/`` so they match the trainer's
+    # in-band logging namespace and satisfy the smoke pass criteria.
+    # Already-prefixed names are passed through unchanged so future CLIs
+    # that emit fully qualified keys do not get double-prefixed.
     metrics_dict: dict[str, Any] = {}
     for _label, label_metrics in eval_output.get("results", {}).items():
         for metric_name, value in label_metrics.items():
-            metrics_dict[metric_name] = value
+            key = (
+                metric_name
+                if metric_name.startswith("gen-val/")
+                else f"gen-val/{metric_name}"
+            )
+            metrics_dict[key] = value
 
     wandb.init(
         id=wandb_run_id,
