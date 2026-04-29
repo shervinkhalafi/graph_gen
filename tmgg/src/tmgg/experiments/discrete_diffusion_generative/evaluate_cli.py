@@ -97,6 +97,26 @@ def _load_diffusion_module(
             f"Checkpoint {checkpoint_path} has no 'state_dict' entry and "
             f"the top-level object is not a dict (got {type(state_dict).__name__})."
         )
+
+    # CategoricalNoiseProcess pre-registers ``_limit_{x,e,y}`` as None
+    # buffers in __init__; ``initialize_from_data()`` (called during
+    # training-time setup) populates them with empirical-marginal probs.
+    # ``state_dict`` excludes None-valued buffers, so a fresh post-init
+    # module's state_dict has no ``_limit_*`` keys — yet trained
+    # checkpoints DO carry populated tensor values for these keys, which
+    # ``load_state_dict(strict=True)`` flags as unexpected. Pre-populate
+    # the buffers directly from the checkpoint values so the strict
+    # load succeeds.
+    np_buf_keys = (
+        "noise_process._limit_x",
+        "noise_process._limit_e",
+        "noise_process._limit_y",
+    )
+    for key in np_buf_keys:
+        if key in state_dict and hasattr(module, "noise_process"):
+            attr = key.split(".", 1)[1]
+            module.noise_process.register_buffer(attr, state_dict[key].clone())
+
     module.load_state_dict(state_dict)
     return module.to(device).eval()
 
