@@ -149,6 +149,35 @@ flowchart TD
 
 The flowchart is the *default* logic. The vibe note can override it whenever literature or prior-round evidence suggests a different cut order. The override is recorded in prose and audited by the synthesis subsection of every round (§6).
 
+### 3.5 In-flight watch loop (Option-C)
+
+While a round's Modal jobs train, Claude polls W&B every 15 minutes wall-clock through `ScheduleWakeup`, applies the literature-informed decision flowchart below, and decides keep/kill/extend per run. The watcher is informational — `scripts/sweep/watch_runs.py` prints a recommendation, Claude is the gatekeeper. A `kill` decision is logged as a `watch` row in `watches.jsonl` plus an `outcome` row in `rounds.jsonl` with `failure_kind=watch_killed`; Claude invokes `modal app stop <app_id>` from Bash. There is no auto-kill.
+
+The cadence policy has a freshness gate: if `current_step` has not advanced since the prior watch row for a given run, the wakeup produces zero new rows. So a 15-minute cadence yields one watch row per run per validation cycle in steady state, fewer when validation is sparse.
+
+```mermaid
+flowchart TD
+    START["Read snapshot"] --> DIVERGED{"NLL inf/NaN<br/>or jump &gt;50%?"}
+    DIVERGED -->|yes| KILL_DIV["KILL: diverged"]
+    DIVERGED -->|no| COSTCAP{"Wall-time &gt;<br/>1.5x budget?"}
+    COSTCAP -->|yes| KILL_COST["KILL: cost-cap"]
+    COSTCAP -->|no| DEGEN{"Samples<br/>degenerate 3+ watches?"}
+    DEGEN -->|yes| KILL_SAMP["KILL: degenerate samples"]
+    DEGEN -->|no| OPTHEALTH{"All blocks grad_cosine&lt;0.1<br/>AND update_to_weight&lt;1e-4<br/>AND quality flat for 3 watches?"}
+    OPTHEALTH -->|yes| KILL_OPT["KILL: opt-health confluence"]
+    OPTHEALTH -->|no| PHASETRANS{"modularity_q rising<br/>OR bits_per_edge descending?"}
+    PHASETRANS -->|yes| EXTEND["EXTEND watch 2x<br/>max 1 extension"]
+    PHASETRANS -->|no| SAT{"8+ points AND<br/>saturation fit predicts<br/>terminal within 3% of current?"}
+    SAT -->|yes| KILL_SAT["KILL: saturation heuristic"]
+    SAT -->|no| HBAND{"At &gt;=33% step_cap<br/>AND in bottom 1/eta of peers<br/>AND stable 3 watches?"}
+    HBAND -->|yes| KILL_REL["KILL: Hyperband-style relative"]
+    HBAND -->|no| KEEP["KEEP"]
+```
+
+The order is deliberate: the cheapest and highest-confidence kills (diverged, cost-cap, samples) come first, then dynamics-side kills (opt-health), then the phase-transition guard (extend rather than kill, capped at one 2× extension), then the saturation heuristic, then the relative-bottom-of-peers Hyperband-flavoured kill.
+
+Citation notes for the criteria. The saturation heuristic uses a 3% tolerance because v1's gen-val/* noise floor is `std/mean ≈ 0.19` per `s_star.yaml`; recalibrate when a denser-cadence reference run lands. The Hyperband cut is gentler than canonical Hyperband [4]: canonical Hyperband halts $1 - 1/\eta = 2/3$ of the population at each rung, whereas this watcher kills only the bottom $1/\eta$ and only after 3 watches of stability — the cost of a wrong-kill is one re-launch, so we err toward letting runs finish. The phase-transition guard exists because the v1 long-run shows step-wise phase transitions where `gen-val/sbm_accuracy` is flat at chance for tens of thousands of steps and then jumps; canonical Hyperband would kill exactly the configs that are about to transition.
+
 ## 4. Step-budget $S^\star$ derivation
 
 ### 4.1 Saturating-exponential model
@@ -183,6 +212,28 @@ The fallback is a **dual-key schema** in `s_star.yaml`:
 Per the pre-runner's "Pitfall to design around" section, NLL plateaus do not always match sample-quality plateaus in this regime; the NLL-derived $S^\star$ would be only an *upper bound* even if it fitted cleanly. The structural-quality $S^\star$ replaces the operational cap once a v1-equivalent run with `eval_every_n_steps ≤ 10000` lands.
 
 The script raises `InsufficientSamplesError` (a `KeyError` subclass) per metric and accumulates; if zero gen-val/* metrics meet the floor and `--nll-fallback` is *not* passed, it aborts loudly per the CLAUDE.md "fail loud" rule.
+
+### 4.5 Cosine/U-bowl eval cadence
+
+The v1 long-run logs `val/gen/*` only three times across $232\text{k}$ steps because the generation eval is expensive. A uniform `eval_every_n_steps = 10000` therefore allocates the same computational budget at every horizon, which is wasteful in regimes where the curve is provably uninformative — for example the chance plateau at the midpoint of the bowl, or the immediate aftermath of warmup once gradients have stopped accelerating.
+
+The cosine/U-bowl cadence places evaluations densely where the curvature is high and sparsely where the curve is provably flat. The density formula on the first bowl $[0, 2 s_p]$ is
+
+$$\rho(s) = \rho_{\max} - (\rho_{\max} - \rho_{\min}) \sin^2\!\left(\frac{\pi s}{2 s_p}\right)$$
+
+with $\rho_{\max}$ the densest spacing's reciprocal (default $1/4000$), $\rho_{\min}$ the sparsest (default $1/20000$), and $s_p$ the bowl's chance-plateau midpoint (default $35000$). The bowl maxima sit at $s = 0$ (warmup) and $s = 2 s_p = s_k$ (the expected knee); the bowl minimum sits at $s = s_p$ (mid-chance-plateau).
+
+The CDF has a closed form. Using $\sin^2(x) = (1 - \cos(2x))/2$,
+
+$$C(s) = \int_0^s \rho(t) \, dt = \frac{\rho_{\max} + \rho_{\min}}{2} \cdot s + \frac{(\rho_{\max} - \rho_{\min}) s_p}{2 \pi} \sin\!\left(\frac{\pi s}{s_p}\right).$$
+
+Eval timestamps follow inverse-CDF placement: $s_i = C^{-1}\!\left(\frac{i}{N} \cdot C(S)\right)$ for $i = 1, \ldots, N$ with $S$ the total step budget. The CDF is strictly increasing because $\rho > 0$ everywhere, so `scipy.optimize.brentq` always converges. The library implementation is `scripts/sweep/eval_schedule.py`; tests in `tests/sweep/test_eval_schedule.py` pin the bowl shape, CDF monotonicity, inverse-CDF round-trip accuracy, schedule density skew, and iterate-beyond-knee behaviour.
+
+For $S > 2 s_p$ the bowl repeats with period $2 s_p$ — the closed-form CDF accumulates linearly across periods because the sin term vanishes at every multiple of $s_p$. Iteration beyond the expected knee therefore needs no shift bookkeeping: pass any $S$ to `compute_schedule` and the placement covers it.
+
+The motivation is rooted in D-optimal experimental design [11]: when the goal is parameter estimation under a saturating-exponential model, observations should concentrate where the curve is most informative. Atkinson and Donev formalise this as maximising the determinant of the Fisher information matrix, which here reduces to placing observations at the curvature extrema. The cosine bowl is a smooth approximation to that placement that respects the empirical observation — flat at chance for tens of thousands of steps before phase-transitioning — that the v1 long-run displays.
+
+The training-side consumer that actually fires `val_check` at the schedule list is a deferred patch (spec §10 Phase 0.4). The offline schedule artefact lands first so round-1 plans can paste the integer list as a Hydra override.
 
 ## 5. Anchors and the paper-vs-reproduction gap
 
@@ -353,8 +404,10 @@ Every round's vibe note ends with an explicit "if I'm wrong about this, here's t
 
 [10] Liao, R., Li, Y., Song, Y., Wang, S., Hamilton, W., Duvenaud, D. K., Urtasun, R., and Zemel, R. "Efficient Graph Generation with Graph Recurrent Attention Networks." *NeurIPS 2019*. arXiv:1910.00760. [https://arxiv.org/abs/1910.00760](https://arxiv.org/abs/1910.00760)
 
-[11] Spec: `docs/superpowers/specs/2026-04-29-smallest-config-search-design.md` (gitignored; on disk).
+[11] Atkinson, A. C. and Donev, A. N. *Optimum Experimental Designs*. Oxford University Press, 1992. ISBN 0-19-852254-1. The classical reference for D-optimal experimental design. The cosine/U-bowl eval cadence in §4.5 places observations at curvature extrema in the spirit of this work, adapted to a smooth bowl that respects the empirical phase-transition pattern of graph-generation training curves.
 
-[12] Plan: `docs/superpowers/plans/2026-04-29-smallest-config-search.md` (gitignored; on disk).
+[12] Spec: `docs/superpowers/specs/2026-04-29-smallest-config-search-design.md` (gitignored; on disk).
 
-[13] Skill: `~/300_custom_tooling/399_custom_ai_skills/plugins/tmgg-research-loops/skills/smallest-config-search/SKILL.md`.
+[13] Plan: `docs/superpowers/plans/2026-04-29-smallest-config-search.md` (gitignored; on disk).
+
+[14] Skill: `~/300_custom_tooling/399_custom_ai_skills/plugins/tmgg-research-loops/skills/smallest-config-search/SKILL.md`.
