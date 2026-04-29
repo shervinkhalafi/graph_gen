@@ -1,21 +1,47 @@
 """MOSES dataset — DiGress repro Table 5.
 
-SMILES source: the ``moses`` package (``moses.get_dataset(split)``).
-Atom decoder: (C, N, S, O, F, Cl, Br, H). DiGress uses the published
-MOSES train/test/scaffold split; we mirror the package's
-``get_dataset`` helper.
+SMILES source: the canonical molecularsets/moses GitHub-LFS CSVs,
+the same ones upstream DiGress downloads. Each CSV has a ``SMILES``
+column (uppercase). Atom decoder: (C, N, S, O, F, Cl, Br, H).
+
+The Python ``moses`` package on PyPI (versions ≤ 0.10) is a
+namespace stub with no actual code; the real package
+``molsets`` exposes ``moses.get_dataset`` but adds heavy deps for no
+benefit here. We follow upstream's lead and just download the CSVs.
+
+DiGress evaluates against MOSES's scaffold split (held-out scaffolds)
+for the FCD/SNN metrics. Our DataModule serves
+``train`` + ``val`` (= ``test_scaffolds``) + ``test`` (= ``test``).
 """
 
 from __future__ import annotations
+
+import csv
 
 from tmgg.data.datasets.molecular.codec import SMILESCodec
 from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
 from tmgg.data.datasets.molecular.vocabulary import AtomBondVocabulary
 
-# MOSES test split is large enough that DiGress evaluates against
-# scaffold split (held-out scaffolds) for the FCD/SNN metrics. Our
-# DataModule serves train + val(=test_scaffolds) + test(=test).
-_MOSES_VAL_SPLIT = "test_scaffolds"
+# Upstream MOSES splits, hosted via molecularsets/moses GitHub LFS.
+# These match upstream DiGress's ``train_url`` / ``val_url`` /
+# ``test_url`` (note upstream's somewhat confusing naming: it maps
+# the MOSES ``test`` CSV onto its own ``val`` slot and the
+# ``test_scaffolds`` CSV onto its own ``test`` slot — we keep the
+# name MOSES uses on disk).
+_MOSES_URLS = {
+    "train": (
+        "https://media.githubusercontent.com/media/molecularsets/moses/"
+        "master/data/train.csv"
+    ),
+    "val": (
+        "https://media.githubusercontent.com/media/molecularsets/moses/"
+        "master/data/test_scaffolds.csv"
+    ),
+    "test": (
+        "https://media.githubusercontent.com/media/molecularsets/moses/"
+        "master/data/test.csv"
+    ),
+}
 
 
 class MOSESDataset(MolecularGraphDataset):
@@ -23,8 +49,7 @@ class MOSESDataset(MolecularGraphDataset):
 
     DATASET_NAME = "moses"
     DEFAULT_MAX_ATOMS = 30
-    # SMILES come from the ``moses`` package, not URLs.
-    RAW_FILES: dict[str, str] = {}
+    RAW_FILES = _MOSES_URLS
 
     @classmethod
     def make_codec(cls) -> SMILESCodec:
@@ -36,14 +61,20 @@ class MOSESDataset(MolecularGraphDataset):
         )
 
     def download_smiles_split(self, split: str) -> list[str]:
-        """Pull SMILES from the ``moses`` package."""
-        import moses
-
-        moses_split = {
-            "train": "train",
-            "val": _MOSES_VAL_SPLIT,
-            "test": "test",
-        }.get(split)
-        if moses_split is None:
-            raise ValueError(f"Unknown split {split!r}.")
-        return list(moses.get_dataset(moses_split))  # pyright: ignore[reportAttributeAccessIssue]  # moses has no stubs; runtime-verified
+        """Download the MOSES CSV for a split and return its SMILES column."""
+        path = self._default_download(split)
+        smiles_out: list[str] = []
+        with path.open("r", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Upstream uses ``pd.read_csv(path)['SMILES']`` — column
+                # is uppercase in MOSES CSVs.
+                smi = row.get("SMILES") or row.get("smiles")
+                if smi:
+                    smiles_out.append(smi.strip())
+        if not smiles_out:
+            raise RuntimeError(
+                f"MOSES split {split!r}: 0 SMILES read from {path}; "
+                "column 'SMILES' may be missing or file is empty."
+            )
+        return smiles_out
