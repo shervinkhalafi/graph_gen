@@ -157,6 +157,31 @@ def create_callbacks(config: DictConfig) -> list[pl.Callback]:
             )
         )
 
+    # Async-eval spawn callback (smallest-config sweep). Mirrors the
+    # gate pattern used by ema/final_sample_dump/chain_saving: read
+    # the config block; if enabled, instantiate via hydra.utils.instantiate
+    # so the YAML's _target_ + all init kwargs flow through cleanly. The
+    # ``enabled`` key is the gate only and is not an ``__init__`` kwarg
+    # of ``AsyncEvalSpawnCallback``, so we strip it before instantiation
+    # (instantiate would otherwise pass it as a kwarg and crash).
+    aes_cfg = cb_config.get("async_eval_spawn", None)
+    if aes_cfg is not None and bool(aes_cfg.get("enabled", False)):
+        from omegaconf import DictConfig as _DictConfig
+        from omegaconf import open_dict
+
+        aes_container = OmegaConf.to_container(aes_cfg, resolve=True)
+        if not isinstance(aes_container, dict):
+            raise TypeError(
+                "callbacks.async_eval_spawn must resolve to a dict; "
+                f"got {type(aes_container).__name__}"
+            )
+        aes_cfg_for_init = OmegaConf.create(aes_container)
+        assert isinstance(aes_cfg_for_init, _DictConfig)
+        with open_dict(aes_cfg_for_init):
+            if "enabled" in aes_cfg_for_init:
+                del aes_cfg_for_init["enabled"]
+        callbacks.append(hydra.utils.instantiate(aes_cfg_for_init))
+
     return callbacks
 
 

@@ -130,9 +130,19 @@ def create_loggers(config: DictConfig) -> list[Logger]:
                         entity=logger_params.get("entity"),
                         project=logger_params.get("project"),
                     )
-                    # Derive W&B run name from run_id when not set explicitly
-                    wandb_name = logger_params.get("name") or config.get(
-                        "run_id", config.get("experiment_name", "unknown")
+                    # Derive W&B run name. Order of precedence:
+                    #   1. Top-level ``wandb_name`` override (added by
+                    #      launchers via ``+wandb_name=...``); honors the
+                    #      sweep launcher's explicit naming.
+                    #   2. The logger config block's ``name`` field.
+                    #   3. The auto-generated ``run_id`` (or
+                    #      ``experiment_name`` as a final fallback).
+                    wandb_name = (
+                        config.get("wandb_name")
+                        or logger_params.get("name")
+                        or config.get(
+                            "run_id", config.get("experiment_name", "unknown")
+                        )
                     )
                     wandb_kwargs: dict[str, Any] = {
                         "project": logger_params.get("project"),

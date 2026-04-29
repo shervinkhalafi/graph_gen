@@ -341,3 +341,45 @@ class TestCreateLoggers:
         assert len(loggers) == 1
         assert len(captured_csv) == 1
         assert captured_csv[0]["save_dir"] == f"{tmp_path}/csv"
+
+    def test_wandb_logger_honors_wandb_name_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A top-level ``wandb_name`` config key must override ``run_id``.
+
+        Regression rationale
+        --------------------
+        The smallest-config sweep launcher passes
+        ``+wandb_name=smallest-cfg/spectre_sbm/r0/smoke/<hash>`` as a
+        Hydra override, expecting the W&B run's display name to match
+        the audit identifier so post-hoc reconciliation can find the
+        run by name. Before the fix, ``create_loggers`` only read
+        ``logger_params.get('name')`` (left null in
+        ``base/logger/wandb.yaml``) and fell back to ``run_id``,
+        ignoring ``wandb_name`` entirely. The fix promotes ``wandb_name``
+        to the top of the precedence chain.
+        """
+        cfg = _compose_config(tmp_path, "base_config_spectral_arch")
+        with open_dict(cfg):
+            cfg.run_id = "default-run"
+            cfg.wandb_name = "custom-name"
+        captured: list[dict[str, Any]] = []
+
+        class DummyWandbLogger:
+            def __init__(self, **kwargs: Any) -> None:
+                captured.append(kwargs)
+
+        monkeypatch.setattr(
+            "tmgg.training.logging._has_wandb_credentials", lambda: True
+        )
+        monkeypatch.setattr("tmgg.training.logging.WandbLogger", DummyWandbLogger)
+
+        _ = create_loggers(cfg)
+
+        assert len(captured) == 1
+        assert captured[0]["name"] == "custom-name", (
+            f"wandb_name override must take precedence over run_id; "
+            f"got name={captured[0]['name']!r}"
+        )

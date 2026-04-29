@@ -51,6 +51,9 @@ import pytest
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 
+from tmgg.training.callbacks.async_eval_spawn import AsyncEvalSpawnCallback
+from tmgg.training.orchestration.run_experiment import create_callbacks
+
 EXP_CONFIG_PATH = (
     Path(__file__).resolve().parents[3] / "src" / "tmgg" / "experiments" / "exp_configs"
 )
@@ -145,3 +148,77 @@ def test_async_eval_spawn_defaults(tmp_path: Path) -> None:
     assert aes.num_samples == 40
     assert aes.num_steps == 1000
     assert aes.modal_app_name == "tmgg-spectral"
+
+
+def test_async_eval_spawn_callback_wired_when_enabled(tmp_path: Path) -> None:
+    """``create_callbacks`` should append an ``AsyncEvalSpawnCallback`` when the
+    ``callbacks.async_eval_spawn`` block is composed and ``enabled=true``.
+
+    Regression rationale
+    --------------------
+    Before the fix, ``create_callbacks`` only read a hardcoded set of
+    keys (``checkpoint``, ``early_stopping``, ``ema_decay``,
+    ``final_sample_dump``, ``chain_saving``); the ``async_eval_spawn``
+    block was silently dropped even when present in the resolved config
+    and gated open. This regressed the smallest-config smoke run: the
+    trainer ran 1000 steps cleanly, but no eval manifest was written and
+    no step-stamped checkpoints were saved. The fix wires the block
+    through ``hydra.utils.instantiate`` after stripping the ``enabled``
+    gate (which is not an ``__init__`` kwarg of the callback).
+    """
+    overrides = _minimal_overrides(tmp_path) + [
+        "base/callbacks=default_with_async_eval",
+        "callbacks.async_eval_spawn.enabled=true",
+        "callbacks.async_eval_spawn.schedule=[1000, 2000]",
+        "callbacks.async_eval_spawn.run_uid=test-uid",
+        "callbacks.async_eval_spawn.manifest_path=/tmp/test_manifest.jsonl",
+        # ``~logger`` is already in _minimal_overrides; no need to mock W&B.
+    ]
+
+    with initialize_config_dir(version_base=None, config_dir=str(EXP_CONFIG_PATH)):
+        cfg = compose(
+            config_name="base_config_spectral_arch",
+            overrides=overrides,
+        )
+
+    callbacks = create_callbacks(cfg)
+    aes_callbacks = [cb for cb in callbacks if isinstance(cb, AsyncEvalSpawnCallback)]
+    assert len(aes_callbacks) == 1, (
+        f"expected exactly one AsyncEvalSpawnCallback in the returned list; "
+        f"got {len(aes_callbacks)}. Full callback types: "
+        f"{[type(cb).__name__ for cb in callbacks]}"
+    )
+    aes = aes_callbacks[0]
+    assert aes.schedule == [1000, 2000]
+    assert aes.run_uid == "test-uid"
+    assert aes.manifest_path == "/tmp/test_manifest.jsonl"
+
+
+def test_async_eval_spawn_callback_skipped_when_disabled(tmp_path: Path) -> None:
+    """``create_callbacks`` must NOT append an ``AsyncEvalSpawnCallback``
+    when the block is composed but ``enabled=false`` (the default).
+
+    Regression rationale
+    --------------------
+    The gate must remain a hard off-switch. A launcher that composes
+    ``base/callbacks=default_with_async_eval`` without flipping
+    ``enabled=true`` should get the default callbacks plus nothing else;
+    otherwise we'd be auto-spawning Modal jobs every run.
+    """
+    overrides = _minimal_overrides(tmp_path) + [
+        "base/callbacks=default_with_async_eval",
+        # enabled defaults to false in async_eval_spawn.yaml.
+    ]
+
+    with initialize_config_dir(version_base=None, config_dir=str(EXP_CONFIG_PATH)):
+        cfg = compose(
+            config_name="base_config_spectral_arch",
+            overrides=overrides,
+        )
+
+    callbacks = create_callbacks(cfg)
+    aes_callbacks = [cb for cb in callbacks if isinstance(cb, AsyncEvalSpawnCallback)]
+    assert len(aes_callbacks) == 0, (
+        f"expected zero AsyncEvalSpawnCallback when enabled=false; "
+        f"got {len(aes_callbacks)}."
+    )
