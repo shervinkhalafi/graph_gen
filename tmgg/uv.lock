@@ -1688,12 +1688,6 @@ wheels = [
 ]
 
 [[package]]
-name = "moses"
-version = "0.10.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/84/0d/783ac17bd7ce07a1cd5f1ec4c4c3c1d6feee1b09a743933c4bed94e7c68b/moses-0.10.0.tar.gz", hash = "sha256:e3a1068099d9bb9768e71380f452e18c4f523b7c95208ba1e8f123d3af6dfce7", size = 17844, upload-time = "2016-10-12T04:27:49.533Z" }
-
-[[package]]
 name = "mpmath"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3315,7 +3309,6 @@ dependencies = [
     { name = "loguru" },
     { name = "matplotlib" },
     { name = "modal" },
-    { name = "moses" },
     { name = "networkx" },
     { name = "numpy" },
     { name = "omegaconf" },
@@ -3377,7 +3370,6 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.5.0" },
     { name = "mkdocstrings-python", marker = "extra == 'docs'" },
     { name = "modal", specifier = ">=0.64.0" },
-    { name = "moses", specifier = ">=0.4" },
     { name = "networkx", specifier = ">=3.5" },
     { name = "numpy", specifier = ">=1.21.0" },
     { name = "omegaconf", specifier = ">=2.3.0" },
