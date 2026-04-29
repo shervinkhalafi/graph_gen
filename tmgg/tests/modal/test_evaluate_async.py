@@ -28,9 +28,23 @@ Invariants
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+
+# Bring the manifest helper onto the test path the same way the
+# Modal-side modules do at runtime, so tests can read the per-row
+# directory layout via the canonical reader.
+_REPO_ROOT_TEST = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT_TEST) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT_TEST))
+from scripts.sweep._eval_manifest import (  # noqa: E402  -- post-sys.path import
+    read_manifest as _eval_manifest_read,
+)
+from scripts.sweep._eval_manifest import (  # noqa: E402  -- post-sys.path import
+    resolve_manifest_dir as _eval_manifest_resolve_dir,
+)
 
 
 def _make_task(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
@@ -169,7 +183,8 @@ class TestAsyncEvalManifestWrite:
         eval_output = _success_eval_output(task)
 
         manifest_path = Path(task["manifest_path"])
-        assert not manifest_path.exists()
+        manifest_dir = _eval_manifest_resolve_dir(manifest_path)
+        assert not manifest_dir.exists()
 
         with (
             patch.object(
@@ -181,10 +196,8 @@ class TestAsyncEvalManifestWrite:
         ):
             evaluate_async.evaluate_mmd_async(task)
 
-        assert manifest_path.exists()
-        rows = [
-            json.loads(line) for line in manifest_path.read_text().splitlines() if line
-        ]
+        assert manifest_dir.exists()
+        rows = _eval_manifest_read(manifest_path)
         assert len(rows) == 1, f"expected 1 row, got {len(rows)}: {rows}"
         row = rows[0]
         assert row["kind"] == "eval_event"
@@ -228,10 +241,9 @@ class TestAsyncEvalFailureSemantics:
             evaluate_async.evaluate_mmd_async(task)
 
         # Manifest must record the failure.
-        assert manifest_path.exists()
-        rows = [
-            json.loads(line) for line in manifest_path.read_text().splitlines() if line
-        ]
+        manifest_dir = _eval_manifest_resolve_dir(manifest_path)
+        assert manifest_dir.exists()
+        rows = _eval_manifest_read(manifest_path)
         assert len(rows) == 1
         row = rows[0]
         assert row["status"] == "failed"
@@ -331,8 +343,7 @@ class TestAsyncEvalPrefixesUnqualifiedMetricNames:
 
         # Manifest row must carry the prefixed names too -- this is what
         # the smoke verification scripts grep for.
-        manifest = Path(task["manifest_path"])
-        rows = [json.loads(line) for line in manifest.read_text().splitlines() if line]
+        rows = _eval_manifest_read(task["manifest_path"])
         assert len(rows) == 1
         assert rows[0]["status"] == "completed"
         assert "gen-val/degree_mmd" in rows[0]["metrics"]
@@ -407,9 +418,7 @@ class TestAsyncEvalSurfacesCliFailures:
         assert mock_log.call_count == 0
 
         # Manifest must record the failure.
-        rows = [
-            json.loads(line) for line in manifest_path.read_text().splitlines() if line
-        ]
+        rows = _eval_manifest_read(manifest_path)
         assert len(rows) == 1
         assert rows[0]["status"] == "failed"
         assert rows[0]["error_tail"] is not None

@@ -38,7 +38,7 @@ at import time — wired to ``_commit_outputs_volume`` from
 
 from __future__ import annotations
 
-import json
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -46,6 +46,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
 from pytorch_lightning.callbacks import Callback
+
+# Make scripts/sweep/_eval_manifest.py importable from the trainer
+# container. The callback writes via the same helper the readers use,
+# so the manifest filename convention has exactly one source of truth.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from scripts.sweep._eval_manifest import (  # noqa: E402  -- post-sys.path import
+    read_manifest as eval_manifest_read,
+)
+from scripts.sweep._eval_manifest import (  # noqa: E402  -- post-sys.path import
+    write_manifest_row as eval_manifest_write_row,
+)
 
 if TYPE_CHECKING:
     import pytorch_lightning as pl
@@ -69,34 +82,29 @@ def _function_name_for_tier(gpu_tier: str) -> str:
     return f"modal_evaluate_mmd_async_{gpu_tier}"
 
 
-def _append_manifest_row(manifest_path: str, row: dict[str, Any]) -> None:
-    """Append a single JSON row to the manifest file.
+def _write_manifest_row(manifest_path: str, row: dict[str, Any]) -> None:
+    """Write a single eval-event row as an immutable JSON file.
 
-    Mirrors ``tmgg.modal._lib.evaluate_async._append_manifest_row``: a
-    single ``open().write()`` is atomic on POSIX for sub-PIPE_BUF rows.
-    The Modal volume commit is the caller's responsibility.
+    Replaces the legacy append-to-shared-JSONL pattern. With Modal
+    Volume's last-writer-wins semantics, two concurrent appenders
+    (trainer + eval worker) can clobber each other's rows when
+    committing overlapping views of the same file. Per-row files keyed
+    by ``{step}-{status}-{discriminator}`` eliminate that failure mode.
+    The trainer's discriminator is the just-spawned ``modal_call_id``
+    (``fc-...``); see ``write_manifest_row`` in
+    ``scripts.sweep._eval_manifest`` for the exact filename convention.
     """
-    Path(manifest_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(manifest_path, "a") as f:
-        f.write(json.dumps(row) + "\n")
+    eval_manifest_write_row(manifest_path, row)
 
 
 def _read_manifest(manifest_path: str) -> list[dict[str, Any]]:
-    """Read the JSONL manifest into a list of dicts.
+    """Read the manifest into a list of dicts.
 
-    Returns an empty list if the file does not exist yet — the trainer
-    may call drain before any spawns happened.
+    Delegates to ``scripts.sweep._eval_manifest.read_manifest`` which
+    auto-detects directory vs JSONL layout. Returns an empty list when
+    no manifest exists yet (drain may run before any spawns).
     """
-    p = Path(manifest_path)
-    if not p.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in p.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        rows.append(json.loads(line))
-    return rows
+    return eval_manifest_read(manifest_path)
 
 
 class AsyncEvalSpawnCallback(Callback):
@@ -374,7 +382,7 @@ class AsyncEvalSpawnCallback(Callback):
             "metrics": None,
             "error_tail": None,
         }
-        _append_manifest_row(self.manifest_path, row)
+        _write_manifest_row(self.manifest_path, row)
 
         # Commit again so the spawned-row is visible to the eval worker's
         # snapshot of ``tmgg-outputs``. Modal volumes only flush on

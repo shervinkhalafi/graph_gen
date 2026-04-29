@@ -72,13 +72,18 @@ def _make_resolver(spawn_call_id: str = "fc-123") -> MagicMock:
 
 
 def _read_manifest(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text().splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
-    return rows
+    """Read the manifest via the canonical helper, which auto-detects
+    directory-of-rows vs legacy-JSONL layout."""
+    import sys as _sys
+
+    _repo = Path(__file__).resolve().parents[3]
+    if str(_repo) not in _sys.path:
+        _sys.path.insert(0, str(_repo))
+    from scripts.sweep._eval_manifest import (
+        read_manifest as _read,
+    )
+
+    return _read(path)
 
 
 # ---------------------------------------------------------------------------
@@ -334,9 +339,9 @@ class TestOnTrainBatchEnd:
         # First commit fires before the manifest row is written.
         assert commit_snapshots[0] == [], "first commit must precede the manifest write"
         # Second commit fires AFTER the manifest row, so the worker can see it.
-        assert len(commit_snapshots[1]) == 1, (
-            f"second commit must observe the spawned row; saw {commit_snapshots[1]}"
-        )
+        assert (
+            len(commit_snapshots[1]) == 1
+        ), f"second commit must observe the spawned row; saw {commit_snapshots[1]}"
         assert commit_snapshots[1][0]["status"] == "spawned"
         assert commit_snapshots[1][0]["modal_call_id"] == "fc-99"
 

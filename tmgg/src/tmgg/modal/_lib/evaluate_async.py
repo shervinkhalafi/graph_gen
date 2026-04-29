@@ -28,25 +28,58 @@ modifying it. The Modal ``@app.function`` decorator wrapping happens in
 
 from __future__ import annotations
 
-import json
+import sys
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import wandb
 
-from tmgg.modal._lib.evaluate import EvaluationInput, run_mmd_evaluation
+# Make scripts/sweep/_eval_manifest.py importable from inside the Modal
+# container — the eval worker writes via the same helper the readers
+# (fetch_outcomes, watch_runs) use, so the manifest-file naming
+# convention has exactly one source of truth.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from scripts.sweep._eval_manifest import (  # noqa: E402  -- post-sys.path import
+    write_manifest_row as eval_manifest_write_row,
+)
+
+from tmgg.modal._lib.evaluate import (  # noqa: E402  -- after dynamic-path block
+    EvaluationInput,
+    run_mmd_evaluation,
+)
+
+_EVAL_WORKER_ID = uuid.uuid4().hex[:12]
+"""Per-process discriminator for manifest filenames.
+
+Each eval-worker container has a unique 12-char hex ID. Combined with
+``scheduled_step`` and ``status`` this guarantees a collision-free
+filename in the directory-layout manifest, so the trainer container
+and any concurrent eval workers never write to the same path. The
+ID is generated once at module import (i.e. once per Modal call).
+"""
 
 
-def _append_manifest_row(manifest_path: str, row: dict[str, Any]) -> None:
-    """Append a single JSON row to the manifest file.
+def _write_manifest_row(manifest_path: str, row: dict[str, Any]) -> None:
+    """Write a single eval-event row as an immutable JSON file.
 
-    A single ``open(...).write(...)`` call is used so the row hits disk
-    atomically on POSIX for the size we care about (well under
-    ``PIPE_BUF``). The Modal volume commit happens elsewhere in the
-    spawn pipeline.
+    Replaces the legacy append-to-shared-JSONL pattern. With Modal
+    Volume's last-writer-wins semantics, two concurrent appenders
+    (trainer + eval worker) can clobber each other's rows when
+    committing overlapping views of the same file. Per-row files
+    keyed by ``{step}-{status}-{discriminator}`` eliminate that
+    failure mode: every writer produces a unique path.
+
+    Stamps ``_eval_worker_id`` on the row so the helper in
+    ``scripts.sweep._eval_manifest`` picks up a non-empty
+    discriminator even when ``modal_call_id`` is null (eval workers
+    don't have access to their own call ID at runtime).
     """
-    with open(manifest_path, "a") as f:
-        f.write(json.dumps(row) + "\n")
+    row_with_disc = {**row, "_eval_worker_id": _EVAL_WORKER_ID}
+    eval_manifest_write_row(manifest_path, row_with_disc)
 
 
 def evaluate_mmd_async(task: dict[str, Any]) -> dict[str, Any]:
@@ -121,7 +154,7 @@ def evaluate_mmd_async(task: dict[str, Any]) -> dict[str, Any]:
             "metrics": None,
             "error_tail": str(exc)[:1000],
         }
-        _append_manifest_row(manifest_path, failed_row)
+        _write_manifest_row(manifest_path, failed_row)
         raise
 
     # ------------------------------------------------------------------
@@ -146,7 +179,7 @@ def evaluate_mmd_async(task: dict[str, Any]) -> dict[str, Any]:
             "metrics": None,
             "error_tail": str(error_message)[:1000],
         }
-        _append_manifest_row(manifest_path, failed_row)
+        _write_manifest_row(manifest_path, failed_row)
         raise RuntimeError(
             f"run_mmd_evaluation reported status={eval_output.get('status')!r}: "
             f"{error_message}"
@@ -198,6 +231,6 @@ def evaluate_mmd_async(task: dict[str, Any]) -> dict[str, Any]:
         "metrics": metrics_dict,
         "error_tail": None,
     }
-    _append_manifest_row(manifest_path, completed_row)
+    _write_manifest_row(manifest_path, completed_row)
 
     return eval_output
