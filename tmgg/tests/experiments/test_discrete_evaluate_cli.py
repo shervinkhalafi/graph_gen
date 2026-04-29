@@ -4,10 +4,14 @@ Test rationale
 --------------
 The evaluation helper is a small orchestration layer: it loads a checkpoint,
 optionally swaps in EMA shadow weights, fetches reference graphs from the
-training-time datamodule (``--reference_set val|test``), samples generated
-graphs, and delegates the metric computation. Tests cover:
+training-time datamodule (``--reference_set val|test``), instantiates the
+trainer's saved :class:`~tmgg.evaluation.graph_evaluator.GraphEvaluator`
+from the same sibling ``config.yaml``, samples generated graphs, and
+delegates the full metric computation (degree/clustering/spectral MMD plus
+orbit/SBM/block-structure/planarity/uniqueness when their dependencies
+are available). Tests cover:
 
-* The MMD compute symbol is module-level so callers can patch it.
+* The evaluator-loader symbol is module-level so callers can patch it.
 * The evaluator drives the datamodule through ``setup`` + ``get_reference_graphs``
   rather than the deprecated synthetic ``generate_reference_graphs`` path
   (regression for parity D-16c cleanup; the synthetic shortcut bypassed
@@ -15,6 +19,11 @@ graphs, and delegates the metric computation. Tests cover:
 * ``--reference_set`` flag plumbs through to the datamodule call.
 * ``--use_ema {auto,true,false}`` semantics: auto swaps when shadow
   present, true raises when shadow absent, false skips the swap.
+* ``mmd_results`` carries the full ``EvaluationResults.to_dict()`` shape
+  (the three core MMDs plus the optional orbit/sbm/block-structure
+  fields, possibly ``None`` when their backends or train graphs are
+  absent), not the stripped 3-field dict from the previous
+  ``compute_mmd_metrics`` shortcut.
 """
 
 from __future__ import annotations
@@ -34,17 +43,57 @@ from tmgg.experiments.discrete_diffusion_generative import evaluate_cli
 
 
 @dataclass
-class _DummyMMDResults:
+class _DummyEvalResults:
+    """Mirrors the public surface of :class:`EvaluationResults`.
+
+    Carries the full flat dict with sentinel values for every field;
+    optional metrics are ``None`` to model the realistic case of orca /
+    graph-tool unavailable and novelty unsupported by the CLI path.
+    """
+
     degree_mmd: float = 0.1
     clustering_mmd: float = 0.2
     spectral_mmd: float = 0.3
+    orbit_mmd: float | None = None
+    sbm_accuracy: float | None = None
+    planarity_accuracy: float | None = None
+    uniqueness: float | None = None
+    novelty: float | None = None
+    modularity_q: float | None = None
+    spectral_gap_l2: float | None = None
+    empirical_p_in: float | None = None
+    empirical_p_out: float | None = None
 
-    def to_dict(self) -> dict[str, float]:
+    def to_dict(self) -> dict[str, float | None]:
         return {
             "degree_mmd": self.degree_mmd,
             "clustering_mmd": self.clustering_mmd,
             "spectral_mmd": self.spectral_mmd,
+            "orbit_mmd": self.orbit_mmd,
+            "sbm_accuracy": self.sbm_accuracy,
+            "planarity_accuracy": self.planarity_accuracy,
+            "uniqueness": self.uniqueness,
+            "novelty": self.novelty,
+            "modularity_q": self.modularity_q,
+            "spectral_gap_l2": self.spectral_gap_l2,
+            "empirical_p_in": self.empirical_p_in,
+            "empirical_p_out": self.empirical_p_out,
         }
+
+
+class _DummyEvaluator:
+    """Stand-in for ``GraphEvaluator`` exposing the surface the CLI uses."""
+
+    def __init__(self) -> None:
+        self.kernel = "gaussian_tv"
+        self.sigma = 1.0
+        self.evaluate_calls: list[tuple[int, int]] = []
+
+    def evaluate(
+        self, refs: list[nx.Graph[Any]], generated: list[nx.Graph[Any]]
+    ) -> _DummyEvalResults:
+        self.evaluate_calls.append((len(refs), len(generated)))
+        return _DummyEvalResults()
 
 
 class _DummyModule:
@@ -120,7 +169,7 @@ class TestDatamoduleReferencePath:
         monkeypatch.setattr(evaluate_cli, "torch", _build_torch_stub(callbacks={}))
         monkeypatch.setattr(evaluate_cli.hydra.utils, "instantiate", lambda cfg: dm)
         monkeypatch.setattr(
-            evaluate_cli, "compute_mmd_metrics", lambda *a, **kw: _DummyMMDResults()
+            evaluate_cli, "_load_graph_evaluator", lambda _path: _DummyEvaluator()
         )
 
         result = evaluate_cli.evaluate_checkpoint(
@@ -152,7 +201,7 @@ class TestDatamoduleReferencePath:
         monkeypatch.setattr(evaluate_cli, "torch", _build_torch_stub(callbacks={}))
         monkeypatch.setattr(evaluate_cli.hydra.utils, "instantiate", lambda cfg: dm)
         monkeypatch.setattr(
-            evaluate_cli, "compute_mmd_metrics", lambda *a, **kw: _DummyMMDResults()
+            evaluate_cli, "_load_graph_evaluator", lambda _path: _DummyEvaluator()
         )
 
         result = evaluate_cli.evaluate_checkpoint(
@@ -240,7 +289,7 @@ class TestEmaWiring:
         monkeypatch.setattr(evaluate_cli, "torch", _build_torch_stub(callbacks={}))
         monkeypatch.setattr(evaluate_cli.hydra.utils, "instantiate", lambda cfg: dm)
         monkeypatch.setattr(
-            evaluate_cli, "compute_mmd_metrics", lambda *a, **kw: _DummyMMDResults()
+            evaluate_cli, "_load_graph_evaluator", lambda _path: _DummyEvaluator()
         )
 
         result = evaluate_cli.evaluate_checkpoint(
@@ -281,7 +330,7 @@ class TestEmaWiring:
         )
         monkeypatch.setattr(evaluate_cli.hydra.utils, "instantiate", lambda cfg: dm)
         monkeypatch.setattr(
-            evaluate_cli, "compute_mmd_metrics", lambda *a, **kw: _DummyMMDResults()
+            evaluate_cli, "_load_graph_evaluator", lambda _path: _DummyEvaluator()
         )
 
         result = evaluate_cli.evaluate_checkpoint(
@@ -471,13 +520,22 @@ def test_evaluate_checkpoint_loads_real_diffusion_checkpoint(
     constructor hyperparameter. The evaluation helper rebuilds that model
     from checkpoint metadata before calling ``load_from_checkpoint``, then
     rebuilds the datamodule from the sibling config.yaml.
+
+    Invariants
+    ----------
+    The CLI must surface the FULL :class:`EvaluationResults` dictionary
+    (the three core MMDs plus the optional orbit/sbm/block-structure
+    fields) on the ``mmd_results`` key. The optional fields may be
+    ``None`` when their backing dependency (orca, graph-tool) or
+    train-graph input is unavailable in the test environment, so the
+    assertion is permissive on values but strict on the key set.
     """
     checkpoint_path = _train_tiny_discrete_checkpoint(tmp_path)
 
     monkeypatch.setattr(
         evaluate_cli,
-        "compute_mmd_metrics",
-        lambda *args, **kwargs: _DummyMMDResults(),
+        "_load_graph_evaluator",
+        lambda _path: _DummyEvaluator(),
     )
 
     results = evaluate_cli.evaluate_checkpoint(
@@ -492,11 +550,29 @@ def test_evaluate_checkpoint_loads_real_diffusion_checkpoint(
     assert results["checkpoint_name"] == "last.ckpt"
     assert results["num_generated"] >= 1
     assert results["reference_set"] == "val"
-    assert results["mmd_results"] == {
-        "degree_mmd": 0.1,
-        "clustering_mmd": 0.2,
-        "spectral_mmd": 0.3,
+
+    mmd = results["mmd_results"]
+    # Core MMDs must always be populated.
+    assert {"degree_mmd", "clustering_mmd", "spectral_mmd"}.issubset(mmd)
+    assert mmd["degree_mmd"] == 0.1
+    assert mmd["clustering_mmd"] == 0.2
+    assert mmd["spectral_mmd"] == 0.3
+
+    # Optional metric keys must be present in the dict (value may be None
+    # when the underlying dependency is missing, which mirrors the real
+    # GraphEvaluator contract).
+    optional_keys = {
+        "orbit_mmd",
+        "sbm_accuracy",
+        "planarity_accuracy",
+        "uniqueness",
+        "novelty",
+        "modularity_q",
+        "spectral_gap_l2",
+        "empirical_p_in",
+        "empirical_p_out",
     }
+    assert optional_keys.issubset(mmd)
 
 
 def test_lightning_load_from_checkpoint_directly_raises_typeerror(

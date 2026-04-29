@@ -1,9 +1,12 @@
 """CLI for discrete diffusion checkpoint evaluation.
 
-Loads a trained checkpoint, samples graphs, and reports MMD metrics
-against a reference distribution drawn from the checkpoint's own
-datamodule (val or test split per ``--reference_set``). Separated from
-``evaluate`` to avoid an import cycle with ``lightning_module``.
+Loads a trained checkpoint, samples graphs, and reports the FULL graph
+generation metric set (degree/clustering/spectral MMD plus orbit MMD,
+SBM accuracy, planarity, uniqueness, novelty, and block-structure
+telemetry) against a reference distribution drawn from the
+checkpoint's own datamodule (val or test split per
+``--reference_set``). Separated from ``evaluate`` to avoid an import
+cycle with ``lightning_module``.
 
 Only DiffusionModule checkpoints are supported. Legacy checkpoints from
 earlier LightningModule implementations are incompatible.
@@ -16,11 +19,32 @@ checkpoint. The fail-loud contract holds: when ``config.yaml`` is missing
 or its ``data:`` block lacks a ``_target_``, the call raises rather
 than falling back to synthetic graphs.
 
+The :class:`~tmgg.evaluation.graph_evaluator.GraphEvaluator` is also
+instantiated from the sibling ``config.yaml`` (the
+``model.evaluator:`` block) so the CLI computes the same metric set
+that the trainer uses at validation time. The trainer's saved
+``evaluator`` config carries the dataset-specific ``p_intra`` /
+``p_inter`` / ``clustering_sigma`` overrides, so they survive the
+round-trip into the CLI without callers having to duplicate them on
+the command line. The ``--kernel`` and ``--sigma`` CLI flags, when
+explicitly passed, override the corresponding fields on the
+instantiated evaluator; otherwise the saved-config values win.
+
 EMA weights swap into the loaded model when ``use_ema in ('true',
 'auto')`` and the checkpoint carries an ``EMACallback`` shadow under
 ``checkpoint['callbacks']``. ``--use_ema true`` without a shadow raises;
 ``--use_ema auto`` silently uses live weights and records
 ``ema_active=False`` in the result dict.
+
+Known limitations
+-----------------
+``novelty`` is always ``None`` in CLI results. Computing it would
+require fetching the ``train`` split from the reconstructed
+datamodule and threading the train graphs into ``GraphEvaluator``;
+that work is tangential to the smallest-config sweep's threshold
+check (which gates only on the conditionally-computed metrics like
+``orbit_mmd``, ``sbm_accuracy``, and the block-structure metrics).
+Lift this when the sweep configuration adds a novelty threshold.
 """
 
 from __future__ import annotations
@@ -36,7 +60,7 @@ import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from tmgg.evaluation.mmd_metrics import compute_mmd_metrics
+from tmgg.evaluation.graph_evaluator import GraphEvaluator
 from tmgg.training.callbacks.ema import EMACallback
 from tmgg.training.lightning_modules.diffusion_module import DiffusionModule
 
@@ -205,6 +229,57 @@ def _load_datamodule_for_reference(
     return datamodule
 
 
+def _load_graph_evaluator(checkpoint_path: Path) -> GraphEvaluator:
+    """Instantiate the saved ``GraphEvaluator`` from the sibling config.
+
+    Reads the sibling ``config.yaml`` and Hydra-instantiates the
+    ``model.evaluator:`` block. The trainer's evaluator carries the
+    dataset-specific ``p_intra``/``p_inter``/``clustering_sigma``
+    overrides (see ``conf/experiment/*.yaml``); reusing it ensures the
+    CLI computes the same metric set the trainer logs at validation
+    time.
+
+    Parameters
+    ----------
+    checkpoint_path
+        Path to the ``.ckpt`` file under evaluation. The sibling
+        ``config.yaml`` is located one directory above.
+
+    Returns
+    -------
+    GraphEvaluator
+        The instantiated evaluator. Caller may override ``kernel`` and
+        ``sigma`` afterwards if CLI flags were explicitly supplied.
+
+    Raises
+    ------
+    KeyError
+        ``config.yaml`` lacks a ``model.evaluator`` block.
+    """
+    config_path = _find_sibling_config_yaml(checkpoint_path)
+    loaded = OmegaConf.load(config_path)
+    if not isinstance(loaded, DictConfig):
+        raise TypeError(
+            f"config.yaml at {config_path} did not parse to a DictConfig; "
+            f"got {type(loaded).__name__}."
+        )
+    evaluator_cfg = OmegaConf.select(loaded, "model.evaluator")
+    if evaluator_cfg is None:
+        raise KeyError(
+            f"config.yaml at {config_path} has no `model.evaluator:` block; "
+            "cannot reconstruct the GraphEvaluator for the CLI metric set. "
+            "Older runs without an evaluator block in the saved config are "
+            "unsupported."
+        )
+    evaluator = hydra.utils.instantiate(evaluator_cfg)
+    if not isinstance(evaluator, GraphEvaluator):
+        raise TypeError(
+            f"`model.evaluator` at {config_path} did not instantiate to a "
+            f"GraphEvaluator; got {type(evaluator).__name__}."
+        )
+    return evaluator
+
+
 def _collect_reference_graphs(
     datamodule: Any,
     *,
@@ -277,11 +352,11 @@ def evaluate_checkpoint(
     num_samples: int = 500,
     reference_set: Literal["val", "test"] = "val",
     use_ema: Literal["auto", "true", "false"] = "auto",
-    mmd_kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
-    mmd_sigma: float = 1.0,
+    mmd_kernel: Literal["gaussian", "gaussian_tv"] | None = None,
+    mmd_sigma: float | None = None,
     device: str = "cpu",
 ) -> dict[str, Any]:
-    """Load a discrete diffusion checkpoint, sample graphs, and compute MMD.
+    """Load a discrete diffusion checkpoint and compute the full metric set.
 
     Reference graphs come from the *training-time datamodule*: the
     sibling ``config.yaml`` is loaded, the ``data:`` block is
@@ -289,6 +364,16 @@ def evaluate_checkpoint(
     walked to collect up to ``num_samples`` references. There is no
     synthetic-regeneration fallback (CLAUDE.md "single way of doing
     things").
+
+    The evaluator itself is instantiated from the same sibling
+    ``config.yaml`` (the ``model.evaluator:`` block), so the CLI
+    reports the same metric set the trainer logs at validation time:
+    degree/clustering/spectral MMD, orbit MMD (when ``orca`` is
+    available), SBM accuracy (when ``graph-tool`` is available),
+    block-structure telemetry (modularity Q, λ₂ spectral gap,
+    empirical p_in/p_out), planarity, and uniqueness. ``novelty`` is
+    always ``None`` here because the CLI does not currently fetch the
+    train split (see module docstring).
 
     Parameters
     ----------
@@ -306,18 +391,28 @@ def evaluate_checkpoint(
         requires a shadow; raises if absent. ``"false"`` skips the
         swap.
     mmd_kernel
-        Kernel for MMD computation.
+        When non-``None``, overrides the kernel field on the
+        instantiated evaluator (per the "explicit CLI flag wins"
+        contract documented at module level). ``None`` keeps the
+        saved-config value.
     mmd_sigma
-        Kernel bandwidth.
+        When non-``None``, overrides the fallback sigma field on the
+        instantiated evaluator. Per-metric ``degree_sigma`` /
+        ``clustering_sigma`` / ``spectral_sigma`` from the saved
+        config are not overridden here -- the CLI knob is too coarse
+        for that, and the dataset-specific clustering bandwidth
+        matters most. ``None`` keeps the saved-config value.
     device
         Torch device.
 
     Returns
     -------
     dict
-        Evaluation results including MMD metrics and the
-        ``ema_active`` boolean reflecting whether EMA weights were
-        actually used.
+        Evaluation results. ``mmd_results`` carries the full flat
+        dictionary produced by
+        :meth:`tmgg.evaluation.graph_evaluator.EvaluationResults.to_dict`,
+        with ``None`` for any conditionally-skipped metric (orca /
+        graph-tool unavailable, novelty unsupported by the CLI).
     """
     checkpoint_path = Path(checkpoint_path)
 
@@ -360,20 +455,36 @@ def evaluate_checkpoint(
     if not ref_graphs:
         raise RuntimeError(
             f"Reference {reference_set} split for {checkpoint_path} returned "
-            "zero graphs; cannot compute MMD against an empty reference."
+            "zero graphs; cannot compute the metric set against an empty reference."
         )
 
-    # Sample from model using the sampler. Generate the same count as
-    # the (possibly truncated) reference list so MMD compares
-    # equally-sized populations.
+    # Reconstruct the trainer's GraphEvaluator from the saved config so
+    # the CLI reports the same metric set the trainer logs at
+    # validation. Apply CLI overrides for kernel/sigma when explicitly
+    # supplied; otherwise the saved-config values win.
+    evaluator = _load_graph_evaluator(checkpoint_path)
+    if mmd_kernel is not None:
+        evaluator.kernel = mmd_kernel
+    if mmd_sigma is not None:
+        evaluator.sigma = mmd_sigma
+
+    # Sample from model. Generate the same count as the (possibly
+    # truncated) reference list so MMD compares equally-sized
+    # populations.
     num_generated = len(ref_graphs)
     print(f"Sampling {num_generated} graphs from model...")
     with torch.no_grad():
-        generated_graph_data = module.generate_graphs(num_generated)
+        generated_graphs = module.generate_graphs(num_generated)
 
-    mmd_results = compute_mmd_metrics(
-        ref_graphs, generated_graph_data, kernel=mmd_kernel, sigma=mmd_sigma
-    )
+    eval_results = evaluator.evaluate(ref_graphs, generated_graphs)
+    if eval_results is None:
+        raise RuntimeError(
+            f"GraphEvaluator.evaluate returned None for {checkpoint_path}: "
+            "fewer than 2 graphs in either the reference or the generated "
+            "set after eval_num_samples truncation. Increase --num-samples "
+            "or check the datamodule split."
+        )
+    metric_dict = eval_results.to_dict()
 
     results: dict[str, Any] = {
         "checkpoint_path": str(checkpoint_path.absolute()),
@@ -381,19 +492,24 @@ def evaluate_checkpoint(
         "reference_set": reference_set,
         "num_generated": num_generated,
         "num_reference": len(ref_graphs),
-        "mmd_kernel": mmd_kernel,
-        "mmd_sigma": mmd_sigma,
-        "mmd_results": mmd_results.to_dict(),
+        "mmd_kernel": evaluator.kernel,
+        "mmd_sigma": evaluator.sigma,
+        "mmd_results": metric_dict,
         "timestamp": datetime.now().isoformat(),
         "ema_active": ema_active,
     }
 
+    # Smoke-debug print. Render every metric the evaluator returned;
+    # ``None`` shows as ``n/a`` so a missing optional dependency
+    # (orca, graph-tool) or skipped metric is obvious at a glance.
     print(f"\n{'=' * 60}")
-    print("MMD Results")
+    print("Evaluation Results")
     print(f"{'=' * 60}")
-    print(f"  Degree MMD:     {mmd_results.degree_mmd:.6f}")
-    print(f"  Clustering MMD: {mmd_results.clustering_mmd:.6f}")
-    print(f"  Spectral MMD:   {mmd_results.spectral_mmd:.6f}")
+    for metric_name, value in metric_dict.items():
+        if value is None:
+            print(f"  {metric_name:<22} n/a")
+        else:
+            print(f"  {metric_name:<22} {value:.6f}")
     print(f"{'=' * 60}\n")
 
     return results
@@ -425,11 +541,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--kernel",
-        default="gaussian_tv",
+        default=None,
         choices=["gaussian", "gaussian_tv"],
-        help="MMD kernel (default: gaussian_tv)",
+        help=(
+            "Override the MMD kernel on the saved evaluator. "
+            "Default: keep the saved-config value (typically gaussian_tv)."
+        ),
     )
-    parser.add_argument("--sigma", type=float, default=1.0, help="Kernel bandwidth")
+    parser.add_argument(
+        "--sigma",
+        type=float,
+        default=None,
+        help=(
+            "Override the fallback MMD bandwidth on the saved evaluator. "
+            "Default: keep the saved-config value."
+        ),
+    )
     parser.add_argument("--device", default="cpu", help="Torch device (default: cpu)")
     parser.add_argument(
         "--output", type=str, default=None, help="Write results to JSON file"
