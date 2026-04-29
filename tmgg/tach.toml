@@ -81,6 +81,7 @@ depends_on = [
     "tmgg.training",
     "tmgg.data",
     "tmgg.utils.noising",
+    "tmgg.modal",  # AsyncEvalSpawnCallback wires Modal volume_commit_fn (function-scoped import)
 ]
 # Uses top-level logging.py; hydra instantiation uses tmgg.data and noising sanity checks
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import os
 import urllib.request
 from pathlib import Path
 
@@ -208,16 +209,28 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
     # ------------------------------------------------------------------
 
     def _write_shards(self, graphs: list[GraphData]) -> None:
+        # Atomic write: ``torch.save`` to a sibling ``<idx>.pt.tmp`` then
+        # ``os.replace`` to the final ``<idx>.pt``. ``os.replace`` is
+        # atomic on POSIX when src and dst live on the same filesystem
+        # (Modal volumes satisfy this — both are under the same mount).
+        # Without this, a SIGTERM / OOM mid-``torch.save`` leaves a
+        # half-written ``.pt`` whose internal zip directory is missing
+        # later tensors; the next training run then dies at
+        # ``PytorchStreamReader failed locating file data/N`` and Modal
+        # crash-loops the run on retry. We hit this exact failure mode
+        # in the Phase 8 smoke runs (543 retries from corrupted shards).
         shard_dir = self._shard_dir()
         shard_dir.mkdir(parents=True, exist_ok=True)
         for shard_idx, start in enumerate(range(0, len(graphs), self.shard_size)):
             shard = graphs[start : start + self.shard_size]
             shard_path = shard_dir / f"{shard_idx:04d}.pt"
+            tmp_path = shard_dir / f"{shard_idx:04d}.pt.tmp"
             # ``weights_only=False`` on load is required because
             # ``GraphData`` is a dataclass; these are first-party
             # files we wrote ourselves so the security memory's
             # "no third-party pickles" rule does not apply.
-            torch.save(shard, shard_path)
+            torch.save(shard, tmp_path)
+            os.replace(tmp_path, shard_path)
 
     def _load_shards(self) -> list[GraphData]:
         shard_dir = self._shard_dir()
