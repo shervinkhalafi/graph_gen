@@ -23,7 +23,6 @@ The W&B query layer is mocked via FakeRun (same pattern as
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -51,7 +50,7 @@ class FakeRun:
     summary: dict[str, Any]
     history_records: list[dict[str, Any]] = field(default_factory=list)
 
-    def history(self, **_kwargs: Any) -> list[dict[str, Any]]:
+    def history(self, **_: Any) -> list[dict[str, Any]]:
         return self.history_records
 
 

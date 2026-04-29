@@ -58,18 +58,15 @@ import datetime as dt
 import hashlib
 import json
 import math
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from scipy.optimize import curve_fit
 
 from scripts.sweep.compute_s_star import (
     MIN_POINTS_FOR_FIT,
     fit_saturating_exponential,
-    saturation_step,
 )
 
 # Watcher cadence (seconds). Claude calls ``ScheduleWakeup`` with
@@ -448,7 +445,7 @@ def main() -> None:  # pragma: no cover — CLI driver, exercised by integration
         run_uid = launched["run_uid"]
         prior = find_prior_watches(watches, run_uid=run_uid)
         try:
-            summary, _full_summary, history = fetch_snapshot_from_wandb(
+            summary, _, history = fetch_snapshot_from_wandb(
                 entity=args.entity,
                 project=args.project,
                 run_name=run_uid,
