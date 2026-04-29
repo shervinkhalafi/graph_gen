@@ -35,6 +35,13 @@ WRAPPER_BY_DATASET = {
 
 MODAL_APP_ID_RE = re.compile(r"\b(ap-[A-Za-z0-9]{10,})\b")
 
+# The wrapper subprocess (``tmgg-modal run --detach``) prints a stable
+# ``MODAL_FUNCTION_CALL_ID=fc-...`` line so the launcher can record the
+# trainer's call ID for the manual-kill workflow (see
+# ``scripts/sweep/kill_call.py``). Anchored on the prefix to avoid
+# false-positives from log lines that happen to mention an ``fc-...`` ID.
+MODAL_FUNCTION_CALL_ID_RE = re.compile(r"MODAL_FUNCTION_CALL_ID=(fc-[A-Za-z0-9]+)")
+
 
 def config_hash(overrides: dict[str, Any]) -> str:
     blob = json.dumps(overrides, sort_keys=True).encode()
@@ -131,6 +138,18 @@ def parse_modal_app_id(stdout: str) -> str | None:
     return m.group(1) if m else None
 
 
+def parse_modal_function_call_id(stdout: str) -> str | None:
+    """Extract the trainer's ``fc-...`` FunctionCall ID from wrapper output.
+
+    The wrapper prints ``MODAL_FUNCTION_CALL_ID=fc-...`` after a
+    detached spawn. Returning ``None`` is non-fatal: legacy runs and
+    dry-runs do not emit the marker, and the manual-kill workflow then
+    falls back to ``modal app stop <app_id>``.
+    """
+    m = MODAL_FUNCTION_CALL_ID_RE.search(stdout)
+    return m.group(1) if m else None
+
+
 def append_launched_row(
     *,
     rounds_jsonl: Path,
@@ -187,6 +206,9 @@ def launch_one(
             f"refusing to append launched row per spec §7 invariant 1"
         )
     app_id = parse_modal_app_id(proc.stdout) or parse_modal_app_id(proc.stderr)
+    fc_id = parse_modal_function_call_id(proc.stdout) or parse_modal_function_call_id(
+        proc.stderr
+    )
     row: dict[str, Any] = {
         "kind": "launched",
         "ts_utc": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
@@ -205,6 +227,11 @@ def launch_one(
         "wandb_run_id": None,
         "wandb_group": f"round-{round_no}-{dataset}-{axis_changed}",
         "modal_app_id": app_id,
+        # The trainer's FunctionCall ID for direct ``modal.FunctionCall.cancel``
+        # via ``scripts.sweep.kill_call``. ``None`` when the wrapper did not
+        # emit the marker (legacy output / blocking mode); operators then
+        # fall back to ``modal app stop <modal_app_id>``.
+        "modal_function_call_id": fc_id,
         "launched_by_session": session_tag,
     }
     if async_eval_schedule_path is not None:

@@ -154,6 +154,13 @@ def run(
         click.echo("\nSpawning experiment (detached)...")
         task = runner.spawn_experiment(cfg, gpu_type=gpu)
         click.echo(f"Spawned: run_id={task.run_id}, gpu={task.gpu_tier}")
+        # Stable marker the launcher (``scripts/sweep/launch_round.py``)
+        # parses to record the trainer's FunctionCall ID on the launched
+        # JSONL row, enabling manual cancel via ``scripts/sweep/kill_call.py``.
+        # ``function_call`` is None only on legacy / non-Modal paths; we
+        # echo nothing in that case so the parser falls back to None.
+        if task.function_call is not None:
+            click.echo(f"MODAL_FUNCTION_CALL_ID={task.function_call.object_id}")
         click.echo("Check Modal dashboard or confirmation log for progress.")
     else:
         click.echo("\nDispatching experiment (blocking)...")

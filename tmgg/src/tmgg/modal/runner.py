@@ -232,7 +232,14 @@ class ModalRunner:
         )
         self._active_runs[run_id] = spawned
 
-        logger.info(f"Spawned experiment {run_id} on {gpu} GPU (detached)")
+        # ``object_id`` is the ``fc-...`` token that ``scripts/sweep/kill_call.py``
+        # accepts for direct cancel. Logging it here gives operators a
+        # second source of truth alongside the CLI's stdout marker.
+        fc_id = getattr(function_call, "object_id", None)
+        logger.info(
+            f"Spawned experiment {run_id} on {gpu} GPU (detached); "
+            f"function_call_id={fc_id}"
+        )
         return spawned
 
     def spawn_sweep(
