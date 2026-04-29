@@ -46,9 +46,13 @@ def datasets() -> None:
 @click.argument("name", type=DATASET_CHOICE)
 @click.option(
     "--detach/--no-detach",
-    default=False,
+    default=True,
     show_default=True,
-    help="Fire-and-forget (spawn) instead of waiting for the report.",
+    help=(
+        "Fire-and-forget (spawn) [default] vs. block until the report "
+        "returns (--no-detach). Detached calls survive a local Ctrl+C and "
+        "let you tail logs via ``modal app logs tmgg-spectral``."
+    ),
 )
 def prepare(name: str, detach: bool) -> None:
     """Download + preprocess one dataset on Modal."""
@@ -74,9 +78,13 @@ def prepare(name: str, detach: bool) -> None:
 @click.argument("name", type=DATASET_CHOICE)
 @click.option(
     "--detach/--no-detach",
-    default=False,
+    default=True,
     show_default=True,
-    help="Fire-and-forget (spawn) instead of waiting for the report.",
+    help=(
+        "Fire-and-forget (spawn) [default] vs. block until the report "
+        "returns (--no-detach). Detached calls survive a local Ctrl+C and "
+        "let you tail logs via ``modal app logs tmgg-spectral``."
+    ),
 )
 def validate(name: str, detach: bool) -> None:
     """Validate the on-volume artifacts for one dataset."""
