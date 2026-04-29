@@ -156,13 +156,23 @@ known-first-party = ["tmgg"]
 [tool.basedpyright]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
-include = ["src/tmgg", "tests"]
+include = ["src/tmgg", "tests", "scripts/sweep"]
 exclude = ["**/__pycache__", "**/typings", "tests/archived", "src/tmgg/experiments/_scaffold"]
 # Point pyright at the uv-managed venv so ad-hoc scripts outside `include`
 # (e.g. analysis/**) can still resolve project deps when the pre-commit hook
 # or the live harness scans them on edit.
 venvPath = "."
 venv = ".venv"
+# `scripts/sweep/` is exposed as an implicit namespace package (PEP 420) so
+# `from scripts.sweep.X import ...` resolves as an absolute import. Adding
+# the project root to extraPaths gives pyright the same view that pytest
+# (via rootdir-based sys.path) and `python -m scripts.sweep.X` see at
+# runtime. NB: there is intentionally no `scripts/__init__.py` — making
+# `scripts/` a regular package would cause pyright to flag every
+# `from scripts.sweep.X import ...` under reportImplicitRelativeImport
+# (because both `scripts/` and `tests/` would then be sibling packages
+# at the project root and pyright cannot disambiguate the resolution).
+extraPaths = ["."]
 reportMissingImports = true
 reportMissingTypeStubs = false  # Don't complain about missing stubs for torch etc.
 reportConstantRedefinition = false  # Allow uppercase tensor vars (X, E, Q, K, V) to be reassigned

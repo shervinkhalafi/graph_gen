@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from scripts.sweep.fetch_outcomes import (
     build_outcome_row,
@@ -17,6 +17,7 @@ from scripts.sweep.fetch_outcomes import (
     find_pending_launches,
     read_rounds,
 )
+from wandb.apis.public.runs import Run as WandbRun
 
 
 @dataclass
@@ -58,8 +59,8 @@ def test_fetch_block_keyed_diagnostic_filters_prefix() -> None:
         },
     )
     out = fetch_block_keyed_diagnostic(
-        run,
-        "diagnostics-train/opt-health/grad_snr",  # type: ignore[arg-type]
+        cast(WandbRun, cast(object, run)),
+        "diagnostics-train/opt-health/grad_snr",
     )
     assert out == {"transformer_block_0": 0.34, "transformer_block_4": 0.12}
 
@@ -88,8 +89,8 @@ def test_build_outcome_row_passes_when_metrics_within_tolerance(
     )
     row = build_outcome_row(
         launched=launched,
-        run=run,
-        anchors_path=anchors_path,  # type: ignore[arg-type]
+        run=cast(WandbRun, cast(object, run)),
+        anchors_path=anchors_path,
     )
     assert row["kind"] == "outcome"
     assert row["status"] == "finished"
@@ -108,8 +109,8 @@ def test_build_outcome_row_failed_run_returns_failed_status(
     run = FakeRun(id="x", state="crashed", summary={"_step": 50})
     row = build_outcome_row(
         launched=launched,
-        run=run,
-        anchors_path=anchors_path,  # type: ignore[arg-type]
+        run=cast(WandbRun, cast(object, run)),
+        anchors_path=anchors_path,
     )
     assert row["status"] == "failed"
     assert "failure_kind" in row

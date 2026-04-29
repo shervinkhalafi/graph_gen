@@ -22,10 +22,10 @@ from pathlib import Path
 from typing import Any
 
 import wandb
-
 from scripts.sweep.check_threshold import (
     check_run,  # MetricMissingError / AnchorMissingError propagate from check_run per §7 invariant 2
 )
+from wandb.apis.public.runs import Run as WandbRun
 
 REQUIRED_DIAGNOSTIC_KEYS = (
     "diagnostics-train/opt-health/grad_snr",
@@ -56,9 +56,7 @@ def find_pending_launches(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def resolve_wandb_run(
-    *, entity: str, project: str, run_name: str
-) -> wandb.apis.public.Run:
+def resolve_wandb_run(*, entity: str, project: str, run_name: str) -> WandbRun:
     api = wandb.Api()
     runs = api.runs(f"{entity}/{project}", filters={"display_name": run_name})
     run_list = list(runs)
@@ -71,9 +69,7 @@ def resolve_wandb_run(
     return run_list[0]
 
 
-def fetch_block_keyed_diagnostic(
-    run: wandb.apis.public.Run, key_prefix: str
-) -> dict[str, float]:
+def fetch_block_keyed_diagnostic(run: WandbRun, key_prefix: str) -> dict[str, float]:
     """Pull terminal block-keyed scalars matching ``<key_prefix>/<block>``.
 
     W&B summary stores logged scalars under their full key (with ``/``
@@ -97,7 +93,7 @@ def fetch_block_keyed_diagnostic(
 def build_outcome_row(
     *,
     launched: dict[str, Any],
-    run: wandb.apis.public.Run,
+    run: WandbRun,
     anchors_path: Path,
 ) -> dict[str, Any]:
     summary = dict(run.summary)
@@ -150,7 +146,7 @@ def build_outcome_row(
     return row
 
 
-def _classify_failure(run: wandb.apis.public.Run) -> str:
+def _classify_failure(run: WandbRun) -> str:
     state = run.state
     if state == "crashed":
         # Heuristic: SIGILL leaves exit_code=-4; OOM leaves a CUDA OOM in the

@@ -170,7 +170,7 @@ def compute_s_star(
     fractions: tuple[float, ...] = (0.90, 0.95, 0.99),
     nll_fallback: bool = False,
     operational_cap: int | None = None,
-) -> dict:
+) -> dict[str, object]:
     """Fit each metric, write a flat S* yaml to ``out_path``.
 
     The output schema is **flat**: top-level keys ``s_star``,
