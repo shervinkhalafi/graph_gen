@@ -13,7 +13,7 @@ for preprocessed shards stored under
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 
 import torch
@@ -214,12 +214,26 @@ class SMILESCodec:
                 yield data
 
     def encode_dataset_with_stats(
-        self, smiles_iter: Iterable[str]
+        self,
+        smiles_iter: Iterable[str],
+        *,
+        progress_callback: Callable[[int, dict[str, int]], None] | None = None,
+        progress_every: int = 0,
     ) -> tuple[list[GraphData], dict[str, int]]:
         """Encode a list of SMILES, returning (graphs, drop_counters).
 
         Counters: ``"parse_failure"``, ``"atom_count_overflow"``,
         ``"vocab_miss"``, ``"kekulize_failure"``.
+
+        Parameters
+        ----------
+        progress_callback, progress_every
+            If both are set (``progress_every > 0``), invoke
+            ``progress_callback(processed_count, counters)`` once every
+            ``progress_every`` SMILES. Used by long-running prepare jobs
+            to surface incremental progress over long preprocess loops
+            (MOSES ~1.5M molecules takes minutes); zero overhead when
+            disabled.
         """
         graphs: list[GraphData] = []
         counters = {
@@ -234,6 +248,12 @@ class SMILESCodec:
         # buckets per failure mode.
         for smi in smiles_iter:
             counters["input"] += 1
+            if (
+                progress_callback is not None
+                and progress_every > 0
+                and counters["input"] % progress_every == 0
+            ):
+                progress_callback(counters["input"], counters)
             mol = Chem.MolFromSmiles(smi)
             if mol is None:
                 counters["parse_failure"] += 1
