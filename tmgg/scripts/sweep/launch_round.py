@@ -47,8 +47,40 @@ def make_run_uid(
     return f"smallest-cfg/{dataset}/r{round_no}/{axis_changed}/{cfg_hash}"
 
 
+def load_async_eval_schedule(schedule_path: Path) -> list[int]:
+    """Read the integer ``schedule`` list from an ``eval_schedule_*.yaml`` file.
+
+    The YAML schema is produced by ``scripts/sweep/eval_schedule.py``:
+
+    .. code-block:: yaml
+
+        dataset: spectre_sbm
+        n_evals: 24
+        total_steps: 100000
+        params: {rho_min: ..., rho_max: ..., s_p: ..., expected_knee_s_k: ...}
+        schedule: [2590, 5237, 8011, ...]
+        doc: "..."
+
+    Only the ``schedule`` key is consumed here; we cast to ``int`` so we
+    inline an unambiguous Hydra list literal (no quotes, no decimals).
+    """
+    payload = yaml.safe_load(schedule_path.read_text())
+    if "schedule" not in payload:
+        raise KeyError(
+            f"{schedule_path}: missing required 'schedule' key "
+            f"(produced by scripts/sweep/eval_schedule.py)"
+        )
+    return [int(s) for s in payload["schedule"]]
+
+
 def build_wrapper_invocation(
-    *, dataset: str, run_uid: str, seed: int, overrides: dict[str, Any]
+    *,
+    dataset: str,
+    run_uid: str,
+    seed: int,
+    overrides: dict[str, Any],
+    async_eval_schedule_path: Path | None = None,
+    async_eval_gpu_tier: str = "standard",
 ) -> list[str]:
     """Compose the wrapper command line.
 
@@ -62,12 +94,34 @@ def build_wrapper_invocation(
          correct Hydra key.
       3. Re-run round 1 (the misnamed runs are non-fatal — fetch_outcomes
          simply can't resolve them by display_name).
+
+    Async-eval mode (``async_eval_schedule_path`` is not None) appends
+    the Hydra overrides that bind the ``default_with_async_eval``
+    callback group, enable the ``async_eval_spawn`` callback, inline the
+    integer schedule list, and forward ``run_uid`` + ``gpu_tier`` to the
+    spawned worker. The override syntax uses ``base/callbacks=...`` (no
+    leading ``+``) because ``_base_infra.yaml`` already binds
+    ``base/callbacks: default``; ``+`` would attempt an append, which
+    Hydra rejects.
     """
     wrapper = WRAPPER_BY_DATASET[dataset]
     cmd: list[str] = [f"./{wrapper}"]
     cmd += [f"seed={seed}", f"wandb_name={run_uid}"]
     for k, v in overrides.items():
         cmd.append(f"{k}={v}")
+    if async_eval_schedule_path is not None:
+        schedule = load_async_eval_schedule(async_eval_schedule_path)
+        # Hydra accepts list literals via ``key=[a,b,c]`` on the CLI; no
+        # spaces inside the brackets and no quoting around individual
+        # integers.
+        schedule_literal = "[" + ",".join(str(s) for s in schedule) + "]"
+        cmd += [
+            "base/callbacks=default_with_async_eval",
+            "callbacks.async_eval_spawn.enabled=true",
+            f"callbacks.async_eval_spawn.schedule={schedule_literal}",
+            f"callbacks.async_eval_spawn.run_uid={run_uid}",
+            f"callbacks.async_eval_spawn.gpu_tier={async_eval_gpu_tier}",
+        ]
     return cmd
 
 
@@ -98,17 +152,32 @@ def launch_one(
     rounds_jsonl: Path,
     session_tag: str,
     dry_run: bool,
+    async_eval_schedule_path: Path | None = None,
+    async_eval_gpu_tier: str = "standard",
 ) -> dict[str, Any]:
     cfg_hash = config_hash(overrides)
     run_uid = make_run_uid(
         dataset=dataset, round_no=round_no, axis_changed=axis_changed, cfg_hash=cfg_hash
     )
     cmd = build_wrapper_invocation(
-        dataset=dataset, run_uid=run_uid, seed=seed, overrides=overrides
+        dataset=dataset,
+        run_uid=run_uid,
+        seed=seed,
+        overrides=overrides,
+        async_eval_schedule_path=async_eval_schedule_path,
+        async_eval_gpu_tier=async_eval_gpu_tier,
     )
     print("LAUNCH:", " ".join(shlex.quote(c) for c in cmd))
     if dry_run:
-        return {"run_uid": run_uid, "dry_run": True}
+        # Mirror the production-row schema's async-eval keys so dry-run
+        # consumers can audit the full plan; downstream tests rely on
+        # ``async_eval_enabled`` being absent or false when the flag is off.
+        dry: dict[str, Any] = {"run_uid": run_uid, "dry_run": True}
+        if async_eval_schedule_path is not None:
+            dry["async_eval_enabled"] = True
+            dry["async_eval_schedule_path"] = str(async_eval_schedule_path)
+            dry["async_eval_gpu_tier"] = async_eval_gpu_tier
+        return dry
     proc = subprocess.run(cmd, capture_output=True, text=True)
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
@@ -118,7 +187,7 @@ def launch_one(
             f"refusing to append launched row per spec §7 invariant 1"
         )
     app_id = parse_modal_app_id(proc.stdout) or parse_modal_app_id(proc.stderr)
-    row = {
+    row: dict[str, Any] = {
         "kind": "launched",
         "ts_utc": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "run_uid": run_uid,
@@ -138,8 +207,29 @@ def launch_one(
         "modal_app_id": app_id,
         "launched_by_session": session_tag,
     }
+    if async_eval_schedule_path is not None:
+        row["async_eval_enabled"] = True
+        row["async_eval_schedule_path"] = str(async_eval_schedule_path)
+        row["async_eval_gpu_tier"] = async_eval_gpu_tier
     append_launched_row(rounds_jsonl=rounds_jsonl, row=row)
     return row
+
+
+# Sentinel used by argparse when ``--async-eval`` is passed bare (no value).
+# We prefer this over ``nargs='?'`` + ``const=True`` to keep mypy happy with a
+# concrete sentinel type and to make the "no value supplied" case unambiguous.
+_ASYNC_EVAL_DEFAULT_SENTINEL = "__use_default_path__"
+
+
+def _default_schedule_path(dataset: str) -> Path:
+    """Resolve the default ``eval_schedule_<dataset>.yaml`` path.
+
+    Matches ``scripts/sweep/eval_schedule.py``'s ``--out`` default.
+    """
+    return (
+        Path("docs/experiments/sweep/smallest-config-2026-04-29")
+        / f"eval_schedule_{dataset}.yaml"
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -154,6 +244,27 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--session-tag", default=dt.datetime.now().strftime("claude-%Y-%m-%d-%H")
     )
+    p.add_argument(
+        "--async-eval",
+        nargs="?",
+        const=_ASYNC_EVAL_DEFAULT_SENTINEL,
+        default=None,
+        help=(
+            "Enable async-eval mode for every launch in the round. "
+            "Optionally takes a path to an ``eval_schedule_<dataset>.yaml`` "
+            "file; if omitted, defaults to "
+            "``docs/experiments/sweep/smallest-config-2026-04-29/"
+            "eval_schedule_<dataset>.yaml`` (per-launch dataset). Per-launch "
+            "``async_eval: true`` entries in round.yaml override this CLI default "
+            "when the CLI flag is unset."
+        ),
+    )
+    p.add_argument(
+        "--async-eval-gpu-tier",
+        default="standard",
+        choices=["debug", "standard", "fast"],
+        help="GPU tier for the spawned async-eval workers (default: standard).",
+    )
     return p.parse_args()
 
 
@@ -162,6 +273,22 @@ def main() -> None:
     spec = yaml.safe_load(args.round_yaml.read_text())
     round_no = int(spec["round"])
     for entry in spec["launches"]:
+        # Async-eval activation: CLI flag wins, then per-launch entry, else off.
+        # Per-launch ``async_eval_gpu_tier`` overrides the CLI tier.
+        per_launch_async = bool(entry.get("async_eval", False))
+        per_launch_tier = entry.get("async_eval_gpu_tier")
+        if args.async_eval is not None:
+            if args.async_eval == _ASYNC_EVAL_DEFAULT_SENTINEL:
+                schedule_path: Path | None = _default_schedule_path(entry["dataset"])
+            else:
+                schedule_path = Path(args.async_eval)
+            tier = per_launch_tier or args.async_eval_gpu_tier
+        elif per_launch_async:
+            schedule_path = _default_schedule_path(entry["dataset"])
+            tier = per_launch_tier or args.async_eval_gpu_tier
+        else:
+            schedule_path = None
+            tier = args.async_eval_gpu_tier
         launch_one(
             dataset=entry["dataset"],
             round_no=round_no,
@@ -173,6 +300,8 @@ def main() -> None:
             rounds_jsonl=args.rounds_jsonl,
             session_tag=args.session_tag,
             dry_run=args.dry_run,
+            async_eval_schedule_path=schedule_path,
+            async_eval_gpu_tier=tier,
         )
 
 
