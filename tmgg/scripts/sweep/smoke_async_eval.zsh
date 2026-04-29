@@ -108,6 +108,7 @@ launches:
     overrides:
       trainer.max_steps: 1000
       trainer.val_check_interval: 1000  # disable in-band gen-val; async does it
+      force_fresh: true                 # bypass skip-completed check (key exists in default config; no + prefix)
 EOF
 print -r -- "[smoke] Wrote round.yaml: ${round_yaml}"
 
