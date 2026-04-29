@@ -192,13 +192,28 @@ def run_mmd_evaluation(task_dict: dict[str, Any]) -> dict[str, Any]:
 
     task = EvaluationInput(**task_dict)
     run_id = task.run_id
-    output_dir = Path(OUTPUTS_MOUNT) / run_id
-    config_path = output_dir / "config.yaml"
 
+    # ``output_dir`` is the run directory that holds ``config.yaml`` and
+    # ``checkpoints/``. On Modal the convention is
+    # ``/data/outputs/{experiment_name}/{run_id}`` -- two levels below
+    # ``OUTPUTS_MOUNT``, NOT one. The trainer-side callback passes only
+    # the basename ``run_id`` (it strips the experiment-name parent in
+    # ``AsyncEvalSpawnCallback._derive_run_id``), so reconstructing from
+    # ``run_id`` alone drops ``{experiment_name}/`` and the worker reads
+    # the wrong path. When the spawn supplies an explicit
+    # ``checkpoint_path`` (the async-eval call path always does), derive
+    # ``output_dir`` from ``checkpoint_path.parent.parent`` so the full
+    # ``{experiment_name}/{run_id}`` prefix is preserved. Only fall back
+    # to ``OUTPUTS_MOUNT/run_id`` for the manual-CLI path that doesn't
+    # supply a checkpoint, where the legacy single-level layout still
+    # applies.
     if task.checkpoint_path:
         checkpoint_path = Path(task.checkpoint_path)
+        output_dir = checkpoint_path.parent.parent
     else:
+        output_dir = Path(OUTPUTS_MOUNT) / run_id
         checkpoint_path = output_dir / "checkpoints" / "last.ckpt"
+    config_path = output_dir / "config.yaml"
     checkpoint_name = checkpoint_path.stem
 
     # ------------------------------------------------------------------

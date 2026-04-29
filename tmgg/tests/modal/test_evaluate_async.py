@@ -103,18 +103,18 @@ class TestAsyncEvalLogsAtTrainerStep:
         ):
             evaluate_async.evaluate_mmd_async(task)
 
-        assert mock_log.call_count == 1, (
-            f"wandb.log must be called exactly once; got {mock_log.call_count}"
-        )
+        assert (
+            mock_log.call_count == 1
+        ), f"wandb.log must be called exactly once; got {mock_log.call_count}"
         call_args = mock_log.call_args
         # The single positional arg is the metrics dict
         logged_dict = (
             call_args.args[0] if call_args.args else call_args.kwargs.get("data")
         )
         assert logged_dict is not None
-        assert logged_dict["trainer/global_step"] == 5240, (
-            "trainer/global_step must equal the task's global_step"
-        )
+        assert (
+            logged_dict["trainer/global_step"] == 5240
+        ), "trainer/global_step must equal the task's global_step"
         assert "gen-val/sbm_accuracy" in logged_dict
         assert logged_dict["gen-val/sbm_accuracy"] == 0.62
         assert "gen-val/degree_mmd" in logged_dict
@@ -266,9 +266,9 @@ class TestAsyncEvalDoesNotDefineMetric:
         ):
             evaluate_async.evaluate_mmd_async(task)
 
-        assert mock_dm.call_count == 0, (
-            "Eval worker must not call define_metric; trainer owns that contract."
-        )
+        assert (
+            mock_dm.call_count == 0
+        ), "Eval worker must not call define_metric; trainer owns that contract."
 
 
 class TestAsyncEvalPrefixesUnqualifiedMetricNames:
@@ -323,9 +323,9 @@ class TestAsyncEvalPrefixesUnqualifiedMetricNames:
             "spectral_mmd",
             "sbm_accuracy",
         ):
-            assert unprefixed not in logged_dict, (
-                f"unprefixed key {unprefixed!r} leaked"
-            )
+            assert (
+                unprefixed not in logged_dict
+            ), f"unprefixed key {unprefixed!r} leaked"
         assert logged_dict["gen-val/sbm_accuracy"] == 0.85
         assert logged_dict["trainer/global_step"] == task["global_step"]
 
@@ -553,3 +553,178 @@ class TestRunMmdEvaluationDispatchesByDiffusionFamily:
                     "seed": 0,
                 }
             )
+
+
+class TestRunMmdEvaluationResolvesPathsFromCheckpoint:
+    """Bug 6 regression (smoke run 2026-04-29): the trainer-side callback
+    passes ``run_id`` as the basename only (e.g. ``MyRun_xyz``) but
+    ``checkpoint_path`` carries the full ``{experiment_name}/{run_id}``
+    prefix (because Lightning's ``default_root_dir`` is set to that full
+    path during training). Reconstructing ``output_dir`` from
+    ``OUTPUTS_MOUNT/run_id`` therefore drops the experiment-name parent
+    and the worker reads ``config.yaml`` from the wrong location, so the
+    eval fails with ``Config not found``. The fix derives ``output_dir``
+    from ``Path(checkpoint_path).parent.parent`` whenever a
+    ``checkpoint_path`` is supplied.
+    """
+
+    def test_output_dir_derived_from_checkpoint_when_path_supplied(
+        self, tmp_path: Path
+    ) -> None:
+        """Stage a fake on-volume layout where the experiment-name parent
+        is REQUIRED to find ``config.yaml``. The ``run_id`` in the task
+        dict is intentionally just the basename (matching what
+        ``AsyncEvalSpawnCallback._derive_run_id`` actually emits)."""
+        import subprocess
+
+        import yaml
+
+        from tmgg.modal._lib import evaluate as evaluate_mod
+
+        # Real-world layout: /data/outputs/{experiment_name}/{run_id}/...
+        # Mirror it under tmp_path. Crucially, run_id is the basename only.
+        experiment_name = "discrete_diffusion"
+        run_id = (
+            "discrete_diffusion_DiffusionModule_lr2e-4_wd1e-12_s0_fresh_20260429T180418"
+        )
+        run_dir = tmp_path / experiment_name / run_id
+        (run_dir / "checkpoints").mkdir(parents=True)
+        ckpt = run_dir / "checkpoints" / "step_42.ckpt"
+        ckpt.write_bytes(b"")
+        config_yaml = run_dir / "config.yaml"
+        config_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "model": {
+                        "noise_process": {
+                            "_target_": "tmgg.diffusion.noise_process.CategoricalNoiseProcess"
+                        }
+                    },
+                    "data": {"graph_type": "sbm"},
+                }
+            )
+        )
+
+        # If the worker tried OUTPUTS_MOUNT/run_id (legacy bug) it would
+        # look at ``tmp_path/{run_id}/config.yaml`` which does NOT exist.
+        legacy_path = tmp_path / run_id / "config.yaml"
+        assert (
+            not legacy_path.exists()
+        ), "Test setup invariant: legacy single-level path must be absent."
+
+        captured: dict[str, Any] = {}
+
+        class _DummyCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cli_args, capture_output=True, text=True):  # noqa: ARG001
+            captured["cli_args"] = list(cli_args)
+            output_idx = cli_args.index("--output")
+            output_path = Path(cli_args[output_idx + 1])
+            output_path.write_text(json.dumps({"mmd_results": {"degree_mmd": 0.01}}))
+            return _DummyCompleted()
+
+        with (
+            patch.object(evaluate_mod, "OUTPUTS_MOUNT", str(tmp_path)),
+            patch.object(subprocess, "run", side_effect=fake_run),
+        ):
+            result = evaluate_mod.run_mmd_evaluation(
+                {
+                    "run_id": run_id,  # basename only -- mirrors the trainer
+                    "checkpoint_path": str(
+                        ckpt
+                    ),  # full {experiment_name}/{run_id} path
+                    "num_samples": 40,
+                    "num_steps": 100,
+                    "mmd_kernel": "gaussian_tv",
+                    "mmd_sigma": 1.0,
+                    "seed": 42,
+                }
+            )
+
+        # The eval must succeed because output_dir was derived from
+        # checkpoint_path.parent.parent, not OUTPUTS_MOUNT/run_id.
+        assert (
+            result["status"] == "completed"
+        ), f"Expected status='completed' (config resolved); got: {result}"
+        # And the side-effect file (eval results JSON) lands in the right
+        # run dir, which is two parents up from the checkpoint.
+        eval_json = run_dir / "mmd_evaluation_step_42.json"
+        assert (
+            eval_json.exists()
+        ), f"Combined eval results should be written to {eval_json}, but wasn't."
+
+    def test_failed_status_message_points_to_correct_path_when_checkpoint_supplied(
+        self, tmp_path: Path
+    ) -> None:
+        """If config.yaml truly is missing, the error must reference the
+        derived path (under ``{experiment_name}/{run_id}/``) so operators
+        can find the actual problem rather than chasing a phantom
+        ``OUTPUTS_MOUNT/{run_id}`` location."""
+        from tmgg.modal._lib import evaluate as evaluate_mod
+
+        experiment_name = "discrete_diffusion"
+        run_id = "MyRun_xyz"
+        run_dir = tmp_path / experiment_name / run_id
+        (run_dir / "checkpoints").mkdir(parents=True)
+        ckpt = run_dir / "checkpoints" / "step_1.ckpt"
+        ckpt.write_bytes(b"")
+        # Deliberately do NOT create config.yaml.
+
+        with patch.object(evaluate_mod, "OUTPUTS_MOUNT", str(tmp_path)):
+            result = evaluate_mod.run_mmd_evaluation(
+                {
+                    "run_id": run_id,
+                    "checkpoint_path": str(ckpt),
+                    "num_samples": 1,
+                    "num_steps": 1,
+                    "mmd_kernel": "gaussian_tv",
+                    "mmd_sigma": 1.0,
+                    "seed": 0,
+                }
+            )
+
+        assert result["status"] == "failed"
+        # The error message should reference the path under the
+        # experiment-name parent, NOT the legacy single-level layout.
+        expected_path = str(run_dir / "config.yaml")
+        legacy_path = str(tmp_path / run_id / "config.yaml")
+        assert expected_path in result["error_message"], (
+            f"Error must cite the derived path {expected_path!r}; "
+            f"got: {result['error_message']!r}"
+        )
+        assert legacy_path not in result["error_message"], (
+            f"Error must NOT cite the legacy single-level path {legacy_path!r}; "
+            f"got: {result['error_message']!r}"
+        )
+
+    def test_legacy_path_fallback_when_no_checkpoint_supplied(
+        self, tmp_path: Path
+    ) -> None:
+        """Manual-CLI invocations (no spawn, no checkpoint_path) keep the
+        legacy ``OUTPUTS_MOUNT/{run_id}`` layout. Documents the carve-out."""
+        from tmgg.modal._lib import evaluate as evaluate_mod
+
+        run_id = "manual-run"
+        run_dir = tmp_path / run_id
+        run_dir.mkdir(parents=True)
+        # No config, no checkpoint -- failure path is fine; we only care
+        # that the *path* the failure reports matches the legacy layout.
+
+        with patch.object(evaluate_mod, "OUTPUTS_MOUNT", str(tmp_path)):
+            result = evaluate_mod.run_mmd_evaluation(
+                {
+                    "run_id": run_id,
+                    "checkpoint_path": None,
+                    "num_samples": 1,
+                    "num_steps": 1,
+                    "mmd_kernel": "gaussian_tv",
+                    "mmd_sigma": 1.0,
+                    "seed": 0,
+                }
+            )
+
+        assert result["status"] == "failed"
+        assert str(run_dir / "config.yaml") in result["error_message"]
