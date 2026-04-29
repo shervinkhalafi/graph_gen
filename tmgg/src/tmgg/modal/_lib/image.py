@@ -137,10 +137,21 @@ def _compile_orca_in_image() -> None:
 
 
 def _runtime_env() -> dict[str, str]:
-    """Return runtime environment variables for the Modal image."""
+    """Return runtime environment variables for the Modal image.
+
+    ``OPENBLAS_CORETYPE=Haswell`` forces OpenBLAS into the AVX2/FMA kernel
+    path and disables AVX-512 dispatch at runtime. graph-tool, scipy, and
+    numpy all link against conda-forge's OpenBLAS, which uses ``DYNAMIC_ARCH``
+    and may otherwise dispatch into AVX-512 kernels that require newer
+    extensions (vbmi/vnni/bf16/...) than Modal's cheap-tier hosts expose.
+    Pairing this with the ``*_101`` graph-tool pin (level-1 baseline build)
+    in ``micromamba_install`` is the belt-and-suspenders fix for the
+    SIGILL described in ``reference_modal_avx512_sigill`` (user memory).
+    """
     return {
         "WANDB_MODE": "online",
         "PYTHONUNBUFFERED": "1",
+        "OPENBLAS_CORETYPE": "Haswell",
     }
 
 
@@ -169,12 +180,36 @@ def create_tmgg_image(
     modal.Image
         Image with TMGG, PyTorch, graph-tool, ORCA, and all deps.
     """
-    # micromamba base with one solved binary environment for graph-tool + PyTorch
+    # micromamba base with one solved binary environment for graph-tool + PyTorch.
+    #
+    # The graph-tool pin ``graph-tool=*=*_101`` forces conda-forge's level-1
+    # (baseline x86-64) build. The feedstock ships three CPU-microarch
+    # variants distinguished only by their build-number suffix:
+    #
+    #   _101 -> microarch level 1  (baseline, runs on every x86-64 host)
+    #   _301 -> microarch level 3  (AVX2 / BMI2 / FMA, no AVX-512)
+    #   _401 -> microarch level 4  (AVX-512: f/cd/bw/dq/vl)
+    #
+    # micromamba currently has a known archspec bug
+    # (https://github.com/mamba-org/mamba/issues/3222) — it does not
+    # report ``__archspec`` correctly, so the solver may pick a higher
+    # microarch level than the runtime host actually supports. Modal's
+    # cheap-tier CPU pool is heterogeneous; we have observed SIGILLs on
+    # hosts whose ``cpu-isa`` shows only the v4 baseline AVX-512 (avx512
+    # f/cd/bw/dq/vl) but where graph-tool's _401 build was apparently
+    # compiled against a newer microarch (icelake-server / sapphirerapids
+    # adding vbmi/vnni/bf16/vp2intersect/fp16). Pinning to ``_101`` makes
+    # the build choice deterministic and portable to every host. The
+    # graph-tool workload here (SBM accuracy, motif counts) is not on
+    # the training hot path, so the level-1 perf hit is irrelevant.
+    #
+    # Cross-reference: ``reference_modal_avx512_sigill`` in user memory
+    # documents the matching ORCA fix (-march=x86-64-v3 at compile time).
     image = (
         modal.Image.micromamba(python_version="3.12")
         .apt_install("git", "build-essential", "libffi-dev")
         .micromamba_install(
-            "graph-tool",
+            "graph-tool=*=*_101",
             f"pytorch=={PYTORCH_VERSION}",
             f"torchvision=={TORCHVISION_VERSION}",
             f"pytorch-cuda={PYTORCH_CUDA_VERSION}",
