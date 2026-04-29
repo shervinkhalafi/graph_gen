@@ -816,9 +816,11 @@ def modal_list_checkpoints(run_id: str) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 
 
-_DATASET_OPS_TIMEOUT = (
-    3600  # 1h ceiling — MOSES preprocess can take ~10min, plus retries.
-)
+_DATASET_OPS_TIMEOUT = 10800
+# 3h ceiling. The original 3600 was too tight: MOSES (~1.58M SMILES) hit the
+# 1h mark mid-shard-write at ``cpu=4``, leaving 2/4 train shards written
+# (atomic-rename kept those clean) and a stranded ``.pt.tmp``. GuacaMol
+# (~1.27M SMILES) is similarly sized. 3h gives headroom for both.
 
 
 @app.function(
