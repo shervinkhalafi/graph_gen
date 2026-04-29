@@ -10,7 +10,7 @@
 # Defaults match ``AsyncEvalSpawnCallback.__init__`` so a launcher only
 # needs to set ``enabled=true`` plus the schedule and per-run identifiers.
 # The schedule list is left empty by default; sweep launchers pass it in
-# via ``+callbacks.async_eval_spawn.schedule=[...]`` (or a schedule file).
+# via ``callbacks.async_eval_spawn.schedule=[...]`` (or a schedule file).
 
 callbacks:
   async_eval_spawn:
