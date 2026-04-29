@@ -67,7 +67,15 @@ class SpectrePlanarDataModule(BaseGraphDataModule):
         self.graph_type = "planar"
         self.num_nodes = 0  # updated by setup()
 
-        self.save_hyperparameters()
+        # ``**_metadata`` swallows keys leaked from the base config's
+        # inline SBM ``data:`` block (notably ``num_nodes``,
+        # ``graph_type``, ``num_graphs``, ``train_ratio``, ...). Lightning's
+        # ``save_hyperparameters()`` would otherwise capture every
+        # unpacked key into ``self.hparams`` and trigger the
+        # LightningModule/LightningDataModule hparams-merge collision
+        # check (e.g. DM ``num_nodes=20`` from the leaked SBM block vs
+        # Module ``num_nodes=64`` from the planar yaml override).
+        self.save_hyperparameters(ignore=list(_metadata.keys()))
 
     @override
     def setup(self, stage: str | None = None) -> None:

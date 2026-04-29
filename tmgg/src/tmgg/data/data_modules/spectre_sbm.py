@@ -126,7 +126,14 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         self.graph_type = "sbm"
         self.num_nodes = 0  # updated by setup() from the fixture
 
-        self.save_hyperparameters()
+        # Ignore keys leaked from the base config's inline SBM ``data:``
+        # block (notably ``num_nodes``, ``graph_type``, ``num_graphs``,
+        # ``train_ratio``, ``val_ratio``, ``graph_config``, ``eval_meta``).
+        # Without this, ``save_hyperparameters()`` would capture every
+        # ``**_metadata`` key and trigger the LightningModule/DataModule
+        # hparams-merge collision when an experiment yaml overrides
+        # ``model.num_nodes`` to a value other than ``data.num_nodes=20``.
+        self.save_hyperparameters(ignore=list(_metadata.keys()))
 
     @override
     def setup(self, stage: str | None = None) -> None:

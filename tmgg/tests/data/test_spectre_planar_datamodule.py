@@ -42,3 +42,43 @@ def test_dataloader_shapes() -> None:
     assert batch.E_class is not None
     assert batch.E_class.shape[0] == 4  # batch dim
     assert batch.E_class.shape[1] == 64  # n_max
+
+
+def test_metadata_swallow_does_not_pollute_hparams() -> None:
+    """Leaked Hydra keys must not enter ``self.hparams``.
+
+    Starting state: instantiate the planar DM the way Hydra does when
+    the planar experiment yaml inherits from the base config's inline
+    SBM ``data:`` block — the unused SBM keys (``num_nodes``,
+    ``graph_type``, ``num_graphs``, ``train_ratio``, ``val_ratio``,
+    ``graph_config``, ``eval_meta``) get unpacked into ``**_metadata``
+    on the planar DM constructor.
+
+    Invariant: those keys MUST NOT appear in ``hparams_initial``.
+    Otherwise Lightning's ``Trainer._log_hyperparams`` collision check
+    raises when an experiment yaml overrides ``model.num_nodes`` to a
+    value other than the leaked ``data.num_nodes=20`` (was caught by
+    the Phase 8 planar Modal smoke run, run id ``2rvpiku0``).
+    """
+    dm = SpectrePlanarDataModule(
+        batch_size=12,
+        num_nodes=20,
+        graph_type="sbm",
+        num_graphs=2000,
+        train_ratio=0.8,
+        val_ratio=0.1,
+        graph_config={"num_blocks": 2, "p_intra": 0.7, "p_inter": 0.1},
+        eval_meta={"p_intra": 0.7, "p_inter": 0.1},
+    )
+    leaked_keys = {
+        "num_nodes",
+        "graph_type",
+        "num_graphs",
+        "train_ratio",
+        "val_ratio",
+        "graph_config",
+        "eval_meta",
+    }
+    assert leaked_keys.isdisjoint(dm.hparams.keys()), (
+        f"leaked keys appeared in hparams: " f"{leaked_keys & set(dm.hparams.keys())}"
+    )

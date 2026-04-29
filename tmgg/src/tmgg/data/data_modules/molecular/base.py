@@ -69,7 +69,12 @@ class MolecularDataModule(BaseGraphDataModule):
         self.graph_type = self.dataset_cls.DATASET_NAME
         self.num_nodes = self.dataset_cls.DEFAULT_MAX_ATOMS
 
-        self.save_hyperparameters()
+        # Ignore keys leaked from the base config's inline SBM ``data:``
+        # block (notably ``num_nodes``, ``graph_type``, ``num_graphs``,
+        # ...) so they are not captured into ``self.hparams`` and do not
+        # collide with the LightningModule's ``num_nodes`` hparam at
+        # ``Trainer._log_hyperparams`` merge time.
+        self.save_hyperparameters(ignore=list(_metadata.keys()))
 
     # ------------------------------------------------------------------
     # Lightning hooks
