@@ -1,0 +1,18 @@
+# Smoke schedule for async-eval architecture validation.
+# Two evals at training steps 200 and 800 inside a 1k-step training run.
+# Used by ./scripts/sweep/smoke_async_eval.zsh and is the first artefact
+# the smoke-launcher writes to /tmp/ as a sanity check.
+dataset: spectre_sbm
+n_evals: 2
+total_steps: 1000
+params:
+  rho_min: null
+  rho_max: null
+  s_p: null
+  expected_knee_s_k: null
+schedule: [200, 800]
+doc: |
+  Smoke schedule for async-eval architecture validation. Two evals at
+  training steps 200 and 800 inside a 1k-step training run on
+  spectre_sbm. Pass criteria documented in
+  Agent2-comms.md "Async-eval ready for smoke" section.
