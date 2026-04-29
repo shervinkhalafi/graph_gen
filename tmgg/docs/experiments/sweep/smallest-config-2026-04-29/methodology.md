@@ -106,10 +106,10 @@ The pre-runner [1] outlines three textbook alternatives. Each is rejected for re
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Claude as Claude (session N)
-    participant State as anchors.yaml<br/>rounds.jsonl<br/>progress.md
-    participant WB as W&B API
-    participant Modal as Modal (a100)
+    actor Claude as "Claude (session N)"
+    participant State as "anchors.yaml<br/>rounds.jsonl<br/>progress.md"
+    participant WB as "W&B API"
+    participant Modal as "Modal (a100)"
     participant User as User
 
     Claude->>State: read prior rounds
@@ -128,23 +128,23 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A[Start round N] --> B{Outcome rows<br/>for round N-1<br/>complete?}
-    B -- no --> Z[Halt — wait for Modal]
-    B -- yes --> C[Read terminal metrics<br/>+ opt-health diagnostics]
-    C --> D{Any block at<br/>update_to_weight ≈ 1e-6?}
-    D -- yes --> E[Cut n_layers]
-    D -- no --> F{grad_snr decreasing<br/>across blocks?}
-    F -- yes --> G[Cut dx]
-    F -- no --> H{Late-t kl_diffusion<br/>bins flat?}
-    H -- yes --> I[Cut T]
-    H -- no --> J[Cut dim_ffy or<br/>extend if phase-<br/>transitioning]
-    E --> K[Write vibe note]
+    A["Start round N"] --> B{"Outcome rows<br/>for round N-1<br/>complete?"}
+    B -- no --> Z["Halt — wait for Modal"]
+    B -- yes --> C["Read terminal metrics<br/>+ opt-health diagnostics"]
+    C --> D{"Any block at<br/>update_to_weight ~= 1e-6?"}
+    D -- yes --> E["Cut n_layers"]
+    D -- no --> F{"grad_snr decreasing<br/>across blocks?"}
+    F -- yes --> G["Cut dx"]
+    F -- no --> H{"Late-t kl_diffusion<br/>bins flat?"}
+    H -- yes --> I["Cut T"]
+    H -- no --> J["Cut dim_ffy or<br/>extend if phase-<br/>transitioning"]
+    E --> K["Write vibe note"]
     G --> K
     I --> K
     J --> K
-    K --> L[Commit a disconfirming<br/>fallback config]
-    L --> M[Write round.yaml<br/>+ launch_round.py]
-    M --> N[Halt]
+    K --> L["Commit a disconfirming<br/>fallback config"]
+    L --> M["Write round.yaml<br/>+ launch_round.py"]
+    M --> N["Halt"]
 ```
 
 The flowchart is the *default* logic. The vibe note can override it whenever literature or prior-round evidence suggests a different cut order. The override is recorded in prose and audited by the synthesis subsection of every round (§6).
