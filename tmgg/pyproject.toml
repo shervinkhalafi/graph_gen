@@ -27,7 +27,7 @@ dependencies = [
   "polars>=1.0.0",           # Used by tmgg-modal aggregate
   "pot>=0.9.0",              # Python Optimal Transport (EMD kernel for MMD metrics)
   "rdkit>=2024.3",
-  "fcd-torch>=1.0.7",
+  "fcd>=1.2.2",
   # We deliberately do NOT depend on ``moses`` / ``molsets`` /
   # ``guacamol``. The former two are documented in
   # ``tmgg.evaluation.molecular.moses_metrics``: the PyPI ``moses`` is
@@ -118,6 +118,17 @@ dev = [
     "pre-commit>=4.0.0",
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
+    # Typing stubs for RDKit. Without these basedpyright reports
+    # ``"Chem" is unknown import symbol`` for every ``from rdkit import
+    # Chem`` site under ``src/tmgg/data/datasets/molecular`` and
+    # ``src/tmgg/evaluation/molecular``. These were transitively
+    # available via ``molecule-benchmarks`` during a prior consolidation
+    # spike, masking the missing dev-dep declaration; declaring it here
+    # makes the resolution explicit. The stubs themselves still have
+    # internal bugs (wrong signatures for ``HasSubstructMatch``,
+    # ``BulkTanimotoSimilarity``, ``MolToSmiles``); those need a
+    # separate pin or upstream fix.
+    "rdkit-stubs>=0.8",
     "ruff>=0.8.0",
     "tach>=0.32.2",
     "tomlkit>=0.13.0",

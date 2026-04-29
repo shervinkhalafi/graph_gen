@@ -57,7 +57,7 @@ def test_fcd_metric_near_zero_on_identical_sets() -> None:
 
 
 def test_fcd_chembl_metric_finite() -> None:
-    """FCDChEMBLMetric is a thin wrapper around fcd_torch — same shape."""
+    """FCDChEMBLMetric is a thin wrapper around the maintained ``fcd>=1.2.2`` — same shape."""
     from tmgg.evaluation.molecular.guacamol_metrics import FCDChEMBLMetric
 
     v = FCDChEMBLMetric().compute(_GEN, _REF)

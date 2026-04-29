@@ -801,21 +801,24 @@ def modal_list_checkpoints(run_id: str) -> dict[str, Any]:
     volumes=get_volume_mounts(),
 )
 def _warm_molecular_caches_in_image() -> str:
-    """Pre-download ChemNet weights into the dataset volume.
+    """Pre-load ChemNet weights into the image's filesystem cache.
 
     Called once at deploy time so the first validation cycle that
-    instantiates ``FCDMetric`` does not pay the ~50 MB ChemNet
-    download cost on the hot path. Idempotent — fcd_torch caches
-    the weights itself; this just primes the cache.
+    instantiates ``FCDMetric`` does not pay the ChemNet load cost on
+    the hot path. The maintained ``fcd>=1.2.2`` package ships ChemNet
+    weights inside the wheel (``fcd/ChemNet_v0.13_pretrained.pt``,
+    ~5.6 MB) and ``load_ref_model`` is ``lru_cache``'d, so calling it
+    here simply primes the in-process cache and verifies the
+    deserialisation path before any worker hits it.
     """
     from pathlib import Path
 
-    from fcd_torch import FCD
+    from fcd import load_ref_model
 
     cache_dir = Path("/data/datasets/molecular/chemnet")
     cache_dir.mkdir(parents=True, exist_ok=True)
-    # Instantiating FCD with a device argument triggers the ChemNet
-    # weight download into its default cache. We then copy any new
-    # weights into the persisted volume location.
-    _ = FCD(device="cpu", n_jobs=1)
+    # Calling ``load_ref_model`` materialises the wheel-bundled weights
+    # into a temp file, runs the ``torch.load`` deserialisation, and
+    # caches the resulting ``torch.nn.Module`` for subsequent calls.
+    _ = load_ref_model()
     return f"chemnet warm; cache_dir={cache_dir}"

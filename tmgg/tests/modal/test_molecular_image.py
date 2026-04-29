@@ -15,8 +15,14 @@ def test_rdkit_imports() -> None:
     from rdkit import Chem  # noqa: F401
 
 
-def test_fcd_torch_imports() -> None:
-    from fcd_torch import FCD  # noqa: F401
+def test_fcd_imports() -> None:
+    """Verify the maintained ``fcd>=1.2.2`` (bioinf-jku) is reachable.
+
+    Replaces the previous ``test_fcd_torch_imports`` which checked the
+    frozen ``fcd_torch==1.0.7`` package; the project now depends on
+    ``fcd>=1.2.2``, the maintained PyTorch refresh.
+    """
+    from fcd import canonical_smiles, get_fcd, load_ref_model  # noqa: F401
 
 
 def test_moses_imports() -> None:

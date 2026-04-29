@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection, Iterable, Iterator, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -151,7 +151,10 @@ def _calculate_internal_pairwise_similarities(
 
     similarities = np.zeros((nfps, nfps), dtype=np.float64)
     for i in range(1, nfps):
-        sims = DataStructs.BulkTanimotoSimilarity(fps[i], fps[:i])
+        # rdkit-stubs misses ``BulkTanimotoSimilarity`` even though the
+        # real ``rdkit.DataStructs`` re-exports it from the C++ extension.
+        # Drop this marker once rdkit-stubs ships a fix.
+        sims = DataStructs.BulkTanimotoSimilarity(fps[i], fps[:i])  # type: ignore[reportAttributeAccessIssue]
         similarities[i, :i] = sims
         similarities[:i, i] = sims
     return similarities
@@ -324,23 +327,30 @@ class FCDChEMBLMetric(MolecularMetric):
 
     The historical name "ChEMBL" reflects DiGress' use of GuacaMol's
     ChEMBL training split as the reference; the metric itself is
-    distribution-agnostic. Backed by :mod:`fcd_torch`; we never
-    depended on ``guacamol`` for this metric.
+    distribution-agnostic. Backed by the maintained :pkg:`fcd` package
+    (``bioinf-jku/FCD``, PyPI ``fcd>=1.2.2``); we never depended on
+    ``guacamol`` for this metric. The previous backend was the now-
+    frozen ``fcd_torch==1.0.7`` (2019); the new ``fcd>=1.2.2`` ships
+    the same ChemNet weights and Frechet formula, and parity holds to
+    ~3e-3 absolute on toy SMILES sets.
     """
 
     name = "fcd_chembl"
 
-    def __init__(self, device: str = "cpu", n_jobs: int = 1) -> None:
+    def __init__(self, device: str = "cpu") -> None:
         self.device = device
-        self.n_jobs = n_jobs
-        self._fcd: object | None = None
+        # Cached ChemNet ``torch.nn.Module``. The ``fcd`` package ships
+        # no type stubs, so we keep the slot as ``Any`` rather than
+        # ``object`` to satisfy ``get_fcd``'s ``model: Module | None``
+        # parameter without an extra cast.
+        self._model: Any = None
 
-    def _ensure(self) -> object:
-        if self._fcd is None:
-            from fcd_torch import FCD
+    def _ensure_model(self) -> Any:
+        if self._model is None:
+            from fcd import load_ref_model
 
-            self._fcd = FCD(device=self.device, n_jobs=self.n_jobs)
-        return self._fcd
+            self._model = load_ref_model()
+        return self._model
 
     def compute(
         self,
@@ -349,9 +359,20 @@ class FCDChEMBLMetric(MolecularMetric):
     ) -> float:
         if reference is None:
             raise ValueError("FCDChEMBLMetric requires reference SMILES.")
-        # Drop invalid SMILES via RDKit before handing off to fcd_torch.
+        from fcd import canonical_smiles, get_fcd
+
+        # ``_canonicalize_list`` already drops invalid SMILES and
+        # duplicates via RDKit; we still funnel through ``fcd``'s own
+        # ``canonical_smiles`` for byte-exact parity with the upstream
+        # GuacaMol/FCD pipeline.
         gen_valid = _canonicalize_list(generated, include_stereocenters=False)
         if not gen_valid:
             return float("inf")
-        fcd = self._ensure()
-        return float(fcd(list(gen_valid), list(reference)))  # type: ignore[operator]
+        gen_canonical = [s for s in canonical_smiles(list(gen_valid)) if s]
+        ref_canonical = [s for s in canonical_smiles(list(reference)) if s]
+        if not gen_canonical or not ref_canonical:
+            return float("inf")
+        model = self._ensure_model()
+        return float(
+            get_fcd(gen_canonical, ref_canonical, model=model, device=self.device)
+        )

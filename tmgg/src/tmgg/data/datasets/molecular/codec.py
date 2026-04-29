@@ -120,7 +120,11 @@ class SMILESCodec:
 
         # Atom classes
         try:
-            atom_classes = [self.vocab.encode_atom(a.GetSymbol()) for a in atoms]
+            # rdkit-stubs declares ``Atom.GetSymbol`` as taking a synthetic
+            # ``RDKit`` self-parameter that the real RDKit never requires
+            # (boost::python C++ binding artefact). Drop this marker once
+            # rdkit-stubs ships a fix.
+            atom_classes = [self.vocab.encode_atom(a.GetSymbol()) for a in atoms]  # type: ignore[reportCallIssue]
         except ValueError:
             return None
 
@@ -132,7 +136,7 @@ class SMILESCodec:
         e_class = torch.zeros((1, n, n, self.vocab.num_bond_types), dtype=torch.float32)
         # Default everywhere: NONE (class 0).
         e_class[..., 0] = 1.0
-        for bond in mol.GetBonds():
+        for bond in mol.GetBonds():  # type: ignore[reportCallIssue]
             i = bond.GetBeginAtomIdx()
             j = bond.GetEndAtomIdx()
             try:
@@ -199,7 +203,7 @@ class SMILESCodec:
                 bond_name = self.vocab.decode_bond(cls)
                 rwmol.AddBond(i, j, _bond_name_to_rdkit(bond_name))  # type: ignore[arg-type]
 
-        mol = rwmol.GetMol()
+        mol = rwmol.GetMol()  # type: ignore[reportCallIssue]
         try:
             Chem.SanitizeMol(mol)
         except Exception:
@@ -266,7 +270,7 @@ class SMILESCodec:
             try:
                 # Pre-flight vocab lookup so we can bucket vocab misses
                 # separately from other failures inside encode().
-                _ = [self.vocab.encode_atom(a.GetSymbol()) for a in atoms]
+                _ = [self.vocab.encode_atom(a.GetSymbol()) for a in atoms]  # type: ignore[reportCallIssue]
             except ValueError:
                 counters["vocab_miss"] += 1
                 continue

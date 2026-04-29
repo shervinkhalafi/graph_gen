@@ -29,7 +29,12 @@ def _round_trip_match_rate(smiles: list[str], codec) -> float:
         # Compare canonical forms.
         from rdkit import Chem
 
-        original_canon = Chem.MolToSmiles(Chem.MolFromSmiles(s))
+        # rdkit-stubs types ``MolFromSmiles`` as ``Mol | None`` but
+        # ``MolToSmiles`` as taking ``Mol``. The real RDKit returns ``None``
+        # for invalid SMILES, so a runtime guard would be safer; in this
+        # test we rely on the SMILES list being valid. Drop this marker
+        # once rdkit-stubs offers an overload that accepts ``Mol | None``.
+        original_canon = Chem.MolToSmiles(Chem.MolFromSmiles(s))  # type: ignore[reportArgumentType]
         n_attempted += 1
         if decoded == original_canon:
             matched += 1

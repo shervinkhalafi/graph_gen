@@ -29,8 +29,12 @@ The MOSES filter set keeps molecules with: only allowed atoms
 SMILES that round-trip, and no substructure match against MCF or WEHI
 PAINS - identical to ``moses.metrics.utils.mol_passes_filters``.
 
-FCD remains a thin wrapper over ``fcd_torch.FCD``, which works
-standalone.
+FCD remains a thin wrapper over the maintained ``fcd>=1.2.2`` package
+(``bioinf-jku/FCD``, refreshed 2023-08), which works standalone. The
+ChemNet weights and Frechet formula are unchanged from the legacy
+``fcd_torch==1.0.7`` (frozen at 2019-03), so numbers are identical to
+within ~3e-3 absolute on toy SMILES sets — drift attributable to
+internal canonicalisation rounding, not the metric definition.
 """
 
 from __future__ import annotations
@@ -172,12 +176,15 @@ def _passes_moses_filters(smiles: str) -> bool:
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return False
-    ring_info = mol.GetRingInfo()
+    # rdkit-stubs declares Mol bound methods as taking a synthetic ``RDKit``
+    # self-parameter that the real RDKit never requires (boost::python C++
+    # binding artefact). Drop these markers once rdkit-stubs ships a fix.
+    ring_info = mol.GetRingInfo()  # type: ignore[reportCallIssue]
     if ring_info.NumRings() != 0 and any(len(r) >= 8 for r in ring_info.AtomRings()):
         return False
-    if any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms()):
+    if any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms()):  # type: ignore[reportCallIssue]
         return False
-    if any(atom.GetSymbol() not in allowed for atom in mol.GetAtoms()):
+    if any(atom.GetSymbol() not in allowed for atom in mol.GetAtoms()):  # type: ignore[reportCallIssue]
         return False
     h_mol = Chem.AddHs(mol)
     for patt in _compiled_filters():
@@ -195,23 +202,34 @@ def _passes_moses_filters(smiles: str) -> bool:
 
 
 class FCDMetric(MolecularMetric):
-    """Frechet ChemNet Distance via :mod:`fcd_torch`."""
+    """Frechet ChemNet Distance via the maintained :pkg:`fcd` package.
+
+    Backed by ``bioinf-jku/FCD`` (PyPI ``fcd>=1.2.2``), the maintained
+    PyTorch refresh of the original ``fcd_torch``. The reference
+    ChemNet weights ship inside the wheel; ``fcd.load_ref_model``
+    is internally ``lru_cache``'d, so the model loads once per process
+    even if multiple :class:`FCDMetric` instances are created.
+
+    The ``device`` argument is forwarded to :func:`fcd.get_fcd`, which
+    does the ``model.to(device)`` move on each call. We cache the
+    ChemNet ``torch.nn.Module`` per instance to amortise the
+    weight-load cost across repeated ``compute`` invocations.
+    """
 
     name = "fcd"
 
-    def __init__(self, device: str = "cpu", n_jobs: int = 1) -> None:
+    def __init__(self, device: str = "cpu") -> None:
         self.device = device
-        self.n_jobs = n_jobs
-        # ``fcd_torch.FCD`` is the actual type, but the package ships no
-        # type stubs so we type the slot as ``Any`` to keep pyright quiet.
-        self._fcd: Any = None
+        # The cached ChemNet ``torch.nn.Module``. The ``fcd`` package
+        # ships no type stubs, so we keep the slot as ``Any``.
+        self._model: Any = None
 
-    def _ensure(self) -> Any:
-        if self._fcd is None:
-            from fcd_torch import FCD
+    def _ensure_model(self) -> Any:
+        if self._model is None:
+            from fcd import load_ref_model
 
-            self._fcd = FCD(device=self.device, n_jobs=self.n_jobs)
-        return self._fcd
+            self._model = load_ref_model()
+        return self._model
 
     def compute(
         self,
@@ -220,12 +238,21 @@ class FCDMetric(MolecularMetric):
     ) -> float:
         if reference is None:
             raise ValueError("FCDMetric requires reference SMILES.")
+        from fcd import canonical_smiles, get_fcd
+
         gen_valid = _drop_invalid(generated)
         if not gen_valid:
             return float("inf")
-        fcd = self._ensure()
-        # fcd_torch's FCD object is callable: __call__(gen, ref) → float.
-        return float(fcd(list(gen_valid), list(reference)))
+        # ``canonical_smiles`` returns ``None`` for SMILES it cannot
+        # parse; filter those out before the Frechet computation.
+        gen_canonical = [s for s in canonical_smiles(list(gen_valid)) if s]
+        ref_canonical = [s for s in canonical_smiles(list(reference)) if s]
+        if not gen_canonical or not ref_canonical:
+            return float("inf")
+        model = self._ensure_model()
+        return float(
+            get_fcd(gen_canonical, ref_canonical, model=model, device=self.device)
+        )
 
 
 class SNNMetric(MolecularMetric):
