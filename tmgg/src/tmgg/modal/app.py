@@ -64,9 +64,15 @@ def resolve_modal_function_name(base_name: str, gpu_tier: str) -> str:
     return base_name
 
 
-# Memory configurations (for non-GPU containers)
-MEMORY_CONFIGS = {
-    "small": 2048,  # 2 GB
-    "medium": 8192,  # 8 GB
-    "large": 32768,  # 32 GB
+# Per-tier CPU reservations (vCPU floor; bursts up to host limit).
+# Memory is intentionally left at Modal's default — RAM on Modal is
+# billed for what is reserved, so let workers grow to host capacity
+# instead of paying for unused headroom. CPU reservations matter more
+# for guaranteeing dataloader / RDKit-preprocessing throughput.
+CPU_PROFILES = {
+    "debug": 2.0,
+    "standard": 4.0,
+    "fast": 8.0,
+    "multi": 12.0,
+    "h100": 8.0,
 }
