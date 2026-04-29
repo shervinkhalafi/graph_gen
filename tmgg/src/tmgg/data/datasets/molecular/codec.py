@@ -15,27 +15,19 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import torch
+from rdkit import Chem
+from rdkit.Chem import RWMol
+from rdkit.Chem.rdchem import BondType
 
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.molecular.vocabulary import AtomBondVocabulary
 
-if TYPE_CHECKING:
-    pass  # type: ignore[import-not-found]
-
 
 # Map RDKit's BondType to our bond_decoder string for `encode_bond`.
-# Populated lazily so the rdkit import stays inside the codec.
 def _rdkit_bond_name(bond_type: object) -> str:
-    """Map an RDKit ``Chem.BondType`` to our bond_decoder name.
-
-    Lazy-importing here avoids hoisting rdkit into module-level
-    imports and keeps the codec the sole RDKit-touching surface.
-    """
-    from rdkit.Chem.rdchem import BondType
-
+    """Map an RDKit ``Chem.BondType`` to our bond_decoder name."""
     if bond_type == BondType.SINGLE:
         return "SINGLE"
     if bond_type == BondType.DOUBLE:
@@ -48,8 +40,6 @@ def _rdkit_bond_name(bond_type: object) -> str:
 
 
 def _bond_name_to_rdkit(name: str) -> object:
-    from rdkit.Chem.rdchem import BondType
-
     return {
         "SINGLE": BondType.SINGLE,
         "DOUBLE": BondType.DOUBLE,
@@ -101,8 +91,6 @@ class SMILESCodec:
         Returns ``None`` when the molecule fails to parse, has too
         many heavy atoms, or contains an atom not in the vocabulary.
         """
-        from rdkit import Chem
-
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return None
@@ -174,9 +162,6 @@ class SMILESCodec:
         sanitisation. Used by :class:`ValidityMetric` and round-trip
         tests; not used in the training loop.
         """
-        from rdkit import Chem
-        from rdkit.Chem import RWMol
-
         if data.X_class is None or data.E_class is None:
             return None
         x_class = data.X_class
@@ -247,8 +232,6 @@ class SMILESCodec:
         }
         # Re-implement the encode() body inline so we can fill counter
         # buckets per failure mode.
-        from rdkit import Chem
-
         for smi in smiles_iter:
             counters["input"] += 1
             mol = Chem.MolFromSmiles(smi)
