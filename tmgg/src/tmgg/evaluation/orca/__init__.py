@@ -39,6 +39,12 @@ def _get_binary_path() -> Path:
     with glibc/libstdc++ mismatches. To avoid trusting any preexisting native
     artifact, the wrapper recompiles ORCA once per process from the bundled
     source and atomically replaces any existing binary in-place.
+
+    The compile target is fixed at ``-march=x86-64-v3`` (AVX2 + BMI2 + FMA,
+    no AVX-512). Modal's cheap-tier CPU pool is heterogeneous and some
+    hosts lack AVX-512; binaries baked with ``-march=native`` on an
+    AVX-512 build host SIGILL when the runtime host is plainer. v3 is the
+    common floor across every modern x86-64 host we have observed on Modal.
     """
     binary = _ORCA_DIR / "orca"
     source = _ORCA_DIR / "orca.cpp"
@@ -59,7 +65,15 @@ def _get_binary_path() -> Path:
 
     try:
         subprocess.run(
-            ["g++", "-O2", "-std=c++11", "-o", str(build_binary), str(source)],
+            [
+                "g++",
+                "-O2",
+                "-march=x86-64-v3",
+                "-std=c++11",
+                "-o",
+                str(build_binary),
+                str(source),
+            ],
             check=True,
             capture_output=True,
             text=True,

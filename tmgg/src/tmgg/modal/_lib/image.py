@@ -106,6 +106,12 @@ def _compile_orca_in_image() -> None:
     This runs as a Modal image build step via ``Image.run_function()`` so the
     resulting binary is built against the container's libc/libstdc++ rather
     than copied from the host machine.
+
+    The ``-march=x86-64-v3`` target keeps AVX2/BMI2/FMA but drops AVX-512.
+    Modal's CPU pool is heterogeneous and some hosts (especially on the
+    cheap T4/A10G tiers) lack AVX-512, so an AVX-512-baked binary SIGILLs
+    at runtime. v3 is the highest baseline that runs on every modern x86-64
+    host Modal exposes; see ``reference_modal_avx512_sigill`` in user memory.
     """
     import subprocess
 
@@ -117,7 +123,15 @@ def _compile_orca_in_image() -> None:
 
     binary.unlink(missing_ok=True)
     subprocess.run(
-        ["g++", "-O2", "-std=c++11", "-o", str(binary), str(source)],
+        [
+            "g++",
+            "-O2",
+            "-march=x86-64-v3",
+            "-std=c++11",
+            "-o",
+            str(binary),
+            str(source),
+        ],
         check=True,
     )
 
