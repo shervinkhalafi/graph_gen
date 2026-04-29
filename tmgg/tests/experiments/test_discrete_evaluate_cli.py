@@ -400,17 +400,59 @@ def _train_tiny_discrete_checkpoint(tmp_path: Path) -> Path:
     checkpoint_path = checkpoint_dir / "last.ckpt"
     assert checkpoint_path.exists()
 
-    # Mirror run_experiment: persist the data block as sibling config.yaml
-    # so evaluate_checkpoint can rebuild the datamodule.
+    # Mirror run_experiment: persist the model + data blocks as sibling
+    # config.yaml so evaluate_checkpoint can hydra-instantiate the module
+    # for checkpoint loading and rebuild the datamodule for reference graphs.
     config = OmegaConf.create(
         {
+            "model": {
+                "_target_": "tmgg.training.lightning_modules.diffusion_module.DiffusionModule",
+                "model": {
+                    "_target_": "tmgg.models.digress.transformer_model.GraphTransformer",
+                    "n_layers": 2,
+                    "input_dims": {"X": 2, "E": 2, "y": 0},
+                    "hidden_mlp_dims": {"X": 16, "E": 16, "y": 16},
+                    "hidden_dims": {
+                        "dx": 16,
+                        "de": 16,
+                        "dy": 16,
+                        "n_head": 2,
+                    },
+                    "output_dims": {"X": 2, "E": 2, "y": 0},
+                    "use_timestep": True,
+                },
+                "noise_schedule": {
+                    "_target_": "tmgg.diffusion.schedule.NoiseSchedule",
+                    "schedule_type": "cosine_iddpm",
+                    "timesteps": 5,
+                },
+                "noise_process": {
+                    "_target_": "tmgg.diffusion.noise_process.CategoricalNoiseProcess",
+                    "schedule": "${model.noise_schedule}",
+                    "x_classes": 2,
+                    "e_classes": 2,
+                    "limit_distribution": "uniform",
+                },
+                "sampler": {
+                    "_target_": "tmgg.diffusion.sampler.CategoricalSampler",
+                },
+                "evaluator": {
+                    "_target_": "tmgg.evaluation.graph_evaluator.GraphEvaluator",
+                    "eval_num_samples": 2,
+                    "kernel": "gaussian",
+                    "sigma": 1.0,
+                },
+                "loss_type": "cross_entropy",
+                "num_nodes": 8,
+                "eval_every_n_steps": 100,
+            },
             "data": {
                 "_target_": "tmgg.data.data_modules.synthetic_categorical.SyntheticCategoricalDataModule",
                 "num_nodes": 8,
                 "num_graphs": 40,
                 "batch_size": 4,
                 "seed": 42,
-            }
+            },
         }
     )
     OmegaConf.save(config, tmp_path / "config.yaml")
@@ -455,3 +497,39 @@ def test_evaluate_checkpoint_loads_real_diffusion_checkpoint(
         "clustering_mmd": 0.2,
         "spectral_mmd": 0.3,
     }
+
+
+def test_lightning_load_from_checkpoint_directly_raises_typeerror(
+    tmp_path: Path,
+) -> None:
+    """Regression: pin the bug that ``_load_diffusion_module`` works around.
+
+    ``DiffusionModule.save_hyperparameters(ignore=["model", "noise_process",
+    "sampler", "noise_schedule", "evaluator"])`` excludes five ``nn.Module``
+    constructor args from saved hparams. Lightning's
+    ``DiffusionModule.load_from_checkpoint(path)`` reconstructs via
+    ``cls(**hparams)`` and consequently raises::
+
+        TypeError: DiffusionModule.__init__() missing 3 required keyword-only
+        arguments: 'model', 'noise_process', and 'noise_schedule'
+
+    The CLI's ``_load_diffusion_module`` bypasses this via
+    hydra-instantiate-from-config + ``module.load_state_dict``. This test
+    pins the original failure so a future refactor that re-introduces
+    ``load_from_checkpoint`` would tripwire here, AND that our helper
+    succeeds where the direct Lightning path fails.
+    """
+    from tmgg.training.lightning_modules.diffusion_module import DiffusionModule
+
+    checkpoint_path = _train_tiny_discrete_checkpoint(tmp_path)
+
+    # Direct Lightning path: provably broken for DiffusionModule checkpoints.
+    with pytest.raises(
+        TypeError, match="missing.*'(model|noise_process|noise_schedule)'"
+    ):
+        DiffusionModule.load_from_checkpoint(str(checkpoint_path), map_location="cpu")
+
+    # Our helper path: succeeds via hydra-instantiate from sibling config.yaml.
+    module = evaluate_cli._load_diffusion_module(checkpoint_path, device="cpu")
+    assert isinstance(module, DiffusionModule)
+    assert not module.training  # _load_diffusion_module returns module.eval()

@@ -26,7 +26,6 @@ EMA weights swap into the loaded model when ``use_ema in ('true',
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import sys
 from datetime import datetime
@@ -38,53 +37,8 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from tmgg.evaluation.mmd_metrics import compute_mmd_metrics
-from tmgg.models.base import GraphModel
 from tmgg.training.callbacks.ema import EMACallback
 from tmgg.training.lightning_modules.diffusion_module import DiffusionModule
-
-
-def _instantiate_checkpoint_model(
-    checkpoint_path: Path,
-    *,
-    device: str,
-) -> GraphModel:
-    """Reconstruct the nested graph model from checkpoint metadata.
-
-    ``DiffusionModule`` intentionally excludes the graph model from
-    ``save_hyperparameters`` because the instantiated module object is not a
-    stable constructor argument. The checkpoint still stores
-    ``model_class`` and ``model_config`` in the hyperparameters, which is the
-    canonical source for rebuilding that nested model at load time.
-    """
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    hparams = checkpoint.get("hyper_parameters")
-    if not isinstance(hparams, dict):
-        raise TypeError(
-            f"Expected checkpoint hyperparameters dict in {checkpoint_path}, "
-            f"got {type(hparams).__name__}"
-        )
-
-    model_class_path = hparams.get("model_class")
-    model_config = hparams.get("model_config")
-    if not isinstance(model_class_path, str):
-        raise TypeError(
-            f"Checkpoint {checkpoint_path} is missing string model_class metadata"
-        )
-    if not isinstance(model_config, dict):
-        raise TypeError(
-            f"Checkpoint {checkpoint_path} is missing dict model_config metadata"
-        )
-
-    module_path, class_name = model_class_path.rsplit(".", 1)
-    model_module = importlib.import_module(module_path)
-    model_class = getattr(model_module, class_name)
-    if not isinstance(model_class, type) or not issubclass(model_class, GraphModel):
-        raise TypeError(
-            f"Checkpoint model class {model_class_path!r} is not a GraphModel subclass"
-        )
-
-    model = model_class(**model_config)
-    return model
 
 
 def _load_diffusion_module(
@@ -92,23 +46,59 @@ def _load_diffusion_module(
     *,
     device: str,
 ) -> DiffusionModule:
-    """Load a diffusion checkpoint, rebuilding the nested model if needed."""
-    try:
-        return DiffusionModule.load_from_checkpoint(
-            str(checkpoint_path), map_location=device
-        )
-    except TypeError as exc:
-        if "missing 1 required keyword-only argument: 'model'" not in str(exc):
-            raise
+    """Load a diffusion checkpoint, hydra-instantiating from the sibling config.
 
-    # Newer checkpoints persist model metadata but not the instantiated model.
-    # Rebuild the nested GraphModel explicitly and retry the Lightning load.
-    model = _instantiate_checkpoint_model(checkpoint_path, device=device)
-    return DiffusionModule.load_from_checkpoint(
-        str(checkpoint_path),
-        map_location=device,
-        model=model,
+    ``DiffusionModule.save_hyperparameters(ignore=["model", "noise_process",
+    "sampler", "noise_schedule", "evaluator"])`` (see
+    :class:`DiffusionModule`) drops five ``nn.Module`` constructor arguments
+    from the saved hparams. Lightning's ``load_from_checkpoint`` then can't
+    reconstruct the module via ``cls(**hparams)`` and raises::
+
+        TypeError: DiffusionModule.__init__() missing 3 required keyword-only
+        arguments: 'model', 'noise_process', and 'noise_schedule'
+
+    The fix is to read the sibling ``config.yaml`` (saved by
+    ``run_experiment.run_single_experiment`` next to the checkpoint),
+    hydra-instantiate the full module via ``config.model`` (whose
+    ``_target_`` points at :class:`DiffusionModule` and whose nested
+    ``model``/``noise_process``/``noise_schedule`` sub-blocks hydra
+    recursively instantiates), then load just the ``state_dict`` from the
+    checkpoint.
+
+    ``weights_only=False`` is required because Lightning checkpoints carry
+    non-tensor metadata (callbacks state, hyperparameters dict, optimizer
+    state). We trust the checkpoint here because we wrote it ourselves to
+    our private Modal volume; the checkpoint is not third-party content.
+    """
+    config_path = _find_sibling_config_yaml(checkpoint_path)
+    loaded = OmegaConf.load(config_path)
+    if not isinstance(loaded, DictConfig):
+        raise TypeError(
+            f"config.yaml at {config_path} did not parse to a DictConfig; "
+            f"got {type(loaded).__name__}."
+        )
+    model_cfg = OmegaConf.select(loaded, "model")
+    if model_cfg is None:
+        raise KeyError(
+            f"config.yaml at {config_path} has no `model:` block; cannot "
+            f"hydra-instantiate the DiffusionModule for checkpoint loading."
+        )
+
+    module: DiffusionModule = hydra.utils.instantiate(model_cfg)
+
+    # weights_only=False: Lightning checkpoints contain non-tensor metadata.
+    # Safe here because we wrote this checkpoint ourselves on our private volume.
+    checkpoint = torch.load(
+        str(checkpoint_path), map_location=device, weights_only=False
     )
+    state_dict = checkpoint.get("state_dict", checkpoint)
+    if not isinstance(state_dict, dict):
+        raise TypeError(
+            f"Checkpoint {checkpoint_path} has no 'state_dict' entry and "
+            f"the top-level object is not a dict (got {type(state_dict).__name__})."
+        )
+    module.load_state_dict(state_dict)
+    return module.to(device).eval()
 
 
 def _find_sibling_config_yaml(checkpoint_path: Path) -> Path:
