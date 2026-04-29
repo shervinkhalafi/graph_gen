@@ -15,6 +15,7 @@ the absolute on-disk path so failed checks are immediately actionable.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -30,6 +31,14 @@ SPECTRE_DATASETS = ("planar", "sbm")
 ALL_DATASETS = MOLECULAR_DATASETS + SPECTRE_DATASETS
 
 DEFAULT_MODAL_CACHE_ROOT = Path("/data/datasets")
+
+# Sentinel filename written into a split's shard dir AFTER every shard
+# has been atomically renamed into its final ``<idx>.pt`` form. Cache-hit
+# logic short-circuits only when this marker exists; without it we
+# treat the dir as a partial / preempted preprocess and rebuild the
+# missing shards. Mirrors a "manifest-then-data" two-phase commit so a
+# preempted preprocess can never be mistaken for a complete one.
+_COMPLETE_MARKER = "_complete"
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +146,15 @@ def prepare_molecular_dataset(
         try:
             shard_dir = ds._shard_dir()
             entry["path"] = str(shard_dir)
+            complete_marker = shard_dir / _COMPLETE_MARKER
 
-            # Cache hit: shards already present, skip preprocess.
-            if shard_dir.exists() and any(shard_dir.iterdir()):
+            # Cache hit only if the explicit completion marker exists.
+            # ``any(shard_dir.iterdir())`` was the old check; it fired
+            # spuriously on preempted preprocess runs that left partial
+            # shards on disk and silently delivered an under-counted
+            # dataset to subsequent training. The marker is written
+            # only after every shard has been atomically renamed.
+            if complete_marker.exists():
                 ds.setup()  # quick path: just loads existing shards
                 entry["shards"] = len(sorted(shard_dir.glob("*.pt")))
                 entry["graphs"] = len(ds)
@@ -151,32 +166,87 @@ def prepare_molecular_dataset(
                 _log(f"[{name}/{split}] downloading SMILES...")
                 smiles = ds.download_smiles_split(split)
                 n_smiles = len(smiles)
-                _log(f"[{name}/{split}] downloaded {n_smiles} SMILES; " f"encoding...")
+                _log(
+                    f"[{name}/{split}] downloaded {n_smiles} SMILES; "
+                    f"streaming encode + write..."
+                )
 
                 codec = ds.make_codec()
-                # Cap progress lines at ~20 per split to keep stdout
-                # readable even for ~1.5M-SMILES datasets like MOSES.
-                step = max(1, n_smiles // 20) if n_smiles > 0 else 0
-                graphs, counters = codec.encode_dataset_with_stats(
-                    smiles,
-                    progress_callback=(
-                        _make_encode_progress_cb(name, split, n_smiles)
-                        if step > 0
-                        else None
-                    ),
-                    progress_every=step,
-                )
-                entry["graphs"] = len(graphs)
-                entry["counters"] = counters
-                _log(
-                    f"[{name}/{split}] encoded {len(graphs)} graphs "
-                    f"(counters={counters}); writing shards..."
-                )
+                shard_dir.mkdir(parents=True, exist_ok=True)
 
-                ds._write_shards(graphs)
-                ds._graphs = graphs
-                entry["shards"] = len(sorted(shard_dir.glob("*.pt")))
-                _log(f"[{name}/{split}] wrote {entry['shards']} shard(s)")
+                # Streaming, resumable preprocess: encode → write → next.
+                # Each shard is atomically renamed before we move on, so
+                # a preemption mid-encode loses at most one shard's
+                # worth of work (~``shard_size`` SMILES). On restart we
+                # skip every ``<idx>.pt`` already on disk and pick up
+                # where the previous run left off.
+                shard_size = ds.shard_size
+                n_shards = (n_smiles + shard_size - 1) // shard_size
+                counters_total = {
+                    "input": 0,
+                    "parse_failure": 0,
+                    "atom_count_overflow": 0,
+                    "vocab_miss": 0,
+                    "kekulize_failure": 0,
+                    "kept": 0,
+                }
+                total_graphs = 0
+                shards_written = 0
+                for shard_idx in range(n_shards):
+                    shard_path = shard_dir / f"{shard_idx:04d}.pt"
+                    if shard_path.exists():
+                        # Resume: shard already finalised by an earlier
+                        # run. Load it just to update the running graph
+                        # count (cheap; one .pt per shard).
+                        prior = torch.load(shard_path, weights_only=False)
+                        total_graphs += len(prior)
+                        shards_written += 1
+                        _log(
+                            f"[{name}/{split}] shard {shard_idx + 1}/{n_shards} "
+                            f"resume (already on disk; {len(prior)} graphs)"
+                        )
+                        continue
+                    chunk = smiles[
+                        shard_idx * shard_size : (shard_idx + 1) * shard_size
+                    ]
+                    chunk_graphs, chunk_counters = codec.encode_dataset_with_stats(
+                        chunk
+                    )
+                    for k, v in chunk_counters.items():
+                        counters_total[k] += v
+                    tmp_path = shard_dir / f"{shard_idx:04d}.pt.tmp"
+                    torch.save(chunk_graphs, tmp_path)
+                    os.replace(tmp_path, shard_path)
+                    total_graphs += len(chunk_graphs)
+                    shards_written += 1
+                    _log(
+                        f"[{name}/{split}] shard {shard_idx + 1}/{n_shards} "
+                        f"wrote {len(chunk_graphs)}/{len(chunk)} kept "
+                        f"(running counters={counters_total})"
+                    )
+
+                # Two-phase commit on the marker too: write a temp
+                # sentinel and atomic-rename. A preemption between the
+                # last shard write and the marker rename leaves the
+                # shards complete but the marker absent — the next run
+                # will resume by loading every shard (skip-existing) and
+                # then write the marker without re-encoding anything.
+                marker_tmp = shard_dir / f"{_COMPLETE_MARKER}.tmp"
+                marker_tmp.write_text(
+                    f"shards={n_shards}\nshard_size={shard_size}\n"
+                    f"graphs={total_graphs}\n"
+                )
+                os.replace(marker_tmp, complete_marker)
+
+                entry["graphs"] = total_graphs
+                entry["counters"] = counters_total
+                entry["shards"] = shards_written
+                _log(
+                    f"[{name}/{split}] streamed {shards_written} shard(s); "
+                    f"counters={counters_total}; complete-marker written"
+                )
+                # Refresh ds._graphs so callers querying len(ds) work.
+                ds._graphs = ds._load_shards()
         except KeyError as exc:
             # Split not declared by this dataset (e.g., GuacaMol may
             # omit one). Record cleanly.
@@ -371,9 +441,22 @@ def validate_molecular_dataset(
         entry["graphs"] = sum(s.get("graphs", 0) for s in per_shard)
         entry["shard_reports"] = per_shard
         statuses = {s["status"] for s in per_shard}
+        complete_marker = shard_dir / _COMPLETE_MARKER
+        entry["complete_marker"] = complete_marker.exists()
         if statuses != {"ok"}:
             entry["status"] = "errors"
             entry["error_count"] = sum(1 for s in per_shard if s["status"] != "ok")
+        elif not complete_marker.exists():
+            # Every shard loads cleanly but the preprocess never wrote
+            # the completion sentinel — typical fingerprint of a
+            # preempted prepare. Surface as an actionable status so the
+            # caller knows to re-run prepare (which will resume from
+            # whichever shards are already on disk).
+            entry["status"] = "incomplete"
+            entry["detail"] = (
+                "all loaded shards are valid, but no _complete marker — "
+                "rerun ``tmgg-modal datasets prepare`` to finish + mark."
+            )
         splits_report[split] = entry
 
     return {

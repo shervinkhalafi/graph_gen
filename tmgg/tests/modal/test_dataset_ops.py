@@ -31,9 +31,11 @@ import pytest
 import torch
 
 from tmgg.modal._lib.dataset_ops import (
+    _COMPLETE_MARKER,
     ALL_DATASETS,
     _validate_shard,
     prepare_dataset,
+    prepare_molecular_dataset,
     validate_dataset,
 )
 
@@ -124,6 +126,110 @@ class TestDispatcher:
 # ---------------------------------------------------------------------------
 # Spectre validate path (synthesise a fixture, no network)
 # ---------------------------------------------------------------------------
+
+
+class TestStreamingPreprocess:
+    """``prepare_molecular_dataset`` must be preemption-robust.
+
+    The cache-hit short-circuit must only fire when the explicit
+    ``_complete`` marker exists. A partial shard layout (some final
+    ``<idx>.pt`` files present, marker absent) must trigger a resume —
+    not a silent "everything is fine" report.
+    """
+
+    def _patch_dataset_cls(self, monkeypatch, smiles, max_atoms=5, shard_size=3):
+        from tmgg.data.datasets.molecular import dataset as ds_mod
+        from tmgg.data.datasets.molecular.codec import SMILESCodec
+        from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
+        from tmgg.data.datasets.molecular.vocabulary import AtomBondVocabulary
+        from tmgg.modal._lib import dataset_ops
+
+        class _TinyQM9(MolecularGraphDataset):
+            DATASET_NAME = "qm9"
+            DEFAULT_MAX_ATOMS = max_atoms
+            SAMPLE_SMILES = smiles
+
+            def __init__(self_inner, *, split: str, cache_root=None):  # type: ignore[no-untyped-def]
+                super().__init__(
+                    split=split,
+                    cache_root=cache_root,
+                    shard_size=shard_size,
+                )
+
+            @classmethod
+            def make_codec(cls) -> SMILESCodec:
+                return SMILESCodec(
+                    vocab=AtomBondVocabulary.qm9(),
+                    max_atoms=cls.DEFAULT_MAX_ATOMS,
+                )
+
+            def download_smiles_split(self, split: str) -> list[str]:
+                return list(self.SAMPLE_SMILES)
+
+        # Redirect dispatcher to point at the tiny in-memory dataset for ``qm9``.
+        monkeypatch.setattr(
+            dataset_ops, "_molecular_dataset_cls", lambda name: _TinyQM9
+        )
+        monkeypatch.setattr(dataset_ops, "_molecular_splits", lambda name: ("train",))
+        return _TinyQM9, ds_mod
+
+    def test_streaming_writes_marker_and_shards(self, tmp_path, monkeypatch) -> None:
+        """End-to-end clean run: marker + every shard land on disk."""
+        smiles = ["CCO", "CC(=O)O", "CCC", "CCCC", "CCCCO", "CCN"]  # 6 → 2 shards of 3
+        cls, _ = self._patch_dataset_cls(monkeypatch, smiles)
+        report = prepare_molecular_dataset("qm9", cache_root=tmp_path)
+        train = report["splits"]["train"]
+        assert train["status"] == "ok"
+        # 6 SMILES, shard_size=3 → 2 shards, 6 graphs total.
+        assert train["shards"] == 2
+        ds = cls(split="train", cache_root=tmp_path)
+        shard_dir = ds._shard_dir()
+        assert (shard_dir / _COMPLETE_MARKER).exists()
+        assert sorted(p.name for p in shard_dir.glob("*.pt")) == ["0000.pt", "0001.pt"]
+        assert not list(shard_dir.glob("*.pt.tmp"))
+
+    def test_partial_state_without_marker_triggers_resume(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Partial shard layout + no marker MUST re-encode the missing tail."""
+        smiles = ["CCO", "CC(=O)O", "CCC", "CCCC", "CCCCO", "CCN"]  # 2 shards of 3
+        cls, _ = self._patch_dataset_cls(monkeypatch, smiles)
+
+        # Simulate a preempted prepare: write only shard 0 manually.
+        ds = cls(split="train", cache_root=tmp_path)
+        shard_dir = ds._shard_dir()
+        shard_dir.mkdir(parents=True, exist_ok=True)
+        # Build the shard 0 content exactly as the streaming impl would.
+        codec = ds.make_codec()
+        partial_chunk = smiles[:3]
+        partial_graphs, _ = codec.encode_dataset_with_stats(partial_chunk)
+        torch.save(partial_graphs, shard_dir / "0000.pt")
+        # Important: no _complete marker, no shard 1.
+
+        report = prepare_molecular_dataset("qm9", cache_root=tmp_path)
+        train = report["splits"]["train"]
+        assert train["status"] == "ok"
+        # Both shards must end up on disk after the resume.
+        assert sorted(p.name for p in shard_dir.glob("*.pt")) == ["0000.pt", "0001.pt"]
+        # And the marker should now be present.
+        assert (shard_dir / _COMPLETE_MARKER).exists()
+
+    def test_full_cache_hit_skips_preprocess(self, tmp_path, monkeypatch) -> None:
+        """Marker present → cache hit → no re-encoding."""
+        smiles = ["CCO", "CC(=O)O", "CCC"]
+        cls, _ = self._patch_dataset_cls(monkeypatch, smiles)
+        # First run: warm cache.
+        prepare_molecular_dataset("qm9", cache_root=tmp_path)
+        # Second run: would re-download SMILES from
+        # ``download_smiles_split``; mutate sentinel to detect re-call.
+        cls.SAMPLE_SMILES = ["NEVER_CALLED"]  # type: ignore[attr-defined]
+        report = prepare_molecular_dataset("qm9", cache_root=tmp_path)
+        train = report["splits"]["train"]
+        assert train["status"] == "ok"
+        assert train["shards"] == 1
+        # Counters key only set on the streaming path; cache-hit branch
+        # omits it. Use that to confirm we took the short-circuit.
+        assert "counters" not in train
 
 
 class TestSpectreValidate:
