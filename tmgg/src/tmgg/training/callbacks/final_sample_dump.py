@@ -268,11 +268,12 @@ class FinalSampleDumpCallback(Callback):
                 default_root_dir=trainer.default_root_dir,
             )
             target.parent.mkdir(parents=True, exist_ok=True)
+            global_step = int(getattr(pl_module, "global_step", -1))
             payload = {
                 "graphs": samples,
                 "meta": {
                     "num_samples": len(samples),
-                    "global_step": int(getattr(pl_module, "global_step", -1)),
+                    "global_step": global_step,
                     "wall_seconds": float(wall_seconds),
                     "ema_active": ema_active,
                     "run_name": self.run_name,
@@ -301,9 +302,7 @@ class FinalSampleDumpCallback(Callback):
                         for k, v in results.to_dict().items()
                         if v is not None
                     }
-                    self._log_to_experiment(
-                        pl_module, metrics, step=int(payload["meta"]["global_step"])
-                    )
+                    self._log_to_experiment(pl_module, metrics, step=global_step)
         finally:
             if ema_active and ema_cb is not None and ema_cb.ema is not None:
                 ema_cb.ema.restore(backbone_params_fn())
