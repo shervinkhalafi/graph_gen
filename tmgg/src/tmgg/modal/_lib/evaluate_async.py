@@ -28,29 +28,14 @@ modifying it. The Modal ``@app.function`` decorator wrapping happens in
 
 from __future__ import annotations
 
-import sys
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import wandb
 
-# Make scripts/sweep/_eval_manifest.py importable from inside the Modal
-# container — the eval worker writes via the same helper the readers
-# (fetch_outcomes, watch_runs) use, so the manifest-file naming
-# convention has exactly one source of truth.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-from scripts.sweep._eval_manifest import (  # noqa: E402  -- post-sys.path import
-    write_manifest_row as eval_manifest_write_row,
-)
-
-from tmgg.modal._lib.evaluate import (  # noqa: E402  -- after dynamic-path block
-    EvaluationInput,
-    run_mmd_evaluation,
-)
+from tmgg.modal._lib.evaluate import EvaluationInput, run_mmd_evaluation
+from tmgg.sweep._eval_manifest import write_manifest_row as eval_manifest_write_row
 
 _EVAL_WORKER_ID = uuid.uuid4().hex[:12]
 """Per-process discriminator for manifest filenames.
