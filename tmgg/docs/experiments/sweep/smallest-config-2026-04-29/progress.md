@@ -70,6 +70,43 @@ heuristic 100k-step cap; the operational S* will be replaced
 with a real gen-val/* fit once a v1-equivalent run with
 `eval_every_n_steps <= 10000` lands.
 
+### Eval cadence for round 1 — cosine/U-bowl
+
+Per spec §11.1, generation evaluations follow the cosine/U-bowl
+schedule from `scripts/sweep/eval_schedule.py`. SBM defaults:
+`rho_max = 1/4000`, `rho_min = 1/20000`, `s_p = 35000`,
+`s_k = 70000`. With `total_steps = 100000` and `n_evals = 24`,
+the integer schedule (computed by
+`uv run python -m scripts.sweep.eval_schedule --dataset spectre_sbm
+--total-steps 100000 --n-evals 24`) is:
+
+```
+[2590, 5237, 8011, 11004, 14369, 18403, 23855, 33237, 44142,
+ 50291, 54605, 58115, 61192, 64014, 66689, 69289, 71873, 74499,
+ 77229, 80150, 83392, 87196, 92125, 100000]
+```
+
+The first half is dense in `[0, ~14k]` (warmup), middle is sparse
+around `[33k, 50k]` (chance plateau), late stretch is dense in
+`[60k, 80k]` (expected knee at `s_k = 70k`), plus the iterate-beyond
+entry at 100000. The ENZYMES round-1 anchor run uses the same
+parameters (no v1-derived ENZYMES priors yet to motivate different
+defaults).
+
+The training-side consumer that fires `val_check` at exactly these
+steps is a deferred patch (spec §10 Phase 0.4). Until that lands,
+the wrappers' default `val_check_interval = 10000` continues to
+fire — round 1's actual eval cadence is therefore uniform every
+10000 steps, NOT the cosine bowl. The schedule list is committed
+ahead of the consumer so round-1 vibes-augmented analysis can
+already reason about the intended placement, and so the consumer
+patch (when it lands) can be slotted in without changing the round
+artefacts.
+
+### In-flight watch entries for round 1
+(populated during the 15-min watch loop while runs train; see
+`watches.jsonl` for the structured log)
+
 ### Synthesis (every round, cheap)
 This is round 0; the synthesis is the pre-rank above. Round 1 will
 decide whether the pre-rank survives contact with new opt-health
