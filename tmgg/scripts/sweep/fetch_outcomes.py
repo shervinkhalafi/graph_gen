@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import wandb
+from scripts.sweep._eval_manifest import evals_completeness, read_manifest
 from scripts.sweep.check_threshold import (
     check_run,  # MetricMissingError / AnchorMissingError propagate from check_run per §7 invariant 2
 )
@@ -31,6 +32,32 @@ REQUIRED_DIAGNOSTIC_KEYS = (
     "diagnostics-train/opt-health/grad_snr",
     "diagnostics-train/opt-health/grad_cosine",
     "diagnostics-train/opt-health/update_to_weight",
+)
+
+# History keys pulled when a manifest is present. The trainer registers
+# ``trainer/global_step`` as the custom step axis via ``define_metric``,
+# so we pull it explicitly to key the per-step dict. The four anchored
+# gen-val metrics span every dataset's threshold rule (sbm_accuracy is
+# only checked for ``spectre_sbm`` but pulling it costs nothing).
+HISTORY_KEYS = (
+    "trainer/global_step",
+    "gen-val/sbm_accuracy",
+    "gen-val/degree_mmd",
+    "gen-val/clustering_mmd",
+    "gen-val/orbit_mmd",
+    "gen-val/spectral_mmd",
+    "gen-val/modularity_q",
+)
+
+# Metrics required to consider a step "fully anchored" — i.e. usable as
+# the terminal-step source for the threshold check. We deliberately do
+# not require ``sbm_accuracy`` here: non-SBM datasets do not log it, so
+# requiring it would forbid the terminal-step source on every other
+# dataset. ``check_run`` separately enforces dataset-specific anchors.
+ANCHORED_GENVAL_KEYS = (
+    "gen-val/degree_mmd",
+    "gen-val/clustering_mmd",
+    "gen-val/orbit_mmd",
 )
 
 
@@ -90,12 +117,83 @@ def fetch_block_keyed_diagnostic(run: WandbRun, key_prefix: str) -> dict[str, fl
     return out
 
 
+def _scan_history_per_step(
+    run: WandbRun,
+) -> dict[int, dict[str, float]]:
+    """Pull gen-val metrics from W&B history, keyed by ``trainer/global_step``.
+
+    Async-eval logs gen-val/* without an explicit ``step=`` kwarg; the
+    custom step axis ``trainer/global_step`` (registered by the trainer
+    via ``define_metric``) routes them into history rows. We pull those
+    rows here and re-key them by integer step so callers can pick the
+    terminal step or build a saturation-fit series.
+    """
+    metrics_per_step: dict[int, dict[str, float]] = {}
+    for hrow in run.scan_history(keys=list(HISTORY_KEYS)):
+        if hrow is None:
+            continue
+        raw_step = hrow.get("trainer/global_step")
+        if raw_step is None:
+            continue
+        step = int(raw_step)
+        record: dict[str, float] = {}
+        for key in HISTORY_KEYS:
+            if key == "trainer/global_step":
+                continue
+            value = hrow.get(key)
+            if isinstance(value, int | float):
+                record[key] = float(value)
+        if record:
+            metrics_per_step[step] = record
+    return metrics_per_step
+
+
+def _terminal_step_metrics(
+    metrics_per_step: dict[int, dict[str, float]],
+) -> tuple[int | None, dict[str, float]]:
+    """Pick the highest step where every anchored gen-val key is present.
+
+    Returns ``(step, metrics)`` or ``(None, {})`` if no step is fully
+    anchored. The threshold check runs against the returned ``metrics``;
+    ``check_run`` will raise ``MetricMissingError`` if a dataset-specific
+    anchor (e.g. ``sbm_accuracy`` for SBM) is still absent.
+    """
+    fully_anchored = [
+        step
+        for step, record in metrics_per_step.items()
+        if all(k in record for k in ANCHORED_GENVAL_KEYS)
+    ]
+    if not fully_anchored:
+        return None, {}
+    terminal = max(fully_anchored)
+    return terminal, dict(metrics_per_step[terminal])
+
+
 def build_outcome_row(
     *,
     launched: dict[str, Any],
     run: WandbRun,
     anchors_path: Path,
+    manifest_path: Path | None = None,
+    expected_schedule: list[int] | None = None,
 ) -> dict[str, Any]:
+    """Build an outcome row for ``launched`` from a finished W&B ``run``.
+
+    Two branches:
+
+    1. **Legacy (manifest_path is None).** Read terminal metrics from
+       ``run.summary`` and apply ``check_run`` directly. This is the
+       in-band-eval path; ``metrics_per_step``, ``evals_completeness``,
+       and ``gate_reason`` are all ``None``.
+    2. **Async-eval (manifest_path provided).** Read the JSONL manifest
+       to get the eval-worker view of completeness. Pull W&B history
+       keyed by ``trainer/global_step`` so the per-step metrics are
+       available for the saturation fit. Apply ``check_run`` to the
+       **terminal-step** history values (not the summary, which can hold
+       stale or unrelated values). Refuse ``threshold_pass=true`` if any
+       expected scheduled step is missing both from the manifest's
+       terminal status and from W&B history.
+    """
     summary = dict(run.summary)
     metrics_subset = {
         k: v
@@ -116,32 +214,93 @@ def build_outcome_row(
             "last_logged_step": int(summary.get("_step", 0) or 0),
         }
 
-    breakdown = check_run(
-        metrics={
+    use_manifest = manifest_path is not None
+
+    metrics_per_step: dict[int, dict[str, float]] | None = None
+    completeness: dict[str, int | list[int]] | None = None
+    gate_reason: str | None = None
+    terminal_step_from_history: int | None = None
+
+    if use_manifest:
+        assert manifest_path is not None  # narrow for type-checker
+        manifest_rows = read_manifest(manifest_path)
+        schedule = list(expected_schedule or [])
+        completeness = evals_completeness(manifest_rows, schedule)
+        metrics_per_step = _scan_history_per_step(run)
+        terminal_step_from_history, terminal_metrics = _terminal_step_metrics(
+            metrics_per_step
+        )
+        # Async-eval: replace summary-derived metrics with the
+        # terminal-step history values. The summary may still hold a
+        # stale gen-val key from an earlier in-band path or from a
+        # manual log; history is authoritative for per-step gen-val.
+        threshold_metrics_source: dict[str, float] = dict(terminal_metrics)
+    else:
+        threshold_metrics_source = {
             k: float(v) for k, v in metrics_subset.items() if isinstance(v, int | float)
-        },
+        }
+
+    # Decide whether expected evals are missing AND not in history.
+    expected_evals_missing = False
+    if use_manifest and completeness is not None:
+        # ``evals_completeness`` returns a union-typed dict; the
+        # "missing" entry is always a list[int] by construction. Narrow
+        # explicitly so basedpyright accepts the iteration.
+        missing_value = completeness["missing"]
+        assert isinstance(missing_value, list)
+        manifest_missing: list[int] = list(missing_value)
+        history_steps = (
+            set(metrics_per_step.keys()) if metrics_per_step is not None else set()
+        )
+        truly_missing = [s for s in manifest_missing if s not in history_steps]
+        if truly_missing:
+            expected_evals_missing = True
+
+    breakdown = check_run(
+        metrics=threshold_metrics_source,
         dataset=launched["dataset"],
         anchors_path=anchors_path,
     )
+
+    threshold_pass = bool(breakdown["pass"])
+    if expected_evals_missing:
+        threshold_pass = False
+        gate_reason = "expected_evals_missing"
 
     diag_terminal = {
         prefix.rsplit("/", 1)[-1]: fetch_block_keyed_diagnostic(run, prefix)
         for prefix in REQUIRED_DIAGNOSTIC_KEYS
     }
 
-    row = {
+    if use_manifest and terminal_step_from_history is not None:
+        terminal_step = terminal_step_from_history
+    else:
+        terminal_step = int(summary.get("_step", launched["step_cap"]))
+
+    if use_manifest:
+        # Emit the terminal-step metrics as the canonical "metrics"
+        # field — saturation fits and downstream readers want these,
+        # not the summary view.
+        out_metrics: dict[str, float] = dict(threshold_metrics_source)
+    else:
+        out_metrics = {
+            k: float(v) for k, v in metrics_subset.items() if isinstance(v, int | float)
+        }
+
+    row: dict[str, Any] = {
         "kind": "outcome",
         "ts_utc": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "run_uid": launched["run_uid"],
         "wandb_run_id": run.id,
         "status": "finished",
-        "terminal_step": int(summary.get("_step", launched["step_cap"])),
-        "metrics": {
-            k: float(v) for k, v in metrics_subset.items() if isinstance(v, int | float)
-        },
+        "terminal_step": terminal_step,
+        "metrics": out_metrics,
         "diagnostics_terminal": diag_terminal,
-        "threshold_pass": breakdown["pass"],
+        "threshold_pass": threshold_pass,
         "threshold_breakdown": breakdown["per_metric"],
+        "metrics_per_step": metrics_per_step,
+        "evals_completeness": completeness,
+        "gate_reason": gate_reason,
     }
     return row
 
