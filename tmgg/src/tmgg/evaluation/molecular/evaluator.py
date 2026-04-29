@@ -78,7 +78,13 @@ class MolecularEvaluator:
     # ------------------------------------------------------------------
 
     @classmethod
-    def for_qm9(cls) -> MolecularEvaluator:
+    def for_qm9(cls, **_kwargs: object) -> MolecularEvaluator:
+        # ``**_kwargs`` swallows fields leaked from the
+        # ``discrete_sbm_official`` model preset's ``evaluator:`` block
+        # via Hydra deep-merge (notably ``eval_num_samples``, ``p_intra``,
+        # ``p_inter``, ``clustering_sigma``). The molecular evaluator
+        # does not consume them; rejecting them would force the QM9
+        # yaml to ``~``-delete each one explicitly at compose time.
         from tmgg.evaluation.molecular.rdkit_metrics import (
             NoveltyMetric,
             UniquenessMetric,
@@ -95,7 +101,8 @@ class MolecularEvaluator:
         )
 
     @classmethod
-    def for_moses(cls) -> MolecularEvaluator:
+    def for_moses(cls, **_kwargs: object) -> MolecularEvaluator:
+        # See ``for_qm9`` for the ``**_kwargs`` swallow rationale.
         from tmgg.evaluation.molecular.moses_metrics import (
             FCDMetric,
             FiltersMetric,
@@ -128,7 +135,8 @@ class MolecularEvaluator:
         )
 
     @classmethod
-    def for_guacamol(cls) -> MolecularEvaluator:
+    def for_guacamol(cls, **_kwargs: object) -> MolecularEvaluator:
+        # See ``for_qm9`` for the ``**_kwargs`` swallow rationale.
         from tmgg.evaluation.molecular.guacamol_metrics import (
             FCDChEMBLMetric,
             KLDivPropertyMetric,

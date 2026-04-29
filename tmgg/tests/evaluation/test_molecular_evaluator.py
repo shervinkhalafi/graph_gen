@@ -48,6 +48,34 @@ def test_for_guacamol_metric_keys() -> None:
     ]
 
 
+def test_classmethod_presets_swallow_leaked_kwargs() -> None:
+    """Hydra-leaked evaluator fields must not crash the classmethod call.
+
+    Starting state: each molecular experiment yaml inherits the
+    ``evaluator:`` block from ``discrete_sbm_official`` (because the
+    yaml does ``override /models/discrete@model: discrete_sbm_official``)
+    and only overrides ``_target_``. Hydra deep-merges, so
+    ``eval_num_samples``, ``p_intra``, ``p_inter``, and
+    ``clustering_sigma`` get passed through to the classmethod call.
+
+    Invariant: the three classmethod presets MUST accept these
+    Hydra-leaked kwargs without raising. Was caught by the Phase 8
+    QM9 Modal smoke run (TypeError at ``MolecularEvaluator.for_qm9()``).
+    """
+    leaked = {
+        "eval_num_samples": 40,
+        "p_intra": 0.7,
+        "p_inter": 0.1,
+        "clustering_sigma": 0.1,
+    }
+    ev_qm9 = MolecularEvaluator.for_qm9(**leaked)
+    ev_moses = MolecularEvaluator.for_moses(**leaked)
+    ev_guacamol = MolecularEvaluator.for_guacamol(**leaked)
+    assert ev_qm9.metrics
+    assert ev_moses.metrics
+    assert ev_guacamol.metrics
+
+
 def test_evaluate_on_decoded_graphs() -> None:
     """End-to-end: evaluator decodes GraphData and runs metrics."""
     codec = _qm9_codec()
