@@ -102,6 +102,16 @@ class GraphDataCollator:
         SPECTRE-SBM / SPECTRE-Planar behaviour and lets
         :meth:`from_pyg_batch` infer the width from data when ``x`` is
         present.
+    num_bond_types_e
+        Optional explicit width for the one-hot ``E_class`` densified
+        from each ``Data.edge_attr`` (integer bond-class indices).
+        Forwarded verbatim to :meth:`GraphData.from_pyg_batch`.
+        Required for molecular-path correctness — without it, batches
+        that miss a rare bond class (e.g. AROMATIC) end up with a
+        narrower ``E_class`` than batches that include it. ``None``
+        (default) preserves the legacy 2-class ``[no-edge, edge]``
+        encoding used by SPECTRE-SBM / SPECTRE-Planar when
+        ``edge_attr`` is absent.
 
     See Also
     --------
@@ -114,6 +124,7 @@ class GraphDataCollator:
 
     n_max_static: int | None = None
     num_atom_types_x: int | None = None
+    num_bond_types_e: int | None = None
 
     def __call__(self, data_list: list[Data]) -> GraphData:
         from typing import cast
@@ -126,6 +137,7 @@ class GraphDataCollator:
             batch,
             n_max_static=self.n_max_static,
             num_atom_types_x=self.num_atom_types_x,
+            num_bond_types_e=self.num_bond_types_e,
         )
 
 

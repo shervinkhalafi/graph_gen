@@ -560,6 +560,7 @@ class GraphData:
         *,
         n_max_static: int | None = None,
         num_atom_types_x: int | None = None,
+        num_bond_types_e: int | None = None,
     ) -> GraphData:
         """Convert a PyG Batch to a dense GraphData.
 
@@ -592,12 +593,29 @@ class GraphData:
             and this kwarg is ``None``, ``X_class`` is left ``None`` to
             preserve the structure-only path used by SPECTRE-SBM /
             SPECTRE-Planar.
+        num_bond_types_e
+            Optional explicit width for the densified ``E_class`` one-hot
+            when the input ``batch`` carries a per-edge ``edge_attr``
+            attribute of integer bond-class indices (shape
+            ``(num_edges,)``). When ``None`` and ``edge_attr`` is
+            present, the width is inferred from ``int(edge_attr.max()) +
+            1`` — adequate for tests but underspecified for production
+            datasets that may not see every class in a given batch
+            (callers MUST pass the codec's ``vocab.num_bond_types`` to
+            guarantee consistent widths across batches; see the
+            molecular collator wiring in
+            ``data_modules/molecular/base.py``). When ``edge_attr`` is
+            absent, the legacy 2-class ``[no-edge, edge]`` densification
+            is used (preserves SPECTRE-SBM / SPECTRE-Planar paths).
 
         Returns
         -------
         GraphData
-            Dense batched representation with ``E_class`` (``de_class=2``
-            one-hot ``[no-edge, edge]``) always populated. ``X_class`` is
+            Dense batched representation with ``E_class`` always
+            populated. When ``edge_attr`` is present in ``batch``, the
+            width matches ``num_bond_types_e`` (or the inferred maximum)
+            and channel 0 encodes "no edge"; otherwise the legacy
+            2-class ``[no-edge, edge]`` layout is used. ``X_class`` is
             populated when the input batch carries a per-graph ``x``
             attribute of integer atom-class indices; otherwise ``None``
             (the spec forbids datasets emitting a degenerate
@@ -613,12 +631,15 @@ class GraphData:
         bs = int(batch.num_graphs)
         edge_index: Tensor = getattr(batch, "edge_index")  # noqa: B009
         batch_vec: Tensor = getattr(batch, "batch")  # noqa: B009
+        edge_attr_in: Tensor | None = getattr(batch, "edge_attr", None)
         # Upstream parity (DiGress utils.py:53-62): drop self-loops on the
         # sparse ``edge_index`` BEFORE densification so any per-edge
         # attributes a future dataset carries on diagonal entries are
         # discarded with the edges, rather than zeroed only after a lossy
-        # ``to_dense_adj`` accumulation.
-        edge_index, _ = remove_self_loops(edge_index)
+        # ``to_dense_adj`` accumulation. Pass ``edge_attr`` through the
+        # same call so it stays index-aligned with ``edge_index`` after
+        # the strip.
+        edge_index, edge_attr_in = remove_self_loops(edge_index, edge_attr_in)
         adj = to_dense_adj(edge_index, batch_vec)
         n_packed = adj.shape[1]
 
@@ -658,8 +679,80 @@ class GraphData:
                     f"shape={tuple(adj.shape)}, max|adj - adj.T|={max_asym:.3e}"
                 )
 
-        # One-hot edge features (bs, n, n, 2): [no-edge, edge]
-        E_class = torch.stack([1.0 - adj, adj], dim=-1)
+        # One-hot edge features. Two regimes:
+        # - ``edge_attr`` absent (SPECTRE-SBM / SPECTRE-Planar): emit the
+        #   legacy 2-class ``[no-edge, edge]`` one-hot.
+        # - ``edge_attr`` present (molecular path): densify the per-edge
+        #   bond class indices into a wider ``(bs, n, n, num_bond_types)``
+        #   tensor that mirrors the atom-class ``X_class`` densification.
+        #   Channel 0 ("no-edge" / "NONE") is set everywhere by default,
+        #   then cleared at positions where a real bond exists before the
+        #   bond's class is set. This preserves bond multiplicity through
+        #   the dataset → collator boundary instead of collapsing it to
+        #   "edge present / absent" — see the diagnosis in
+        #   ``docs/reports/2026-04-29-dataset-shims-and-hacks/README.md``
+        #   item #3.3.
+        if edge_attr_in is None:
+            E_class = torch.stack([1.0 - adj, adj], dim=-1)
+        else:
+            if edge_attr_in.dim() != 1:
+                raise ValueError(
+                    "from_pyg_batch: batch.edge_attr must be 1D integer "
+                    f"bond-class indices of shape (num_edges,); got shape "
+                    f"{tuple(edge_attr_in.shape)}."
+                )
+            if torch.is_floating_point(edge_attr_in):
+                raise ValueError(
+                    "from_pyg_batch: batch.edge_attr must be an integer "
+                    f"dtype (bond-class indices); got dtype "
+                    f"{edge_attr_in.dtype}."
+                )
+            edge_attr_long = edge_attr_in.long()
+            if num_bond_types_e is None:
+                num_bond_types = int(edge_attr_long.max().item()) + 1
+            else:
+                num_bond_types = int(num_bond_types_e)
+                observed_max = int(edge_attr_long.max().item())
+                if observed_max >= num_bond_types:
+                    raise ValueError(
+                        "from_pyg_batch: observed bond-class index "
+                        f"{observed_max} exceeds num_bond_types_e="
+                        f"{num_bond_types}."
+                    )
+            E_class = torch.zeros(
+                (bs, n_max, n_max, num_bond_types),
+                dtype=adj.dtype,
+                device=adj.device,
+            )
+            # Default to NONE everywhere so positions without a real bond
+            # carry the "no-edge" one-hot (parity with the legacy 2-class
+            # branch above where ``[1, 0]`` is the no-edge encoding).
+            E_class[..., 0] = 1.0
+            # Map every retained sparse edge to its (graph, src, dst)
+            # triple. ``edge_index`` is global (sums across graphs) so we
+            # convert the source row id to a per-graph row id via the
+            # cumulative node count, matching the X_class densification
+            # below.
+            node_counts_for_edge = torch.bincount(batch_vec, minlength=bs)
+            cum_counts_e = torch.zeros(bs + 1, dtype=torch.long, device=adj.device)
+            cum_counts_e[1:] = torch.cumsum(node_counts_for_edge, dim=0)
+            graph_ids = batch_vec[edge_index[0]]
+            src_in_graph = edge_index[0] - cum_counts_e[graph_ids]
+            dst_in_graph = edge_index[1] - cum_counts_e[graph_ids]
+            # Clear the NONE channel where a real bond exists, then set
+            # the bond's class. PyG edge_index entries appear in both
+            # directions for an undirected edge, so the symmetric
+            # assignment is implicit; we additionally enforce symmetry
+            # below to defend against directed inputs.
+            E_class[graph_ids, src_in_graph, dst_in_graph, 0] = 0.0
+            E_class[graph_ids, src_in_graph, dst_in_graph, edge_attr_long] = 1.0
+            # Defensive symmetrise: take the elementwise OR (max) with
+            # the transposed view so any single-direction entry from a
+            # directed input becomes symmetric. The NONE channel is
+            # restored at positions that are no-edge in *both* directions
+            # because zeros stay zero under max.
+            E_class = torch.maximum(E_class, E_class.transpose(1, 2))
+
         # Upstream parity: zero the diagonal of the target tensor so the
         # ``(true != 0).any(-1)`` row predicate inside the masked CE
         # helpers excludes self-loops automatically. Mirrors upstream
