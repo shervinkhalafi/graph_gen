@@ -243,7 +243,14 @@ class TestOnTrainBatchEnd:
         assert ckpt_path.parent.name == "checkpoints"
 
     def test_callback_calls_volume_commit_before_spawn(self, tmp_path: Path) -> None:
-        """Order: save_checkpoint → volume_commit → spawn (so the eval reads the new ckpt)."""
+        """Ordering contract:
+
+        1. ``save_checkpoint`` writes the step-stamped ckpt to the volume.
+        2. ``volume_commit`` flushes the ckpt so the spawned worker sees it.
+        3. ``spawn`` enqueues the Modal call.
+        4. ``volume_commit`` (again) flushes the ``spawned`` manifest row so the
+           worker can correlate its ``completed`` row against it (bug #2 fix).
+        """
         from tmgg.training.callbacks.async_eval_spawn import AsyncEvalSpawnCallback
 
         manifest = tmp_path / "eval_manifest.jsonl"
@@ -279,7 +286,59 @@ class TestOnTrainBatchEnd:
         trainer.global_step = 3
         cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=0)
 
-        assert events == ["save_checkpoint", "volume_commit", "spawn"]
+        assert events == [
+            "save_checkpoint",
+            "volume_commit",
+            "spawn",
+            "volume_commit",
+        ]
+
+    def test_callback_commits_manifest_row_after_spawn(self, tmp_path: Path) -> None:
+        """Bug #2 regression: the spawned-row commit must fire AFTER the
+        manifest write, so the eval worker's volume snapshot includes
+        the row. The smoke run never wrote a ``spawned`` row to the
+        worker's view because the second commit was missing."""
+        from tmgg.training.callbacks.async_eval_spawn import AsyncEvalSpawnCallback
+
+        manifest = tmp_path / "eval_manifest.jsonl"
+        trainer = _make_trainer(tmp_path=tmp_path)
+        pl_module = MagicMock()
+
+        # Capture the manifest contents at each volume_commit call so we
+        # can prove the spawned row exists at the second commit.
+        commit_snapshots: list[list[dict[str, Any]]] = []
+
+        def _snapshot() -> None:
+            commit_snapshots.append(_read_manifest(manifest))
+
+        volume_commit = MagicMock(side_effect=_snapshot)
+        resolver = _make_resolver(spawn_call_id="fc-99")
+
+        cb = AsyncEvalSpawnCallback(
+            schedule=[3],
+            run_uid="uid",
+            wandb_project="tmgg-spectral",
+            wandb_entity="graph_denoise_team",
+            manifest_path=str(manifest),
+            modal_function_resolver=resolver,
+            volume_commit_fn=volume_commit,
+        )
+        cb.on_train_start(trainer, pl_module)
+        trainer.global_step = 3
+        cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=0)
+
+        assert volume_commit.call_count == 2, (
+            f"expected 2 commits (pre-spawn + post-manifest), "
+            f"got {volume_commit.call_count}"
+        )
+        # First commit fires before the manifest row is written.
+        assert commit_snapshots[0] == [], "first commit must precede the manifest write"
+        # Second commit fires AFTER the manifest row, so the worker can see it.
+        assert len(commit_snapshots[1]) == 1, (
+            f"second commit must observe the spawned row; saw {commit_snapshots[1]}"
+        )
+        assert commit_snapshots[1][0]["status"] == "spawned"
+        assert commit_snapshots[1][0]["modal_call_id"] == "fc-99"
 
     def test_callback_resolves_correct_modal_function_per_tier(
         self, tmp_path: Path

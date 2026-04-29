@@ -222,3 +222,44 @@ def test_async_eval_spawn_callback_skipped_when_disabled(tmp_path: Path) -> None
         f"expected zero AsyncEvalSpawnCallback when enabled=false; "
         f"got {len(aes_callbacks)}."
     )
+
+
+def test_async_eval_callback_volume_commit_fn_wired_to_modal_helper(
+    tmp_path: Path,
+) -> None:
+    """Bug #2 regression: ``create_callbacks`` must bind the callback's
+    ``_volume_commit_fn`` to ``tmgg.modal._functions._commit_outputs_volume``
+    so the trainer-side commits actually fire on Modal.
+
+    Without this wiring the callback's ``volume_commit_fn`` stays
+    ``None`` (its constructor default), the trainer never commits the
+    persistent volume between writing the spawned manifest row and
+    spawning the eval worker, and the worker's volume snapshot misses
+    the row entirely. Symptom in the 2026-04-29 smoke: the manifest
+    contained ``completed`` rows from the workers but no ``spawned``
+    rows from the trainer.
+    """
+    from tmgg.modal._functions import _commit_outputs_volume
+
+    overrides = _minimal_overrides(tmp_path) + [
+        "base/callbacks=default_with_async_eval",
+        "callbacks.async_eval_spawn.enabled=true",
+        "callbacks.async_eval_spawn.schedule=[100]",
+        "callbacks.async_eval_spawn.run_uid=test-uid",
+        "callbacks.async_eval_spawn.manifest_path=/tmp/test_manifest.jsonl",
+    ]
+
+    with initialize_config_dir(version_base=None, config_dir=str(EXP_CONFIG_PATH)):
+        cfg = compose(
+            config_name="base_config_spectral_arch",
+            overrides=overrides,
+        )
+
+    callbacks = create_callbacks(cfg)
+    aes_callbacks = [cb for cb in callbacks if isinstance(cb, AsyncEvalSpawnCallback)]
+    assert len(aes_callbacks) == 1
+    aes = aes_callbacks[0]
+    assert aes._volume_commit_fn is _commit_outputs_volume, (
+        "create_callbacks must wire _volume_commit_fn to _commit_outputs_volume; "
+        f"got {aes._volume_commit_fn!r}"
+    )

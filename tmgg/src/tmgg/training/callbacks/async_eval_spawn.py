@@ -376,6 +376,15 @@ class AsyncEvalSpawnCallback(Callback):
         }
         _append_manifest_row(self.manifest_path, row)
 
+        # Commit again so the spawned-row is visible to the eval worker's
+        # snapshot of ``tmgg-outputs``. Modal volumes only flush on
+        # function-return or explicit ``Volume.commit()``; without this
+        # second commit the trainer's spawned rows never reach the eval
+        # workers, and ``on_fit_end`` drain treats every spawn as
+        # in-flight forever (bug #2 in the 2026-04-29 smoke).
+        if self._volume_commit_fn is not None:
+            self._volume_commit_fn()
+
     def _derive_run_id(self, trainer: pl.Trainer) -> str:
         """Best-effort derivation of the Modal run_id for the eval payload.
 

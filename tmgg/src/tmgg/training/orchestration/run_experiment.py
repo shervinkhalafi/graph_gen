@@ -164,10 +164,21 @@ def create_callbacks(config: DictConfig) -> list[pl.Callback]:
     # ``enabled`` key is the gate only and is not an ``__init__`` kwarg
     # of ``AsyncEvalSpawnCallback``, so we strip it before instantiation
     # (instantiate would otherwise pass it as a kwarg and crash).
+    #
+    # ``_volume_commit_fn`` is wired post-instantiation rather than via
+    # the YAML because the commit closure references the live Modal
+    # client and is not Hydra-instantiable. Without this hook the
+    # trainer's ``spawned`` manifest rows never reach the eval workers'
+    # snapshot of ``tmgg-outputs`` (Modal volumes only flush when the
+    # function returns or ``Volume.commit()`` fires explicitly), and the
+    # workers see an empty manifest -- the symptom of bug #2 in the
+    # 2026-04-29 smoke.
     aes_cfg = cb_config.get("async_eval_spawn", None)
     if aes_cfg is not None and bool(aes_cfg.get("enabled", False)):
         from omegaconf import DictConfig as _DictConfig
         from omegaconf import open_dict
+
+        from tmgg.modal._functions import _commit_outputs_volume
 
         aes_container = OmegaConf.to_container(aes_cfg, resolve=True)
         if not isinstance(aes_container, dict):
@@ -180,7 +191,9 @@ def create_callbacks(config: DictConfig) -> list[pl.Callback]:
         with open_dict(aes_cfg_for_init):
             if "enabled" in aes_cfg_for_init:
                 del aes_cfg_for_init["enabled"]
-        callbacks.append(hydra.utils.instantiate(aes_cfg_for_init))
+        async_eval_callback = hydra.utils.instantiate(aes_cfg_for_init)
+        async_eval_callback._volume_commit_fn = _commit_outputs_volume
+        callbacks.append(async_eval_callback)
 
     return callbacks
 
