@@ -27,6 +27,7 @@ path = "tmgg.modal"
 depends_on = [
     "tmgg.training.orchestration",  # Uses run_experiment, generate_run_id
     "tmgg.experiments",             # Evaluation function uses datamodule and checkpoint utils
+    "tmgg.data",                    # Dataset prepare/validate functions orchestrate dataset classes + SPECTRE fixture loaders
 ]
 # Modal platform integration - depends on cloud abstraction and run_experiment
 

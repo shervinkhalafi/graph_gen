@@ -805,6 +805,172 @@ def modal_list_checkpoints(run_id: str) -> dict[str, Any]:
     return list_checkpoints_for_run(run_id)
 
 
+# ----------------------------------------------------------------------
+# Dataset prepare + validate (CPU-only, share the tmgg-datasets volume).
+#
+# One ``@app.function`` per dataset for ``prepare`` and ``validate`` —
+# matches the existing per-tier wrapper pattern; lets each call be
+# launched / retried independently from the others. All delegate to
+# the impls in ``tmgg.modal._lib.dataset_ops`` so the same code path
+# is unit-testable locally.
+# ----------------------------------------------------------------------
+
+
+_DATASET_OPS_TIMEOUT = (
+    3600  # 1h ceiling — MOSES preprocess can take ~10min, plus retries.
+)
+
+
+@app.function(
+    name="modal_prepare_qm9",
+    image=experiment_image,
+    cpu=4.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_prepare_qm9() -> dict[str, Any]:
+    """Download + preprocess QM9 into ``/data/datasets/qm9/``."""
+    from tmgg.modal._lib.dataset_ops import prepare_dataset
+
+    return prepare_dataset("qm9")
+
+
+@app.function(
+    name="modal_prepare_moses",
+    image=experiment_image,
+    cpu=4.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_prepare_moses() -> dict[str, Any]:
+    """Download + preprocess MOSES into ``/data/datasets/moses/``."""
+    from tmgg.modal._lib.dataset_ops import prepare_dataset
+
+    return prepare_dataset("moses")
+
+
+@app.function(
+    name="modal_prepare_guacamol",
+    image=experiment_image,
+    cpu=4.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_prepare_guacamol() -> dict[str, Any]:
+    """Download + preprocess GuacaMol into ``/data/datasets/guacamol/``."""
+    from tmgg.modal._lib.dataset_ops import prepare_dataset
+
+    return prepare_dataset("guacamol")
+
+
+@app.function(
+    name="modal_prepare_planar",
+    image=experiment_image,
+    cpu=2.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_prepare_planar() -> dict[str, Any]:
+    """Download the SPECTRE planar fixture into ``/data/datasets/spectre/``."""
+    from tmgg.modal._lib.dataset_ops import prepare_dataset
+
+    return prepare_dataset("planar")
+
+
+@app.function(
+    name="modal_prepare_sbm",
+    image=experiment_image,
+    cpu=2.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_prepare_sbm() -> dict[str, Any]:
+    """Download the SPECTRE SBM fixture into ``/data/datasets/spectre/``."""
+    from tmgg.modal._lib.dataset_ops import prepare_dataset
+
+    return prepare_dataset("sbm")
+
+
+@app.function(
+    name="modal_validate_qm9",
+    image=experiment_image,
+    cpu=2.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_validate_qm9() -> dict[str, Any]:
+    """Validate every QM9 preprocessed shard (load + schema)."""
+    from tmgg.modal._lib.dataset_ops import validate_dataset
+
+    return validate_dataset("qm9")
+
+
+@app.function(
+    name="modal_validate_moses",
+    image=experiment_image,
+    cpu=2.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_validate_moses() -> dict[str, Any]:
+    """Validate every MOSES preprocessed shard (load + schema)."""
+    from tmgg.modal._lib.dataset_ops import validate_dataset
+
+    return validate_dataset("moses")
+
+
+@app.function(
+    name="modal_validate_guacamol",
+    image=experiment_image,
+    cpu=2.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_validate_guacamol() -> dict[str, Any]:
+    """Validate every GuacaMol preprocessed shard (load + schema)."""
+    from tmgg.modal._lib.dataset_ops import validate_dataset
+
+    return validate_dataset("guacamol")
+
+
+@app.function(
+    name="modal_validate_planar",
+    image=experiment_image,
+    cpu=1.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_validate_planar() -> dict[str, Any]:
+    """Validate the SPECTRE planar fixture (file + load)."""
+    from tmgg.modal._lib.dataset_ops import validate_dataset
+
+    return validate_dataset("planar")
+
+
+@app.function(
+    name="modal_validate_sbm",
+    image=experiment_image,
+    cpu=1.0,
+    timeout=_DATASET_OPS_TIMEOUT,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    volumes=get_volume_mounts(),
+)
+def modal_validate_sbm() -> dict[str, Any]:
+    """Validate the SPECTRE SBM fixture (file + load)."""
+    from tmgg.modal._lib.dataset_ops import validate_dataset
+
+    return validate_dataset("sbm")
+
+
 @app.function(
     name="_warm_molecular_caches_in_image",
     image=experiment_image,
