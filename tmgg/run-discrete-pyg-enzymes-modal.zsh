@@ -69,6 +69,16 @@ cmd=(
   # Validate every 10 000 steps. Upstream DiGress validates per-epoch
   # (~44k steps at our batch size); we deliberately validate ~4x more
   # often for faster training-time feedback.
+  #
+  # NOTE (smallest-config sweep, 2026-04-29): the smallest-config
+  # search is moving toward a non-uniform cosine/U-bowl eval cadence
+  # (see docs/superpowers/specs/2026-04-29-smallest-config-search-
+  # design.md §11.1 and scripts/sweep/eval_schedule.py). Per-round
+  # round.yaml overrides will eventually replace these uniform values
+  # with the inverse-CDF-placed schedule list. The training-side
+  # consumer that reads the list is a deferred Phase 0.4 patch
+  # (spec §10); until it lands, the schedule list is informational
+  # and the 10000-step uniform cadence still governs val_check.
   trainer.val_check_interval=10000
   model.eval_every_n_steps=10000
   # timesteps=1000 now baked into discrete_sbm_official.yaml (parity #43);
