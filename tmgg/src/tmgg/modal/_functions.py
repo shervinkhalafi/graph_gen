@@ -717,6 +717,69 @@ def modal_evaluate_mmd_fast(task_dict: dict[str, Any]) -> dict[str, Any]:
     return _evaluate_mmd_impl(task_dict)
 
 
+# ----------------------------------------------------------------------
+# Async-eval wrappers (Step 2 of compressed-tumbling-whale plan).
+#
+# Same per-tier triple as ``modal_evaluate_mmd*`` above, but each
+# delegates to ``evaluate_mmd_async`` from
+# ``tmgg.modal._lib.evaluate_async``. The trainer fires-and-forgets
+# these via ``.spawn(...)`` on every scheduled eval step; the worker
+# resumes the trainer's W&B run and logs gen-val/* metrics under the
+# trainer's custom step axis. ``standard`` (A10G) is the default tier
+# for async eval — the cost/throughput sweet spot for MMD evaluation —
+# while ``debug`` (T4) and ``fast`` (A100) cover the same tier matrix
+# the rest of the code expects.
+# ----------------------------------------------------------------------
+
+
+@app.function(
+    name="modal_evaluate_mmd_async",
+    image=experiment_image,
+    gpu=GPU_CONFIGS["standard"],
+    timeout=3600,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    secrets=[tigris_secret, wandb_secret],
+    volumes=get_volume_mounts(),
+)
+def modal_evaluate_mmd_async(task: dict[str, Any]) -> dict[str, Any]:
+    """Async MMD eval that resumes the trainer's W&B run (standard, A10G)."""
+    from tmgg.modal._lib.evaluate_async import evaluate_mmd_async
+
+    return evaluate_mmd_async(task)
+
+
+@app.function(
+    name="modal_evaluate_mmd_async_debug",
+    image=experiment_image,
+    gpu=GPU_CONFIGS["debug"],
+    timeout=1800,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    secrets=[tigris_secret, wandb_secret],
+    volumes=get_volume_mounts(),
+)
+def modal_evaluate_mmd_async_debug(task: dict[str, Any]) -> dict[str, Any]:
+    """Async MMD eval that resumes the trainer's W&B run (debug, T4)."""
+    from tmgg.modal._lib.evaluate_async import evaluate_mmd_async
+
+    return evaluate_mmd_async(task)
+
+
+@app.function(
+    name="modal_evaluate_mmd_async_fast",
+    image=experiment_image,
+    gpu=GPU_CONFIGS["fast"],
+    timeout=7200,
+    scaledown_window=DEFAULT_SCALEDOWN_WINDOW,
+    secrets=[tigris_secret, wandb_secret],
+    volumes=get_volume_mounts(),
+)
+def modal_evaluate_mmd_async_fast(task: dict[str, Any]) -> dict[str, Any]:
+    """Async MMD eval that resumes the trainer's W&B run (fast, A100)."""
+    from tmgg.modal._lib.evaluate_async import evaluate_mmd_async
+
+    return evaluate_mmd_async(task)
+
+
 @app.function(
     name="modal_list_checkpoints",
     image=experiment_image,
