@@ -452,6 +452,37 @@ def hash_snapshot(payload: dict[str, Any]) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
+def extract_trainer_step(record: dict[str, Any]) -> int:
+    """Return the trainer's true ``global_step`` from a W&B record dict.
+
+    The W&B step axis ``_step`` is wandb's internal log-event counter
+    (one increment per ``wandb.log`` call), NOT the Lightning trainer's
+    ``global_step``. Lightning's WandbLogger separately logs
+    ``trainer/global_step`` as a metric, and that key holds the true
+    training step. The watcher's flowchart (saturation fits, freshness
+    gate, evals_lag, "at >= 33% step_cap") all need the trainer step,
+    not the log-event count.
+
+    History records that pre-date the WandbLogger's first metric flush
+    (e.g. very early in training, before the first batch) may not have
+    ``trainer/global_step`` populated yet; in that case we fall back to
+    ``_step`` and treat the run as still booting (``current_step ≈ 0``).
+    Background: round-2 of the smallest-config sweep was killed on a
+    misread perf signal because the watcher was reading ``_step``
+    (~1100) instead of ``trainer/global_step`` (~8500); the resulting
+    "wall-clock pace 6× slower than impl-perf" diagnosis was an
+    artifact of dividing trainer steps by wall-time using wandb's
+    log-event count as the numerator (2026-04-30).
+    """
+    raw = record.get("trainer/global_step")
+    if raw is None:
+        raw = record.get("_step", 0)
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def fetch_snapshot_from_wandb(  # pragma: no cover — wraps live W&B API
     *,
     entity: str,
@@ -485,7 +516,11 @@ def fetch_snapshot_from_wandb(  # pragma: no cover — wraps live W&B API
         "gen-val/clustering_mmd",
         "diagnostics-val/progress/bits_per_edge",
     ]
-    raw_history = list(run.scan_history(keys=["_step", *history_keys], page_size=200))
+    raw_history = list(
+        run.scan_history(
+            keys=["_step", "trainer/global_step", *history_keys], page_size=200
+        )
+    )
     # Truncate to last k validation cycles (those with any gen-val/* key).
     val_records = [r for r in raw_history if any(k.startswith("gen-val/") for k in r)]
     history_subset = val_records[-last_k_validations:]
@@ -596,7 +631,7 @@ def main() -> None:  # pragma: no cover — CLI driver, exercised by integration
         except LookupError as exc:
             print(f"# SKIP {run_uid}: {exc}")
             continue
-        current_step = int(summary.get("_step", 0) or 0)
+        current_step = extract_trainer_step(summary)
         if not freshness_gate_passes(current_step=current_step, prior_watches=prior):
             print(f"# SKIP {run_uid}: freshness gate (step={current_step} unchanged)")
             continue
@@ -608,7 +643,9 @@ def main() -> None:  # pragma: no cover — CLI driver, exercised by integration
             float(r["val/epoch_NLL"]) for r in history if "val/epoch_NLL" in r
         ]
         quality_steps: list[float] = [
-            float(r["_step"]) for r in history if "gen-val/sbm_accuracy" in r
+            float(extract_trainer_step(r))
+            for r in history
+            if "gen-val/sbm_accuracy" in r
         ]
         quality_values: list[float] = [
             float(r["gen-val/sbm_accuracy"])

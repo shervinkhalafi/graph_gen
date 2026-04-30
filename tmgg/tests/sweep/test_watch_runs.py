@@ -33,6 +33,7 @@ from scripts.sweep.watch_runs import (
     FlowchartInput,
     apply_flowchart,
     build_recommendation,
+    extract_trainer_step,
     find_prior_watches,
     find_running_launches,
     read_watches,
@@ -51,6 +52,49 @@ class FakeRun:
 
     def history(self, **_: Any) -> list[dict[str, Any]]:
         return self.history_records
+
+
+# -----------------------------------------------------------------------------
+# Trainer-step extraction. The W&B ``_step`` axis is wandb's internal
+# log-event counter (one increment per ``wandb.log`` call), NOT the
+# Lightning trainer's ``global_step``. Lightning's WandbLogger separately
+# logs ``trainer/global_step`` as a metric. The watcher MUST use that key
+# for the flowchart's step-based gates (saturation fits, freshness gate,
+# evals_lag, "at >= 33% step_cap").
+#
+# Round 2 of the smallest-config sweep was killed on a misread perf
+# signal because the watcher previously read ``_step`` (~1100) instead of
+# ``trainer/global_step`` (~8500); the resulting "wall-clock pace 6×
+# slower than impl-perf" diagnosis was an artifact of dividing trainer
+# steps by wall-time using wandb's log-event count as the numerator.
+# -----------------------------------------------------------------------------
+
+
+def test_extract_trainer_step_prefers_trainer_global_step() -> None:
+    """When both keys exist, trainer/global_step wins (it's the real step)."""
+    record = {"_step": 1119, "trainer/global_step": 8557, "epoch": 777}
+    assert extract_trainer_step(record) == 8557
+
+
+def test_extract_trainer_step_falls_back_to_underscore_step() -> None:
+    """Records that pre-date the WandbLogger's first metric flush only have
+    ``_step`` populated; treat as still-booting and use ``_step`` as a
+    coarse proxy for ``current_step`` (essentially zero in practice).
+    """
+    record = {"_step": 0}
+    assert extract_trainer_step(record) == 0
+
+
+def test_extract_trainer_step_handles_missing_and_none() -> None:
+    """Empty record or both keys missing returns 0 instead of raising."""
+    assert extract_trainer_step({}) == 0
+    assert extract_trainer_step({"trainer/global_step": None, "_step": None}) == 0
+
+
+def test_extract_trainer_step_handles_string_values() -> None:
+    """W&B sometimes serializes numeric metrics as strings; coerce safely."""
+    assert extract_trainer_step({"trainer/global_step": "8557"}) == 8557
+    assert extract_trainer_step({"trainer/global_step": "not a number"}) == 0
 
 
 def test_find_running_launches_returns_running_only() -> None:
