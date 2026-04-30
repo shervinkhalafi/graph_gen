@@ -42,6 +42,20 @@ MODAL_APP_ID_RE = re.compile(r"\b(ap-[A-Za-z0-9]{10,})\b")
 # false-positives from log lines that happen to mention an ``fc-...`` ID.
 MODAL_FUNCTION_CALL_ID_RE = re.compile(r"MODAL_FUNCTION_CALL_ID=(fc-[A-Za-z0-9]+)")
 
+# All sweep runs land in this single W&B project. ``fetch_outcomes`` and
+# ``watch_runs`` query it by default and ignore the ``wandb_project`` field
+# in rounds.jsonl rows, so a wrapper that silently lands in a different
+# project is invisible to the rest of the pipeline.
+CANONICAL_WANDB_PROJECT = "tmgg-smallest-config-sweep"
+
+# The wrappers echo the rendered ``tmgg-modal run ...`` command (which
+# carries the wrapper's own ``wandb_project=<value>`` token) before
+# spawning. We scan that echo to assert the effective project matches the
+# canonical one — guarding against the round-1 incident where the SBM
+# wrapper defaulted ``WANDB_PROJECT=discrete-diffusion`` and the runs
+# vanished from the sweep namespace.
+WRAPPER_WANDB_PROJECT_RE = re.compile(r"\bwandb_project=([A-Za-z0-9_\-]+)")
+
 
 def config_hash(overrides: dict[str, Any]) -> str:
     blob = json.dumps(overrides, sort_keys=True).encode()
@@ -205,6 +219,29 @@ def launch_one(
             f"wrapper exited {proc.returncode} for run_uid={run_uid}; "
             f"refusing to append launched row per spec §7 invariant 1"
         )
+    project_match = WRAPPER_WANDB_PROJECT_RE.search(
+        proc.stdout
+    ) or WRAPPER_WANDB_PROJECT_RE.search(proc.stderr)
+    if project_match is None:
+        raise RuntimeError(
+            f"wrapper output for run_uid={run_uid} did not contain a "
+            f"'wandb_project=...' token; cannot verify the run landed in "
+            f"the canonical sweep project ({CANONICAL_WANDB_PROJECT}). "
+            f"Inspect the wrapper {WRAPPER_BY_DATASET[dataset]} or "
+            f"the WRAPPER_WANDB_PROJECT_RE regex."
+        )
+    actual_project = project_match.group(1)
+    if actual_project != CANONICAL_WANDB_PROJECT:
+        raise RuntimeError(
+            f"wrapper for run_uid={run_uid} rendered "
+            f"wandb_project={actual_project!r} but the canonical sweep "
+            f"project is {CANONICAL_WANDB_PROJECT!r}. The trainer pod will "
+            f"land in the wrong W&B namespace and fetch_outcomes/watch_runs "
+            f"will silently miss it. Fix the wrapper default "
+            f"({WRAPPER_BY_DATASET[dataset]}) or set "
+            f"WANDB_PROJECT={CANONICAL_WANDB_PROJECT} in the environment, "
+            f"then relaunch."
+        )
     app_id = parse_modal_app_id(proc.stdout) or parse_modal_app_id(proc.stderr)
     fc_id = parse_modal_function_call_id(proc.stdout) or parse_modal_function_call_id(
         proc.stderr
@@ -223,7 +260,7 @@ def launch_one(
         "config_hash": cfg_hash,
         "config_overrides": overrides,
         "wandb_entity": "graph_denoise_team",
-        "wandb_project": "tmgg-smallest-config-sweep",
+        "wandb_project": CANONICAL_WANDB_PROJECT,
         "wandb_run_id": None,
         "wandb_group": f"round-{round_no}-{dataset}-{axis_changed}",
         "modal_app_id": app_id,

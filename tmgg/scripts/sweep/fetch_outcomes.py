@@ -74,13 +74,34 @@ def read_rounds(rounds_jsonl: Path) -> list[dict[str, Any]]:
 
 
 def find_pending_launches(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Launched rows that have no matching outcome row."""
-    outcome_uids = {r["run_uid"] for r in rows if r.get("kind") == "outcome"}
-    return [
-        r
-        for r in rows
-        if r.get("kind") == "launched" and r["run_uid"] not in outcome_uids
-    ]
+    """Launched rows that have no matching outcome row.
+
+    A launched row is "pending" if there is no outcome row with the same
+    ``run_uid`` whose ``ts_utc`` is at or after the launched row's
+    ``ts_utc``. This timestamp-aware pairing supports the relaunch-after-kill
+    flow: when a wrapper-misconfig (or any other early failure) prompts an
+    operator to cancel a launched pod and respawn the same configuration,
+    both attempts share a ``run_uid`` (because the config hash is identical),
+    but only the latest launched row should be searched for in W&B. Pairing
+    by uid alone would treat the cancel-outcome row as "done" and silently
+    drop the relaunch.
+    """
+    latest_outcome_ts: dict[str, str] = {}
+    for r in rows:
+        if r.get("kind") != "outcome":
+            continue
+        ts = r.get("ts_utc", "")
+        prev = latest_outcome_ts.get(r["run_uid"], "")
+        if ts > prev:
+            latest_outcome_ts[r["run_uid"]] = ts
+    pending: list[dict[str, Any]] = []
+    for r in rows:
+        if r.get("kind") != "launched":
+            continue
+        outcome_ts = latest_outcome_ts.get(r["run_uid"])
+        if outcome_ts is None or outcome_ts < r.get("ts_utc", ""):
+            pending.append(r)
+    return pending
 
 
 def resolve_wandb_run(*, entity: str, project: str, run_name: str) -> WandbRun:

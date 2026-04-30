@@ -17,7 +17,7 @@ set -euo pipefail
 : "${GPU_TIER:=standard}"
 : "${SEED:=1}"
 : "${WANDB_ENTITY:=graph_denoise_team}"
-: "${WANDB_PROJECT:=discrete-diffusion}"
+: "${WANDB_PROJECT:=tmgg-smallest-config-sweep}"
 # MODAL_DEBUG=0 (default) → container sets PYTHONOPTIMIZE=1 inside the
 # training subprocess, stripping ``assert`` and ``if __debug__:`` blocks
 # from the hot path (~50 host-side syncs/step removed; see

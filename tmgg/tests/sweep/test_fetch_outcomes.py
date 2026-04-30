@@ -50,12 +50,85 @@ def _write_manifest(path: Path, rows: list[dict[str, Any]]) -> None:
 def test_find_pending_launches_returns_unmatched(tmp_path: Path) -> None:
     rows = [
         {"kind": "schema", "version": 1},
-        {"kind": "launched", "run_uid": "a"},
-        {"kind": "launched", "run_uid": "b"},
-        {"kind": "outcome", "run_uid": "a"},
+        {"kind": "launched", "run_uid": "a", "ts_utc": "2026-04-29T10:00:00+00:00"},
+        {"kind": "launched", "run_uid": "b", "ts_utc": "2026-04-29T10:01:00+00:00"},
+        {"kind": "outcome", "run_uid": "a", "ts_utc": "2026-04-29T11:00:00+00:00"},
     ]
     pending = find_pending_launches(rows)
     assert [r["run_uid"] for r in pending] == ["b"]
+
+
+def test_find_pending_launches_treats_relaunch_after_kill_as_pending(
+    tmp_path: Path,
+) -> None:
+    """A relaunch row with the same run_uid but a later ts_utc must be pending.
+
+    The smallest-config sweep's relaunch-after-kill flow (e.g. round 1's
+    SBM wrapper-misconfig kill + respawn) appends:
+      1. an original ``launched`` row at T1,
+      2. a ``failed`` outcome row at T2 (T2 > T1) marking the cancellation,
+      3. a fresh ``launched`` row at T3 (T3 > T2) for the respawn.
+    All three share a ``run_uid`` because the config hash is identical.
+    Pairing by uid alone would mark the relaunch as already-resolved by the
+    cancel-outcome and silently skip it; pairing by (uid, latest-outcome-ts)
+    correctly identifies the relaunch as pending while still marking the
+    original as paired.
+    """
+    rows = [
+        {"kind": "schema", "version": 1},
+        {
+            "kind": "launched",
+            "run_uid": "smallest-cfg/spectre_sbm/r1/anchor/abcd1234",
+            "ts_utc": "2026-04-30T04:33:28+00:00",
+            "modal_function_call_id": "fc-original",
+        },
+        {
+            "kind": "outcome",
+            "run_uid": "smallest-cfg/spectre_sbm/r1/anchor/abcd1234",
+            "ts_utc": "2026-04-30T04:40:00+00:00",
+            "status": "failed",
+            "failure_kind": "cancelled_wrapper_misconfig",
+        },
+        {
+            "kind": "launched",
+            "run_uid": "smallest-cfg/spectre_sbm/r1/anchor/abcd1234",
+            "ts_utc": "2026-04-30T04:45:00+00:00",
+            "modal_function_call_id": "fc-relaunch",
+        },
+    ]
+    pending = find_pending_launches(rows)
+    assert (
+        len(pending) == 1
+    ), "the relaunch row must be pending; cancel-outcome should not shadow it"
+    assert pending[0]["modal_function_call_id"] == "fc-relaunch"
+
+
+def test_find_pending_launches_skips_relaunch_once_its_outcome_lands(
+    tmp_path: Path,
+) -> None:
+    """After the relaunch finishes, both launched rows are paired.
+
+    Sequencing: launched(T1) → outcome(T2) → launched(T3) → outcome(T4).
+    The latest outcome's ts (T4) is >= the relaunch's ts (T3), so neither
+    launched row is pending.
+    """
+    rows = [
+        {"kind": "launched", "run_uid": "x", "ts_utc": "2026-04-30T01:00:00+00:00"},
+        {
+            "kind": "outcome",
+            "run_uid": "x",
+            "ts_utc": "2026-04-30T02:00:00+00:00",
+            "status": "failed",
+        },
+        {"kind": "launched", "run_uid": "x", "ts_utc": "2026-04-30T03:00:00+00:00"},
+        {
+            "kind": "outcome",
+            "run_uid": "x",
+            "ts_utc": "2026-04-30T04:00:00+00:00",
+            "status": "finished",
+        },
+    ]
+    assert find_pending_launches(rows) == []
 
 
 def test_read_rounds_skips_schema_and_blanks(tmp_path: Path) -> None:

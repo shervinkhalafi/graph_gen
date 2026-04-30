@@ -220,6 +220,7 @@ def test_launched_row_records_modal_function_call_id(tmp_path: Path) -> None:
         "Deploying Modal app...\n"
         "Spawned ap-9q8fJxK2Lm successfully\n"
         "MODAL_FUNCTION_CALL_ID=fc-01KQDABCDEF\n"
+        "Overrides: ... wandb_project=tmgg-smallest-config-sweep ...\n"
     )
     fake_proc = subprocess.CompletedProcess(
         args=["./run-upstream-digress-sbm-modal-a100.zsh"],
@@ -258,7 +259,10 @@ def test_launched_row_modal_function_call_id_null_when_marker_missing(
     direct cancel possible; fall back to ``modal app stop <app_id>``."
     """
     rounds_jsonl = tmp_path / "rounds.jsonl"
-    fake_stdout = "Spawned ap-9q8fJxK2Lm successfully\n"  # no MODAL_FUNCTION_CALL_ID
+    fake_stdout = (
+        "Spawned ap-9q8fJxK2Lm successfully\n"  # no MODAL_FUNCTION_CALL_ID
+        "Overrides: wandb_project=tmgg-smallest-config-sweep\n"
+    )
     fake_proc = subprocess.CompletedProcess(
         args=["./run-upstream-digress-sbm-modal-a100.zsh"],
         returncode=0,
@@ -281,6 +285,92 @@ def test_launched_row_modal_function_call_id_null_when_marker_missing(
 
     assert row["modal_function_call_id"] is None
     assert row["modal_app_id"] == "ap-9q8fJxK2Lm"
+
+
+# -----------------------------------------------------------------------------
+# Canonical-W&B-project guard. Round 1 of the smallest-config sweep was
+# launched with the SBM wrapper defaulting WANDB_PROJECT=discrete-diffusion;
+# the trainer pods landed in the wrong project and ``fetch_outcomes`` /
+# ``watch_runs`` (which both default to ``--project tmgg-smallest-config-sweep``
+# and ignore the row's ``wandb_project`` field) silently missed them. The
+# guard parses the wrapper's echoed command for ``wandb_project=<value>`` and
+# raises before appending the rounds.jsonl row when the value disagrees with
+# ``CANONICAL_WANDB_PROJECT``. Tests pin both failure modes plus the happy path.
+# -----------------------------------------------------------------------------
+
+
+def test_launch_one_raises_when_wrapper_uses_wrong_wandb_project(
+    tmp_path: Path,
+) -> None:
+    """Wrapper rendered ``wandb_project=discrete-diffusion`` — must crash, not append."""
+    rounds_jsonl = tmp_path / "rounds.jsonl"
+    fake_stdout = (
+        "Spawned ap-9q8fJxK2Lm successfully\n"
+        "MODAL_FUNCTION_CALL_ID=fc-01KQDABCDEF\n"
+        "Overrides: wandb_project=discrete-diffusion +wandb_name=...\n"
+    )
+    fake_proc = subprocess.CompletedProcess(
+        args=["./run-upstream-digress-sbm-modal-a100.zsh"],
+        returncode=0,
+        stdout=fake_stdout,
+        stderr="",
+    )
+    with (
+        patch("scripts.sweep.launch_round.subprocess.run", return_value=fake_proc),
+        pytest.raises(RuntimeError, match="discrete-diffusion"),
+    ):
+        launch_one(
+            dataset="spectre_sbm",
+            round_no=1,
+            axis_changed="anchor",
+            axis_value="full",
+            seed=0,
+            step_cap=100000,
+            overrides={},
+            rounds_jsonl=rounds_jsonl,
+            session_tag="test",
+            dry_run=False,
+        )
+    # The row must NOT be appended on guard failure — a half-recorded launch
+    # would mislead fetch_outcomes into searching for a phantom run.
+    assert not rounds_jsonl.exists() or rounds_jsonl.read_text(encoding="utf-8") == ""
+
+
+def test_launch_one_raises_when_wrapper_omits_wandb_project_token(
+    tmp_path: Path,
+) -> None:
+    """No ``wandb_project=...`` token in wrapper output — must crash, not append.
+
+    Defends against a future wrapper that drops the echo line entirely; the
+    guard cannot then verify the project, so the safe behavior is to fail
+    loudly rather than silently trust the canonical-project default.
+    """
+    rounds_jsonl = tmp_path / "rounds.jsonl"
+    fake_stdout = (
+        "Spawned ap-9q8fJxK2Lm successfully\n" "MODAL_FUNCTION_CALL_ID=fc-01KQDABCDEF\n"
+    )
+    fake_proc = subprocess.CompletedProcess(
+        args=["./run-upstream-digress-sbm-modal-a100.zsh"],
+        returncode=0,
+        stdout=fake_stdout,
+        stderr="",
+    )
+    with (
+        patch("scripts.sweep.launch_round.subprocess.run", return_value=fake_proc),
+        pytest.raises(RuntimeError, match="wandb_project"),
+    ):
+        launch_one(
+            dataset="spectre_sbm",
+            round_no=1,
+            axis_changed="anchor",
+            axis_value="full",
+            seed=0,
+            step_cap=100000,
+            overrides={},
+            rounds_jsonl=rounds_jsonl,
+            session_tag="test",
+            dry_run=False,
+        )
 
 
 def test_legacy_launch_omits_async_eval_fields(tmp_path: Path) -> None:
