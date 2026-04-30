@@ -513,21 +513,57 @@ def fetch_snapshot_from_wandb(  # pragma: no cover — wraps live W&B API
         run_list.sort(key=lambda r: getattr(r, "created_at", "") or "", reverse=True)
     run = run_list[0]
     summary = dict(run.summary)
-    history_keys = [
-        "val/epoch_NLL",
+    # Split into two scan_history calls because wandb's scan_history filters
+    # to rows having ALL requested keys; mixing trainer-logged
+    # (``val/epoch_NLL``, ``diagnostics-val/*``) with eval-worker-logged
+    # (``gen-val/*``) keys returns 0 rows because no single row has
+    # everything. Round 2 of the smallest-config sweep hit this — the
+    # gen-val data was correctly logged to wandb history but invisible to
+    # the watcher because of the over-restrictive keys filter.
+    gen_val_keys = [
         "gen-val/sbm_accuracy",
         "gen-val/modularity_q",
         "gen-val/degree_mmd",
         "gen-val/clustering_mmd",
+        "gen-val/orbit_mmd",
+        "gen-val/spectral_mmd",
+    ]
+    nll_keys = [
+        "val/epoch_NLL",
         "diagnostics-val/progress/bits_per_edge",
     ]
-    raw_history = list(
+    gen_rows = list(
         run.scan_history(
-            keys=["_step", "trainer/global_step", *history_keys], page_size=200
+            keys=["trainer/global_step", "_step", *gen_val_keys], page_size=200
         )
     )
-    # Truncate to last k validation cycles (those with any gen-val/* key).
-    val_records = [r for r in raw_history if any(k.startswith("gen-val/") for k in r)]
+    nll_rows = list(
+        run.scan_history(
+            keys=["trainer/global_step", "_step", *nll_keys], page_size=200
+        )
+    )
+    # Merge by trainer/global_step so a single row can carry both gen-val
+    # and NLL fields when both happened to fire at the same step.
+    by_step: dict[int, dict[str, Any]] = {}
+    for row in (*gen_rows, *nll_rows):
+        if row is None:
+            continue
+        step_raw = row.get("trainer/global_step")
+        if step_raw is None:
+            step_raw = row.get("_step", 0)
+        try:
+            step = int(step_raw or 0)
+        except (TypeError, ValueError):
+            continue
+        merged = by_step.setdefault(step, {})
+        for k, v in row.items():
+            if v is not None:
+                merged[k] = v
+    val_records = [
+        r
+        for _, r in sorted(by_step.items())
+        if any(k.startswith("gen-val/") for k in r)
+    ]
     history_subset = val_records[-last_k_validations:]
     return summary, dict(run.summary), history_subset
 
@@ -707,14 +743,29 @@ def main() -> None:  # pragma: no cover — CLI driver, exercised by integration
         )
         snapshot_payload = {"summary": summary, "history": history}
         snapshot_sha = hash_snapshot(snapshot_payload)
-        rec = build_recommendation(
-            run_uid=run_uid,
-            flowchart_input=flowchart_input,
-            observed_metrics={
+        # gen-val/* metrics are registered with ``step_metric=trainer/global_step``
+        # via ``define_metric``, so wandb does NOT auto-populate them in the
+        # run summary — they only land in history. Prefer the latest history
+        # row's gen-val keys; fall back to summary for legacy in-band runs
+        # that did not use the custom step axis.
+        observed_metrics: dict[str, float] = {}
+        if history:
+            latest_history = history[-1]
+            observed_metrics = {
+                k: float(v)
+                for k, v in latest_history.items()
+                if isinstance(v, int | float) and k.startswith("gen-val/")
+            }
+        if not observed_metrics:
+            observed_metrics = {
                 k: float(v)
                 for k, v in summary.items()
                 if isinstance(v, int | float) and k.startswith("gen-val/")
-            },
+            }
+        rec = build_recommendation(
+            run_uid=run_uid,
+            flowchart_input=flowchart_input,
+            observed_metrics=observed_metrics,
             observed_diagnostics={},
             snapshot_sha256=snapshot_sha,
             previous_decision_ref=prior[-1]["run_uid"] if prior else None,
