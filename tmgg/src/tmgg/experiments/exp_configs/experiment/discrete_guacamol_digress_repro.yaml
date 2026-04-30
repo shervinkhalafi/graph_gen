@@ -29,3 +29,11 @@ model:
     output_dims_x_feat: null
     output_dims_e_class: 5
     output_dims_e_feat: null
+  # GuacaMol vocab: 12 atom types + 5 bond types (no-bond + 4 bond
+  # orders). Override ``noise_process.{x,e}_classes`` away from the
+  # SBM preset default (2/2) so the empirical-marginal initialiser
+  # and forward process see the right class cardinality. See the QM9
+  # yaml for the full failure mode this guards against.
+  noise_process:
+    x_classes: 12
+    e_classes: 5

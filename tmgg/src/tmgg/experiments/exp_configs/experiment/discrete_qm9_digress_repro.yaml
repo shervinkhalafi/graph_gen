@@ -29,3 +29,15 @@ model:
     output_dims_x_feat: null
     output_dims_e_class: 5
     output_dims_e_feat: null
+  # The ``discrete_sbm_official`` model preset defaults
+  # ``noise_process.x_classes=2``, ``e_classes=2`` (SBM convention).
+  # QM9 has 4 atom types + 5 bond types (no-bond + 4 bond orders); the
+  # noise process must match so the empirical marginals
+  # (``initialize_from_data``) and the forward / reverse process operate
+  # on the same class cardinality the data + model expect. Without this
+  # override, ``count_node_classes_sparse`` raises an AssertionError at
+  # preflight ("per-node feature dimension 4 disagrees with
+  # num_node_classes=2").
+  noise_process:
+    x_classes: 4
+    e_classes: 5
