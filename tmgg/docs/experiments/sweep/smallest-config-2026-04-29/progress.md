@@ -170,18 +170,63 @@ Active call IDs (the relaunched pair + the original ENZYMES anchor):
 - ENZYMES anchor: `fc-01KQEAMD3RW1XN40QZ4Y8YA75Q`
 
 ### In-flight watch entries for round 1
-(populated during the 15-min watch loop while runs train; see
-`watches.jsonl` for the structured log)
+
+**Watch wakeup #1 (T+~15min after launch).** Two of three pods
+crashed within minutes; SBM anchor still running.
+
+- **SBM n_layers=6** (`fc-01KQEB11GXA2D7AAY2MS4NRY8Y`): KILLED.
+  Trainer subprocess exited 1 during checkpoint restoration. The
+  state_dict of a previously-cached n_layers=8 model was loaded into
+  the new n_layers=6 model, which lacks `tf_layers.7.norm_y2.{weight,bias}`.
+  Root cause: the wrapper's run_id formula
+  (`discrete_diffusion_DiffusionModule_lr2e-4_wd1e-12_s0`) does not
+  include `n_layers`, so this run shared a Modal output dir with a
+  prior n_layers=8 SBM run. The wandb run
+  https://wandb.ai/graph_denoise_team/tmgg-smallest-config-sweep/runs/m1uwn3es
+  exists but only logged init metadata.
+  Fix path: add `+force_fresh=true` to the round.yaml overrides for
+  the n_layers cut, or include `n_layers` in the wrapper run_id formula.
+  Marked `failure_kind=checkpoint_state_dict_mismatch`.
+- **ENZYMES anchor** (`fc-01KQEAMD3RW1XN40QZ4Y8YA75Q`): KILLED.
+  Hydra preflight crashed: `GraphDataModule.__init__() got an
+  unexpected keyword argument 'num_nodes'`. Root cause:
+  `base_config_discrete_diffusion_generative.yaml` defines
+  `data.num_nodes=20` as a top-level field for the synthetic
+  `SyntheticCategoricalDataModule` default; `+data=pyg_enzymes` merges
+  (does not replace) the data dict, so the leftover `num_nodes=20` is
+  passed to `GraphDataModule.__init__` which strict-rejects unknown
+  kwargs. SBM works because `SpectreSBMDataModule` has a `**_metadata`
+  catch-all that swallows the leftover. Fix path: add `~data.num_nodes`
+  to the ENZYMES wrapper, or change `pyg_enzymes.yaml` to nullify the
+  legacy field. Marked `failure_kind=config_schema_mismatch`.
+- **SBM anchor** (`fc-01KQEB0K2RZ8HY01BKSNMW6T4E`): KEEP. Modal call
+  still running. W&B project `tmgg-smallest-config-sweep` does not yet
+  exist (the project is created when the first run logs its first
+  metric); no gen-val data available for the watcher flowchart yet.
+  Recheck at wakeup #2.
+
+**Bookkeeping.** 11 abandoned round-0 smoke launches (no associated
+W&B runs, never paired with outcomes since round 0) cleared at the
+same time with two `failure_kind=abandoned_smoke` outcome rows (one
+per smoke run_uid). `find_pending_launches` shrank from 14 to 1 (the
+SBM anchor). Without this cleanup, every future watch wakeup would
+have re-traversed the abandoned set and crashed `watch_runs.py` on
+the first project lookup.
 
 ### Synthesis (every round, cheap)
-Round 1 is the first sweep round to actually consume the cosine/U-bowl
-eval schedule end-to-end (the 16-step list lives in
-`eval_schedule_<dataset>.yaml`). Whether the trainer-side consumer
-fires `val_check` at the scheduled steps or falls back to
-`val_check_interval=10000` is a separate Phase 0.4 deferred patch;
-either way, the SBM anchor sets the baseline for whether the v1
-diagnostic pre-rank generalizes (depth → ffy → dx → T) in the new
-opt-health namespace. The wrapper-misconfig incident is a one-time
-artefact of the per-dataset wrapper inconsistency; the new guard
-prevents it from recurring on any future round, so no synthesis
-adjustment to the round-2 plan is warranted.
+Round 1's effective evidence is just the SBM anchor — both axis cuts
+failed for infrastructure reasons, not scientific ones. The n_layers=6
+cut crashed in checkpoint restoration (wrapper run_id reuses a Modal
+output dir across architectures), and the ENZYMES anchor crashed in
+Hydra preflight (base config's synthetic-default data block leaks
+`num_nodes` into `GraphDataModule` because that data class lacks the
+`**_metadata` swallow that `SpectreSBMDataModule` has). Neither
+failure tells us anything about the scientific hypotheses (does
+n_layers=6 cross threshold? Is ENZYMES's spectral_mmd around HiGen's
+level?). Recommended round-2 plan: ship two wrapper fixes (run-id
+includes n_layers OR force_fresh on cuts; `~data.num_nodes` on ENZYMES
+wrapper), then relaunch (a) SBM n_layers=6 with `force_fresh`,
+(b) ENZYMES anchor. The SBM anchor result from round 1 stays as the
+in-house baseline regardless. The wrapper-misconfig (W&B project)
+incident from earlier is unrelated to either round-1 crash and is
+already locked out by the canonical-project guard.
