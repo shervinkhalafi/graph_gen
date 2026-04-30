@@ -271,6 +271,31 @@ visible to the watcher.
   GraphDataModule fix held — Hydra preflight passed, training started.
   No gen-val yet. Recommendation: keep.
 
+**Watch wakeup #4 (T+~3.5h after original launch).** All three pods
+have gen-val data now. Step pacing: SBM anchor advanced 2154 → 4678
+in 15 min ≈ 168 steps/min, projecting ~70h to reach 100k — well over
+the original ~13h estimate. Worth flagging: A100 + bf16-mixed at
+batch_size=12 may be slower than projected, or async-eval workers are
+serializing more than expected. Cost estimate revision pending.
+
+- **SBM anchor** (`5b20d928`, step 4678): `modularity_q=0.412` (≥ 0.3 ✓),
+  `spectral_mmd=0.0065` (≤ 0.01 ✓), `clustering_mmd=0.067`
+  (≤ 0.0747 ✓). Failing early: `degree_mmd=0.0067` (> 0.00195 ceil;
+  got worse from 0.0016 at wakeup #3 — normal early variance),
+  `orbit_mmd=0.110`, `sbm_accuracy=0.44`. Recommendation: keep.
+- **SBM n_layers=6 relaunch** (`52104237`, step 3462): first gen-val
+  landed. `modularity_q=0.406`, `spectral_mmd=0.0073`,
+  `clustering_mmd=0.073` — within tolerances; `degree_mmd=0.017`,
+  `orbit_mmd=0.133`, `sbm_accuracy=0.406`. Metrics close to the
+  anchor at the same step regime — too early to prefer either.
+  Recommendation: keep.
+- **ENZYMES anchor** (`5b20d928`, step 2436): first gen-val landed.
+  HiGen anchors are `degree=0.004`, `clustering=0.083`, `orbit=0.002`.
+  Observed: `degree=0.0076` (✗ at 1.5× ceil 0.006), `clustering=0.057`
+  (✓ pass), `orbit=0.0091` (✗ at 1.5× ceil 0.003); `spectral_mmd=0.033`
+  (this run pins the path-D in-house threshold for ENZYMES).
+  `modularity_q=0.37`, `planarity_accuracy=0.375`. Recommendation: keep.
+
 **Bookkeeping.** 11 abandoned round-0 smoke launches (no associated
 W&B runs, never paired with outcomes since round 0) cleared at the
 same time with two `failure_kind=abandoned_smoke` outcome rows (one
