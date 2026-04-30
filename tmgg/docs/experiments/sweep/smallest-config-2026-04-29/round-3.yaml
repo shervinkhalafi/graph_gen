@@ -1,0 +1,93 @@
+# Round 3 — lock n_layers=6 as new SBM baseline; attack dim_ffy axis;
+# re-seed L6 to confirm round-2 read.
+#
+# Round 2 evidence summary (in-band trustworthy points only):
+#
+#   SBM anchor (L8) trajectory: step → sbm_acc / passing
+#     10k → 0.34 / 4-of-6
+#     20k → 0.59 / 5-of-6
+#     30k → 0.375 / 3-of-6  (anchor's own dip)
+#
+#   SBM n_layers=6 (L6) trajectory:
+#     10k → 0.56 / 3-of-6
+#     20k → 0.44 / 3-of-6  (L6 dip)
+#     30k → 0.41 / 5-of-6
+#     40k → 0.5625 / 5-of-6  (recovered)
+#
+# Both pods bounce sbm_accuracy by ±0.15 absolute — that's the eval
+# noise floor for 32-graph SBM evaluation. At matched step 30k, L6
+# beats anchor 5/6 vs 3/6. No statistically meaningful gap on any
+# threshold metric within the noise floor.
+#
+# Provisional decision: n_layers=6 is safely shrinkable for SPECTRE
+# SBM. Round 3 locks L6 as the new baseline AND queues a re-seed of
+# L6 to confirm the noise-floor read, AND attacks dim_ffy per the
+# round-0 pre-rank order (n_layers → dim_ffy → dx → T).
+#
+# ENZYMES round 2 saturated to 4/5 PASS (degree, clustering,
+# modularity, spectral all within HiGen tolerances; orbit borderline
+# at 0.020 vs ceil 0.003). spectral_mmd path-D anchor pinned at 0.025
+# in anchors.yaml. Round 3 does not attack ENZYMES axes yet — first
+# get one full SBM cut locked, then ENZYMES axis attacks come once
+# the SBM smallest-config is identified.
+#
+# Per skill's per-config seed budget = 1 default; the L6 re-seed is
+# the explicit "borderline → re-seed" escalation. Three SBM launches
+# this round (1× re-seed L6 baseline + 2× dim_ffy cuts on L6).
+
+session_tag: round-3-lock-L6-and-attack-dim_ffy
+round: 3
+
+launches:
+  # 1. L6 re-seed: same config as round-2 L6 but seed=1, confirming
+  #    the matched-step parity is robust to seed (skill: "borderline
+  #    → re-seed to lock"). This is the disconfirming-config check
+  #    for round 2's "L6 is safe" decision.
+  - dataset: spectre_sbm
+    axis_changed: n_layers_reseed
+    axis_value: 6
+    seed: 1
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 6
+
+  # 2. dim_ffy=128: first cut on the next axis. Round-0 pre-rank:
+  #    `mlp_in_y` ratio 1.013, `mlp_out_y` ratio 1.0 (flat) — the
+  #    global-feature MLPs are over-provisioned. Cut from 256 to 128
+  #    (50% reduction). Combined with n_layers=6 from L6 baseline.
+  - dataset: spectre_sbm
+    axis_changed: dim_ffy
+    axis_value: 128
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 6
+      model.model.hidden_dims.dim_ffy: 128
+
+  # 3. dim_ffy=64: more aggressive cut (75% reduction). If 128 passes
+  #    threshold, this is the next probe; if 128 fails threshold, this
+  #    is the confirmation that 128 is the lower bound on this axis.
+  #    Either way, gives gradient info on the dim_ffy axis.
+  - dataset: spectre_sbm
+    axis_changed: dim_ffy
+    axis_value: 64
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 6
+      model.model.hidden_dims.dim_ffy: 64
+
+# Disconfirming-config fallback (if all three fail to cross threshold):
+#   The L6 re-seed result is the keystone. If it passes within the
+#   round-2 noise envelope, n_layers=6 stays locked and round 4
+#   pivots to dx OR T per pre-rank. If it FAILS the noise envelope
+#   (e.g. seed-1 L6 sbm_accuracy stays below 0.3 across in-band evals
+#   while seed-0 L6 reached 0.56), the round-2 read was a one-seed
+#   fluke and we revert to L8 baseline + retry n_layers cuts at L7
+#   instead.

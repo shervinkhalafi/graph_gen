@@ -321,3 +321,103 @@ wrapper), then relaunch (a) SBM n_layers=6 with `force_fresh`,
 in-house baseline regardless. The wrapper-misconfig (W&B project)
 incident from earlier is unrelated to either round-1 crash and is
 already locked out by the canonical-project guard.
+
+## Round 2 — Closing synthesis (early-stop, 2026-04-30)
+
+### What we observed
+Round 2 closed early at step ≈30k (anchor) / 40k (L6) / 75k (ENZYMES) after 4
+trustworthy in-band data points per SBM pod. The cosine-schedule async-eval
+data turned out unreliable on both datasets (loaded checkpoints produced
+metrics that systematically regressed vs the in-band evaluator path; in-band
+is the trustworthy source). The watcher had four bugs found and fixed during
+the round: (a) `_step` vs `trainer/global_step` misread, (b) duplicate-name
+ambiguity post-relaunch, (c) `scan_history(keys=...)` filtering rule that
+hid all gen-val data behind an empty result, (d) `find_pending_launches`
+ts-pairing that mis-credited cancel-outcomes. All four are in regression
+tests.
+
+### What round 2 told us about n_layers
+Matched-step in-band evidence:
+
+| step | anchor (L8) sbm_acc | L6 sbm_acc | anchor pass | L6 pass |
+|---|---|---|---|---|
+| 10k | 0.34 | 0.56 | 4/6 | 3/6 |
+| 20k | 0.59 | 0.44 | 5/6 | 3/6 |
+| 30k | 0.375 | 0.41 | 3/6 | 5/6 |
+| 40k | n/a   | 0.5625 | n/a | 5/6 |
+
+Both pods bounce sbm_accuracy by ±0.15 absolute — that is the
+32-graph evaluator's noise floor. At matched step 30k L6 actually beats
+anchor 5/6 vs 3/6. There is no statistically meaningful gap on any
+threshold metric within the noise floor. The "anchor pulled ahead at step
+20k" reading from earlier was the noise itself, not signal.
+
+### Decision
+**Provisionally lock n_layers=6 as the new SBM baseline.** Queue an L6
+re-seed in round 3 as the formal "borderline → re-seed" check (skill rule:
+single-seed reads on borderline outcomes get a 2nd seed before locking).
+Round 3 launches the re-seed in parallel with the next axis attack
+(`dim_ffy`) to keep the sweep moving.
+
+### What round 2 told us about ENZYMES
+Saturated to 4/5 PASS by step 60-70k. Trajectory is stable and small —
+spectral_mmd clusters around 0.025-0.034. The path-D in-house spectral_mmd
+anchor is now pinned at 0.025 (`tolerance_x=1.0` because this IS the
+reference). Only `orbit_mmd` still fails (0.020 vs HiGen ceil 0.003) — the
+gap is large enough to suggest ENZYMES needs more steps OR a different
+model regime (orbit MMD measures higher-order graph structure that DiGress
+struggles with even at the published config).
+
+### Cost
+Round 2 burn: ~$8 across 3 pods × ~3-4h × A100. Saved ~$15-20 by stopping
+early before step_cap.
+
+## Round 3 — Lock L6, re-seed, attack dim_ffy
+
+### What round 2 told us
+n_layers=6 is provisionally safe for SBM (matched-step parity within
+eval-noise floor across 4 in-band points per pod). ENZYMES anchor is
+saturated at 4/5 PASS; spectral_mmd anchor pinned at 0.025.
+
+### What I'm trying next and why
+Three SBM launches:
+1. **L6 re-seed (seed=1)**: keystone confirmation of round 2's "L6 is
+   safe" read. If seed-1 sbm_accuracy stays in the 0.4-0.6 range across
+   matched in-band steps, L6 is locked. If seed-1 fails the noise
+   envelope, revert to L8 and probe n_layers=7.
+2. **dim_ffy=128 on L6**: first cut of the next axis (round-0 pre-rank:
+   `mlp_in_y` ratio 1.013, `mlp_out_y` flat — the global-feature MLPs
+   are over-provisioned). 50% reduction from the round-1 default 256.
+3. **dim_ffy=64 on L6**: aggressive 75% cut. Gives gradient info on the
+   dim_ffy axis regardless of which way 128 lands.
+
+### Configs to launch
+| dataset | model_arch | axis_changed | axis_value | seed | step_cap |
+|---|---|---|---|---|---|
+| spectre_sbm | digress_official | n_layers_reseed | 6 | 1 | 100000 |
+| spectre_sbm | digress_official | dim_ffy | 128 | 0 | 100000 |
+| spectre_sbm | digress_official | dim_ffy | 64 | 0 | 100000 |
+
+ENZYMES does not get a round-3 launch. Strategy: lock the SBM smallest
+config first (n_layers + dim_ffy + dx + T axes), THEN attack ENZYMES axes
+once the SBM minimum is identified. Reduces sweep search-space
+combinatorics.
+
+### If I'm wrong, the cheapest disconfirming config is:
+The L6 re-seed itself is the disconfirming-config check on round 2's
+n_layers decision. For dim_ffy: if both 128 and 64 fail to cross threshold,
+that establishes the dim_ffy axis as non-shrinkable given L6 — pivot to dx
+in round 4. If only 64 fails, 128 is the lower bound on this axis.
+
+### In-flight watch entries for round 3
+(populated during the 4m30s cache-warm watch loop while runs train; see
+`watches.jsonl` for the structured log)
+
+### Synthesis (every round, cheap)
+Round 3 is the first round to compose two axis cuts (L6 + dim_ffy). The
+ablation it can answer: does cutting dim_ffy on top of L6 still produce a
+valid config? Eval-pipeline noise is the dominant uncertainty source we've
+characterized (±0.15 abs sbm_accuracy at 32 graphs); round 3's threshold
+verdicts are interpreted against that floor, not against zero. Saturation-
+fit diagnostic continues running each tick to characterize asymptote
+prediction quality on the new pods.
