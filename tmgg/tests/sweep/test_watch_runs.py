@@ -54,15 +54,63 @@ class FakeRun:
 
 
 def test_find_running_launches_returns_running_only() -> None:
-    """Running launches = launched rows without paired outcome."""
+    """Running launches = launched rows without paired outcome.
+
+    The watcher's ``find_running_launches`` is a re-export of
+    ``fetch_outcomes.find_pending_launches``, so the timestamp-aware
+    pairing rule (introduced for relaunch-after-kill) carries through:
+    when an outcome exists for a uid, only later-launched rows of the
+    same uid stay running. This test pins the basic happy path; the
+    relaunch-aware behavior is covered exhaustively in
+    ``test_fetch_outcomes.py``.
+    """
     rows = [
         {"kind": "schema", "version": 1},
-        {"kind": "launched", "run_uid": "a", "step_cap": 100000},
-        {"kind": "launched", "run_uid": "b", "step_cap": 100000},
-        {"kind": "outcome", "run_uid": "a"},
+        {
+            "kind": "launched",
+            "run_uid": "a",
+            "ts_utc": "2026-04-30T01:00:00+00:00",
+            "step_cap": 100000,
+        },
+        {
+            "kind": "launched",
+            "run_uid": "b",
+            "ts_utc": "2026-04-30T01:01:00+00:00",
+            "step_cap": 100000,
+        },
+        {"kind": "outcome", "run_uid": "a", "ts_utc": "2026-04-30T02:00:00+00:00"},
     ]
     running = find_running_launches(rows)
     assert [r["run_uid"] for r in running] == ["b"]
+
+
+def test_find_running_launches_treats_relaunch_as_running() -> None:
+    """Watcher must agree with fetch_outcomes that a relaunch is pending.
+
+    Regression: the watcher used to ship its own uid-only pairing copy,
+    which silently disagreed with fetch_outcomes after a relaunch-after-
+    kill (the cancel-outcome would shadow the relaunch). Now that both
+    share fetch_outcomes.find_pending_launches, this case must work end
+    to end through the watcher entry point.
+    """
+    rows = [
+        {"kind": "launched", "run_uid": "x", "ts_utc": "2026-04-30T01:00:00+00:00"},
+        {
+            "kind": "outcome",
+            "run_uid": "x",
+            "ts_utc": "2026-04-30T02:00:00+00:00",
+            "status": "failed",
+        },
+        {
+            "kind": "launched",
+            "run_uid": "x",
+            "ts_utc": "2026-04-30T03:00:00+00:00",
+            "modal_function_call_id": "fc-relaunch",
+        },
+    ]
+    running = find_running_launches(rows)
+    assert len(running) == 1
+    assert running[0]["modal_function_call_id"] == "fc-relaunch"
 
 
 def test_find_prior_watches_returns_chrono(tmp_path: Path) -> None:

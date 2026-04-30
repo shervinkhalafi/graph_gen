@@ -205,6 +205,28 @@ crashed within minutes; SBM anchor still running.
   metric); no gen-val data available for the watcher flowchart yet.
   Recheck at wakeup #2.
 
+**Watch wakeup #2 (T+~30min after launch).** Modal call still running.
+W&B-side flowchart could not run: this host's `~/.netrc` authenticates
+to wandb as `igkgh-personal`, but the sweep writes under the
+`graph_denoise_team` entity (Modal pods authenticate via Doppler
+secrets, a different identity). The project lookup for
+`tmgg-smallest-config-sweep` returns `Could not find project` —
+which is auth, not absence (a direct fetch of the n_layers=6 wandb
+run id `m1uwn3es` also fails the same way, and listing all projects
+under `graph_denoise_team` returns 0 even though several known
+projects exist). Per `CLAUDE.md` rule "re-authentication issue → stop
+and tell the user, don't look for alternatives", halting the
+autonomous watch loop until wandb auth is sorted.
+
+While the loop is halted, the SBM anchor continues training on Modal
+regardless — its terminal outcome can be fetched once auth lands.
+Side fix shipped this wakeup: `watch_runs.find_running_launches` is
+now a re-export of `fetch_outcomes.find_pending_launches` so the
+watcher and fetcher cannot diverge again on pairing semantics
+(regression test in `test_watch_runs.py`). Without this fix the
+watcher would have ignored the relaunch-after-kill case and reported
+0 running launches the first time it ran post-fix.
+
 **Bookkeeping.** 11 abandoned round-0 smoke launches (no associated
 W&B runs, never paired with outcomes since round 0) cleared at the
 same time with two `failure_kind=abandoned_smoke` outcome rows (one

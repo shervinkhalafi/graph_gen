@@ -127,13 +127,20 @@ def read_watches(path: Path) -> list[dict[str, Any]]:
 
 
 def find_running_launches(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Launched rows from ``rounds.jsonl`` without a paired outcome."""
-    outcome_uids = {r["run_uid"] for r in rows if r.get("kind") == "outcome"}
-    return [
-        r
-        for r in rows
-        if r.get("kind") == "launched" and r["run_uid"] not in outcome_uids
-    ]
+    """Launched rows from ``rounds.jsonl`` without a paired outcome.
+
+    Single source of truth lives in ``fetch_outcomes.find_pending_launches``
+    so the watcher and ``fetch_outcomes`` agree on what counts as still-
+    running. The watcher historically had its own copy with the older
+    uid-only pairing rule, which silently disagreed with fetch_outcomes
+    after the relaunch-after-kill flow landed (uid-only marks the
+    relaunch as already-paired by the cancel-outcome). Re-export the
+    canonical implementation here so callers and tests do not have to
+    track which module owns it.
+    """
+    from scripts.sweep.fetch_outcomes import find_pending_launches
+
+    return find_pending_launches(rows)
 
 
 def find_prior_watches(
