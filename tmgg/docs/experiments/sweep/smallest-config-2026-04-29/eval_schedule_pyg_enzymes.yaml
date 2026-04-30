@@ -1,0 +1,28 @@
+dataset: pyg_enzymes
+n_evals: 16
+total_steps: 100000
+params:
+  rho_min: 5.0e-05
+  rho_max: 0.00025
+  s_p: 35000
+  expected_knee_s_k: 70000
+schedule:
+- 3903
+- 8011
+- 12626
+- 18403
+- 27766
+- 44142
+- 52587
+- 58115
+- 62627
+- 66689
+- 70579
+- 74499
+- 78659
+- 83392
+- 89458
+- 100000
+doc: "Cosine/U-bowl eval cadence per spec \xA711.1. Density is rho(s) = rho_max -\
+  \ (rho_max - rho_min) * sin^2(pi * s / (2 * s_p)); min at s_p (chance-plateau midpoint),\
+  \ max at 0 and 2*s_p."

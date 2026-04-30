@@ -1,0 +1,87 @@
+# Round 1 — anchor + first axis cut for SPECTRE SBM and PyG ENZYMES.
+#
+# Per the round-0 diagnostic pre-rank (see progress.md round-0 section,
+# commit 246d4030), tf_layers_7 had the smallest growth ratio (1.05)
+# and lowest terminal weight norm in the v1 long-run, so n_layers is
+# the cheapest axis to attack first. Round 1 launches the SBM anchor
+# at full DiGress config + the SBM cut at n_layers=6, and the ENZYMES
+# anchor at full config (no v1-equivalent for ENZYMES means this run
+# also pins the in-house spectral_mmd path-D fallback — see anchors.yaml).
+#
+# Step cap = 100000 from s_star.yaml's s_star_operational. The gen-val/*
+# sample density in v1 was insufficient for the Domhan fit, so this is
+# the heuristic cap until a v1-equivalent at eval_every_n_steps <= 10000
+# is available. See spec §10.4.
+#
+# Async eval is enabled across all three launches (validated end-to-end
+# via smoke 12, commit cb326ea7). The cosine/U-bowl eval schedule lives
+# at eval_schedule_<dataset>.yaml; generate via:
+#   uv run python -m scripts.sweep.eval_schedule \
+#     --dataset spectre_sbm --total-steps 100000 --n-evals 16 \
+#     --out docs/experiments/sweep/smallest-config-2026-04-29/eval_schedule_spectre_sbm.yaml
+# (and similarly for pyg_enzymes) BEFORE invoking launch_round.
+#
+# Launch invocation (per dataset because launch_round takes one
+# --async-eval schedule path; or split this round.yaml into two
+# round-1-{sbm,enzymes}.yaml files and pair each with its schedule):
+#
+#   uv run python -m scripts.sweep.launch_round \
+#     --round-yaml docs/experiments/sweep/smallest-config-2026-04-29/round-1.yaml \
+#     --async-eval docs/experiments/sweep/smallest-config-2026-04-29/eval_schedule_spectre_sbm.yaml
+#
+# Cost estimate: 3 trainer runs × ~13h × A100 + ~16 evals/run × 13min ×
+# A10G ≈ $5–$10 total at Modal's standard pricing.
+
+session_tag: round-1-anchor-and-n_layers-cut
+round: 1
+
+launches:
+  # ----- SPECTRE SBM ------------------------------------------------
+  # 1. Anchor: full DiGress config. Establishes the in-house baseline
+  #    against the HiGen-derived raw-MMD anchors in anchors.yaml.
+  - dataset: spectre_sbm
+    axis_changed: anchor
+    axis_value: full
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+
+  # 2. First cut: n_layers 8 -> 6. Round-0 pre-rank evidence: tf_layers_7
+  #    weight-norm growth ratio 1.05 (lowest of all 8 layers) suggests
+  #    the last 1-2 transformer layers are doing minimal work in the
+  #    v1 trajectory. If quality crosses threshold at n_layers=6, lock
+  #    the cut. If not, the disconfirming-config fallback is
+  #    n_layers=7 (interpolate before pivoting axes).
+  - dataset: spectre_sbm
+    axis_changed: n_layers
+    axis_value: 6
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 6
+
+  # ----- PyG ENZYMES ------------------------------------------------
+  # 3. Anchor: full DiGress config. No v1-equivalent run exists, so
+  #    this run doubles as the path-D in-house reference for the
+  #    spectral_mmd threshold (anchors.yaml has degree/clustering/
+  #    orbit pinned from HiGen but no spectral_mmd; this run pins it).
+  - dataset: pyg_enzymes
+    axis_changed: anchor
+    axis_value: full
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+
+# Disconfirming-config fallback (if all three fail to cross threshold):
+#   The most likely failure mode is "anchor itself fails" — i.e. the
+#   published thresholds are too tight in our reproduction. In that
+#   case, do NOT relax anchors.yaml in round 2; instead, run an extra
+#   sanity probe at full config + 200k steps (2× step_cap) to confirm
+#   that the failure isn't a truncation artifact. Document the result
+#   in progress.md's round-1 synthesis subsection.
