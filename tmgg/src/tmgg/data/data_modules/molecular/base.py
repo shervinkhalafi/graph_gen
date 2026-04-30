@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import override
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from tmgg.data.data_modules.base_data_module import BaseGraphDataModule
 from tmgg.data.data_modules.multigraph_data_module import (
@@ -25,6 +25,30 @@ from tmgg.data.data_modules.multigraph_data_module import (
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
 from tmgg.utils.noising.size_distribution import SizeDistribution
+
+
+class _OneHotPyGView(Dataset[object]):
+    """Lazy view: yield each graph in one-hot PyG form on indexing.
+
+    Wraps a :class:`MolecularGraphDataset` so the raw-PyG dataloader
+    can stream :meth:`_graphdata_to_pyg_one_hot` outputs without
+    materialising a parallel list of PyG ``Data`` objects.
+    """
+
+    def __init__(self, ds: MolecularGraphDataset) -> None:
+        self._ds = ds
+
+    def __len__(self) -> int:
+        graphs = self._ds._graphs
+        return 0 if graphs is None else len(graphs)
+
+    def __getitem__(self, idx: int) -> object:
+        graphs = self._ds._graphs
+        if graphs is None:
+            raise RuntimeError(
+                "MolecularGraphDataset not setup; call .setup() before indexing."
+            )
+        return MolecularGraphDataset._graphdata_to_pyg_one_hot(graphs[idx])
 
 
 class MolecularDataModule(BaseGraphDataModule):
@@ -169,18 +193,29 @@ class MolecularDataModule(BaseGraphDataModule):
     def train_dataloader_raw_pyg(self) -> DataLoader[object]:
         """Raw PyG ``Batch`` training loader for the noise-process initialiser.
 
-        The molecular dataset's ``__getitem__`` already returns a PyG
-        ``Data`` object (atom-class indices in ``x``, bond-class indices
-        in ``edge_attr``) — we just swap the dense ``GraphData`` collator
-        for ``RawPyGCollator`` so the resulting loader yields PyG
-        ``Batch`` objects suitable for
-        :meth:`CategoricalNoiseProcess.initialize_from_data`. Off the hot
-        training path; consumed exactly once per run.
+        Wraps the molecular training dataset in :class:`_OneHotPyGView`
+        so each graph is converted via
+        :meth:`MolecularGraphDataset._graphdata_to_pyg_one_hot` (yielding
+        ``x`` with shape ``(N, num_atom_types)`` and ``edge_attr`` with
+        shape ``(E, num_bond_types)``, both float one-hot). This matches
+        the contract that :func:`count_node_classes_sparse` /
+        :func:`count_edge_classes_sparse` already assume — SBM/Planar
+        satisfy it by omitting both fields entirely (fallback path);
+        molecular populates them explicitly so per-class atom + bond
+        histograms can be summed.
+
+        We deliberately do NOT use the dataset's normal ``__getitem__``
+        here. That path emits 1-D index ``x``/``edge_attr`` for the
+        dense collator's ``F.one_hot`` densification step; piping it
+        through :class:`RawPyGCollator` would hand the sparse counters
+        a 1-D tensor and crash with ``IndexError: tuple index out of
+        range`` on ``x.shape[1]``. The two paths intentionally diverge.
+        Off the hot training path; consumed exactly once per run.
         """
         if self._train_dataset is None:
             raise RuntimeError(f"{type(self).__name__} not setup. Call setup() first.")
         return self._make_dataloader(
-            self._train_dataset,
+            _OneHotPyGView(self._train_dataset),
             shuffle=False,
             collate_fn=RawPyGCollator(),
         )

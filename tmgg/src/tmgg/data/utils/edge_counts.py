@@ -90,6 +90,19 @@ def count_edge_classes_sparse(
         else:
             per_class[1] = float(num_edges)
     else:
+        # Shape tripwire: ``edge_attr`` must be a 2-D one-hot
+        # ``(E, K)`` tensor. A 1-D ``(E,)`` of class indices would
+        # crash ``edge_attr.sum(dim=0)`` to a scalar and silently
+        # corrupt the per-class histogram. Surface clearly here.
+        if edge_attr.dim() != 2:
+            raise AssertionError(
+                f"count_edge_classes_sparse expects ``edge_attr`` to be a "
+                f"2-D one-hot ``(E, num_edge_classes)`` tensor, got shape "
+                f"{tuple(edge_attr.shape)}. If your dataset emits 1-D "
+                f"class indices, either omit ``edge_attr`` from the PyG "
+                f"``Data`` (fallback branch handles binary-edge batches) "
+                f"or convert to one-hot before batching."
+            )
         if edge_attr.shape[0] != edge_index.shape[1]:
             # Self-loop edges were removed above; if the dataset attaches
             # edge_attr we need the dataset to provide compatible counts.
@@ -159,6 +172,21 @@ def count_node_classes_sparse(
         target_class = 0 if num_node_classes == 1 else 1
         counts_out[target_class] = float(num_nodes)
         return counts_out
+    # Shape tripwire: ``x`` must be a 2-D one-hot ``(N, K)``. A 1-D
+    # ``(N,)`` would crash ``x.shape[1]`` with ``IndexError: tuple index
+    # out of range`` — surface a clear actionable error instead. The
+    # molecular ``MolecularGraphDataset`` raw-PyG path emits one-hot
+    # explicitly via ``_graphdata_to_pyg_one_hot``; SBM/Planar omit
+    # ``x`` entirely (handled by the fallback above). 1-D ``x`` would
+    # mean a caller fed indices through this path by mistake.
+    if x.dim() != 2:
+        raise AssertionError(
+            f"count_node_classes_sparse expects ``x`` to be a 2-D one-hot "
+            f"``(N, num_node_classes)`` tensor, got shape {tuple(x.shape)}. "
+            f"If your dataset emits 1-D class indices, either omit ``x`` "
+            f"from the PyG ``Data`` (fallback branch handles structure-"
+            f"only batches) or convert to one-hot before batching."
+        )
     if x.shape[1] != num_node_classes:
         raise AssertionError(
             f"count_node_classes_sparse: per-node feature dimension "

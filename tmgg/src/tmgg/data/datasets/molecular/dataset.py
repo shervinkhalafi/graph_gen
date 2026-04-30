@@ -255,6 +255,60 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
         return self._graphdata_to_pyg(self._graphs[idx])
 
     @staticmethod
+    def _graphdata_to_pyg_one_hot(gd: GraphData) -> Data:
+        """Convert codec :class:`GraphData` to PyG :class:`Data` with one-hot ``x``/``edge_attr``.
+
+        Variant of :meth:`_graphdata_to_pyg` for the *raw* PyG path
+        consumed by :func:`count_node_classes_sparse` and
+        :func:`count_edge_classes_sparse` (and ultimately
+        :meth:`CategoricalNoiseProcess.initialize_from_data`). Those
+        helpers expect:
+
+        - ``x``: ``(N, num_atom_types)`` float one-hot, summable along
+          ``dim=0`` for per-class node histograms.
+        - ``edge_attr``: ``(E, num_bond_types)`` float one-hot, with
+          row-zero reserved for the implicit "no-edge" class (the sparse
+          counter discards it because no-edge entries do not appear in
+          ``edge_index``).
+
+        SBM/Planar satisfy the same contract by *omitting* ``x`` and
+        ``edge_attr`` entirely; the counters fall back to a fixed-class
+        branch in that case. Molecular datasets need real per-class
+        histograms, so we populate them explicitly.
+
+        The dense training path uses :meth:`_graphdata_to_pyg` (the
+        index variant) which is what :meth:`GraphData.from_pyg_batch`
+        densifies into the dense ``X_class`` / ``E_class`` collator
+        output. Don't merge the two: the dense path requires integer
+        indices for its ``F.one_hot`` densification step, and the
+        sparse counter path requires float one-hot for its
+        ``x.sum(dim=0)`` aggregation step.
+        """
+        if gd.X_class is None or gd.E_class is None:
+            raise ValueError(
+                "MolecularGraphDataset._graphdata_to_pyg_one_hot requires "
+                "X_class and E_class to be populated by the codec."
+            )
+        n = int(gd.node_mask[0].sum().item())
+        num_bond_types = int(gd.E_class.shape[-1])
+        e_argmax = gd.E_class[0, :n, :n].argmax(dim=-1)
+        adj = (e_argmax != 0).to(torch.float32)
+        edge_index, _ = dense_to_sparse(adj)
+        src, dst = edge_index[0], edge_index[1]
+        bond_idx = e_argmax[src, dst].long()
+        edge_attr = torch.nn.functional.one_hot(
+            bond_idx, num_classes=num_bond_types
+        ).to(torch.float32)
+        # ``X_class`` is already one-hot, just slice + cast.
+        x = gd.X_class[0, :n].to(torch.float32)
+        return Data(
+            edge_index=edge_index,
+            num_nodes=n,
+            x=x,
+            edge_attr=edge_attr,
+        )
+
+    @staticmethod
     def _graphdata_to_pyg(gd: GraphData) -> Data:
         """Convert a single-graph codec :class:`GraphData` to PyG :class:`Data`.
 

@@ -83,6 +83,86 @@ def test_train_dataloader_raw_pyg_yields_pyg_batch(tmp_path: Path) -> None:
     assert batch.num_nodes >= 6  # type: ignore[attr-defined]  # PyG runtime attr
 
 
+def test_train_dataloader_raw_pyg_emits_one_hot_x_and_edge_attr(
+    tmp_path: Path,
+) -> None:
+    """Raw-PyG batch must carry one-hot ``x`` + ``edge_attr``.
+
+    Starting state: tiny molecular DataModule, three SMILES.
+
+    Invariants (the contract every consumer of
+    ``train_dataloader_raw_pyg`` already assumes — SBM/Planar satisfy
+    it by *omitting* ``x``/``edge_attr`` and falling back to the
+    fixed-class branch in :func:`count_node_classes_sparse` /
+    :func:`count_edge_classes_sparse`; molecular populates them
+    explicitly so per-class atom + bond histograms can be summed):
+
+    1. ``batch.x`` has shape ``(sum_N, num_atom_types)`` and is
+       float-valued one-hot (every row sums to 1.0). The previous
+       implementation emitted 1-D ``argmax`` indices, which crashed
+       :func:`count_node_classes_sparse` with ``IndexError: tuple
+       index out of range`` on ``x.shape[1]``.
+    2. ``batch.edge_attr`` has shape ``(E, num_bond_types)`` and is
+       one-hot. ``count_edge_classes_sparse`` reads ``edge_attr.sum(
+       dim=0)``; without the second axis it would crash the same way.
+    3. Each row sums to exactly 1.0 (single-class one-hot) so the
+       per-class counts coming out of the sparse counters add up to
+       the total node / edge count.
+    """
+    import torch
+
+    from tmgg.data.utils.edge_counts import (
+        count_edge_classes_sparse,
+        count_node_classes_sparse,
+    )
+
+    dm = _TinyDataModule(batch_size=2, cache_root=str(tmp_path))
+    dm.prepare_data()
+    dm.setup()
+    codec = _TinyDataset.make_codec()
+    num_atom_types = codec.vocab.num_atom_types
+    num_bond_types = codec.vocab.num_bond_types
+
+    batch = next(iter(dm.train_dataloader_raw_pyg()))
+    # 1. x: (sum_N, num_atom_types) one-hot.
+    assert (
+        batch.x.dim() == 2
+    ), f"x must be 2-D one-hot, got shape {tuple(batch.x.shape)}"
+    assert batch.x.shape[1] == num_atom_types, (
+        f"x second axis must equal vocab.num_atom_types={num_atom_types}, "
+        f"got {batch.x.shape[1]}"
+    )
+    assert torch.allclose(
+        batch.x.sum(dim=-1), torch.ones(batch.x.shape[0])
+    ), "every row of x must sum to 1.0 (one-hot)"
+    # 2. edge_attr: (E, num_bond_types) one-hot.
+    assert (
+        batch.edge_attr.dim() == 2
+    ), f"edge_attr must be 2-D one-hot, got shape {tuple(batch.edge_attr.shape)}"
+    assert batch.edge_attr.shape[1] == num_bond_types, (
+        f"edge_attr second axis must equal vocab.num_bond_types={num_bond_types}, "
+        f"got {batch.edge_attr.shape[1]}"
+    )
+    assert torch.allclose(
+        batch.edge_attr.sum(dim=-1), torch.ones(batch.edge_attr.shape[0])
+    ), "every row of edge_attr must sum to 1.0 (one-hot)"
+    # 3. The sparse counters that crashed before now return histograms
+    # whose totals match the underlying node / edge counts.
+    node_counts = count_node_classes_sparse(batch, num_atom_types)
+    assert node_counts.sum().item() == batch.x.shape[0], (
+        f"per-class node counts ({node_counts.tolist()}) must sum to total "
+        f"node count ({batch.x.shape[0]})"
+    )
+    edge_counts = count_edge_classes_sparse(batch, num_bond_types)
+    # Edge counts include the implicit no-edge slot at index 0; classes 1+
+    # should sum to the actual number of present edges in edge_index.
+    present_edges = int(batch.edge_attr.shape[0])
+    assert int(edge_counts[1:].sum().item()) == present_edges, (
+        f"per-class present-edge counts ({edge_counts[1:].tolist()}) must "
+        f"sum to len(edge_attr)={present_edges}"
+    )
+
+
 def test_basegraph_subclass_without_raw_pyg_override_cannot_instantiate() -> None:
     """Abstract-method enforcement: instantiation refused at object creation.
 
