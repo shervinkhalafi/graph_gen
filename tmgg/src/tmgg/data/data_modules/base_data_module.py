@@ -149,26 +149,28 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         """Return the test dataloader."""
         ...
 
+    @abc.abstractmethod
     def train_dataloader_raw_pyg(self) -> DataLoader[Any]:
         """Return a training dataloader yielding *raw* PyG ``Batch`` objects.
 
         Sits one layer below ``train_dataloader``: bypasses the dense
         ``GraphData`` collator so consumers that need the sparse PyG
         representation (notably the upstream-parity edge / node count
-        helpers in :mod:`tmgg.data.utils.edge_counts`) can iterate the
-        same training data without going through densification.
+        helpers in :mod:`tmgg.data.utils.edge_counts` and
+        :meth:`CategoricalNoiseProcess.initialize_from_data`) can
+        iterate the same training data without going through
+        densification.
 
-        Subclasses that produce PyG ``Data`` lists must override this to
-        wire their stored split through the raw collator. The base
-        method raises so the omission is loud rather than silent (any
-        datamodule whose training data is *not* PyG-backed must declare
-        that explicitly).
+        Marked ``@abc.abstractmethod`` so a subclass that omits the
+        override fails at instantiation time (``TypeError: Can't
+        instantiate abstract class ... with abstract method
+        train_dataloader_raw_pyg``) rather than at config-preflight
+        time on a Modal worker. Datamodules whose training data is not
+        PyG-backed should still implement this and raise
+        ``NotImplementedError`` from the body, so the failure mode is
+        explicit at the leaf class rather than inherited from the base.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not expose a raw PyG training "
-            "dataloader; override train_dataloader_raw_pyg() if the "
-            "datamodule's training data is PyG-backed."
-        )
+        ...
 
     # ------------------------------------------------------------------
     # Concrete utility methods

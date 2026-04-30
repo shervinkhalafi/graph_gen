@@ -18,7 +18,10 @@ from typing import override
 from torch.utils.data import DataLoader
 
 from tmgg.data.data_modules.base_data_module import BaseGraphDataModule
-from tmgg.data.data_modules.multigraph_data_module import GraphDataCollator
+from tmgg.data.data_modules.multigraph_data_module import (
+    GraphDataCollator,
+    RawPyGCollator,
+)
 from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
 from tmgg.utils.noising.size_distribution import SizeDistribution
@@ -160,6 +163,26 @@ class MolecularDataModule(BaseGraphDataModule):
             self._test_dataset,
             shuffle=False,
             collate_fn=self._dense_collator(),
+        )
+
+    @override
+    def train_dataloader_raw_pyg(self) -> DataLoader[object]:
+        """Raw PyG ``Batch`` training loader for the noise-process initialiser.
+
+        The molecular dataset's ``__getitem__`` already returns a PyG
+        ``Data`` object (atom-class indices in ``x``, bond-class indices
+        in ``edge_attr``) — we just swap the dense ``GraphData`` collator
+        for ``RawPyGCollator`` so the resulting loader yields PyG
+        ``Batch`` objects suitable for
+        :meth:`CategoricalNoiseProcess.initialize_from_data`. Off the hot
+        training path; consumed exactly once per run.
+        """
+        if self._train_dataset is None:
+            raise RuntimeError(f"{type(self).__name__} not setup. Call setup() first.")
+        return self._make_dataloader(
+            self._train_dataset,
+            shuffle=False,
+            collate_fn=RawPyGCollator(),
         )
 
     @override
