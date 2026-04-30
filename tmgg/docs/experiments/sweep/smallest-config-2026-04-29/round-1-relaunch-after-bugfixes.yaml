@@ -33,7 +33,7 @@ launches:
     overrides:
       trainer.max_steps: 100000
       model.model.n_layers: 6
-      "+force_fresh": true
+      force_fresh: true
 
   # ENZYMES anchor — same overrides as the original failing launch.
   # No additional Hydra fix needed: the GraphDataModule patch in
