@@ -111,3 +111,77 @@ artefacts.
 This is round 0; the synthesis is the pre-rank above. Round 1 will
 decide whether the pre-rank survives contact with new opt-health
 diagnostics that weren't available in v1.
+
+## Round 1 — anchor + first axis cut (n_layers 8 → 6)
+
+### What round 0 told us
+The v1 long-run's transformer-block weight-norm trajectories ranked
+`n_layers` as the cheapest axis to cut: `tf_layers_7` grew only 5%
+over 226k steps and `tf_layers_1` was second-lowest, both consistent
+with an over-provisioned 8-block stack. `dim_ffy` and `dx` showed
+real growth, so depth before width is the right starting move. No
+new opt-health namespace was available in v1 to cross-check, so
+round 1 also serves as the first opportunity to see
+`diagnostics-train/opt-health/*` on the anchor config.
+
+### What I'm trying next and why
+Three launches: the SBM anchor at full DiGress config (path-D
+in-house baseline against HiGen-derived raw-MMD anchors), the SBM
+cut at `n_layers=6` (the round-0 pre-rank's first move), and the
+ENZYMES anchor at full config (also pins ENZYMES's `spectral_mmd`
+threshold since neither DiGress nor HiGen reports it). Step cap
+100k from `s_star_operational`; eval cadence is the cosine/U-bowl
+16-eval schedule per dataset.
+
+### Configs to launch
+| dataset | model_arch | axis_changed | axis_value | seed | step_cap | run_uid |
+|---|---|---|---|---|---|---|
+| spectre_sbm | digress_official | anchor | full | 0 | 100000 | smallest-cfg/spectre_sbm/r1/anchor/5b20d928 |
+| spectre_sbm | digress_official | n_layers | 6 | 0 | 100000 | smallest-cfg/spectre_sbm/r1/n_layers/358d818c |
+| pyg_enzymes | digress_official | anchor | full | 0 | 100000 | smallest-cfg/pyg_enzymes/r1/anchor/5b20d928 |
+
+### If I'm wrong, the cheapest disconfirming config is:
+`n_layers=7` — interpolates between `n_layers=8` (anchor) and
+`n_layers=6` (round-1 cut). If `n_layers=6` fails to cross threshold
+but `n_layers=7` passes, the pre-rank is partially right (last block
+is removable, but the second-to-last isn't). If both `n_layers=7`
+and `n_layers=6` fail, the depth axis isn't actually slack and we
+pivot to `dim_ffy` per the round-0 pre-rank order.
+
+### Wrapper-misconfig kill + relaunch (operational note)
+Original SBM launches went to W&B project `discrete-diffusion`
+because `run-upstream-digress-sbm-modal.zsh:20` defaulted
+`WANDB_PROJECT=discrete-diffusion`. Both SBM pods cancelled via
+`scripts.sweep.kill_call` within minutes of spawn (no training had
+started). Wrapper default patched to `tmgg-smallest-config-sweep`;
+`launch_round.py` now asserts the rendered wrapper command's
+`wandb_project=<value>` matches `CANONICAL_WANDB_PROJECT` before
+appending a launched row (regression tests pin both failure modes).
+`find_pending_launches` in `fetch_outcomes.py` updated to pair by
+`(run_uid, latest-outcome-ts)` so the relaunch isn't shadowed by
+the cancel-outcome that shares its `run_uid`. Cancel-outcomes
+written to rounds.jsonl with `failure_kind=cancelled_wrapper_misconfig`;
+relaunches landed in the canonical project and verified by the new
+guard. See `skill-feedback.md` round-1 entry for the full forensics.
+
+Active call IDs (the relaunched pair + the original ENZYMES anchor):
+- SBM anchor: `fc-01KQEB0K2RZ8HY01BKSNMW6T4E`
+- SBM n_layers=6: `fc-01KQEB11GXA2D7AAY2MS4NRY8Y`
+- ENZYMES anchor: `fc-01KQEAMD3RW1XN40QZ4Y8YA75Q`
+
+### In-flight watch entries for round 1
+(populated during the 15-min watch loop while runs train; see
+`watches.jsonl` for the structured log)
+
+### Synthesis (every round, cheap)
+Round 1 is the first sweep round to actually consume the cosine/U-bowl
+eval schedule end-to-end (the 16-step list lives in
+`eval_schedule_<dataset>.yaml`). Whether the trainer-side consumer
+fires `val_check` at the scheduled steps or falls back to
+`val_check_interval=10000` is a separate Phase 0.4 deferred patch;
+either way, the SBM anchor sets the baseline for whether the v1
+diagnostic pre-rank generalizes (depth → ffy → dx → T) in the new
+opt-health namespace. The wrapper-misconfig incident is a one-time
+artefact of the per-dataset wrapper inconsistency; the new guard
+prevents it from recurring on any future round, so no synthesis
+adjustment to the round-2 plan is warranted.

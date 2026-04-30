@@ -1,0 +1,37 @@
+# Round-1 SBM relaunch.
+#
+# The original round-1 SBM launches (call IDs fc-01KQEAKHZPCDR2Z35AW1KBBKVP
+# and fc-01KQEAKYM2AMV8VV9DFYNVW01N) landed in W&B project
+# `discrete-diffusion` instead of the canonical `tmgg-smallest-config-sweep`,
+# because run-upstream-digress-sbm-modal.zsh defaulted
+# WANDB_PROJECT=discrete-diffusion. Both pods were cancelled via
+# `scripts.sweep.kill_call`. The wrapper default is now patched and
+# launch_round.py asserts the rendered wrapper command's `wandb_project=...`
+# token matches CANONICAL_WANDB_PROJECT before appending a launched row.
+#
+# Same overrides as round-1.yaml's first two entries — re-spawning into
+# the correct project. ENZYMES anchor (third entry of round-1.yaml) was
+# already in the correct project and remains untouched.
+
+session_tag: round-1-sbm-relaunch
+round: 1
+
+launches:
+  - dataset: spectre_sbm
+    axis_changed: anchor
+    axis_value: full
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+
+  - dataset: spectre_sbm
+    axis_changed: n_layers
+    axis_value: 6
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 6
