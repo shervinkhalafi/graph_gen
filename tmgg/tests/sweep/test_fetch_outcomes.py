@@ -103,6 +103,55 @@ def test_find_pending_launches_treats_relaunch_after_kill_as_pending(
     assert pending[0]["modal_function_call_id"] == "fc-relaunch"
 
 
+def test_find_pending_launches_pairs_by_call_id_when_outcome_lands_after_relaunch(
+    tmp_path: Path,
+) -> None:
+    """Cancel-outcome for the OLD pod must not shadow the relaunch.
+
+    Real failure mode (round-2 relaunch, 2026-04-30): operator killed
+    three pods, immediately relaunched, then appended cancel-outcome
+    rows for the killed pods — but the cancel-outcomes carry timestamps
+    AFTER the new launched rows because the relaunch invocation ran
+    first. Pure ts-based pairing then incorrectly marks the relaunches
+    as already-paired by their predecessors' cancel-outcomes.
+
+    The fix is to match on ``modal_function_call_id`` first: each
+    cancel-outcome carries the killed pod's fc-id, so it pairs to that
+    specific launched row regardless of ts ordering. The relaunched
+    rows have NEW fc-ids and stay pending.
+    """
+    rows = [
+        {
+            "kind": "launched",
+            "run_uid": "smallest-cfg/spectre_sbm/r2/anchor/abcd1234",
+            "ts_utc": "2026-04-30T09:03:38+00:00",
+            "modal_function_call_id": "fc-OLD",
+        },
+        # Operator kills, then relaunches (fc-NEW spawns):
+        {
+            "kind": "launched",
+            "run_uid": "smallest-cfg/spectre_sbm/r2/anchor/abcd1234",
+            "ts_utc": "2026-04-30T10:25:28+00:00",
+            "modal_function_call_id": "fc-NEW",
+        },
+        # ... and only THEN appends the cancel-outcome for the killed pod.
+        # ts is after the relaunch, but modal_function_call_id pins to fc-OLD.
+        {
+            "kind": "outcome",
+            "run_uid": "smallest-cfg/spectre_sbm/r2/anchor/abcd1234",
+            "ts_utc": "2026-04-30T10:26:23+00:00",
+            "status": "failed",
+            "failure_kind": "killed_misread_perf",
+            "modal_function_call_id": "fc-OLD",
+        },
+    ]
+    pending = find_pending_launches(rows)
+    assert (
+        len(pending) == 1
+    ), "the relaunch (fc-NEW) must stay pending; cancel-outcome targets fc-OLD only"
+    assert pending[0]["modal_function_call_id"] == "fc-NEW"
+
+
 def test_find_pending_launches_skips_relaunch_once_its_outcome_lands(
     tmp_path: Path,
 ) -> None:

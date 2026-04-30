@@ -76,19 +76,43 @@ def read_rounds(rounds_jsonl: Path) -> list[dict[str, Any]]:
 def find_pending_launches(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Launched rows that have no matching outcome row.
 
-    A launched row is "pending" if there is no outcome row with the same
-    ``run_uid`` whose ``ts_utc`` is at or after the launched row's
-    ``ts_utc``. This timestamp-aware pairing supports the relaunch-after-kill
-    flow: when a wrapper-misconfig (or any other early failure) prompts an
-    operator to cancel a launched pod and respawn the same configuration,
-    both attempts share a ``run_uid`` (because the config hash is identical),
-    but only the latest launched row should be searched for in W&B. Pairing
-    by uid alone would treat the cancel-outcome row as "done" and silently
-    drop the relaunch.
+    Pairing is two-layered:
+
+    1. **Direct ID match.** If a launched row has a
+       ``modal_function_call_id`` and an outcome row exists with the same
+       value, the launched row is paired regardless of ts. This is the
+       authoritative case — the outcome explicitly identifies which Modal
+       call it refers to.
+    2. **Timestamp fallback per uid.** For launched rows without a
+       ts-after-everything outcome match by call_id, fall back to the
+       per-uid latest-outcome timestamp: the launched row is pending iff
+       no outcome with the same ``run_uid`` has ``ts_utc >= launched ts``.
+
+    Layer 1 covers the operator-cancel-then-relaunch sequence where the
+    cancel-outcome may be appended after the relaunch (e.g. round-2
+    relaunch on 2026-04-30: cancel-outcomes for the killed pods landed
+    in rounds.jsonl after the relaunched-launched rows, with a wall-time
+    gap of seconds between the launch and the bookkeeping write — so
+    layer 2 alone would mark the relaunches as paired). Layer 2 covers
+    the abandoned-smoke / legacy-launch cases where no call_id was
+    captured.
     """
+    outcome_call_ids: set[str] = {
+        cid
+        for cid in (
+            r.get("modal_function_call_id") for r in rows if r.get("kind") == "outcome"
+        )
+        if cid
+    }
+    # Layer 2 considers only call_id-less outcomes — call_id-bearing
+    # outcomes are interpreted strictly via layer 1, so a cancel-outcome
+    # written *after* a relaunch (with the killed pod's call_id) does
+    # not shadow the relaunch via ts ordering.
     latest_outcome_ts: dict[str, str] = {}
     for r in rows:
         if r.get("kind") != "outcome":
+            continue
+        if r.get("modal_function_call_id"):
             continue
         ts = r.get("ts_utc", "")
         prev = latest_outcome_ts.get(r["run_uid"], "")
@@ -98,6 +122,11 @@ def find_pending_launches(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for r in rows:
         if r.get("kind") != "launched":
             continue
+        # Layer 1: direct call_id match (authoritative).
+        call_id = r.get("modal_function_call_id")
+        if call_id and call_id in outcome_call_ids:
+            continue
+        # Layer 2: uid + latest-outcome-ts fallback (call_id-less outcomes only).
         outcome_ts = latest_outcome_ts.get(r["run_uid"])
         if outcome_ts is None or outcome_ts < r.get("ts_utc", ""):
             pending.append(r)

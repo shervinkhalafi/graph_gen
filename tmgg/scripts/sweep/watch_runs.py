@@ -505,7 +505,12 @@ def fetch_snapshot_from_wandb(  # pragma: no cover — wraps live W&B API
     if not run_list:
         raise LookupError(f"no W&B run named {run_name!r} in {entity}/{project}")
     if len(run_list) > 1:
-        raise LookupError(f"ambiguous: {len(run_list)} W&B runs named {run_name!r}")
+        # Multiple runs share this display_name (e.g. relaunch-after-kill:
+        # the killed run and the relaunched one both carry the same run_uid).
+        # Pick the most recently created one — that's the live or final run
+        # the watcher should be reasoning about. ``created_at`` is an ISO
+        # string so lexicographic max works.
+        run_list.sort(key=lambda r: getattr(r, "created_at", "") or "", reverse=True)
     run = run_list[0]
     summary = dict(run.summary)
     history_keys = [
