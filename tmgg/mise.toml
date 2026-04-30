@@ -41,6 +41,22 @@ MODAL_LOGLEVEL=DEBUG uv run modal deploy -m tmgg.modal._functions 2>&1 | tee "$L
 description = "Run Modal app in development mode (hot-reload)"
 run = "uv run modal serve -m tmgg.modal._functions"
 
+[tasks.modal-deploy-eval-all]
+description = "Deploy the tmgg-eval-all Modal app (post-hoc per-checkpoint MMD eval)"
+depends = ["modal-secrets"]
+run = """
+LOGDIR="/tmp/tmgg-modal-logs"
+LOGFILE="$LOGDIR/modal-deploy-eval-all-$(date +%Y%m%d-%H%M%S).log"
+mkdir -p "$LOGDIR"
+rm -f src/tmgg/evaluation/orca/orca
+echo "Logging to $LOGFILE"
+MODAL_LOGLEVEL=DEBUG uv run modal deploy -m tmgg.modal._eval_all_functions 2>&1 | tee "$LOGFILE"
+"""
+
+[tasks.modal-serve-eval-all]
+description = "Run tmgg-eval-all in development mode (hot-reload)"
+run = "uv run modal serve -m tmgg.modal._eval_all_functions"
+
 # Analysis tasks
 [tasks.analyze]
 description = "Run full W&B analysis pipeline (download + importance analysis)"
