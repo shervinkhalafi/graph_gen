@@ -21,7 +21,7 @@ defaults:
   - _base_infra
   - /models/discrete@model: discrete_default
   - override /base/logger: discrete_wandb
-  - override /base/callbacks: discrete_nll
+  - override /base/callbacks: discrete_nll_with_async_eval
   - _self_
 
 experiment_name: "discrete_diffusion"
