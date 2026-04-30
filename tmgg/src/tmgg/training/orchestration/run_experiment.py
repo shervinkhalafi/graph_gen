@@ -251,6 +251,19 @@ def generate_run_id(config: DictConfig) -> str:
     if target:
         parts.append(str(target).split(".")[-1])
 
+    # Dataset discriminator: append a short token from data._target_ so
+    # SBM and ENZYMES (and any future +data=...) launches with otherwise
+    # identical hparams get distinct run dirs. Round-1 of the smallest-
+    # config sweep hit a contamination bug where ENZYMES async-eval
+    # workers loaded leftover SBM checkpoints from a shared run dir
+    # because the run_id formula had no dataset axis (2026-04-30; full
+    # post-mortem in skill-feedback.md).
+    data_cfg = config.get("data", {})
+    if hasattr(data_cfg, "get"):
+        data_target = data_cfg.get("_target_", "")
+        if data_target:
+            parts.append("d" + str(data_target).split(".")[-1])
+
     lr = config.get("learning_rate")
     if lr is not None:
         parts.append(f"lr{_format_hp(lr)}")
@@ -263,6 +276,17 @@ def generate_run_id(config: DictConfig) -> str:
     if k is not None:
         parts.append(f"k{k}")
 
+    # Architecture-depth discriminator: same root cause as the dataset
+    # discriminator above — round-1 SBM n_layers=6 loaded a stale
+    # n_layers=8 checkpoint because the run_id ignored n_layers (this
+    # bug was first masked by force_fresh, but force_fresh alone leaves
+    # the dir collision risk in place for any axis cut).
+    inner_model = model_cfg.get("model") if model_cfg else None
+    if inner_model is not None and hasattr(inner_model, "get"):
+        n_layers = inner_model.get("n_layers")
+        if n_layers is not None:
+            parts.append(f"L{n_layers}")
+
     diff_steps = model_cfg.get("diffusion_steps") if model_cfg else None
     if diff_steps is not None:
         parts.append(f"T{diff_steps}")
@@ -273,7 +297,17 @@ def generate_run_id(config: DictConfig) -> str:
 
     base = "_".join(parts)
 
-    if config.get("force_fresh", False):
+    # ``force_fresh`` defaults to True (post round-1 contamination
+    # incident, 2026-04-30). The Modal output dir is shared across
+    # successive launches that compute the same run_id, and prior-run
+    # checkpoints in that dir get loaded by both Lightning's resume
+    # path and the async-eval worker's checkpoint-by-step lookup. A
+    # ``_fresh_<UTC>`` suffix on every run guarantees a fresh dir; the
+    # cost (no checkpoint resume after a transient crash) is negligible
+    # next to the cost of silently evaluating the wrong checkpoint.
+    # Set ``force_fresh: false`` explicitly to opt back into resume
+    # semantics for an experiment that genuinely needs them.
+    if config.get("force_fresh", True):
         from datetime import UTC, datetime
 
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")

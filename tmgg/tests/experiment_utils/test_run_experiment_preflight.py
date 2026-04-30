@@ -29,7 +29,12 @@ class TestGenerateRunId:
     """
 
     def test_spectral_arch_config(self):
-        """Full spectral arch config produces expected format."""
+        """Full spectral arch config produces expected format.
+
+        Tests the deterministic portion of the id; ``force_fresh: false``
+        opts out of the post-2026-04-30 default that appends a UTC
+        timestamp suffix to dodge run-dir collisions.
+        """
         config = OmegaConf.create(
             {
                 "experiment_name": "stage1",
@@ -37,6 +42,7 @@ class TestGenerateRunId:
                 "learning_rate": 1e-4,
                 "weight_decay": 1e-3,
                 "seed": 1,
+                "force_fresh": False,
             }
         )
         result = generate_run_id(config)
@@ -51,6 +57,7 @@ class TestGenerateRunId:
                 "learning_rate": 5e-5,
                 "weight_decay": 1e-3,
                 "seed": 2,
+                "force_fresh": False,
             }
         )
         result = generate_run_id(config)
@@ -67,6 +74,7 @@ class TestGenerateRunId:
                 "learning_rate": 0.01,
                 "weight_decay": 0.1,
                 "seed": 1,
+                "force_fresh": False,
             }
         )
         result = generate_run_id(config)
@@ -75,7 +83,7 @@ class TestGenerateRunId:
 
     def test_missing_optional_fields(self):
         """Works with minimal config (only seed required)."""
-        config = OmegaConf.create({"seed": 42})
+        config = OmegaConf.create({"seed": 42, "force_fresh": False})
         result = generate_run_id(config)
         assert result == "s42"
 
@@ -85,10 +93,129 @@ class TestGenerateRunId:
             {
                 "model": {"_target_": "tmgg.models.Foo", "diffusion_steps": 500},
                 "seed": 1,
+                "force_fresh": False,
             }
         )
         result = generate_run_id(config)
         assert "T500" in result
+
+    def test_dataset_discriminator_appears_in_id(self):
+        """``data._target_`` short token is included as ``d<ClassName>``.
+
+        Round-1 of the smallest-config sweep hit a contamination bug
+        where ENZYMES async-eval workers loaded leftover SBM checkpoints
+        from a shared run dir because the run_id formula had no
+        dataset axis. This test pins that SBM and ENZYMES configs with
+        identical lr/wd/seed/n_layers produce different run_ids — and
+        therefore different Modal output dirs.
+        """
+        sbm_config = OmegaConf.create(
+            {
+                "experiment_name": "exp",
+                "model": {"_target_": "tmgg.models.Foo"},
+                "data": {"_target_": "tmgg.data.SpectreSBMDataModule"},
+                "learning_rate": 2e-4,
+                "seed": 0,
+                "force_fresh": False,
+            }
+        )
+        enzymes_config = OmegaConf.create(
+            {
+                "experiment_name": "exp",
+                "model": {"_target_": "tmgg.models.Foo"},
+                "data": {"_target_": "tmgg.data.GraphDataModule"},
+                "learning_rate": 2e-4,
+                "seed": 0,
+                "force_fresh": False,
+            }
+        )
+        sbm_id = generate_run_id(sbm_config)
+        enzymes_id = generate_run_id(enzymes_config)
+        assert "dSpectreSBMDataModule" in sbm_id
+        assert "dGraphDataModule" in enzymes_id
+        assert sbm_id != enzymes_id
+
+    def test_n_layers_discriminator_appears_in_id(self):
+        """``model.model.n_layers`` is included as ``L<n>``.
+
+        Round-1 of the smallest-config sweep hit a related contamination
+        bug where SBM n_layers=6 loaded a stale n_layers=8 checkpoint
+        because the run_id formula ignored architecture depth. This
+        test pins that two configs identical except for ``n_layers``
+        produce different run_ids.
+        """
+        n6 = OmegaConf.create(
+            {
+                "experiment_name": "exp",
+                "model": {
+                    "_target_": "tmgg.models.Foo",
+                    "model": {"n_layers": 6},
+                },
+                "seed": 0,
+                "force_fresh": False,
+            }
+        )
+        n8 = OmegaConf.create(
+            {
+                "experiment_name": "exp",
+                "model": {
+                    "_target_": "tmgg.models.Foo",
+                    "model": {"n_layers": 8},
+                },
+                "seed": 0,
+                "force_fresh": False,
+            }
+        )
+        assert "L6" in generate_run_id(n6)
+        assert "L8" in generate_run_id(n8)
+        assert generate_run_id(n6) != generate_run_id(n8)
+
+    def test_force_fresh_defaults_to_true(self):
+        """Post-2026-04-30 default: every run gets a ``_fresh_<UTC>`` suffix.
+
+        The previous default (``force_fresh: false``) shared a Modal
+        output dir across successive launches that computed the same
+        deterministic run_id, which caused two distinct contamination
+        modes in round-1 of the smallest-config sweep:
+          1. async-eval workers loaded prior-run checkpoints (saw
+             evaluations against models from unrelated training runs);
+          2. Lightning's resume picked up incompatible state_dicts when
+             architecture changed (n_layers=6 model loaded an
+             n_layers=8 ckpt and crashed).
+        Defaulting force_fresh to True forces every run into a unique
+        dir; the cost (no checkpoint resume after a transient crash)
+        is negligible next to silent contamination.
+        """
+        config = OmegaConf.create(
+            {
+                "experiment_name": "exp",
+                "model": {"_target_": "tmgg.models.Foo"},
+                "seed": 1,
+                # Note: no force_fresh override.
+            }
+        )
+        result = generate_run_id(config)
+        assert "_fresh_" in result, (
+            "force_fresh must default to True; result was " + result
+        )
+
+    def test_force_fresh_explicit_false_still_works(self):
+        """Opt-out path: ``force_fresh: false`` skips the suffix.
+
+        For experiments that genuinely need checkpoint-resume
+        semantics (e.g. continuation runs), the explicit override is
+        still honored.
+        """
+        config = OmegaConf.create(
+            {
+                "experiment_name": "exp",
+                "model": {"_target_": "tmgg.models.Foo"},
+                "seed": 1,
+                "force_fresh": False,
+            }
+        )
+        result = generate_run_id(config)
+        assert "_fresh_" not in result
 
     def test_existing_run_id_not_overwritten(self):
         """If config already has run_id, generate_run_id returns it unchanged."""
