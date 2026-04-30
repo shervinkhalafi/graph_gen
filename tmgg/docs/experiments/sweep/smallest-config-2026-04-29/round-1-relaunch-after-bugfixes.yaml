@@ -1,0 +1,49 @@
+# Round-1 relaunch after bugfixes (2026-04-30).
+#
+# Wakeup #1 of the watch loop caught two infrastructure failures:
+#   1. SBM n_layers=6 crashed in checkpoint restore: the trainer's
+#      generate_run_id() does not include n_layers, so the n_layers=6
+#      run shared a Modal output dir with a prior n_layers=8 SBM run.
+#      Fix: add +force_fresh=true so generate_run_id() appends a
+#      _fresh_<UTC> suffix, dodging the dir collision (and skipping
+#      the Lightning checkpoint resume that would re-trigger the bug).
+#   2. ENZYMES anchor crashed in Hydra preflight: GraphDataModule
+#      strict-rejected `num_nodes` and `num_graphs` keys leaked from
+#      the base config's inline synthetic-default data block.
+#      Fix: GraphDataModule now explicitly accepts and ignores those
+#      two keys (matches SpectreSBMDataModule's already-existing
+#      **_metadata absorber). Round 1's other launches are unaffected.
+#
+# Same configurations as round-1.yaml's failing entries, with the
+# minimum-blast-radius fix applied per launch.
+
+session_tag: round-1-relaunch-after-bugfixes
+round: 1
+
+launches:
+  # SBM n_layers=6 — same overrides as the original failing launch,
+  # plus +force_fresh=true so generate_run_id() picks a unique
+  # _fresh_<UTC>-suffixed run_id and skips checkpoint resume.
+  - dataset: spectre_sbm
+    axis_changed: n_layers
+    axis_value: 6
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 6
+      "+force_fresh": true
+
+  # ENZYMES anchor — same overrides as the original failing launch.
+  # No additional Hydra fix needed: the GraphDataModule patch in
+  # src/tmgg/data/data_modules/data_module.py absorbs the leftover
+  # base-config keys directly.
+  - dataset: pyg_enzymes
+    axis_changed: anchor
+    axis_value: full
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000

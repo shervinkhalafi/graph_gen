@@ -93,6 +93,31 @@ class TestGraphDataModuleInit:
                 **legacy_kwargs,
             )
 
+    def test_absorbs_synthetic_default_leftover_kwargs(self) -> None:
+        """Hydra ``+data=`` merges leak base-config synthetic-default kwargs.
+
+        ``base_config_discrete_diffusion_generative.yaml``'s inline
+        ``data:`` block sets ``num_nodes=20``, ``num_graphs=2000``, etc.
+        for the synthetic-default ``SyntheticCategoricalDataModule``.
+        When the wrapper does ``+data=pyg_enzymes``, Hydra MERGES (does
+        not replace) the data dict, so those base keys persist into the
+        ``GraphDataModule.__init__`` call. ``SpectreSBMDataModule`` already
+        absorbs them via ``**_metadata``; ``GraphDataModule`` does the
+        same via explicit ignored params, while still rejecting truly
+        unknown legacy kwargs (``noise_levels``, ``noise_type``).
+
+        Pin: passing ``num_nodes`` and ``num_graphs`` does not raise, and
+        ``graph_config["num_nodes"]`` remains the source of truth for
+        the dataset's actual node count.
+        """
+        dm = GraphDataModule(
+            graph_type="sbm",
+            graph_config={"num_nodes": 10, "block_sizes": [5, 5]},
+            num_nodes=20,  # leaked from base-config; ignored
+            num_graphs=2000,  # leaked from base-config; ignored
+        )
+        assert dm.num_nodes_max_static == 10  # graph_config["num_nodes"], not 20
+
 
 class TestGraphDataModuleSBM:
     """Tests for SBM dataset setup."""

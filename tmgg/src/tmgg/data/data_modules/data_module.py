@@ -47,6 +47,8 @@ class GraphDataModule(MultiGraphDataModule):
         seed: int = 42,
         num_nodes_max_static: int | None = None,
         eval_meta: object = None,
+        num_nodes: object = None,
+        num_graphs: object = None,
     ):
         """Initialize the GraphDataModule.
 
@@ -94,6 +96,21 @@ class GraphDataModule(MultiGraphDataModule):
         # ``eval_meta`` is captured into ``self.hparams`` by
         # ``save_hyperparameters()`` below; not used directly here.
         _ = eval_meta
+        # ``num_nodes`` / ``num_graphs`` are explicit ignored params
+        # rather than ``**_metadata`` swallow because the legacy-kwarg
+        # rejection contract (``noise_levels``, ``noise_type`` etc. must
+        # raise ``TypeError``) is still load-bearing — see
+        # ``test_rejects_legacy_noise_levels_argument``. The two keys
+        # below leak through Hydra's ``+data=`` merge from
+        # ``base_config_discrete_diffusion_generative.yaml``'s inline
+        # synthetic-default ``data:`` block; ``SpectreSBMDataModule``
+        # absorbs them via its own ``**_metadata``, so the ENZYMES /
+        # generic-PyG path needs an equivalent absorber to be on parity.
+        # Truth lives in ``graph_config``: ``num_nodes`` here is
+        # redundant with ``graph_config["num_nodes"]`` and ``num_graphs``
+        # is read by callers via ``graph_config.get("num_graphs", 1000)``
+        # (see line 108 below).
+        _ = num_nodes, num_graphs
         if "num_nodes" not in graph_config:
             raise KeyError(
                 "GraphDataModule.__init__: graph_config missing required key "
