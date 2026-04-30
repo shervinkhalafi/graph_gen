@@ -227,6 +227,50 @@ watcher and fetcher cannot diverge again on pairing semantics
 watcher would have ignored the relaunch-after-kill case and reported
 0 running launches the first time it ran post-fix.
 
+**Auth resolution (between wakeup #2 and #3).** `WANDB_API_KEY` lives
+in the project's Doppler `prd` config — the same source the Modal
+wrappers' `mise run modal-deploy` step injects into trainer pods.
+Invoking the watcher under `doppler run -- uv run python -m
+scripts.sweep.watch_runs` authenticates as `igorkraw` (default entity
+under doppler) and resolves the `graph_denoise_team/tmgg-smallest-
+config-sweep` lookup. Local watcher invocations from this point onward
+use the doppler prefix.
+
+**Bugfix relaunch (between wakeup #2 and #3).**
+`round-1-relaunch-after-bugfixes.yaml` re-launched the two failed
+configs after the corresponding code fixes landed:
+- `GraphDataModule.__init__` now accepts (and ignores) `num_nodes`
+  and `num_graphs` as explicit ignored params (matches
+  `SpectreSBMDataModule`'s already-existing `**_metadata` absorber);
+  the legacy-kwarg rejection contract for `noise_levels` /
+  `noise_type` is preserved by using explicit ignored params instead
+  of a generic `**_metadata` swallow. ENZYMES anchor relaunch:
+  `fc-01KQEGC2BFGPW6KFYAZTS6C95R`.
+- SBM `n_layers=6` relaunch uses `force_fresh=true` (plain, not
+  `+force_fresh` — Hydra rejects the append form because the trainer
+  config already declares the key) so `generate_run_id()` appends
+  `_fresh_<UTC>` to the run_id and dodges the Modal output-dir
+  collision. Relaunch: `fc-01KQEGBNS2GN2MYTG1JVVV8194`, run_id
+  `discrete_diffusion_DiffusionModule_lr2e-4_wd1e-12_s0_fresh_20260430T061359`.
+
+**Watch wakeup #3 (T+~3h after original launch).** Three pods now
+visible to the watcher.
+
+- **SBM anchor** (`5b20d928`, fc-...VV8194): step 2154, single gen-val
+  cycle landed (around step 1798); next eval at step 3903 per the
+  cosine schedule. Snapshot sha `3b007ad6` unchanged from wakeup #2's
+  observation since no new gen-val cycle. Mostly-passing metrics
+  early: `modularity_q=0.42` (≥ 0.3 ✓), `spectral_mmd=0.005`
+  (≤ 0.01 ✓), `degree_mmd=0.0016` (≤ 0.0013×1.5 ✓),
+  `clustering_mmd=0.067` (≤ 0.0498×1.5 ✓), `orbit_mmd=0.078`
+  (✗ early), `sbm_accuracy=0.344` (✗ early). Recommendation: keep.
+- **SBM n_layers=6 relaunch** (`52104237`, fc-...8194): step 393,
+  trainer up and stepping. force_fresh suffix confirmed in the run_id.
+  No gen-val yet (first at step 3903). Recommendation: keep.
+- **ENZYMES anchor relaunch** (`5b20d928`, fc-...95R): step 233.
+  GraphDataModule fix held — Hydra preflight passed, training started.
+  No gen-val yet. Recommendation: keep.
+
 **Bookkeeping.** 11 abandoned round-0 smoke launches (no associated
 W&B runs, never paired with outcomes since round 0) cleared at the
 same time with two `failure_kind=abandoned_smoke` outcome rows (one
