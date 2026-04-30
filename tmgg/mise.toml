@@ -25,33 +25,34 @@ echo "Modal secrets created successfully"
 """
 
 [tasks.modal-deploy]
-description = "Deploy TMGG Modal app to Modal cloud"
+description = "Deploy every TMGG Modal app (tmgg-spectral + tmgg-eval-all)"
 depends = ["modal-secrets"]
 run = """
 # Log outside project to avoid "modified during build" error
 LOGDIR="/tmp/tmgg-modal-logs"
-LOGFILE="$LOGDIR/modal-deploy-$(date +%Y%m%d-%H%M%S).log"
+TS="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$LOGDIR"
 rm -f src/tmgg/evaluation/orca/orca
-echo "Logging to $LOGFILE"
-MODAL_LOGLEVEL=DEBUG uv run modal deploy -m tmgg.modal._functions 2>&1 | tee "$LOGFILE"
+
+# Deploy each app sequentially. Modules are listed here; add new ones as
+# additional ``-m`` lines below. Both are deployed as part of the single
+# task so a normal "redeploy after a code change" picks up every app the
+# project owns without forgetting one.
+APPS=(
+    "tmgg.modal._functions"
+    "tmgg.modal._eval_all_functions"
+)
+
+for module in "${APPS[@]}"; do
+    LOGFILE="$LOGDIR/modal-deploy-${module##*.}-${TS}.log"
+    echo "[mise modal-deploy] deploying ${module} -> ${LOGFILE}"
+    MODAL_LOGLEVEL=DEBUG uv run modal deploy -m "${module}" 2>&1 | tee "$LOGFILE"
+done
 """
 
 [tasks.modal-serve]
-description = "Run Modal app in development mode (hot-reload)"
+description = "Run tmgg-spectral in development mode (hot-reload)"
 run = "uv run modal serve -m tmgg.modal._functions"
-
-[tasks.modal-deploy-eval-all]
-description = "Deploy the tmgg-eval-all Modal app (post-hoc per-checkpoint MMD eval)"
-depends = ["modal-secrets"]
-run = """
-LOGDIR="/tmp/tmgg-modal-logs"
-LOGFILE="$LOGDIR/modal-deploy-eval-all-$(date +%Y%m%d-%H%M%S).log"
-mkdir -p "$LOGDIR"
-rm -f src/tmgg/evaluation/orca/orca
-echo "Logging to $LOGFILE"
-MODAL_LOGLEVEL=DEBUG uv run modal deploy -m tmgg.modal._eval_all_functions 2>&1 | tee "$LOGFILE"
-"""
 
 [tasks.modal-serve-eval-all]
 description = "Run tmgg-eval-all in development mode (hot-reload)"
