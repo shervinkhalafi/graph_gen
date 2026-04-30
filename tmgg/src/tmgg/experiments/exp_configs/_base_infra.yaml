@@ -88,8 +88,16 @@ modal_debug: false
 # Random seed for reproducibility
 seed: 42
 
-# Training resumption: set true to ignore existing checkpoints and start fresh
-force_fresh: false
+# Training resumption: when true, generate_run_id appends a _fresh_<UTC>
+# suffix and Lightning skips checkpoint resume — every run gets its own
+# Modal output dir. Default true after the round-1 contamination
+# incident in the smallest-config sweep (2026-04-30): when two runs
+# computed the same deterministic run_id, the async-eval worker's
+# checkpoint-by-step lookup loaded a leftover ckpt from the prior run
+# and reported its metrics under the new run's display name. Set false
+# explicitly only for genuine continuation runs that need resume
+# semantics (e.g. recovering from a transient OOM mid-training).
+force_fresh: true
 
 # When true (default), training continues without W&B logging if WANDB_API_KEY
 # is unset. Set false to enforce W&B and crash without the key.
