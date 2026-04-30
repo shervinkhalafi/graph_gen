@@ -1,0 +1,50 @@
+# Round 2 — clean restart of round 1's three launches under the new
+# generate_run_id formula (commit 08927a6b: includes data._target_ +
+# model.model.n_layers, force_fresh defaults to True).
+#
+# Round 1's contamination forensics:
+# - SBM anchor and ENZYMES anchor shared Modal output dir
+#   discrete_diffusion_DiffusionModule_lr2e-4_wd1e-12_s0/ (same wrapper
+#   run_id formula). Async-eval workers loaded leftover SBM checkpoints
+#   from v1 long-runs in that dir; gen-val/* metrics in W&B for both
+#   runs were from cross-dataset stale checkpoints.
+# - SBM n_layers=6 (with force_fresh) escaped that contamination but
+#   was killed with the rest for a clean reset.
+#
+# Under the new formula:
+#   SBM anchor      → discrete_diffusion_DiffusionModule_dSpectreSBMDataModule_lr2e-4_wd1e-12_s0_fresh_<UTC>
+#   SBM n_layers=6  → discrete_diffusion_DiffusionModule_dSpectreSBMDataModule_lr2e-4_wd1e-12_L6_s0_fresh_<UTC>
+#   ENZYMES anchor  → discrete_diffusion_DiffusionModule_dGraphDataModule_lr2e-4_wd1e-12_s0_fresh_<UTC>
+# All three dirs are distinct without any per-launch overrides.
+
+session_tag: round-2-clean-restart
+round: 2
+
+launches:
+  - dataset: spectre_sbm
+    axis_changed: anchor
+    axis_value: full
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+
+  - dataset: spectre_sbm
+    axis_changed: n_layers
+    axis_value: 6
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 6
+
+  - dataset: pyg_enzymes
+    axis_changed: anchor
+    axis_value: full
+    seed: 0
+    step_cap: 100000
+    async_eval: true
+    overrides:
+      trainer.max_steps: 100000
