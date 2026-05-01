@@ -61,6 +61,12 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from tmgg.evaluation.graph_evaluator import GraphEvaluator
+from tmgg.experiments.discrete_diffusion_generative._eval_dump import (
+    EvalTimings,
+    dump_eval_artifacts,
+    run_val_pass_with_per_batch_capture,
+    stage_timer,
+)
 from tmgg.training.callbacks.ema import EMACallback
 from tmgg.training.lightning_modules.diffusion_module import DiffusionModule
 
@@ -355,6 +361,9 @@ def evaluate_checkpoint(
     mmd_kernel: Literal["gaussian", "gaussian_tv"] | None = None,
     mmd_sigma: float | None = None,
     device: str = "cpu",
+    output_dir: str | Path | None = None,
+    val_batch_limit: int | None = None,
+    viz_count: int = 32,
 ) -> dict[str, Any]:
     """Load a discrete diffusion checkpoint and compute the full metric set.
 
@@ -420,9 +429,13 @@ def evaluate_checkpoint(
     print(f"Evaluating: {checkpoint_path.name}")
     print(f"{'=' * 60}")
 
+    timings = EvalTimings()
+    total_t = stage_timer()
+
     # Load model from checkpoint (save_hyperparameters stores constructor args)
     # Only DiffusionModule checkpoints are supported.
     print("\nLoading model...")
+    load_t = stage_timer()
     module = _load_diffusion_module(checkpoint_path, device=device)
     module = module.to(device)
     module.eval()
@@ -437,6 +450,7 @@ def evaluate_checkpoint(
         print("Swapped EMA shadow weights into model for evaluation.")
     else:
         print("Evaluating live (non-EMA) weights.")
+    timings.load_s = load_t()
 
     # Pull reference graphs from the training-time datamodule. Lightning
     # `setup` reads the dataset on disk (or generates synthetic batches
@@ -458,6 +472,21 @@ def evaluate_checkpoint(
             "zero graphs; cannot compute the metric set against an empty reference."
         )
 
+    # Optional val-pass-with-per-batch-capture. Only fires when
+    # ``output_dir`` is set, because the per-batch CSV is the *only*
+    # consumer of the captured rows; running the pass otherwise wastes
+    # ~30s. Order: before sampling, so an OOM in sampling does not
+    # discard val diagnostics already on disk after dump_eval_artifacts.
+    val_rows = None
+    if output_dir is not None:
+        print("\nRunning val-pass with per-batch capture...")
+        val_t = stage_timer()
+        val_rows = run_val_pass_with_per_batch_capture(
+            module, datamodule, max_batches=val_batch_limit
+        )
+        timings.val_pass_s = val_t()
+        print(f"Captured {len(val_rows.rows)} val batches in {timings.val_pass_s:.1f}s")
+
     # Reconstruct the trainer's GraphEvaluator from the saved config so
     # the CLI reports the same metric set the trainer logs at
     # validation. Apply CLI overrides for kernel/sigma when explicitly
@@ -473,9 +502,12 @@ def evaluate_checkpoint(
     # populations.
     num_generated = len(ref_graphs)
     print(f"Sampling {num_generated} graphs from model...")
+    sample_t = stage_timer()
     with torch.no_grad():
         generated_graphs = module.generate_graphs(num_generated)
+    timings.sample_s = sample_t()
 
+    eval_t = stage_timer()
     eval_results = evaluator.evaluate(ref_graphs, generated_graphs)
     if eval_results is None:
         raise RuntimeError(
@@ -485,6 +517,8 @@ def evaluate_checkpoint(
             "or check the datamodule split."
         )
     metric_dict = eval_results.to_dict()
+    timings.eval_s = eval_t()
+    timings.total_s = total_t()
 
     results: dict[str, Any] = {
         "checkpoint_path": str(checkpoint_path.absolute()),
@@ -495,6 +529,7 @@ def evaluate_checkpoint(
         "mmd_kernel": evaluator.kernel,
         "mmd_sigma": evaluator.sigma,
         "mmd_results": metric_dict,
+        "timings": timings.to_dict(),
         "timestamp": datetime.now().isoformat(),
         "ema_active": ema_active,
     }
@@ -511,6 +546,21 @@ def evaluate_checkpoint(
         else:
             print(f"  {metric_name:<22} {value:.6f}")
     print(f"{'=' * 60}\n")
+
+    if output_dir is not None:
+        out_dir_path = Path(output_dir)
+        print(f"Dumping per-checkpoint artifacts to {out_dir_path}")
+        artifact_paths = dump_eval_artifacts(
+            out_dir_path,
+            checkpoint_name=checkpoint_path.name,
+            results=results,
+            generated_graphs=generated_graphs,
+            reference_graphs=ref_graphs,
+            val_rows=val_rows,
+            timings=timings,
+            viz_count=viz_count,
+        )
+        results["artifact_paths"] = artifact_paths
 
     return results
 
@@ -561,6 +611,37 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output", type=str, default=None, help="Write results to JSON file"
     )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help=(
+            "Write the full multi-format dump (metrics.json/csv, "
+            "generated/reference graph edge-list JSON, viz PNGs, "
+            "val_per_batch.csv, timings.json, summary.md) into this "
+            "directory. Triggers an extra val-pass to capture per-batch "
+            "diagnostics; orthogonal to --output (the JSON-only file)."
+        ),
+    )
+    parser.add_argument(
+        "--val-batch-limit",
+        type=int,
+        default=None,
+        help=(
+            "Cap on val-batches walked during the per-batch capture. "
+            "Default: walk the full val split. Only meaningful with "
+            "--output-dir."
+        ),
+    )
+    parser.add_argument(
+        "--viz-count",
+        type=int,
+        default=32,
+        help=(
+            "Per-side viz count under <output-dir>/viz/ "
+            "(generated_NN.png / reference_NN.png). Default 32."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -572,11 +653,14 @@ def main(argv: list[str] | None = None) -> int:
         mmd_kernel=args.kernel,
         mmd_sigma=args.sigma,
         device=args.device,
+        output_dir=args.output_dir,
+        val_batch_limit=args.val_batch_limit,
+        viz_count=args.viz_count,
     )
 
     if args.output:
         output_path = Path(args.output)
-        output_path.write_text(json.dumps(results, indent=2))
+        output_path.write_text(json.dumps(results, indent=2, default=str))
         print(f"Results written to {output_path}")
 
     return 0
