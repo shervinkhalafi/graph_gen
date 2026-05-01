@@ -472,3 +472,210 @@ class TestGraphTransformerSpectral:
         # The received adjacency should match the actual graph, not its complement
         assert received_adj[0, 1] == 1.0, "Edge (0,1) should be 1 in eigen input"
         assert received_adj[0, 2] == 0.0, "Non-edge (0,2) should be 0 in eigen input"
+
+
+class TestNormalizeEigenvaluesFlag:
+    """Tests for the optional ``normalize_eigenvalues`` flag.
+
+    See ``rationales/digress_spectral_projection_normalize_test_rationale.md``.
+    """
+
+    @staticmethod
+    def _nondegenerate_lambda(bs: int, k: int) -> torch.Tensor:
+        """Random Lambda with min-magnitude bounded away from zero.
+
+        The default normalization is ``Lambda / max|Lambda|`` clamped at
+        ``1e-6``; using non-trivial magnitudes ensures the rescale is a
+        non-degenerate division so the off≡on identity actually
+        exercises both branches.
+        """
+        Lam = torch.randn(bs, k)
+        # Floor magnitudes at 0.1 so max|.| is well above the 1e-6 clamp
+        Lam = Lam.sign() * Lam.abs().clamp(min=0.1)
+        return Lam
+
+    def test_layer_identity_off_on_normalized_input(self):
+        """``normalize=False`` on Λ̄ ≡ ``normalize=True`` on Λ.
+
+        With identical weights, feeding the per-graph rescaled
+        eigenvalues through a layer that does *not* normalize must
+        match feeding the raw eigenvalues through a layer that *does*
+        normalize. Pins the new flag's semantics.
+        """
+        torch.manual_seed(0)
+        bs, n, k, out_dim = 2, 8, 6, 12
+        V = torch.randn(bs, n, k)
+        Lam = self._nondegenerate_lambda(bs, k)
+
+        layer_on = SpectralProjectionLayer(
+            k=k, out_dim=out_dim, num_terms=3, normalize_eigenvalues=True
+        )
+        layer_off = SpectralProjectionLayer(
+            k=k, out_dim=out_dim, num_terms=3, normalize_eigenvalues=False
+        )
+        # Tie weights so the only difference is the gating of the rescale
+        for h_on, h_off in zip(layer_on.H, layer_off.H, strict=True):
+            h_off.data.copy_(h_on.data)
+        layer_off.out_proj.weight.data.copy_(layer_on.out_proj.weight.data)
+
+        Lam_max = Lam.abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-6)
+        Lam_norm = Lam / Lam_max
+
+        out_on = layer_on(V, Lam)
+        out_off = layer_off(V, Lam_norm)
+        torch.testing.assert_close(out_on, out_off, rtol=1e-5, atol=1e-6)
+
+    def test_layer_off_uses_raw_eigenvalues(self):
+        """``normalize=False`` actually skips the rescale.
+
+        On Lambda whose max magnitude is not 1, the two layers must
+        produce different outputs when given the same input — otherwise
+        the flag is silently dead.
+        """
+        torch.manual_seed(0)
+        bs, n, k, out_dim = 2, 8, 6, 12
+        V = torch.randn(bs, n, k)
+        Lam = self._nondegenerate_lambda(bs, k) * 3.0  # max|Lam| ≠ 1
+
+        layer_on = SpectralProjectionLayer(
+            k=k, out_dim=out_dim, num_terms=3, normalize_eigenvalues=True
+        )
+        layer_off = SpectralProjectionLayer(
+            k=k, out_dim=out_dim, num_terms=3, normalize_eigenvalues=False
+        )
+        for h_on, h_off in zip(layer_on.H, layer_off.H, strict=True):
+            h_off.data.copy_(h_on.data)
+        layer_off.out_proj.weight.data.copy_(layer_on.out_proj.weight.data)
+
+        out_on = layer_on(V, Lam)
+        out_off = layer_off(V, Lam)
+        assert not torch.allclose(out_on, out_off, rtol=1e-3, atol=1e-4)
+
+    def test_default_preserved_end_to_end(self):
+        """An unspecified normalize flag matches an explicit ``True``.
+
+        Guards against an accidental default flip in the plumbing. We
+        equalise weights by copying a state_dict between the two
+        models; a seed alone is insufficient because the differing
+        ``projection_config`` dicts alter the order in which the RNG
+        is consumed during ``__init__``.
+        """
+        bs, n = 2, 12
+
+        hidden_dims = {
+            "dx": 64,
+            "de": 16,
+            "dy": 32,
+            "n_head": 4,
+        }
+
+        torch.manual_seed(42)
+        model_default = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+            projection_config={"use_spectral_q": True, "spectral_k": 8},
+        )
+        model_explicit = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+            projection_config={
+                "use_spectral_q": True,
+                "spectral_k": 8,
+                "spectral_normalize_eigenvalues": True,
+            },
+        )
+        # Equalise weights so any output difference is due to the
+        # config branch under test, not random initialisation.
+        model_explicit.load_state_dict(model_default.state_dict())
+        model_default.eval()
+        model_explicit.eval()
+
+        layer_d = model_default.transformer.tf_layers[0]
+        layer_e = model_explicit.transformer.tf_layers[0]
+        assert isinstance(layer_d, XEyTransformerLayer)
+        assert isinstance(layer_e, XEyTransformerLayer)
+        assert isinstance(layer_d.self_attn.q, SpectralProjectionLayer)
+        assert isinstance(layer_e.self_attn.q, SpectralProjectionLayer)
+        assert layer_d.self_attn.q.normalize_eigenvalues is True
+        assert layer_e.self_attn.q.normalize_eigenvalues is True
+
+        adj = torch.rand(bs, n, n)
+        adj = (adj > 0.5).float()
+        adj = (adj + adj.transpose(-1, -2)).clamp(max=1.0)
+        adj.diagonal(dim1=1, dim2=2).zero_()
+        gd = binary_graphdata(adj)
+        out_d = model_default(gd)
+        out_e = model_explicit(gd)
+        assert out_d.E_class is not None and out_e.E_class is not None
+        torch.testing.assert_close(out_d.E_class, out_e.E_class)
+
+    def test_wiring_smoke_normalize_off(self):
+        """``spectral_normalize_eigenvalues=False`` propagates to every Q/K/V."""
+        hidden_dims = {
+            "dx": 64,
+            "de": 16,
+            "dy": 32,
+            "n_head": 4,
+        }
+        model = GraphTransformer(
+            n_layers=2,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+            projection_config={
+                "use_spectral_q": True,
+                "use_spectral_k": True,
+                "use_spectral_v": True,
+                "spectral_k": 8,
+                "spectral_normalize_eigenvalues": False,
+            },
+        )
+
+        for tf_layer in model.transformer.tf_layers:
+            assert isinstance(tf_layer, XEyTransformerLayer)
+            block = tf_layer.self_attn
+            for proj_name in ("q", "k", "v"):
+                proj = getattr(block, proj_name)
+                assert isinstance(proj, SpectralProjectionLayer)
+                assert proj.normalize_eigenvalues is False
+
+        # Forward must still work end-to-end. The eigen_layer feeds
+        # eigenvalues from a real adjacency, so |λ| stays bounded.
+        bs, n = 2, 12
+        adj = torch.rand(bs, n, n)
+        adj = (adj > 0.5).float()
+        adj = (adj + adj.transpose(-1, -2)).clamp(max=1.0)
+        adj.diagonal(dim1=1, dim2=2).zero_()
+        out = model(binary_graphdata(adj))
+        assert out.E_class is not None
+        assert out.E_class.shape == (bs, n, n, 2)
+
+    def test_hidden_dims_fallback(self):
+        """The new key honours the legacy ``hidden_dims`` fallback path."""
+        hidden_dims = {
+            "dx": 64,
+            "de": 16,
+            "dy": 32,
+            "n_head": 4,
+            "use_spectral_q": True,
+            "spectral_k": 8,
+            "spectral_normalize_eigenvalues": False,
+        }
+        model = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+        )
+        layer = model.transformer.tf_layers[0]
+        assert isinstance(layer, XEyTransformerLayer)
+        assert isinstance(layer.self_attn.q, SpectralProjectionLayer)
+        assert layer.self_attn.q.normalize_eigenvalues is False

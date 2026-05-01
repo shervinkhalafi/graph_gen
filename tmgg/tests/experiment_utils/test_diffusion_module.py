@@ -97,6 +97,28 @@ def _make_categorical_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> Graph
     return binary_graphdata(adj)
 
 
+def _path_graph_data(n: int) -> GraphData:
+    """Build a single-graph GraphData representing a path graph on ``n`` nodes.
+
+    Used by on_validation_epoch_end tests as the per-graph reference /
+    generated-sample shape post the 2026-05-01 universal-transport
+    refactor (was nx.path_graph(n); the refactor flipped the
+    public contract from list[nx.Graph] to list[GraphData]).
+    """
+    e_class = torch.zeros(n, n, 2)
+    e_class[..., 0] = 1.0  # default: no edge
+    for i in range(n - 1):
+        e_class[i, i + 1, 0] = 0.0
+        e_class[i, i + 1, 1] = 1.0
+        e_class[i + 1, i, 0] = 0.0
+        e_class[i + 1, i, 1] = 1.0
+    return GraphData(
+        node_mask=torch.ones(n, dtype=torch.float32),
+        E_class=e_class,
+        y=torch.zeros(0),
+    )
+
+
 def _make_module(
     evaluator: GraphEvaluator | None = None,
     loss_type: str = "mse",
@@ -544,13 +566,16 @@ class TestOnValidationEpochEnd:
         """At epoch end past step 0, on_validation_epoch_end should
         call get_reference_graphs on the datamodule to obtain refs.
         """
-        import networkx as nx
-
         evaluator = GraphEvaluator(eval_num_samples=4)
         module = _make_module(evaluator=evaluator, eval_every_n_steps=1)
 
         mock_dm = MagicMock()
-        mock_dm.get_reference_graphs.return_value = [nx.path_graph(5) for _ in range(4)]
+        # Per the 2026-05-01 universal-transport refactor refs are
+        # GraphData (was nx.Graph). Visualization is enabled by default
+        # in DiffusionModule, so mock returns must support .to_networkx().
+        mock_dm.get_reference_graphs.return_value = [
+            _path_graph_data(5) for _ in range(4)
+        ]
 
         mock_trainer = MagicMock()
         mock_trainer.global_step = 1  # past the step-0 untrained-model guard
@@ -558,7 +583,9 @@ class TestOnValidationEpochEnd:
         module._trainer = mock_trainer  # pyright: ignore[reportAttributeAccessIssue]
 
         with patch.object(
-            module, "generate_graphs", return_value=[nx.path_graph(5) for _ in range(4)]
+            module,
+            "generate_graphs",
+            return_value=[_path_graph_data(5) for _ in range(4)],
         ):
             module.on_validation_epoch_end()
 
@@ -595,8 +622,6 @@ class TestOnValidationEpochEnd:
         the already-sampled graphs instead of triggering a third generation
         pass just for visualization.
         """
-        import networkx as nx
-
         evaluator = GraphEvaluator(eval_num_samples=4)
         module = _make_module(
             evaluator=evaluator,
@@ -604,8 +629,14 @@ class TestOnValidationEpochEnd:
             visualization={"enabled": True, "num_samples": 8},
         )
 
-        refs = [nx.path_graph(5) for _ in range(4)]
-        generated = [nx.cycle_graph(5) for _ in range(4)]
+        # Per the 2026-05-01 universal-transport refactor refs and
+        # generated are GraphData; the trainer converts to nx at the
+        # leaf via to_networkx() before passing to
+        # build_validation_visualizations. The mock_build assert below
+        # therefore matches against the converted-nx call args, not
+        # the original GraphData.
+        refs = [_path_graph_data(5) for _ in range(4)]
+        generated = [_path_graph_data(5) for _ in range(4)]
         figures = {
             "gen-val/graph_samples": MagicMock(),
             "gen-val/adjacency_samples": MagicMock(),
@@ -624,7 +655,7 @@ class TestOnValidationEpochEnd:
             patch.object(
                 module,
                 "generate_graphs",
-                side_effect=[generated, [nx.path_graph(5) for _ in range(4)]],
+                side_effect=[generated, [_path_graph_data(5) for _ in range(4)]],
             ) as mock_generate,
             patch.object(
                 module.evaluator,
@@ -654,11 +685,15 @@ class TestOnValidationEpochEnd:
         ):
             module.on_validation_epoch_end()
 
-        mock_build.assert_called_once_with(
-            refs=refs,
-            generated=generated,
-            num_samples=8,
-        )
+        # The trainer converts GraphData → nx at the leaf right before
+        # the build_validation_visualizations call; assert call shape +
+        # node count rather than identity, since the converted nx
+        # objects are fresh.
+        assert mock_build.call_count == 1
+        kwargs = mock_build.call_args.kwargs
+        assert kwargs["num_samples"] == 8
+        assert all(g.number_of_nodes() == 5 for g in kwargs["refs"])
+        assert all(g.number_of_nodes() == 5 for g in kwargs["generated"])
         mock_log_figures.assert_called_once_with(
             mock_trainer.loggers,
             figures,

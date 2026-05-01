@@ -123,7 +123,9 @@ def main() -> int:
     print("\n[Load] SPECTRE test SBM reference graphs (via SpectreSBMDataModule)")
     datamodule = SpectreSBMDataModule(batch_size=12, num_workers=0)
     datamodule.setup()
-    ref_graphs = datamodule.get_reference_graphs("test", 40)
+    ref_graphs = [
+        gd.to_networkx() for gd in datamodule.get_reference_graphs("test", 40)
+    ]
     print(f"  Loaded {len(ref_graphs)} reference graphs")
     print(
         f"  Node-count range: "

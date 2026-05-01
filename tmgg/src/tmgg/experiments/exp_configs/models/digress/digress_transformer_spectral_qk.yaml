@@ -17,6 +17,7 @@ model:
     use_spectral_v: false
     spectral_k: 16
     spectral_num_terms: 3
+    # spectral_normalize_eigenvalues: true   # default; set false to skip the λ/max|λ| rescale
   hidden_mlp_dims:
     X: 256
     E: 64

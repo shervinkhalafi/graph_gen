@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-import networkx as nx
 import pytest
 import torch
 
@@ -444,8 +443,9 @@ class TestGraphDataModulePublicContract:
         graphs = dm.get_reference_graphs("val", max_graphs=2)
 
         assert len(graphs) == 2
-        assert all(isinstance(graph, nx.Graph) for graph in graphs)
-        assert all(graph.number_of_nodes() == 8 for graph in graphs)
+        # Per 2026-05-01 universal-transport refactor: GraphData not nx.
+        assert all(isinstance(gd, GraphData) for gd in graphs)
+        assert all(int(gd.node_mask.sum().item()) == 8 for gd in graphs)
 
     def test_get_size_distribution_is_fixed(self) -> None:
         """GraphDataModule should expose a fixed-size distribution."""

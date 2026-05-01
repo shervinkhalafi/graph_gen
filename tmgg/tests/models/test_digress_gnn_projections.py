@@ -491,3 +491,207 @@ class TestAdjacencyExtraction:
         assert isinstance(result, GraphData)
         assert result.E_class is not None
         assert result.E_class.shape == (bs, n, n, 2)
+
+
+class TestNormalizeAdjFlag:
+    """Tests for the optional ``normalize_adjacency`` flag.
+
+    See ``rationales/digress_gnn_projection_normalize_test_rationale.md``.
+    """
+
+    def test_layer_identity_off_on_normalized_input(self):
+        """``normalize=False`` on Ã ≡ ``normalize=True`` on A.
+
+        With identical weights, feeding the symmetrically normalized
+        adjacency through a layer that does *not* normalize must yield
+        the same output as feeding the raw adjacency through a layer
+        that *does* normalize. Pins the new flag's semantics.
+        """
+        from tmgg.models.layers.graph_ops import sym_normalize_adjacency
+
+        torch.manual_seed(0)
+        bs, n, c = 2, 8, 4
+        A = _random_symmetric_adjacency(bs, n)
+        # Add self-loops so D > 0 everywhere; sym_normalize_adjacency masks
+        # zero-degree rows to zero, which would still satisfy the equality
+        # but mask out signal we want to test.
+        A = A + torch.eye(n).unsqueeze(0)
+        A = (A > 0).float()
+        X = torch.randn(bs, n, c)
+
+        layer_on = BareGraphConvolutionLayer(
+            num_terms=2, num_channels=c, normalize_adjacency=True
+        )
+        layer_off = BareGraphConvolutionLayer(
+            num_terms=2, num_channels=c, normalize_adjacency=False
+        )
+        # Tie weights so the only difference is the gating of the normalize step
+        layer_off.H.data.copy_(layer_on.H.data)
+
+        A_norm = sym_normalize_adjacency(A)
+        out_on = layer_on(A, X)
+        out_off = layer_off(A_norm, X)
+
+        torch.testing.assert_close(out_on, out_off, rtol=1e-5, atol=1e-6)
+
+    def test_layer_off_uses_raw_adjacency(self):
+        """``normalize=False`` actually skips the normalization.
+
+        On a non-trivial input where ``A`` and ``Ã`` differ, the two
+        layers must produce *different* outputs when given the same
+        ``A``, otherwise the flag is silently dead.
+        """
+        torch.manual_seed(0)
+        bs, n, c = 2, 8, 4
+        A = _random_symmetric_adjacency(bs, n) + torch.eye(n).unsqueeze(0)
+        A = (A > 0).float()
+        X = torch.randn(bs, n, c)
+
+        layer_on = BareGraphConvolutionLayer(
+            num_terms=2, num_channels=c, normalize_adjacency=True
+        )
+        layer_off = BareGraphConvolutionLayer(
+            num_terms=2, num_channels=c, normalize_adjacency=False
+        )
+        layer_off.H.data.copy_(layer_on.H.data)
+
+        out_on = layer_on(A, X)
+        out_off = layer_off(A, X)
+        # Outputs must differ — otherwise the flag is a no-op
+        assert not torch.allclose(out_on, out_off, rtol=1e-3, atol=1e-4)
+
+    def test_default_preserved_end_to_end(self):
+        """An unspecified normalize flag matches an explicit ``True``.
+
+        Guards against an accidental default flip in the plumbing. We
+        equalise weights by copying a state_dict between the two
+        models; a seed alone is insufficient because the differing
+        ``projection_config`` dicts alter the order in which the RNG
+        is consumed during ``__init__``.
+        """
+        torch.manual_seed(42)
+        bs, n = 2, 10
+
+        hidden_dims = {
+            "dx": 64,
+            "de": 16,
+            "dy": 32,
+            "n_head": 4,
+        }
+
+        model_default = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+            projection_config={"use_gnn_q": True, "use_gnn_k": True},
+        )
+        model_explicit = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+            projection_config={
+                "use_gnn_q": True,
+                "use_gnn_k": True,
+                "gnn_normalize_adj": True,
+            },
+        )
+        # Equalise weights so any output difference is due to the
+        # config branch under test, not random initialisation.
+        model_explicit.load_state_dict(model_default.state_dict())
+        model_default.eval()
+        model_explicit.eval()
+
+        # Verify per-layer flag propagated identically (the actual
+        # invariant under test).
+        layer_d = model_default.transformer.tf_layers[0]
+        layer_e = model_explicit.transformer.tf_layers[0]
+        assert isinstance(layer_d, XEyTransformerLayer)
+        assert isinstance(layer_e, XEyTransformerLayer)
+        assert isinstance(layer_d.self_attn.q, BareGraphConvolutionLayer)
+        assert isinstance(layer_e.self_attn.q, BareGraphConvolutionLayer)
+        assert layer_d.self_attn.q.normalize_adjacency is True
+        assert layer_e.self_attn.q.normalize_adjacency is True
+
+        # Forward outputs must match bit-for-bit
+        adj = _random_symmetric_adjacency(bs, n)
+        gd = binary_graphdata(adj)
+        out_d = model_default(gd)
+        out_e = model_explicit(gd)
+        assert out_d.E_class is not None and out_e.E_class is not None
+        torch.testing.assert_close(out_d.E_class, out_e.E_class)
+
+    def test_wiring_smoke_normalize_off(self):
+        """`gnn_normalize_adj=False` propagates to every Q/K/V GNN layer."""
+        hidden_dims = {
+            "dx": 64,
+            "de": 16,
+            "dy": 32,
+            "n_head": 4,
+        }
+        model = GraphTransformer(
+            n_layers=2,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+            projection_config={
+                "use_gnn_q": True,
+                "use_gnn_k": True,
+                "use_gnn_v": True,
+                "gnn_normalize_adj": False,
+            },
+        )
+
+        for tf_layer in model.transformer.tf_layers:
+            assert isinstance(tf_layer, XEyTransformerLayer)
+            block = tf_layer.self_attn
+            for proj_name in ("q", "k", "v"):
+                proj = getattr(block, proj_name)
+                assert isinstance(proj, BareGraphConvolutionLayer)
+                assert proj.normalize_adjacency is False
+
+        # Forward must still work (using normalised input so the raw-A
+        # path doesn't blow up the polynomial — the test is about wiring,
+        # not numerics).
+        from tmgg.models.layers.graph_ops import sym_normalize_adjacency
+
+        bs, n = 2, 10
+        adj = _random_symmetric_adjacency(bs, n)
+        adj = sym_normalize_adjacency(adj + torch.eye(n).unsqueeze(0))
+        # Convert dense Ã back to a {0,1} mask for binary_graphdata; we
+        # only need the smoke test, not numerical fidelity here.
+        gd = binary_graphdata((adj > 0).float())
+        out = model(gd)
+        assert out.E_class is not None
+        assert out.E_class.shape == (bs, n, n, 2)
+
+    def test_hidden_dims_fallback(self):
+        """The new key honours the legacy ``hidden_dims`` fallback path.
+
+        ``_PROJ_KEYS`` extends to ``gnn_normalize_adj``, so a config that
+        lives in ``hidden_dims`` (older configs) should still be picked
+        up when ``projection_config`` is None.
+        """
+        hidden_dims = {
+            "dx": 64,
+            "de": 16,
+            "dy": 32,
+            "n_head": 4,
+            "use_gnn_q": True,
+            "gnn_normalize_adj": False,
+        }
+        model = GraphTransformer(
+            n_layers=1,
+            input_dims={"X": 2, "E": 2, "y": 0},
+            hidden_mlp_dims={"X": 32, "E": 16, "y": 32},
+            hidden_dims=hidden_dims,
+            output_dims={"X": 0, "E": 2, "y": 0},
+        )
+        layer = model.transformer.tf_layers[0]
+        assert isinstance(layer, XEyTransformerLayer)
+        assert isinstance(layer.self_attn.q, BareGraphConvolutionLayer)
+        assert layer.self_attn.q.normalize_adjacency is False

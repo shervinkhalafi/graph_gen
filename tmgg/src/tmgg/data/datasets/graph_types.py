@@ -16,12 +16,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import replace as _dc_replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 from torch import Tensor
 
 if TYPE_CHECKING:
+    import networkx as nx
     from torch_geometric.data import Batch, Data
 
 
@@ -506,6 +507,95 @@ class GraphData:
 
         mask_2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
         return adj * mask_2d.float()
+
+    def to_networkx(self, batch_index: int | None = None) -> nx.Graph[Any]:
+        """Convert one graph slice to a NetworkX ``Graph``.
+
+        Honours ``node_mask`` (padding rows/cols are dropped) and
+        :meth:`binarised_adjacency` (channel 0 = "no edge"). When
+        ``X_class`` is populated, the per-node argmax index lands as
+        the ``x_class`` node attribute. When ``E_class`` is populated,
+        the per-edge argmax index lands as the ``e_class`` edge
+        attribute (only for edges that survived the binary
+        threshold). The class indices let downstream consumers
+        recover atom / bond types for molecular runs without
+        re-loading the codec.
+
+        Parameters
+        ----------
+        batch_index
+            For 2-D (batched) ``GraphData`` pass the row to extract.
+            For 1-D (single) ``GraphData`` pass ``None`` (the
+            default) — the call is a no-op slice.
+
+        Returns
+        -------
+        networkx.Graph
+            One simple, undirected graph at most ``n_valid`` nodes.
+
+        Raises
+        ------
+        IndexError
+            ``batch_index`` is out of range for the batched leading
+            dimension.
+        ValueError
+            ``batch_index`` was supplied for a non-batched
+            ``GraphData`` (or omitted for a batched one).
+        """
+        import networkx as nx
+
+        is_batched = self.node_mask.dim() == 2
+        if is_batched and batch_index is None:
+            raise ValueError(
+                "batch_index is required for batched GraphData; pass an "
+                "int or call to_networkx_list() to expand the whole batch."
+            )
+        if not is_batched and batch_index is not None:
+            raise ValueError(
+                "batch_index is not allowed for unbatched GraphData "
+                "(node_mask is 1-D)."
+            )
+
+        adj = self.binarised_adjacency()
+        if is_batched:
+            adj = adj[batch_index]
+            node_mask_row = self.node_mask[batch_index]
+        else:
+            node_mask_row = self.node_mask
+
+        n_valid = int(node_mask_row.sum().item())
+        adj_valid = adj[:n_valid, :n_valid].detach().cpu().numpy()
+        graph = nx.from_numpy_array(adj_valid)
+
+        if self.X_class is not None:
+            x_class_view = self.X_class[batch_index] if is_batched else self.X_class
+            x_class_idx = x_class_view[:n_valid].argmax(dim=-1).detach().cpu().tolist()
+            for node, idx in enumerate(x_class_idx):
+                graph.nodes[node]["x_class"] = int(idx)
+
+        if self.E_class is not None:
+            e_class_view = self.E_class[batch_index] if is_batched else self.E_class
+            e_class_idx = (
+                e_class_view[:n_valid, :n_valid].argmax(dim=-1).detach().cpu().tolist()
+            )
+            for u, v in graph.edges():
+                graph.edges[u, v]["e_class"] = int(e_class_idx[u][v])
+
+        return graph
+
+    def to_networkx_list(self) -> list[nx.Graph[Any]]:
+        """Expand a batched ``GraphData`` into a per-graph nx list.
+
+        Equivalent to ``[self.to_networkx(i) for i in range(bs)]`` for
+        batched data; on unbatched data returns a single-element
+        list. Subsumes the legacy
+        :meth:`GraphEvaluator.to_networkx_graphs` for the
+        single-batched-instance case.
+        """
+        if self.node_mask.dim() == 1:
+            return [self.to_networkx()]
+        bs = self.node_mask.shape[0]
+        return [self.to_networkx(i) for i in range(bs)]
 
     @classmethod
     def synth_structure_only_x_class(cls, node_mask: Tensor, c_x: int) -> Tensor:

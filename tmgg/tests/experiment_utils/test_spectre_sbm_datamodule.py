@@ -29,6 +29,7 @@ import pytest
 import torch
 
 from tmgg.data.data_modules.spectre_sbm import SpectreSBMDataModule
+from tmgg.data.datasets.graph_types import GraphData
 from tmgg.data.datasets.spectre_sbm import (
     SPECTRE_SBM_TEST_LEN,
     SPECTRE_SBM_TOTAL,
@@ -230,15 +231,14 @@ class TestSpectreSBMDataModule:
         assert batch.E_class.shape[-1] == 2  # edge categorical (present/absent)
 
     def test_get_reference_graphs_returns_networkx(self, tmp_path: Path) -> None:
-        import networkx as nx
-
         dm = self._make_dm(tmp_path)
         dm.setup("fit")
         refs = dm.get_reference_graphs("val", max_graphs=3)
         assert len(refs) == 3
-        for g in refs:
-            assert isinstance(g, nx.Graph)
-            assert g.number_of_nodes() == 10  # matches the mock fixture
+        for gd in refs:
+            # Per 2026-05-01 universal-transport refactor: GraphData not nx.
+            assert isinstance(gd, GraphData)
+            assert int(gd.node_mask.sum().item()) == 10  # mock fixture node count
 
     def test_size_distribution_exposes_sizes(self, tmp_path: Path) -> None:
         dm = self._make_dm(tmp_path)

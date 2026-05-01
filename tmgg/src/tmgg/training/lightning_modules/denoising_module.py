@@ -638,9 +638,15 @@ class SingleStepDenoisingModule(DiffusionModule):
 
         dm = self.trainer.datamodule  # pyright: ignore[reportAttributeAccessIssue]
         num_reference_graphs = self.evaluator.eval_num_samples if self.evaluator else 2
-        ref_graphs: list[nx.Graph[Any]] = dm.get_reference_graphs(
-            "val", num_reference_graphs
-        )
+        # get_reference_graphs returns list[GraphData] post the
+        # 2026-05-01 universal-transport refactor. The denoising
+        # module is nx-native (legacy code path); convert at the call
+        # site rather than threading GraphData through the rest of
+        # this method's adjacency-tensor construction.
+        ref_graphs: list[nx.Graph[Any]] = [
+            gd.to_networkx()
+            for gd in dm.get_reference_graphs("val", num_reference_graphs)
+        ]
         if len(ref_graphs) < 2:
             return
 
@@ -695,8 +701,11 @@ class SingleStepDenoisingModule(DiffusionModule):
                 if self.evaluator is None:
                     continue
 
+                # GraphEvaluator.evaluate now declares list[GraphData] but
+                # runtime-duck-types nx.Graph too (legacy denoising path).
                 results = self.evaluator.evaluate(
-                    refs=ref_graphs, generated=denoised_graphs
+                    refs=ref_graphs,  # pyright: ignore[reportArgumentType]
+                    generated=denoised_graphs,  # pyright: ignore[reportArgumentType]
                 )
                 if results is None:
                     continue

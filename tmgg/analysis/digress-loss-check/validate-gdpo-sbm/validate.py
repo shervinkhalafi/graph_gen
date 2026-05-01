@@ -445,7 +445,11 @@ def run(
     print("[1/5] Building SpectreSBMDataModule (auto-downloads fixture if missing)...")
     datamodule = SpectreSBMDataModule(batch_size=12, num_workers=0)
     datamodule.setup()
-    ref_graphs = datamodule.get_reference_graphs("test", 40)
+    # get_reference_graphs returns list[GraphData] post 2026-05-01;
+    # this script is nx-native (uses g.number_of_nodes throughout).
+    ref_graphs = [
+        gd.to_networkx() for gd in datamodule.get_reference_graphs("test", 40)
+    ]
     print(
         f"      Reference test graphs: {len(ref_graphs)} "
         f"(node count range {min(g.number_of_nodes() for g in ref_graphs)} — "

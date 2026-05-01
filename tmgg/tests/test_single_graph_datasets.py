@@ -51,9 +51,14 @@ def _first_train_graph(dm: SingleGraphDataModule) -> np.ndarray:
 
 
 def _first_reference_graph(dm: SingleGraphDataModule, stage: str) -> np.ndarray:
-    """Return one validation or test graph through the public reference API."""
-    graph = dm.get_reference_graphs(stage, max_graphs=1)[0]
-    return np.asarray(nx.to_numpy_array(graph), dtype=np.float32)
+    """Return one validation or test graph through the public reference API.
+
+    Per the 2026-05-01 universal-transport refactor get_reference_graphs
+    returns list[GraphData]; convert at the leaf via to_networkx() to
+    keep the downstream nx.to_numpy_array assertion intact.
+    """
+    gd = dm.get_reference_graphs(stage, max_graphs=1)[0]
+    return np.asarray(nx.to_numpy_array(gd.to_networkx()), dtype=np.float32)
 
 
 class TestSyntheticGraphs:

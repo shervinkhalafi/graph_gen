@@ -1,0 +1,113 @@
+# Round 5 — further cuts BELOW Shervin's pareto frontier.
+#
+# Round-4 read (terminal @ 100k):
+#   Pareto-optimal pods:
+#     B (Shervin + dim_ffy=32): sbm_acc=0.469, mod_q=0.408, degree=0.0016
+#     C (Shervin + dx=32, dim_ffX=32): sbm_acc=0.281, mod_q=0.416, degree=0.00035 (4x BEAT HiGen anchor)
+#   Pod A (Shervin exact) was DOMINATED on every metric by either B or C.
+#
+# Conclusion: Shervin's config is not the lower bound. dim_ffy 256->32
+# and joint dx/dim_ffX 64->32 are both safe. Round 5 composes both
+# pareto cuts as the new BASE, then applies further cuts in three
+# aggression tiers.
+#
+# Round-5 base config (all 3 pods inherit):
+#   n_layers=6, dx=32, de=8, dy=8, n_head=8,
+#   dim_ffX=32, dim_ffE=8, dim_ffy=32
+#   (~50% of Shervin's ~300k params, post-composition)
+#
+# Three cuts vs the base, ranked by aggression:
+#   - Cautious: + dy 8->4 (tiny additional cut, lowest risk)
+#   - Moderate: + n_layers 6->4 (depth halve — biggest compute/param leverage,
+#     single-axis change so risk is bounded)
+#   - Greedy:   + n_layers 6->4 + dx 32->16 + dim_ffX 32->16
+#     (depth halve PLUS another joint node-side halving. Strictly
+#     contains moderate; adds the same dx/dim_ffX halving that
+#     succeeded in R4 Pod C, but applied AGAIN one octave smaller.
+#     Pure node-side attack — edge stream untouched, since edge cuts
+#     have separate risk profile we want to study in isolation later.)
+#
+# Per-round invariant: include >=1 config we expect to fail (the greedy
+# pod plays that role here — depth halve plus another node-dimension
+# halve compounds two large cuts on the already-shrunk base).
+
+session_tag: round-5-further-cuts-below-shervin-pareto
+round: 5
+
+launches:
+  # Cautious: round-4 union + smallest additional axis cut.
+  # dy is the global-feature dim; only 1 vector per graph, so the
+  # absolute param savings are tiny. Probe value: confirms dy isn't
+  # load-bearing in the small regime, and gives us a 4-axis composed
+  # config to use as the next round's pareto baseline.
+  - dataset: spectre_sbm
+    axis_changed: combined_dy_cut
+    axis_value: "cautious"
+    seed: 0
+    step_cap: 100000
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 6
+      model.model.hidden_dims.dx: 32
+      model.model.hidden_dims.de: 8
+      model.model.hidden_dims.dy: 4
+      model.model.hidden_dims.n_head: 8
+      model.model.hidden_dims.dim_ffX: 32
+      model.model.hidden_dims.dim_ffE: 8
+      model.model.hidden_dims.dim_ffy: 32
+
+  # Moderate: round-4 union + depth halve. n_layers 6->4 is the
+  # single highest-leverage axis (linear params + linear compute +
+  # linear memory savings). Single-axis change so the failure mode
+  # is unambiguous if it breaks.
+  - dataset: spectre_sbm
+    axis_changed: combined_L4
+    axis_value: "moderate"
+    seed: 0
+    step_cap: 100000
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 4
+      model.model.hidden_dims.dx: 32
+      model.model.hidden_dims.de: 8
+      model.model.hidden_dims.dy: 8
+      model.model.hidden_dims.n_head: 8
+      model.model.hidden_dims.dim_ffX: 32
+      model.model.hidden_dims.dim_ffE: 8
+      model.model.hidden_dims.dim_ffy: 32
+
+  # Greedy: round-4 union + L4 + ANOTHER joint dx/dim_ffX halving.
+  # dx 32->16 and dim_ffX 32->16 simultaneously, on top of n_layers
+  # 6->4. Re-applies the cut that succeeded in R4 Pod C, one octave
+  # smaller. Pure node-side attack: edge stream (de=8, dim_ffE=8)
+  # untouched. n_head must stay 8 since dx=16 is still divisible.
+  # Hypothesis: aggressive but plausible — quadratic-ish node compute
+  # win on attention QKV projection (dx^2 = 256 -> 16^2 = 16, that's
+  # a 16x cut at the matrix-mul layer) on top of 2x depth speedup.
+  # Disconfirming-config probe.
+  - dataset: spectre_sbm
+    axis_changed: combined_L4_dx16
+    axis_value: "greedy"
+    seed: 0
+    step_cap: 100000
+    overrides:
+      trainer.max_steps: 100000
+      model.model.n_layers: 4
+      model.model.hidden_dims.dx: 16
+      model.model.hidden_dims.de: 8
+      model.model.hidden_dims.dy: 8
+      model.model.hidden_dims.n_head: 8
+      model.model.hidden_dims.dim_ffX: 16
+      model.model.hidden_dims.dim_ffE: 8
+      model.model.hidden_dims.dim_ffy: 32
+
+# Disconfirming-config fallback:
+#   - If cautious passes and moderate fails: depth was load-bearing;
+#     round 6 lock n_layers=6 + try dy=2.
+#   - If moderate passes and greedy fails: depth halve is fine but
+#     dx 32->16 was the breaking cut; round 6 isolate (test L4+dx=24
+#     midpoint, or test L4+dim_ffX=16 with dx still 32).
+#   - If greedy passes: round 6 attacks edge side (de 8->4 + dim_ffE
+#     8->4) on the new greedy-passing base.
+#   - If all 3 fail: round-4 union (dx=32, dim_ffX=32, dim_ffy=32) IS
+#     the lower bound; lock and pivot to ENZYMES.
