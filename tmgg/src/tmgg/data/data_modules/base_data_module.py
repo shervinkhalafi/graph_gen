@@ -199,12 +199,22 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         return SizeDistribution.fixed(self.num_nodes)
 
     def get_reference_graphs(self, stage: str, max_graphs: int) -> list[Any]:
-        """Extract up to *max_graphs* from a dataset split as NetworkX graphs.
+        """Extract up to *max_graphs* from a dataset split as ``GraphData``.
 
-        Iterates the appropriate dataloader, converts ``GraphData`` batches
-        to adjacency matrices, and builds NetworkX graphs respecting
-        ``node_mask`` for variable-size graphs. Subclasses may override for
-        efficiency (e.g., reading directly from internal tensors).
+        Iterates the appropriate dataloader and slices each batched
+        ``GraphData`` along the leading dim, returning a flat list of
+        per-graph (single-instance) ``GraphData`` with a 1-D
+        ``node_mask`` and the optional split fields re-indexed to drop
+        the batch axis. Padding is preserved so downstream consumers can
+        decide whether to trim (graph evaluators) or to keep padded
+        tensors as-is (molecular SMILES decode reads ``node_mask``).
+
+        Per spec ``docs/specs/2026-05-01-graphdata-eval-pipeline-minispec.md``
+        the return type is ``list[GraphData]`` rather than
+        ``list[nx.Graph]``: GraphData is the universal transport format
+        for the whole evaluation pipeline. Callers that need NetworkX
+        graphs convert at the consumption site via
+        :meth:`GraphData.to_networkx` (cheap, local, lossless).
 
         Parameters
         ----------
@@ -215,15 +225,16 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
 
         Returns
         -------
-        list[nx.Graph]
-            Up to *max_graphs* NetworkX graphs from the requested split.
+        list[GraphData]
+            Up to *max_graphs* per-graph ``GraphData`` from the
+            requested split.
 
         Raises
         ------
         ValueError
             If *stage* is not ``"val"`` or ``"test"``.
         """
-        import networkx as nx
+        from tmgg.data.datasets.graph_types import GraphData
 
         if stage == "val":
             loader = self.val_dataloader()
@@ -234,12 +245,18 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
 
         graphs: list[Any] = []
         for batch in loader:
-            adj = batch.binarised_adjacency()  # (B, N, N)
-            bs = adj.shape[0]
+            bs = int(batch.node_mask.shape[0])
             for i in range(bs):
                 if len(graphs) >= max_graphs:
                     return graphs
-                n = int(batch.node_mask[i].sum().item())
-                A_np = adj[i, :n, :n].cpu().numpy()
-                graphs.append(nx.from_numpy_array(A_np))
+                graphs.append(
+                    GraphData(
+                        node_mask=batch.node_mask[i],
+                        X_class=batch.X_class[i] if batch.X_class is not None else None,
+                        X_feat=batch.X_feat[i] if batch.X_feat is not None else None,
+                        E_class=batch.E_class[i] if batch.E_class is not None else None,
+                        E_feat=batch.E_feat[i] if batch.E_feat is not None else None,
+                        y=batch.y[i] if batch.y is not None else batch.y,
+                    )
+                )
         return graphs

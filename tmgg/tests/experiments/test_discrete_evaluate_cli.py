@@ -169,7 +169,7 @@ class TestDatamoduleReferencePath:
         monkeypatch.setattr(evaluate_cli, "torch", _build_torch_stub(callbacks={}))
         monkeypatch.setattr(evaluate_cli.hydra.utils, "instantiate", lambda cfg: dm)
         monkeypatch.setattr(
-            evaluate_cli, "_load_graph_evaluator", lambda _path: _DummyEvaluator()
+            evaluate_cli, "_load_evaluator", lambda _path: _DummyEvaluator()
         )
 
         result = evaluate_cli.evaluate_checkpoint(
@@ -201,7 +201,7 @@ class TestDatamoduleReferencePath:
         monkeypatch.setattr(evaluate_cli, "torch", _build_torch_stub(callbacks={}))
         monkeypatch.setattr(evaluate_cli.hydra.utils, "instantiate", lambda cfg: dm)
         monkeypatch.setattr(
-            evaluate_cli, "_load_graph_evaluator", lambda _path: _DummyEvaluator()
+            evaluate_cli, "_load_evaluator", lambda _path: _DummyEvaluator()
         )
 
         result = evaluate_cli.evaluate_checkpoint(
@@ -289,7 +289,7 @@ class TestEmaWiring:
         monkeypatch.setattr(evaluate_cli, "torch", _build_torch_stub(callbacks={}))
         monkeypatch.setattr(evaluate_cli.hydra.utils, "instantiate", lambda cfg: dm)
         monkeypatch.setattr(
-            evaluate_cli, "_load_graph_evaluator", lambda _path: _DummyEvaluator()
+            evaluate_cli, "_load_evaluator", lambda _path: _DummyEvaluator()
         )
 
         result = evaluate_cli.evaluate_checkpoint(
@@ -330,7 +330,7 @@ class TestEmaWiring:
         )
         monkeypatch.setattr(evaluate_cli.hydra.utils, "instantiate", lambda cfg: dm)
         monkeypatch.setattr(
-            evaluate_cli, "_load_graph_evaluator", lambda _path: _DummyEvaluator()
+            evaluate_cli, "_load_evaluator", lambda _path: _DummyEvaluator()
         )
 
         result = evaluate_cli.evaluate_checkpoint(
@@ -534,7 +534,7 @@ def test_evaluate_checkpoint_loads_real_diffusion_checkpoint(
 
     monkeypatch.setattr(
         evaluate_cli,
-        "_load_graph_evaluator",
+        "_load_evaluator",
         lambda _path: _DummyEvaluator(),
     )
 

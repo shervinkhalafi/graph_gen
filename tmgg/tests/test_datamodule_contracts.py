@@ -44,9 +44,14 @@ def _first_train_graph(dm: SingleGraphDataModule) -> np.ndarray:
 
 
 def _first_reference_graph(dm: SingleGraphDataModule, stage: str) -> np.ndarray:
-    """Read one val/test graph through get_reference_graphs()."""
-    graph = dm.get_reference_graphs(stage, max_graphs=1)[0]
-    return np.asarray(nx.to_numpy_array(graph), dtype=np.float32)
+    """Read one val/test graph through get_reference_graphs().
+
+    Post the 2026-05-01 universal-transport refactor get_reference_graphs
+    yields list[GraphData]; convert at the leaf via to_networkx() to keep
+    downstream nx.to_numpy_array assertions intact.
+    """
+    gd = dm.get_reference_graphs(stage, max_graphs=1)[0]
+    return np.asarray(nx.to_numpy_array(gd.to_networkx()), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +463,9 @@ class TestSyntheticCategoricalDataModuleContract:
 
         graphs = dm.get_reference_graphs("val", max_graphs=3)
         assert len(graphs) == 3
-        assert all(graph.number_of_nodes() == 16 for graph in graphs)
+        # Per 2026-05-01 universal-transport refactor get_reference_graphs
+        # returns GraphData; node count is read off node_mask directly.
+        assert all(int(gd.node_mask.sum().item()) == 16 for gd in graphs)
 
     def test_er_lifecycle(self) -> None:
         """Non-SBM graph types should also produce valid categorical data."""

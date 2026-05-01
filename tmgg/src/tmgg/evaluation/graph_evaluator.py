@@ -914,7 +914,9 @@ class GraphEvaluator:
         return nx_graphs
 
     def evaluate(
-        self, refs: list[nx.Graph[Any]], generated: list[nx.Graph[Any]]
+        self,
+        refs: list[GraphData] | list[nx.Graph[Any]],
+        generated: list[GraphData] | list[nx.Graph[Any]],
     ) -> EvaluationResults | None:
         """Compute all evaluation metrics.
 
@@ -929,9 +931,17 @@ class GraphEvaluator:
         Parameters
         ----------
         refs
-            Reference graphs (e.g. validation set).
+            Reference graphs as per-graph ``GraphData`` (universal
+            transport per spec
+            ``2026-05-01-graphdata-eval-pipeline-minispec.md``). Internally
+            converted to ``nx.Graph`` via
+            :meth:`to_networkx_graphs` for the MMD / structural metric
+            path; the categorical-class indices ride along on the
+            resulting graphs as ``x_class`` / ``e_class`` attributes
+            (see :meth:`GraphData.to_networkx`) for downstream consumers
+            that want them.
         generated
-            Generated NetworkX graphs.
+            Generated graphs in the same format.
 
         Returns
         -------
@@ -949,10 +959,27 @@ class GraphEvaluator:
         if len(generated) < 2:
             return None
 
+        # GraphData → nx for the MMD / structural metric pipeline.
+        # Loose duck-typing on the input: if a caller passed nx.Graph
+        # directly (legacy out-of-tree paths) the entries already have a
+        # ``number_of_nodes`` attribute and we keep them. Otherwise
+        # convert via ``to_networkx_graphs`` (existing helper that also
+        # logs the X/E disagreement warning).
+        nx_refs: list[nx.Graph[Any]] = (
+            refs  # pyright: ignore[reportAssignmentType]
+            if refs and hasattr(refs[0], "number_of_nodes")
+            else self.to_networkx_graphs(refs)  # pyright: ignore[reportArgumentType]
+        )
+        nx_generated: list[nx.Graph[Any]] = (
+            generated  # pyright: ignore[reportAssignmentType]
+            if generated and hasattr(generated[0], "number_of_nodes")
+            else self.to_networkx_graphs(generated)  # pyright: ignore[reportArgumentType]
+        )
+
         # --- Core MMD metrics (always available) ---
         mmd_results = compute_mmd_metrics(
-            refs,
-            generated,
+            nx_refs,
+            nx_generated,
             kernel=self.kernel,
             sigma=self.sigma,
             degree_sigma=self.degree_sigma,
@@ -963,13 +990,13 @@ class GraphEvaluator:
         # --- Orbit MMD (requires orca, skippable) ---
         orbit_mmd: float | None = None
         if "orbit" not in self.skip_metrics and _ORCA_AVAILABLE:
-            orbit_mmd = compute_orbit_mmd(refs, generated, kernel=self.kernel)
+            orbit_mmd = compute_orbit_mmd(nx_refs, nx_generated, kernel=self.kernel)
 
         # --- SBM accuracy (requires graph-tool, skippable) ---
         sbm_accuracy: float | None = None
         if "sbm" not in self.skip_metrics and _GRAPH_TOOL_AVAILABLE:
             sbm_accuracy = compute_sbm_accuracy(
-                generated,
+                nx_generated,
                 p_intra=self.p_intra,
                 p_inter=self.p_inter,
                 refinement_steps=self.sbm_refinement_steps,
@@ -978,17 +1005,17 @@ class GraphEvaluator:
         # --- Planarity (skippable) ---
         planarity_accuracy: float | None = None
         if "planarity" not in self.skip_metrics:
-            planarity_accuracy = compute_planarity_accuracy(generated)
+            planarity_accuracy = compute_planarity_accuracy(nx_generated)
 
         # --- Uniqueness (skippable) ---
         uniqueness: float | None = None
         if "uniqueness" not in self.skip_metrics:
-            uniqueness = compute_uniqueness(generated)
+            uniqueness = compute_uniqueness(nx_generated)
 
         # --- Novelty (needs train_graphs from constructor, skippable) ---
         novelty: float | None = None
         if "novelty" not in self.skip_metrics and self._train_graphs_set:
-            novelty = compute_novelty(generated, self.train_graphs)
+            novelty = compute_novelty(nx_generated, self.train_graphs)
 
         # --- Block-structure metrics (Stage 3 telemetry, skippable) ---
         # ``modularity_q``, ``spectral_gap_l2``, and the empirical
@@ -1002,7 +1029,7 @@ class GraphEvaluator:
             "empirical_p_out": None,
         }
         if "block_structure" not in self.skip_metrics:
-            block_metrics = compute_block_structure_metrics(generated)
+            block_metrics = compute_block_structure_metrics(nx_generated)
 
         return EvaluationResults(
             degree_mmd=mmd_results.degree_mmd,

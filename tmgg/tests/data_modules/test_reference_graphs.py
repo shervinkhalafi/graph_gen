@@ -2,10 +2,14 @@
 
 Test Rationale
 --------------
-get_reference_graphs() is the public API for extracting NetworkX graphs
-from dataset splits. It replaces the per-step accumulation pattern in
-Lightning modules. Tests verify correctness across val/test stages,
-truncation to max_graphs, and error handling for invalid stages.
+get_reference_graphs() is the public API for extracting reference graphs
+from dataset splits. Per the 2026-05-01 universal-transport refactor it
+returns ``list[GraphData]`` (was ``list[nx.Graph]``); the nx view is
+recovered at the consumption site via ``GraphData.to_networkx()``.
+
+Tests verify the type contract, truncation to max_graphs, error
+handling for invalid stages, and the nx-conversion round-trip
+preserves node count + undirected topology.
 
 The fixture uses MultiGraphDataModule with SBM and fixed-size graphs
 (num_nodes=8, num_graphs=20) so node counts are deterministic and the
@@ -18,6 +22,7 @@ import networkx as nx
 import pytest
 
 from tmgg.data.data_modules.multigraph_data_module import MultiGraphDataModule
+from tmgg.data.datasets.graph_types import GraphData
 
 
 @pytest.fixture
@@ -35,21 +40,17 @@ def data_module() -> MultiGraphDataModule:
 
 
 class TestGetReferenceGraphs:
-    """Verify get_reference_graphs() extracts NetworkX graphs correctly."""
+    """Verify get_reference_graphs() returns per-graph GraphData."""
 
-    def test_val_returns_networkx_graphs(
-        self, data_module: MultiGraphDataModule
-    ) -> None:
+    def test_val_returns_graph_data(self, data_module: MultiGraphDataModule) -> None:
         graphs = data_module.get_reference_graphs("val", max_graphs=5)
         assert len(graphs) > 0
-        assert all(isinstance(g, nx.Graph) for g in graphs)
+        assert all(isinstance(g, GraphData) for g in graphs)
 
-    def test_test_returns_networkx_graphs(
-        self, data_module: MultiGraphDataModule
-    ) -> None:
+    def test_test_returns_graph_data(self, data_module: MultiGraphDataModule) -> None:
         graphs = data_module.get_reference_graphs("test", max_graphs=5)
         assert len(graphs) > 0
-        assert all(isinstance(g, nx.Graph) for g in graphs)
+        assert all(isinstance(g, GraphData) for g in graphs)
 
     def test_max_graphs_caps_output(self, data_module: MultiGraphDataModule) -> None:
         graphs = data_module.get_reference_graphs("val", max_graphs=3)
@@ -70,11 +71,17 @@ class TestGetReferenceGraphs:
         self, data_module: MultiGraphDataModule
     ) -> None:
         graphs = data_module.get_reference_graphs("val", max_graphs=5)
-        for g in graphs:
-            # SBM graphs with num_nodes=8 should have 8 nodes
-            assert g.number_of_nodes() == 8
+        for gd in graphs:
+            # SBM graphs with num_nodes=8 should have 8 valid nodes
+            # in the per-graph GraphData (no padding for fixed-size SBM).
+            assert int(gd.node_mask.sum().item()) == 8
+            assert gd.to_networkx().number_of_nodes() == 8
 
-    def test_graphs_are_undirected(self, data_module: MultiGraphDataModule) -> None:
+    def test_to_networkx_round_trip_preserves_undirected(
+        self, data_module: MultiGraphDataModule
+    ) -> None:
         graphs = data_module.get_reference_graphs("val", max_graphs=5)
-        for g in graphs:
-            assert not g.is_directed()
+        for gd in graphs:
+            g_nx = gd.to_networkx()
+            assert isinstance(g_nx, nx.Graph)
+            assert not g_nx.is_directed()

@@ -10,7 +10,6 @@ collate into dense ``GraphData`` batches at the batch boundary.
 
 from __future__ import annotations
 
-import networkx as nx
 import pytest
 import torch
 from torch_geometric.data import Data
@@ -267,11 +266,11 @@ class TestReferenceGraphs:
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Reference extraction should return bounded NetworkX graphs."""
+        """Reference extraction returns per-graph GraphData (universal transport)."""
         graphs = small_dm.get_reference_graphs("val", max_graphs=3)
         assert len(graphs) == 3
-        assert all(isinstance(graph, nx.Graph) for graph in graphs)
-        assert all(graph.number_of_nodes() == 20 for graph in graphs)
+        assert all(isinstance(gd, GraphData) for gd in graphs)
+        assert all(int(gd.node_mask.sum().item()) == 20 for gd in graphs)
 
 
 # -- TestRoundTrip ----------------------------------------------------------

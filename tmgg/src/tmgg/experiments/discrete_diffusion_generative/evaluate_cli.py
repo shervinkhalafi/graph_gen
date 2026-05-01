@@ -235,15 +235,20 @@ def _load_datamodule_for_reference(
     return datamodule
 
 
-def _load_graph_evaluator(checkpoint_path: Path) -> GraphEvaluator:
-    """Instantiate the saved ``GraphEvaluator`` from the sibling config.
+def _load_evaluator(checkpoint_path: Path) -> Any:
+    """Instantiate the saved evaluator (Graph or Molecular) from config.
 
     Reads the sibling ``config.yaml`` and Hydra-instantiates the
     ``model.evaluator:`` block. The trainer's evaluator carries the
-    dataset-specific ``p_intra``/``p_inter``/``clustering_sigma``
-    overrides (see ``conf/experiment/*.yaml``); reusing it ensures the
-    CLI computes the same metric set the trainer logs at validation
-    time.
+    dataset-specific knobs (``p_intra`` / ``p_inter`` / ``clustering_sigma``
+    for graph runs, the codec + metric stack for molecular runs);
+    reusing it ensures the CLI computes the same metric set the trainer
+    logs at validation time.
+
+    Returns either a :class:`GraphEvaluator` or a
+    :class:`MolecularEvaluator`. Both expose ``evaluate(refs, generated)``
+    and ``evaluate(...).to_dict()``; the CLI relies on that duck-typed
+    surface and routes both flavours through the same code path.
 
     Parameters
     ----------
@@ -253,15 +258,16 @@ def _load_graph_evaluator(checkpoint_path: Path) -> GraphEvaluator:
 
     Returns
     -------
-    GraphEvaluator
-        The instantiated evaluator. Caller may override ``kernel`` and
-        ``sigma`` afterwards if CLI flags were explicitly supplied.
+    GraphEvaluator | MolecularEvaluator
+        The instantiated evaluator.
 
     Raises
     ------
     KeyError
         ``config.yaml`` lacks a ``model.evaluator`` block.
     """
+    from tmgg.evaluation.molecular.evaluator import MolecularEvaluator
+
     config_path = _find_sibling_config_yaml(checkpoint_path)
     loaded = OmegaConf.load(config_path)
     if not isinstance(loaded, DictConfig):
@@ -273,15 +279,15 @@ def _load_graph_evaluator(checkpoint_path: Path) -> GraphEvaluator:
     if evaluator_cfg is None:
         raise KeyError(
             f"config.yaml at {config_path} has no `model.evaluator:` block; "
-            "cannot reconstruct the GraphEvaluator for the CLI metric set. "
+            "cannot reconstruct the evaluator for the CLI metric set. "
             "Older runs without an evaluator block in the saved config are "
             "unsupported."
         )
     evaluator = hydra.utils.instantiate(evaluator_cfg)
-    if not isinstance(evaluator, GraphEvaluator):
+    if not isinstance(evaluator, GraphEvaluator | MolecularEvaluator):
         raise TypeError(
             f"`model.evaluator` at {config_path} did not instantiate to a "
-            f"GraphEvaluator; got {type(evaluator).__name__}."
+            f"GraphEvaluator or MolecularEvaluator; got {type(evaluator).__name__}."
         )
     return evaluator
 
@@ -292,12 +298,12 @@ def _collect_reference_graphs(
     reference_set: Literal["val", "test"],
     max_graphs: int,
 ) -> list[Any]:
-    """Pull up to ``max_graphs`` NetworkX references from the datamodule.
+    """Pull up to ``max_graphs`` reference graphs as ``GraphData``.
 
-    Delegates to :meth:`BaseGraphDataModule.get_reference_graphs`, which
-    iterates the appropriate dataloader and converts each
-    ``GraphData.binarised_adjacency()`` slice into a NetworkX graph
-    while honouring ``node_mask`` for variable-size batches.
+    Delegates to :meth:`BaseGraphDataModule.get_reference_graphs`,
+    which (post the 2026-05-01 universal-transport refactor) returns
+    per-graph ``GraphData`` slices. Callers needing nx convert at the
+    leaf via :meth:`GraphData.to_networkx` (cheap, lossless).
     """
     return datamodule.get_reference_graphs(reference_set, max_graphs)
 
@@ -487,15 +493,17 @@ def evaluate_checkpoint(
         timings.val_pass_s = val_t()
         print(f"Captured {len(val_rows.rows)} val batches in {timings.val_pass_s:.1f}s")
 
-    # Reconstruct the trainer's GraphEvaluator from the saved config so
-    # the CLI reports the same metric set the trainer logs at
-    # validation. Apply CLI overrides for kernel/sigma when explicitly
-    # supplied; otherwise the saved-config values win.
-    evaluator = _load_graph_evaluator(checkpoint_path)
-    if mmd_kernel is not None:
-        evaluator.kernel = mmd_kernel
-    if mmd_sigma is not None:
-        evaluator.sigma = mmd_sigma
+    # Reconstruct the trainer's evaluator (Graph or Molecular) from
+    # the saved config so the CLI reports the same metric set the
+    # trainer logs at validation. Apply CLI overrides for kernel/sigma
+    # when explicitly supplied — only meaningful for GraphEvaluator
+    # (MolecularEvaluator does not carry MMD knobs).
+    evaluator = _load_evaluator(checkpoint_path)
+    if isinstance(evaluator, GraphEvaluator):
+        if mmd_kernel is not None:
+            evaluator.kernel = mmd_kernel
+        if mmd_sigma is not None:
+            evaluator.sigma = mmd_sigma
 
     # Sample from model. Generate the same count as the (possibly
     # truncated) reference list so MMD compares equally-sized
@@ -526,8 +534,12 @@ def evaluate_checkpoint(
         "reference_set": reference_set,
         "num_generated": num_generated,
         "num_reference": len(ref_graphs),
-        "mmd_kernel": evaluator.kernel,
-        "mmd_sigma": evaluator.sigma,
+        # GraphEvaluator carries kernel/sigma; MolecularEvaluator does not.
+        # Persist whichever shape the saved evaluator exposed so the
+        # downstream metrics.json round-trips are evaluator-aware.
+        "evaluator_type": type(evaluator).__name__,
+        "mmd_kernel": getattr(evaluator, "kernel", None),
+        "mmd_sigma": getattr(evaluator, "sigma", None),
         "mmd_results": metric_dict,
         "timings": timings.to_dict(),
         "timestamp": datetime.now().isoformat(),
@@ -550,12 +562,20 @@ def evaluate_checkpoint(
     if output_dir is not None:
         out_dir_path = Path(output_dir)
         print(f"Dumping per-checkpoint artifacts to {out_dir_path}")
+        # GraphData → nx at the leaf for viz + edge-list
+        # serialisation. Per spec D4-A: x_class/e_class indices ride
+        # along on the resulting graphs as node/edge attributes (via
+        # GraphData.to_networkx) and land in generated_graphs.json /
+        # reference_graphs.json so molecular post-hoc analysis can
+        # recover atom + bond types without re-loading the codec.
+        nx_generated = [g.to_networkx() for g in generated_graphs]
+        nx_reference = [g.to_networkx() for g in ref_graphs]
         artifact_paths = dump_eval_artifacts(
             out_dir_path,
             checkpoint_name=checkpoint_path.name,
             results=results,
-            generated_graphs=generated_graphs,
-            reference_graphs=ref_graphs,
+            generated_graphs=nx_generated,
+            reference_graphs=nx_reference,
             val_rows=val_rows,
             timings=timings,
             viz_count=viz_count,

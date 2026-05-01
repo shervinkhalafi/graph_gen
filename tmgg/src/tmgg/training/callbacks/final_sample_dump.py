@@ -291,11 +291,13 @@ class FinalSampleDumpCallback(Callback):
             # use getattr to keep pyright happy without a suppression.
             datamodule = getattr(trainer, "datamodule", None)
             if datamodule is not None:
+                # Both `refs` and `samples` are list[GraphData] post the
+                # 2026-05-01 universal-transport refactor; evaluator.evaluate
+                # internally converts to nx via to_networkx_graphs as needed.
                 refs = datamodule.get_reference_graphs(
                     "test", evaluator.eval_num_samples
                 )
-                generated_nx = evaluator.to_networkx_graphs(samples)
-                results = evaluator.evaluate(refs=refs, generated=generated_nx)
+                results = evaluator.evaluate(refs=refs, generated=samples)
                 if results is not None:
                     metrics = {
                         f"final/test/{k}": float(v)

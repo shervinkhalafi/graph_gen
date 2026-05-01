@@ -38,9 +38,15 @@ class MolecularEvaluator:
         self,
         metrics: Sequence[MolecularMetric],
         codec: SMILESCodec,
+        eval_num_samples: int = 500,
     ) -> None:
         self.metrics = list(metrics)
         self.codec = codec
+        # Mirror :class:`GraphEvaluator.eval_num_samples` so the
+        # trainer's on_validation_epoch_end can read this off either
+        # evaluator flavour without a type check (universal-transport
+        # refactor 2026-05-01).
+        self.eval_num_samples = eval_num_samples
 
     # ------------------------------------------------------------------
     # public surface (duck-types GraphEvaluator)

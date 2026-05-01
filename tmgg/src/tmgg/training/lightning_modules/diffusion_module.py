@@ -25,7 +25,6 @@ from __future__ import annotations
 import time
 from typing import Any, override
 
-import networkx as nx
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -1942,16 +1941,11 @@ class DiffusionModule(BaseGraphModule):
         if self.global_step % self.eval_every_n_steps != 0:
             return
 
-        # The GraphEvaluator-vs-MolecularEvaluator branching for the
-        # validation loop lands in a later phase; until then this path
-        # only handles GraphEvaluator. Fail loudly if a MolecularEvaluator
-        # slips in before that wiring exists.
-        if not isinstance(self.evaluator, GraphEvaluator):
-            raise NotImplementedError(
-                "Validation-loop wiring for MolecularEvaluator is not yet "
-                "implemented; only GraphEvaluator is supported here."
-            )
-
+        # GraphEvaluator and MolecularEvaluator both consume
+        # list[GraphData] post the universal-transport refactor (spec
+        # 2026-05-01-graphdata-eval-pipeline-minispec.md), so the
+        # branch is gone. The two evaluators differ in which metrics
+        # they emit, not in how they're called.
         refs = self.trainer.datamodule.get_reference_graphs(  # pyright: ignore[reportAttributeAccessIssue]
             "val", self.evaluator.eval_num_samples
         )
@@ -1971,9 +1965,12 @@ class DiffusionModule(BaseGraphModule):
                 if value is not None:
                     self.log(f"gen-val/{key}", value, on_epoch=True)
             if self.visualization["enabled"]:
+                # build_validation_visualizations is nx-native (spring
+                # layout, networkx draw helpers). Convert at the leaf
+                # via GraphData.to_networkx() — cheap and lossless.
                 figures = build_validation_visualizations(
-                    refs=refs,
-                    generated=generated_graphs,
+                    refs=[g.to_networkx() for g in refs],
+                    generated=[g.to_networkx() for g in generated_graphs],
                     num_samples=int(self.visualization["num_samples"]),
                 )
                 log_figures(
@@ -1999,8 +1996,8 @@ class DiffusionModule(BaseGraphModule):
         num_graphs: int,
         *,
         collector: StepMetricCollector | None = None,
-    ) -> list[nx.Graph[Any]]:
-        """Generate graphs using the sampler and convert to NetworkX.
+    ) -> list[GraphData]:
+        """Generate graphs using the sampler and return as ``GraphData``.
 
         Parameters
         ----------
@@ -2011,8 +2008,12 @@ class DiffusionModule(BaseGraphModule):
 
         Returns
         -------
-        list[nx.Graph]
-            Generated NetworkX graphs.
+        list[GraphData]
+            Generated graphs as per-graph ``GraphData``. Callers that
+            need a NetworkX view convert at the consumption site via
+            :meth:`GraphData.to_networkx` (cheap, lossless, attaches
+            ``x_class`` / ``e_class`` per spec
+            ``2026-05-01-graphdata-eval-pipeline-minispec.md``).
 
         Notes
         -----
@@ -2059,22 +2060,4 @@ class DiffusionModule(BaseGraphModule):
             chain_recorder=chain_recorder,
         )
 
-        # Binarisation lives on the evaluator so the threshold and the
-        # ``E_class`` / ``E_feat`` disagreement warning (Wave 6.1) stay
-        # configurable per-run. See
-        # ``docs/specs/2026-04-15-unified-graph-features-spec.md``
-        # §"Evaluator contract".
-        if self.evaluator is None:
-            raise RuntimeError(
-                "DiffusionModule.generate_graphs requires a GraphEvaluator "
-                "to derive a binary adjacency from sampled GraphData. "
-                "Configure ``evaluator`` on the module (see Wave 6.1 of "
-                "docs/specs/2026-04-15-unified-graph-features-spec.md)."
-            )
-        if not isinstance(self.evaluator, GraphEvaluator):
-            raise NotImplementedError(
-                "to_networkx_graphs is GraphEvaluator-specific; the "
-                "MolecularEvaluator path uses SMILES decoding directly and "
-                "is wired up in a later phase."
-            )
-        return self.evaluator.to_networkx_graphs(graph_data_list)
+        return graph_data_list

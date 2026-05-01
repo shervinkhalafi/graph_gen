@@ -355,10 +355,16 @@ def run_validation(cfg: ValidationConfig) -> ValidationResult:
             break
     ref_graphs = ref_graphs[: cfg.eval_num_samples]
 
-    # Generate samples via the DiffusionModule's generation pipeline
+    # Generate samples via the DiffusionModule's generation pipeline.
+    # Post the 2026-05-01 universal-transport refactor generate_graphs
+    # returns list[GraphData]; compute_mmd_metrics is nx-native, so
+    # convert at the leaf via GraphData.to_networkx().
     with torch.no_grad():
         module = module.to(cfg.device)
-        gen_graphs = module.generate_graphs(min(len(ref_graphs), cfg.eval_num_samples))
+        gen_graph_data = module.generate_graphs(
+            min(len(ref_graphs), cfg.eval_num_samples)
+        )
+        gen_graphs = [gd.to_networkx() for gd in gen_graph_data]
 
     mmd: MMDResults = compute_mmd_metrics(
         ref_graphs, gen_graphs, kernel="gaussian_tv", sigma=1.0
