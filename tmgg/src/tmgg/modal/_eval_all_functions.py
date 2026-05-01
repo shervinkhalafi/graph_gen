@@ -68,6 +68,11 @@ def _eval_all_impl(
     num_steps: int,
     wandb_project_suffix: str,
     skip_last: bool,
+    output_dir_root: str | None,
+    viz_count: int,
+    val_batch_limit: int | None,
+    ckpt_filter: list[str] | None,
+    step_filter: list[int] | None,
 ) -> dict[str, Any]:
     """Tier-agnostic dispatch into the library implementation."""
     from tmgg.modal._lib.eval_all import eval_all_checkpoints_impl
@@ -78,6 +83,11 @@ def _eval_all_impl(
         num_steps=num_steps,
         wandb_project_suffix=wandb_project_suffix,
         skip_last=skip_last,
+        output_dir_root=output_dir_root,
+        viz_count=viz_count,
+        val_batch_limit=val_batch_limit,
+        ckpt_filter=ckpt_filter,
+        step_filter=step_filter,
     )
 
 
@@ -98,6 +108,11 @@ def eval_all_checkpoints(
     num_steps: int = 1000,
     wandb_project_suffix: str = "-eval-all",
     skip_last: bool = True,
+    output_dir_root: str | None = None,
+    viz_count: int = 32,
+    val_batch_limit: int | None = None,
+    ckpt_filter: list[str] | None = None,
+    step_filter: list[int] | None = None,
 ) -> dict[str, Any]:
     """Standard-tier (A10G) eval-all worker. See ``eval_all_checkpoints_impl``."""
     return _eval_all_impl(
@@ -106,6 +121,11 @@ def eval_all_checkpoints(
         num_steps=num_steps,
         wandb_project_suffix=wandb_project_suffix,
         skip_last=skip_last,
+        output_dir_root=output_dir_root,
+        viz_count=viz_count,
+        val_batch_limit=val_batch_limit,
+        ckpt_filter=ckpt_filter,
+        step_filter=step_filter,
     )
 
 
@@ -126,6 +146,11 @@ def eval_all_checkpoints_fast(
     num_steps: int = 1000,
     wandb_project_suffix: str = "-eval-all",
     skip_last: bool = True,
+    output_dir_root: str | None = None,
+    viz_count: int = 32,
+    val_batch_limit: int | None = None,
+    ckpt_filter: list[str] | None = None,
+    step_filter: list[int] | None = None,
 ) -> dict[str, Any]:
     """Fast-tier (A100-40GB) eval-all worker."""
     return _eval_all_impl(
@@ -134,6 +159,11 @@ def eval_all_checkpoints_fast(
         num_steps=num_steps,
         wandb_project_suffix=wandb_project_suffix,
         skip_last=skip_last,
+        output_dir_root=output_dir_root,
+        viz_count=viz_count,
+        val_batch_limit=val_batch_limit,
+        ckpt_filter=ckpt_filter,
+        step_filter=step_filter,
     )
 
 
@@ -154,6 +184,11 @@ def eval_all_checkpoints_debug(
     num_steps: int = 1000,
     wandb_project_suffix: str = "-eval-all",
     skip_last: bool = True,
+    output_dir_root: str | None = None,
+    viz_count: int = 32,
+    val_batch_limit: int | None = None,
+    ckpt_filter: list[str] | None = None,
+    step_filter: list[int] | None = None,
 ) -> dict[str, Any]:
     """Debug-tier (T4) eval-all worker — only for sanity-checking the pipe."""
     return _eval_all_impl(
@@ -162,4 +197,9 @@ def eval_all_checkpoints_debug(
         num_steps=num_steps,
         wandb_project_suffix=wandb_project_suffix,
         skip_last=skip_last,
+        output_dir_root=output_dir_root,
+        viz_count=viz_count,
+        val_batch_limit=val_batch_limit,
+        ckpt_filter=ckpt_filter,
+        step_filter=step_filter,
     )
