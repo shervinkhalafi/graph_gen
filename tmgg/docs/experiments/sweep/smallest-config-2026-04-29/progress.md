@@ -421,3 +421,102 @@ characterized (±0.15 abs sbm_accuracy at 32 graphs); round 3's threshold
 verdicts are interpreted against that floor, not against zero. Saturation-
 fit diagnostic continues running each tick to characterize asymptote
 prediction quality on the new pods.
+
+### Round-3 close (2026-05-01)
+
+All 3 pods completed full 100k steps cleanly (~9.5h each, no preemption).
+Terminal metrics @ 100k (sbm_accuracy on 32 graphs):
+
+| Pod                       | sbm_acc | mod_q | degree | clust | orbit | spectral |
+|---------------------------|---------|-------|--------|-------|-------|----------|
+| L6 reseed (s=1)           | 0.6875  | 0.423 | 0.0019 | 0.066 | 0.096 | 0.0065   |
+| dim_ffy=128 on L6 (s=0)   | 0.4375  | 0.420 | 0.0055 | 0.065 | 0.062 | 0.0080   |
+| dim_ffy=64 on L6 (s=0)    | 0.4688  | 0.436 | 0.0011 | 0.066 | 0.078 | 0.0078   |
+
+vs round-2 baselines: L8 anchor 0.375 @ 32k, L6 (s=0) 0.5625 @ 44k.
+
+**L6 confirmed**: seed-1 reached 0.6875, both seeds within ±0.15 noise
+envelope, both beat L8 at every matched step. Round-2's "L6 safely
+shrinkable" decision is fully backed.
+
+**dim_ffy regression on L6 base**: both cuts (128 and 64) clustered at
+sbm_acc ≈ 0.45, ~0.18 below L6 baseline mean (just outside ±0.15 floor).
+dim_ffy=64 was NOT meaningfully worse than dim_ffy=128 — axis behaves
+binary (intact vs broken) on this base. **HOWEVER, this finding is now
+SUPERSEDED by Shervin's reference (see Round 4 below).**
+
+## Round 4 — pivot to bracket-narrow around Shervin's reference
+
+### What rounds 1-3 told us
+
+Coordinate-descent on round-0's per-axis pre-rank was biased: each axis
+was ranked one-at-a-time on the over-parameterized anchor, which
+flagged dim_ffy as over-provisioned. Round 3's dim_ffy regression on
+the L6 base (with all other dims still at full anchor values) appeared
+to confirm this. Then on 2026-04-30 Shervin reported a working DiGress
+config at ~300k params with dx=64, de=8, dy=8, dim_ffX=64, dim_ffE=8,
+dim_ffy=256, n_head=8 — i.e. he kept dim_ffy at 256 while slashing
+EVERY other axis 4-32×. This evidence dominates our marginal-axis
+read: cutting one axis on an over-parameterized base behaves
+differently than cutting the same axis on a tightly-parameterized base.
+
+### What I'm trying next and why
+
+Search reframe: bracket-narrow around Shervin's known-pass reference,
+not coord-descent on pre-rank. Per-round invariant going forward:
+include ≥1 config we expect to fail, to keep the bracket tight.
+
+Three pods, all on Shervin's base (dx=64, de=8, dy=8, dim_ffX=64,
+dim_ffE=8, dim_ffy=256, n_head=8, n_layers=6 assumed, seed=0):
+
+1. **Pod A — exact reproduction**. Positive control: confirms Shervin's
+   pass claim under our eval pipeline + threshold rule + step budget.
+2. **Pod B — Shervin + dim_ffy 256 → 32**. Probes BELOW Shervin on the
+   axis he kept full. ~0% compute change (dim_ffy operates on 1 vector
+   per graph) — pure param-count cut. Hypothesis: passes (dim_ffy
+   irrelevant in small regime).
+3. **Pod C — Shervin + dx 64 → 32 + dim_ffX 64 → 32 (joint halving)**.
+   Quadratic-ish node-side cut: attn QKV proj 4× cut (`dx²`), node FFN
+   4× cut (`dx · dim_ffX`), edge attn 2× cut (linear in dx). Edge-side
+   untouched (de=dim_ffE=8 already minimal). Hypothesis: lower-bracket
+   probe — plausibly fails because dx=32 may be at the boundary for
+   SBM block discrimination.
+
+### Configs to launch
+| dataset     | model_arch       | axis_changed       | axis_value | seed | step_cap |
+|-------------|------------------|--------------------|------------|------|----------|
+| spectre_sbm | digress_official | shervin_base       | exact      | 0    | 100000   |
+| spectre_sbm | digress_official | shervin_dim_ffy    | 32         | 0    | 100000   |
+| spectre_sbm | digress_official | shervin_dx_dim_ffX | 32_32      | 0    | 100000   |
+
+ENZYMES still no round-4 launch (lock SBM smallest first).
+
+### Cost-savers (all pods)
+
+- **Drop async-eval entirely.** Rely on trainer's in-band
+  `val_check_interval=10000` (10 trustworthy data points across 100k).
+  Async-eval has documented untrustworthy divergence on SBM (see
+  taskwarrior #24). Saves ~3h per pod and removes scheduling complexity.
+- n_layers=6 baked into all pods (don't re-test n_layers axis).
+
+### If I'm wrong, the cheapest disconfirming config is
+
+- Pod A FAILS to reproduce → reproduction problem; investigate eval-
+  pipeline differences vs Shervin's setup before round 5.
+- Pod A passes, B passes, C fails → dim_ffy irrelevant, dx is the
+  active constraint. Round 5 probes dx=48 (midpoint) and locks dim_ffy
+  at 32.
+- Pod A passes, B fails, C passes → dim_ffy was load-bearing in the
+  small regime (Shervin's 256 was deliberate). Round 5 probes dim_ffy
+  midpoint (e.g. 128) and locks dx=32.
+- All three pass → aggressive round 5 with joint cuts.
+- A passes, B and C fail → Shervin sits at the exact boundary; round 5
+  narrows by midpoints between Shervin and the failed cuts.
+
+### Synthesis (every round, cheap)
+
+Round 4 is the first bracket-search round. Cited evidence: Shervin's
+2026-04-30 config message (informal, no W&B handle yet). Round 3's
+"dim_ffy is binary intact/broken on L6" finding is provisionally
+re-interpreted as a coord-descent artifact and will be re-tested in
+Pod B on the small base. Saturation-fit diagnostic continues each tick.

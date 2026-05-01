@@ -55,6 +55,15 @@ class EvaluationInput:
     mmd_kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv"
     mmd_sigma: float = 1.0
     seed: int = 42
+    # Optional multi-format dump dir. When set, the evaluate CLI
+    # additionally writes generated/reference graphs (edge-list JSON),
+    # per-batch val diagnostics, viz PNGs, timings, and a summary.md
+    # under this directory. Async-eval (training callback) leaves it
+    # ``None`` to keep the per-ckpt path lean; the eval-all worker
+    # supplies a fresh subfolder per ckpt.
+    output_dir: str | None = None
+    viz_count: int = 32
+    val_batch_limit: int | None = None
 
 
 @dataclass
@@ -275,6 +284,17 @@ def run_mmd_evaluation(task_dict: dict[str, Any]) -> dict[str, Any]:
             "--output",
             str(result_path),
         ]
+        if task.output_dir:
+            cli_args.extend(
+                [
+                    "--output-dir",
+                    task.output_dir,
+                    "--viz-count",
+                    str(task.viz_count),
+                ]
+            )
+            if task.val_batch_limit is not None:
+                cli_args.extend(["--val-batch-limit", str(task.val_batch_limit)])
 
         logger.info("Running evaluation CLI: %s", " ".join(cli_args))
         proc = subprocess.run(cli_args, capture_output=True, text=True)
