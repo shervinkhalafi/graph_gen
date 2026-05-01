@@ -158,6 +158,14 @@ class SMILESCodec:
     def decode(self, data: GraphData) -> str | None:
         """Decode a single-graph :class:`GraphData` back to a SMILES.
 
+        Accepts either the unbatched form produced by the sampler and
+        by :meth:`BaseGraphDataModule.get_reference_graphs` (1-D
+        ``node_mask``, 2-D ``X_class``, 3-D ``E_class``) or the
+        batched-of-one form (2-D ``node_mask``, 3-D ``X_class``, 4-D
+        ``E_class``); both are valid post the 2026-05-01
+        universal-transport refactor where evaluator inputs come in
+        either shape depending on the producer.
+
         Returns ``None`` if the resulting molecule fails RDKit
         sanitisation. Used by :class:`ValidityMetric` and round-trip
         tests; not used in the training loop.
@@ -167,15 +175,22 @@ class SMILESCodec:
         x_class = data.X_class
         e_class = data.E_class
         node_mask = data.node_mask
-        if x_class.shape[0] != 1:
-            raise ValueError(
-                f"SMILESCodec.decode expects a single-graph batch; got "
-                f"batch size {x_class.shape[0]}."
-            )
+        # Normalise to the unbatched view so the rest of the function
+        # only handles one shape: X_class[n, dx], E_class[n, n, de],
+        # node_mask[n]. Either input shape collapses to that.
+        if x_class.dim() == 3:
+            if x_class.shape[0] != 1:
+                raise ValueError(
+                    f"SMILESCodec.decode expects a single-graph batch; got "
+                    f"batch size {x_class.shape[0]}."
+                )
+            x_class = x_class[0]
+            e_class = e_class[0]
+            node_mask = node_mask[0]
 
-        n_real = int(node_mask[0].sum().item())
-        atom_idx = x_class[0, :n_real].argmax(dim=-1).tolist()
-        bond_idx = e_class[0, :n_real, :n_real].argmax(dim=-1).tolist()
+        n_real = int(node_mask.sum().item())
+        atom_idx = x_class[:n_real].argmax(dim=-1).tolist()
+        bond_idx = e_class[:n_real, :n_real].argmax(dim=-1).tolist()
 
         rwmol = RWMol()
         for a in atom_idx:

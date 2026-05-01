@@ -40,6 +40,29 @@ def test_decode_recovers_canonical() -> None:
     assert decoded == "CCO"
 
 
+def test_decode_accepts_unbatched_graph_data() -> None:
+    """Regression: codec must accept the unbatched shape produced by
+    the sampler and by ``BaseGraphDataModule.get_reference_graphs`` post
+    the 2026-05-01 universal-transport refactor (1-D node_mask, 2-D
+    X_class, 3-D E_class). Pre-fix, decode raised
+    ``"expects a single-graph batch"`` because it only handled the
+    batched-of-one shape.
+    """
+    from tmgg.data.datasets.graph_types import GraphData
+
+    codec = _qm9_codec()
+    encoded = codec.encode("CCO")
+    assert encoded is not None
+    # Strip the leading-1 batch dim to mimic an unbatched single-graph.
+    unbatched = GraphData(
+        node_mask=encoded.node_mask[0],
+        X_class=encoded.X_class[0] if encoded.X_class is not None else None,
+        E_class=encoded.E_class[0] if encoded.E_class is not None else None,
+        y=encoded.y[0] if encoded.y is not None else encoded.y,
+    )
+    assert codec.decode(unbatched) == "CCO"
+
+
 def test_cache_key_changes_with_vocab() -> None:
     qm9 = SMILESCodec(vocab=AtomBondVocabulary.qm9(), max_atoms=30)
     moses = SMILESCodec(vocab=AtomBondVocabulary.moses(), max_atoms=30)
