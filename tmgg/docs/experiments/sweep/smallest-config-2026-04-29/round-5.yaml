@@ -20,12 +20,16 @@
 #   - Cautious: + dy 8->4 (tiny additional cut, lowest risk)
 #   - Moderate: + n_layers 6->4 (depth halve — biggest compute/param leverage,
 #     single-axis change so risk is bounded)
-#   - Greedy:   + n_layers 6->4 + de 8->4 + dim_ffE 8->4 (multi-axis attack,
-#     compounds depth halving with edge-side narrowing)
+#   - Greedy:   + n_layers 6->4 + dx 32->16 + dim_ffX 32->16
+#     (depth halve PLUS another joint node-side halving. Strictly
+#     contains moderate; adds the same dx/dim_ffX halving that
+#     succeeded in R4 Pod C, but applied AGAIN one octave smaller.
+#     Pure node-side attack — edge stream untouched, since edge cuts
+#     have separate risk profile we want to study in isolation later.)
 #
 # Per-round invariant: include >=1 config we expect to fail (the greedy
-# pod plays that role here — multi-axis simultaneous cuts on an already
-# tight base usually break something).
+# pod plays that role here — depth halve plus another node-dimension
+# halve compounds two large cuts on the already-shrunk base).
 
 session_tag: round-5-further-cuts-below-shervin-pareto
 round: 5
@@ -72,34 +76,38 @@ launches:
       model.model.hidden_dims.dim_ffE: 8
       model.model.hidden_dims.dim_ffy: 32
 
-  # Greedy: round-4 union + L4 + edge-side halving.
-  # de 8->4 and dim_ffE 8->4 simultaneously — the edge transformer
-  # stream gets squeezed in lockstep with the depth halve. With 2
-  # edge classes (binary edges in SBM), de=4 is still over-spec'd in
-  # information-theoretic terms (need only ~1 bit per edge). Combined
-  # with depth halve, this is the disconfirming-config probe.
+  # Greedy: round-4 union + L4 + ANOTHER joint dx/dim_ffX halving.
+  # dx 32->16 and dim_ffX 32->16 simultaneously, on top of n_layers
+  # 6->4. Re-applies the cut that succeeded in R4 Pod C, one octave
+  # smaller. Pure node-side attack: edge stream (de=8, dim_ffE=8)
+  # untouched. n_head must stay 8 since dx=16 is still divisible.
+  # Hypothesis: aggressive but plausible — quadratic-ish node compute
+  # win on attention QKV projection (dx^2 = 256 -> 16^2 = 16, that's
+  # a 16x cut at the matrix-mul layer) on top of 2x depth speedup.
+  # Disconfirming-config probe.
   - dataset: spectre_sbm
-    axis_changed: combined_L4_de4_ffE4
+    axis_changed: combined_L4_dx16
     axis_value: "greedy"
     seed: 0
     step_cap: 100000
     overrides:
       trainer.max_steps: 100000
       model.model.n_layers: 4
-      model.model.hidden_dims.dx: 32
-      model.model.hidden_dims.de: 4
+      model.model.hidden_dims.dx: 16
+      model.model.hidden_dims.de: 8
       model.model.hidden_dims.dy: 8
       model.model.hidden_dims.n_head: 8
-      model.model.hidden_dims.dim_ffX: 32
-      model.model.hidden_dims.dim_ffE: 4
+      model.model.hidden_dims.dim_ffX: 16
+      model.model.hidden_dims.dim_ffE: 8
       model.model.hidden_dims.dim_ffy: 32
 
 # Disconfirming-config fallback:
 #   - If cautious passes and moderate fails: depth was load-bearing;
 #     round 6 lock n_layers=6 + try dy=2.
 #   - If moderate passes and greedy fails: depth halve is fine but
-#     edge-side cuts hurt; round 6 isolate which (de vs dim_ffE).
-#   - If greedy passes: aggressive bracket-narrow next round (try
-#     n_layers=3 + de=2 simultaneously).
+#     dx 32->16 was the breaking cut; round 6 isolate (test L4+dx=24
+#     midpoint, or test L4+dim_ffX=16 with dx still 32).
+#   - If greedy passes: round 6 attacks edge side (de 8->4 + dim_ffE
+#     8->4) on the new greedy-passing base.
 #   - If all 3 fail: round-4 union (dx=32, dim_ffX=32, dim_ffy=32) IS
 #     the lower bound; lock and pivot to ENZYMES.
