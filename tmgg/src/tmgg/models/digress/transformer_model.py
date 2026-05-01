@@ -92,6 +92,8 @@ class XEyTransformerLayer(nn.Module):
         use_spectral_v: bool = False,
         spectral_k: int = 16,
         spectral_num_terms: int = 3,
+        gnn_normalize_adj: bool = True,
+        spectral_normalize_eigenvalues: bool = True,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
@@ -106,11 +108,13 @@ class XEyTransformerLayer(nn.Module):
             use_gnn_k=use_gnn_k,
             use_gnn_v=use_gnn_v,
             gnn_num_terms=gnn_num_terms,
+            gnn_normalize_adj=gnn_normalize_adj,
             use_spectral_q=use_spectral_q,
             use_spectral_k=use_spectral_k,
             use_spectral_v=use_spectral_v,
             spectral_k=spectral_k,
             spectral_num_terms=spectral_num_terms,
+            spectral_normalize_eigenvalues=spectral_normalize_eigenvalues,
             device=device,
             dtype=dtype,
         )
@@ -222,6 +226,11 @@ class NodeEdgeBlock(nn.Module):
         If True, use polynomial graph convolution for value projection.
     gnn_num_terms
         Number of polynomial terms for GNN projections (default 2).
+    gnn_normalize_adj
+        If True (default), the GNN projections symmetrically normalize
+        the adjacency to D^{-1/2} A D^{-1/2} before raising it to powers.
+        If False, the raw adjacency is used directly. Forwarded into
+        every ``BareGraphConvolutionLayer`` instantiated by this block.
     use_spectral_q
         If True, use spectral filter bank for query projection.
     use_spectral_k
@@ -232,6 +241,12 @@ class NodeEdgeBlock(nn.Module):
         Number of eigenvectors for spectral projections (default 16).
     spectral_num_terms
         Number of polynomial terms for spectral filter (default 3).
+    spectral_normalize_eigenvalues
+        If True (default), the spectral projections rescale eigenvalues
+        per-graph by ``Lambda / max|Lambda|`` before raising them to
+        powers. If False, the raw eigenvalues are used directly.
+        Forwarded into every ``SpectralProjectionLayer`` instantiated
+        by this block.
     device
         Device for layer parameters.
     dtype
@@ -274,11 +289,13 @@ class NodeEdgeBlock(nn.Module):
         use_gnn_k: bool = False,
         use_gnn_v: bool = False,
         gnn_num_terms: int = 2,
+        gnn_normalize_adj: bool = True,
         use_spectral_q: bool = False,
         use_spectral_k: bool = False,
         use_spectral_v: bool = False,
         spectral_k: int = 16,
         spectral_num_terms: int = 3,
+        spectral_normalize_eigenvalues: bool = True,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
@@ -310,28 +327,43 @@ class NodeEdgeBlock(nn.Module):
 
         # Attention projections (Linear, GNN, or Spectral)
         if use_gnn_q:
-            self.q = BareGraphConvolutionLayer(gnn_num_terms, dx)
+            self.q = BareGraphConvolutionLayer(
+                gnn_num_terms, dx, normalize_adjacency=gnn_normalize_adj
+            )
         elif use_spectral_q:
             self.q = SpectralProjectionLayer(
-                k=spectral_k, out_dim=dx, num_terms=spectral_num_terms
+                k=spectral_k,
+                out_dim=dx,
+                num_terms=spectral_num_terms,
+                normalize_eigenvalues=spectral_normalize_eigenvalues,
             )
         else:
             self.q = Linear(dx, dx, device=device, dtype=dtype)
 
         if use_gnn_k:
-            self.k = BareGraphConvolutionLayer(gnn_num_terms, dx)
+            self.k = BareGraphConvolutionLayer(
+                gnn_num_terms, dx, normalize_adjacency=gnn_normalize_adj
+            )
         elif use_spectral_k:
             self.k = SpectralProjectionLayer(
-                k=spectral_k, out_dim=dx, num_terms=spectral_num_terms
+                k=spectral_k,
+                out_dim=dx,
+                num_terms=spectral_num_terms,
+                normalize_eigenvalues=spectral_normalize_eigenvalues,
             )
         else:
             self.k = Linear(dx, dx, device=device, dtype=dtype)
 
         if use_gnn_v:
-            self.v = BareGraphConvolutionLayer(gnn_num_terms, dx)
+            self.v = BareGraphConvolutionLayer(
+                gnn_num_terms, dx, normalize_adjacency=gnn_normalize_adj
+            )
         elif use_spectral_v:
             self.v = SpectralProjectionLayer(
-                k=spectral_k, out_dim=dx, num_terms=spectral_num_terms
+                k=spectral_k,
+                out_dim=dx,
+                num_terms=spectral_num_terms,
+                normalize_eigenvalues=spectral_normalize_eigenvalues,
             )
         else:
             self.v = Linear(dx, dx, device=device, dtype=dtype)
@@ -536,6 +568,35 @@ class _GraphTransformer(nn.Module):
         Activation function for input MLPs. Defaults to ReLU.
     act_fn_out
         Activation function for output MLPs. Defaults to ReLU.
+    projection_config
+        Optional dict overriding the per-layer Q/K/V projection
+        configuration. Recognised keys:
+
+        - ``use_gnn_q``, ``use_gnn_k``, ``use_gnn_v`` (bool, default False):
+          replace the corresponding linear projection with
+          ``BareGraphConvolutionLayer``.
+        - ``gnn_num_terms`` (int, default 2): polynomial order for the
+          GNN projection.
+        - ``gnn_normalize_adj`` (bool, default True): symmetrically
+          normalize the adjacency to ``D^{-1/2} A D^{-1/2}`` inside
+          ``BareGraphConvolutionLayer``. Set to False to feed the raw
+          ``A`` (or any caller-supplied graph shift operator) through
+          unchanged.
+        - ``use_spectral_q``, ``use_spectral_k``, ``use_spectral_v`` (bool,
+          default False): replace the corresponding linear projection
+          with ``SpectralProjectionLayer``.
+        - ``spectral_k`` (int, default 16): truncation rank.
+        - ``spectral_num_terms`` (int, default 3): polynomial order in
+          the eigenvalues.
+        - ``spectral_normalize_eigenvalues`` (bool, default True): rescale
+          eigenvalues per-graph by ``Lambda / max|Lambda|`` inside
+          ``SpectralProjectionLayer``. Set to False to feed raw
+          eigenvalues straight to the polynomial; the caller is then
+          responsible for ``|λ| ≤ 1``.
+
+        For backwards compatibility the same keys are also read from
+        ``hidden_dims``; ``projection_config`` takes precedence when
+        both are present.
     """
 
     n_layers: int
@@ -609,11 +670,13 @@ class _GraphTransformer(nn.Module):
             "use_gnn_k",
             "use_gnn_v",
             "gnn_num_terms",
+            "gnn_normalize_adj",
             "use_spectral_q",
             "use_spectral_k",
             "use_spectral_v",
             "spectral_k",
             "spectral_num_terms",
+            "spectral_normalize_eigenvalues",
         }
         pc: dict[str, bool | int] = {
             k: v for k, v in hidden_dims.items() if k in _PROJ_KEYS
@@ -625,6 +688,8 @@ class _GraphTransformer(nn.Module):
         use_gnn_k = bool(pc.get("use_gnn_k", False))
         use_gnn_v = bool(pc.get("use_gnn_v", False))
         gnn_num_terms = int(pc.get("gnn_num_terms", 2))
+        # Default True preserves historical behaviour (D^{-1/2} A D^{-1/2}).
+        gnn_normalize_adj = bool(pc.get("gnn_normalize_adj", True))
         self._use_gnn_projections = use_gnn_q or use_gnn_k or use_gnn_v
 
         use_spectral_q = bool(pc.get("use_spectral_q", False))
@@ -632,6 +697,10 @@ class _GraphTransformer(nn.Module):
         use_spectral_v = bool(pc.get("use_spectral_v", False))
         spectral_k = int(pc.get("spectral_k", 16))
         spectral_num_terms = int(pc.get("spectral_num_terms", 3))
+        # Default True preserves historical behaviour (Lambda / max|Lambda|).
+        spectral_normalize_eigenvalues = bool(
+            pc.get("spectral_normalize_eigenvalues", True)
+        )
         self._use_spectral_projections = (
             use_spectral_q or use_spectral_k or use_spectral_v
         )
@@ -659,11 +728,13 @@ class _GraphTransformer(nn.Module):
                     use_gnn_k=use_gnn_k,
                     use_gnn_v=use_gnn_v,
                     gnn_num_terms=gnn_num_terms,
+                    gnn_normalize_adj=gnn_normalize_adj,
                     use_spectral_q=use_spectral_q,
                     use_spectral_k=use_spectral_k,
                     use_spectral_v=use_spectral_v,
                     spectral_k=spectral_k,
                     spectral_num_terms=spectral_num_terms,
+                    spectral_normalize_eigenvalues=spectral_normalize_eigenvalues,
                 )
                 for _ in range(n_layers)
             ]

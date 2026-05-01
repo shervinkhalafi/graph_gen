@@ -25,6 +25,17 @@ class SpectralProjectionLayer(nn.Module):
         Output dimension for the projection.
     num_terms : int
         Number of polynomial terms (degree K-1). Default is 3.
+    normalize_eigenvalues : bool
+        If True (default), rescale eigenvalues to ``[-1, 1]`` per-graph
+        via ``Lambda / max|Lambda|`` before raising them to powers
+        (clamped at ``1e-6`` from below to avoid division by zero on
+        all-zero spectra). If False, feed the input eigenvalues
+        directly to the polynomial. Defaulting to True preserves
+        historical behaviour. Setting False is appropriate when the
+        caller has already rescaled the eigenvalues upstream
+        (e.g. ``L`` already scaled to ``2L/λ_max - I``); the caller
+        is then responsible for keeping ``|λ| ≤ 1`` so ``Λ^ℓ`` does
+        not overflow.
 
     Notes
     -----
@@ -50,11 +61,18 @@ class SpectralProjectionLayer(nn.Module):
     torch.Size([4, 50, 64])
     """
 
-    def __init__(self, k: int, out_dim: int, num_terms: int = 3) -> None:
+    def __init__(
+        self,
+        k: int,
+        out_dim: int,
+        num_terms: int = 3,
+        normalize_eigenvalues: bool = True,
+    ) -> None:
         super().__init__()
         self.k = k
         self.out_dim = out_dim
         self.num_terms = num_terms
+        self.normalize_eigenvalues = normalize_eigenvalues
 
         # Polynomial coefficient matrices H^{(ℓ)} ∈ R^{k×k} for ℓ = 0, ..., K-1
         self.H = nn.ParameterList(
@@ -74,21 +92,26 @@ class SpectralProjectionLayer(nn.Module):
         V : torch.Tensor
             Eigenvectors of shape (batch, n, k).
         Lambda : torch.Tensor
-            Eigenvalues of shape (batch, k).
+            Eigenvalues of shape (batch, k). When
+            ``self.normalize_eigenvalues`` is False, the caller is
+            responsible for keeping ``|Lambda| ≤ 1``.
 
         Returns
         -------
         torch.Tensor
             Projected features of shape (batch, n, out_dim).
         """
-        # Normalize eigenvalues to [-1, 1] for numerical stability
-        Lambda_max = Lambda.abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-6)
-        Lambda_normalized = Lambda / Lambda_max
+        if self.normalize_eigenvalues:
+            # Rescale eigenvalues to [-1, 1] for numerical stability
+            Lambda_max = Lambda.abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-6)
+            Lambda_used = Lambda / Lambda_max
+        else:
+            Lambda_used = Lambda
 
         # Compute W = Σ Λ^ℓ ⊙ H^{(ℓ)}
         from tmgg.models.layers.graph_ops import spectral_polynomial
 
-        W = spectral_polynomial(Lambda_normalized, list(self.H))
+        W = spectral_polynomial(Lambda_used, list(self.H))
 
         # Apply spectral filter: Y = V @ W
         Y = torch.matmul(V, W)  # (batch, n, k)
