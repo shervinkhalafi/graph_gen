@@ -238,6 +238,15 @@ def run_val_pass_with_per_batch_capture(
         :func:`write_val_per_batch_csv`.
     """
     rows = ValBatchRows()
+    # Populate the module's size distribution from the datamodule. In
+    # the trainer flow Lightning's ``setup()`` does this; the
+    # checkpoint-loading CLI flow skips ``setup()`` (no Trainer
+    # attached), so ``validation_step``'s categorical branch crashes
+    # with ``_size_distribution is None``. Mirror what the trainer
+    # would have done — both ExactDensity and Categorical (a
+    # subclass) need it for the log_pN term in the VLB.
+    if getattr(module, "_size_distribution", None) is None:
+        module._size_distribution = datamodule.get_size_distribution("train")
     val_loader = datamodule.val_dataloader()
     module.on_validation_epoch_start()
     with _silenced_lightning_log(module), torch.no_grad():

@@ -243,6 +243,48 @@ def test_dump_eval_artifacts_writes_full_layout(tmp_path: Path) -> None:
         assert key in paths
 
 
+def test_val_pass_populates_size_distribution_from_datamodule() -> None:
+    """Regression: val-pass must hydrate ``_size_distribution`` from the
+    datamodule before iterating, because the CLI flow skips Lightning's
+    ``setup()`` (no Trainer attached). Pre-fix, the categorical branch
+    of ``validation_step`` raised ``_size_distribution is None`` on the
+    very first batch, killing every per-ckpt eval-all dump.
+    """
+    from tmgg.experiments.discrete_diffusion_generative._eval_dump import (
+        run_val_pass_with_per_batch_capture,
+    )
+
+    class _StubSize:
+        def log_prob(self, _node_counts: object) -> object:
+            raise AssertionError("not needed for this regression test")
+
+    class _StubModule:
+        def __init__(self) -> None:
+            self._size_distribution: object | None = None
+            self.device: str = "cpu"
+            self.log = lambda *a, **kw: None
+
+        def on_validation_epoch_start(self) -> None:
+            return None
+
+    class _StubDM:
+        def __init__(self) -> None:
+            self.size = _StubSize()
+
+        def get_size_distribution(self, split: str) -> _StubSize:
+            assert split == "train"
+            return self.size
+
+        def val_dataloader(self) -> list[object]:
+            return []  # zero batches → loop body never executes
+
+    module = _StubModule()
+    dm = _StubDM()
+    rows = run_val_pass_with_per_batch_capture(module, dm)
+    assert module._size_distribution is dm.size
+    assert rows.rows == []
+
+
 @pytest.mark.parametrize(
     "edges",
     [
