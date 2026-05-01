@@ -421,3 +421,27 @@ characterized (±0.15 abs sbm_accuracy at 32 graphs); round 3's threshold
 verdicts are interpreted against that floor, not against zero. Saturation-
 fit diagnostic continues running each tick to characterize asymptote
 prediction quality on the new pods.
+
+### Round-3 close (2026-05-01)
+
+All 3 pods completed full 100k steps cleanly (~9.5h each, no preemption).
+Terminal metrics @ 100k (sbm_accuracy on 32 graphs):
+
+| Pod                       | sbm_acc | mod_q | degree | clust | orbit | spectral |
+|---------------------------|---------|-------|--------|-------|-------|----------|
+| L6 reseed (s=1)           | 0.6875  | 0.423 | 0.0019 | 0.066 | 0.096 | 0.0065   |
+| dim_ffy=128 on L6 (s=0)   | 0.4375  | 0.420 | 0.0055 | 0.065 | 0.062 | 0.0080   |
+| dim_ffy=64 on L6 (s=0)    | 0.4688  | 0.436 | 0.0011 | 0.066 | 0.078 | 0.0078   |
+
+vs round-2 baselines: L8 anchor 0.375 @ 32k, L6 (s=0) 0.5625 @ 44k.
+
+**L6 confirmed**: seed-1 reached 0.6875, both seeds within ±0.15 noise
+envelope, both beat L8 at every matched step. Round-2's "L6 safely
+shrinkable" decision is fully backed.
+
+**dim_ffy regression on L6 base**: both cuts (128 and 64) clustered at
+sbm_acc ≈ 0.45, ~0.18 below L6 baseline mean (just outside ±0.15 floor).
+dim_ffy=64 was NOT meaningfully worse than dim_ffy=128 — axis behaves
+binary (intact vs broken) on this base. **HOWEVER, this finding is now
+SUPERSEDED by Shervin's reference (see Round 4 below).**
+
