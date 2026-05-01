@@ -520,3 +520,132 @@ Round 4 is the first bracket-search round. Cited evidence: Shervin's
 "dim_ffy is binary intact/broken on L6" finding is provisionally
 re-interpreted as a coord-descent artifact and will be re-tested in
 Pod B on the small base. Saturation-fit diagnostic continues each tick.
+
+## Round 5 — closed on user direction (2026-05-01); GREEDY config wins
+
+### What happened
+
+Three pods launched on R4-union base (dx=32, dim_ffX=32, dim_ffy=32,
+n_layers=6, others Shervin):
+
+- **Cautious** (combined_dy_cut): + dy 8→4
+- **Moderate** (combined_L4):     + n_layers 6→4 (depth halve)
+- **Greedy**   (combined_L4_dx16): + n_layers 6→4 + dx 32→16 + dim_ffX 32→16
+
+All 3 killed on user direction at ~step 50-70k after Greedy emerged
+as clear winner on two key axes simultaneously.
+
+### Last-observed metrics before kill
+
+| Pod      | step  | sbm_acc | mod_q | degree  | clust  | orbit  | spectral |
+|----------|-------|---------|-------|---------|--------|--------|----------|
+| Cautious | 52920 | 0.281   | 0.417 | 0.0046  | 0.0709 | 0.0777 | 0.0070   |
+| Moderate | 68899 | 0.250   | 0.405 | 0.0015  | 0.0692 | 0.0693 | 0.0047   |
+| **Greedy**| 60114| **0.500** | **0.442** | 0.0014 | 0.0657 | 0.0763 | 0.0095 |
+
+Greedy had clear leadership on sbm_accuracy (0.500 — best of entire
+sweep), modularity_q (0.442 — best of sweep), and competitive degree.
+Cautious + Moderate were both bouncing in the ±0.15 noise floor.
+Greedy strictly contains Moderate, so Moderate is provably non-pareto;
+Greedy beat Cautious on the leadership metrics, so Cautious is also
+deprioritized.
+
+### Verdict and pareto reset
+
+**Round-5 winning config (new sweep pareto reference):**
+
+```yaml
+n_layers: 4
+hidden_dims:
+  dx: 16
+  de: 8
+  dy: 8
+  n_head: 8
+  dim_ffX: 16
+  dim_ffE: 8
+  dim_ffy: 32
+```
+
+**Cost vs Shervin's reference (~300k params):**
+
+| Dimension                         | Shervin | Greedy | Ratio                     |
+|-----------------------------------|---------|--------|---------------------------|
+| Wall-clock pace (steps/min, A100) | 309     | 373    | **1.21× faster**          |
+| Transformer-stack params          | 182k    | 10k    | **18× fewer**             |
+| Total model params (estimate)     | ~300k   | ~30-50k| **~7-10× smaller**        |
+
+The wall-clock speedup is much smaller than the param/FLOP cuts because
+edge-side compute (n²-scaled at N=200 nodes, both pods have de=8 and
+dim_ffE=8 unchanged) and eval-cycle wall time (fixed per evaluation)
+dominate at this size.
+
+### Open question (deliberately unresolved)
+
+NONE of the round-4 or round-5 configs cross the sbm_acc=0.8 threshold
+within the 100k step cap. Best the sweep has ever seen is sbm_acc=0.500
+(Greedy at step 60k). Visualizations across the sweep still show ER-like
+samples without a crisp 2-block diagonal — Shervin's informal "550k step"
+remark may be the actual scale needed for true block discrimination on
+configs of this size. Open question for round 6: is the gap between
+sbm_acc=0.5 and 0.8 closeable with more steps on the same config, or
+does it require a structurally different architecture?
+
+## Future-work suggestions (post round 5)
+
+These are in priority order; pick from this menu when resuming the sweep.
+
+### Wall-clock-focused suggestions (since wall-clock is the cost metric)
+
+1. **Edge-side cuts on Greedy base.** Greedy left de=8, dim_ffE=8
+   untouched. Cutting both 8→4 attacks the n²-scaled compute that
+   currently dominates wall-clock. Expected wall-clock win: 1.5-2×
+   on top of Greedy's 1.21×. Risk: edge-feature dim might be load-
+   bearing for binary-edge SBM (we never tested edge-side cuts on a
+   small base).
+
+2. **Larger eval cadence.** `val_check_interval: 10000 → 20000`
+   halves the per-100k-step eval wall time. Costs 50% of the in-band
+   data points (5 instead of 10) but the eval-noise floor (±0.15 abs
+   sbm_acc) means individual data points are weak signal anyway.
+
+3. **Smaller eval sample count.** `eval_num_samples: 32 → 16` cuts
+   sampling time roughly in half per cycle. Increases noise floor
+   (~±0.20 abs) but proportionally reduces the eval wall-time
+   floor that masks param-cut wall-clock wins.
+
+### Quality-focused suggestions (for crossing sbm_acc=0.8)
+
+4. **Long Greedy run.** Take the round-5 winner and just train for
+   500k-1M steps. Single-config probe of whether the structurally-
+   sound-but-undertrained hypothesis (per Shervin's claim) holds.
+   Cost: ~25h A100 wall on greedy at 373 steps/min. This is the
+   highest-evidence experiment for the open question above.
+
+5. **Architectural change.** If Greedy at 500k+ still doesn't cross
+   threshold, the architecture (DiGress-as-implemented) may not
+   support the regime; investigate adding spectral/positional input
+   features (already wired in via extra_features) or higher-order
+   interactions.
+
+### Sweep-protocol suggestions
+
+6. **ENZYMES axis attacks.** The smallest-config search on ENZYMES
+   has been deferred since round 1 (only the path-D anchor was run).
+   Now that SBM has a tight pareto baseline (Greedy), ENZYMES axis
+   cuts can be informed by SBM findings and run in parallel.
+
+7. **Per-config seed budget = 2 going forward.** Single-seed reads
+   on sbm_acc are nearly meaningless given the ±0.15 noise floor and
+   the single-eval-bounces we've seen (R4 Pod C 0.03→0.34 in adjacent
+   evals; R5 Greedy 0.281→0.500). Two seeds per config would cut
+   the false-call rate substantially without doubling cost (each pod
+   is cheap at this size).
+
+8. **Visualization-gated promotions.** sbm_accuracy's 0-0.5 range
+   under our eval pipeline does NOT distinguish "pre-block-discrim
+   ER noise" from "early SBM emergence" — we proved this with the
+   step-30k visualization sniff-test where all 6 R4+R5 pods looked
+   visually identical despite numerical metric spread. Consider
+   gating round-progression decisions on visual-block-emergence,
+   not on sbm_accuracy threshold alone.
+
