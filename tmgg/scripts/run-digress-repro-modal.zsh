@@ -29,6 +29,8 @@ shift
 
 case "$DATASET" in
   sbm)        EXP="discrete_sbm_vignac_repro" ;;
+  sbm-pearl)  EXP="discrete_sbm_pearl_repro" ;;
+  sbm-pearl-spectral)  EXP="discrete_sbm_pearl_spectral_repro" ;;
   planar)     EXP="discrete_planar_digress_repro" ;;
   qm9)        EXP="discrete_qm9_digress_repro" ;;
   moses)      EXP="discrete_moses_digress_repro" ;;
