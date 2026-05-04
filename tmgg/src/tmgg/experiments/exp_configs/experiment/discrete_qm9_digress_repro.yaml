@@ -52,6 +52,8 @@ model:
   num_nodes: 9
   evaluator:
     _target_: tmgg.evaluation.molecular.MolecularEvaluator.for_qm9
+    # Upstream general_default.yaml::samples_to_generate=512.
+    eval_num_samples: 512
   # Upstream qm9_no_h.yaml uses configs/model/discrete.yaml defaults
   # (n_layers=5 in the file; qm9_no_h.yaml overrides to n_layers=9).
   # hidden_dims = {dx:256, de:64, dy:64, n_head:8, dim_ffX:256,
@@ -81,16 +83,28 @@ model:
       X: 256
       E: 128
       y: 128
-    # Upstream activates extra_features='all' (cycle counts + Laplacian
-    # eigenfeatures). Cf. discrete_planar_digress_repro.yaml:48-51 for
-    # the analogous SPECTRE-side activation. Without this, the model
-    # trains without spectral / cycle features and the gap to paper FCD
-    # has both a "model class" component and a "training duration"
-    # component (see config_drift_2026-05-04.md §4).
+    # Upstream activates BOTH structural ``extra_features='all'`` (cycle
+    # counts + Laplacian eigenfeatures) AND domain
+    # ``ExtraMolecularFeatures`` (charge + valency on X, mol weight on
+    # y). See ``upstream src/main.py:128-136``: both providers are
+    # passed to the model. Our ``GraphTransformer`` accepts a single
+    # ``ExtraFeaturesProvider``, so we stack them via
+    # ``CompositeExtraFeatures``. Total dim adjustments:
+    #   structural (all): +6 X, 0 E, +11 y
+    #   domain (molecular): +2 X, 0 E, +1 y
+    #   net: +8 X, 0 E, +12 y
+    # Per-dataset constants (valencies, atom_weights, max_weight) come
+    # from ``upstream src/datasets/qm9_dataset.py:227-234`` (no-H QM9).
     extra_features:
-      _target_: tmgg.models.digress.extra_features.ExtraFeatures
-      extra_features_type: all
-      max_n_nodes: ${data.num_nodes_max_static}
+      _target_: tmgg.models.digress.extra_molecular_features.CompositeExtraFeatures
+      providers:
+        - _target_: tmgg.models.digress.extra_features.ExtraFeatures
+          extra_features_type: all
+          max_n_nodes: ${data.num_nodes_max_static}
+        - _target_: tmgg.models.digress.extra_molecular_features.ExtraMolecularFeatures
+          valencies: [4, 3, 2, 1]                  # C, N, O, F
+          atom_weights: [12, 14, 16, 19]
+          max_weight: 150
   # The ``discrete_sbm_official`` model preset defaults
   # ``noise_process.x_classes=2``, ``e_classes=2`` (SBM convention).
   # QM9 has 4 atom types + 5 bond types (no-bond + 4 bond orders); the

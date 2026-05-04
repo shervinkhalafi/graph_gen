@@ -43,6 +43,8 @@ model:
   num_nodes: 30
   evaluator:
     _target_: tmgg.evaluation.molecular.MolecularEvaluator.for_moses
+    # Upstream moses.yaml::samples_to_generate=256.
+    eval_num_samples: 256
   # Upstream moses.yaml overrides:
   #   n_layers=12
   #   hidden_dims = {dx:256, de:64, dy:128, n_head:8, dim_ffX:256,
@@ -72,10 +74,21 @@ model:
       X: 256
       E: 128
       y: 256
+    # See QM9 yaml for the rationale behind composing structural
+    # (cycles + eigenfeatures) with domain (charge/valency/weight)
+    # extra-feature providers. Constants from
+    # ``upstream src/datasets/moses_dataset.py:189-194``: 8 atom types
+    # (C, N, S, O, F, Cl, Br, H), max_weight=350.
     extra_features:
-      _target_: tmgg.models.digress.extra_features.ExtraFeatures
-      extra_features_type: all
-      max_n_nodes: ${data.num_nodes_max_static}
+      _target_: tmgg.models.digress.extra_molecular_features.CompositeExtraFeatures
+      providers:
+        - _target_: tmgg.models.digress.extra_features.ExtraFeatures
+          extra_features_type: all
+          max_n_nodes: ${data.num_nodes_max_static}
+        - _target_: tmgg.models.digress.extra_molecular_features.ExtraMolecularFeatures
+          valencies: [4, 3, 4, 2, 1, 1, 1, 1]      # C, N, S, O, F, Cl, Br, H
+          atom_weights: [12, 14, 32, 16, 19, 35.4, 79.9, 1]
+          max_weight: 350
   # MOSES vocab: 8 atom types + 5 bond types (no-bond + 4 bond orders).
   # Override ``noise_process.{x,e}_classes`` away from the SBM preset
   # default (2/2) so the empirical-marginal initialiser and forward
