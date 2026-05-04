@@ -1,6 +1,6 @@
 # How to run experiments
 
-This guide covers the practical steps for running each type of experiment in TMGG, both locally and on Modal. For parameter reference, see [experiments.md](experiments.md); for config hierarchy details, see [configuration.md](configuration.md).
+This guide covers the practical steps for running each type of experiment in TMGG, both locally and on Modal. For parameter reference, see [experiments.md](experiments.md); for config hierarchy details, see [configuration.md](configuration.md). For the per-run performance opt-ins (notably `torch.compile`) and what's automatic vs manual, see [performance-toggles.md](performance-toggles.md).
 
 ## Prerequisites
 

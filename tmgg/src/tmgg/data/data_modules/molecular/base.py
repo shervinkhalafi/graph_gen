@@ -69,7 +69,7 @@ class MolecularDataModule(BaseGraphDataModule):
         seed: int = 42,
         cache_root: str | None = None,
         num_nodes_max_static: int | None = None,
-        pad_to_static_n_max: bool = False,
+        pad_to_static_n_max: bool = True,
         **_metadata: object,
     ) -> None:
         super().__init__(

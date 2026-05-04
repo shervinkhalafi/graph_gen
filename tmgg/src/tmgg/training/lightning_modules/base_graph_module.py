@@ -82,6 +82,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
         optimizer_type: str = "adam",
         amsgrad: bool = False,
         scheduler_config: dict[str, Any] | None = None,
+        compile_model: bool = False,
+        compile_mode: str = "default",
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -97,6 +99,16 @@ class BaseGraphModule(pl.LightningModule, ABC):
         if not isinstance(model, GraphModel):
             raise TypeError(f"Expected GraphModel subclass, got {type(model).__name__}")
         self.model: GraphModel = model
+
+        # Optional ``torch.compile`` wrap. Independent of the fused-AdamW
+        # optimiser path: compile fuses ops inside the model forward/backward
+        # graph (LayerNorm, matmul epilogues, elementwise chains), while
+        # ``fused=True`` AdamW is a single opaque CUDA kernel outside the
+        # model graph. Both wins compose. ``mode="reduce-overhead"`` and
+        # ``"max-autotune"`` are also valid; ``"default"`` is the safest
+        # starting point.
+        if compile_model:
+            self.model = torch.compile(self.model, mode=compile_mode)  # pyright: ignore[reportAttributeAccessIssue]
 
         # Preserve model metadata in hparams for W&B logging / checkpoint inspection
         self.hparams["model_config"] = model.get_config()
@@ -163,24 +175,28 @@ class BaseGraphModule(pl.LightningModule, ABC):
           parameters. Slow-moving; confirms the optimizer is actually
           updating weights between steps.
         """
-        grad_sq_sum = torch.tensor(0.0, device=self.device)
-        grad_max = torch.tensor(0.0, device=self.device)
-        param_sq_sum = torch.tensor(0.0, device=self.device)
-        has_any_grad = False
-        for p in self.parameters():
-            if p.grad is not None:
-                has_any_grad = True
-                gn = p.grad.detach().norm(2)
-                grad_sq_sum = grad_sq_sum + gn.pow(2)
-                grad_max = torch.maximum(grad_max, gn)
-            param_sq_sum = param_sq_sum + p.detach().norm(2).pow(2)
-        if not has_any_grad:
+        # Batch the per-tensor norms via ``torch._foreach_norm`` so all
+        # parameter / gradient norms run in a single multi-tensor CUDA
+        # launch group instead of N small per-tensor launches. The
+        # Python-loop version was the same launch-overhead pattern that
+        # hit un-fused AdamW: ~250–300 small launches per step on
+        # ~50 parameter tensors, ~19 ms/step CUDA driven by host
+        # dispatch latency rather than arithmetic.
+        grads = [p.grad.detach() for p in self.parameters() if p.grad is not None]
+        params = [p.detach() for p in self.parameters()]
+        if not grads:
             return
+        grad_norms = torch.stack(torch._foreach_norm(grads, 2.0))  # noqa: SLF001
+        param_norms = torch.stack(torch._foreach_norm(params, 2.0))  # noqa: SLF001
         self.log_dict(
             {
-                "diagnostics-train/opt-health/grad_norm_l2": grad_sq_sum.sqrt(),
-                "diagnostics-train/opt-health/grad_norm_preclip_max": grad_max,
-                "diagnostics-train/opt-health/param_norm_l2": param_sq_sum.sqrt(),
+                "diagnostics-train/opt-health/grad_norm_l2": grad_norms.pow(2)
+                .sum()
+                .sqrt(),
+                "diagnostics-train/opt-health/grad_norm_preclip_max": grad_norms.max(),
+                "diagnostics-train/opt-health/param_norm_l2": param_norms.pow(2)
+                .sum()
+                .sqrt(),
             },
             on_step=True,
             on_epoch=False,

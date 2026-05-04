@@ -83,7 +83,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         cache_dir: str | None = None,
         fixture_path: str | None = None,
         num_nodes_max_static: int = 200,
-        pad_to_static_n_max: bool = False,
+        pad_to_static_n_max: bool = True,
         **_metadata: object,
     ) -> None:
         # ``**_metadata`` swallows informational keys (notably

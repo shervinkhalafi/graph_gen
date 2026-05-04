@@ -351,7 +351,19 @@ def sample_discrete_feature_noise(
     long_mask = node_mask.long()
     ux_idx = ux_idx.type_as(long_mask)
     ue_idx = ue_idx.type_as(long_mask)
-    uy = uy.type_as(long_mask)
+    # Note: ``uy`` deliberately keeps its Float dtype from line 349
+    # (``F.one_hot(...).float()``). Previously this line also applied
+    # ``uy.type_as(long_mask)``, which silently coerced a Float one-hot
+    # vector to Long by piggy-backing on ``long_mask`` (introduced for the
+    # integer indices ``ux_idx`` / ``ue_idx``). That cast was vestigial:
+    # ``uy`` is a one-hot probability channel, not an index, and the
+    # downstream ``torch.cat([y, extra_y])`` in the GraphTransformer
+    # requires Float because ``extra_y`` is Float. The Long form happened
+    # to work in eager mode via silent widening, but it diverged from the
+    # training-path producer (``GraphData.from_pyg_batch``) which emits
+    # Float ``y``. The dtype split forced ``torch.compile`` to retrace
+    # per-call; keeping ``uy`` Float here makes both paths emit the same
+    # canonical dtype.
 
     ux_one_hot = F.one_hot(ux_idx, num_classes=x_limit.shape[-1]).float()
     ue_one_hot = F.one_hot(ue_idx, num_classes=e_limit.shape[-1]).float()
@@ -366,8 +378,14 @@ def sample_discrete_feature_noise(
     ue_one_hot = ue_one_hot * upper_triangular_mask
     ue_one_hot = ue_one_hot + torch.transpose(ue_one_hot, 1, 2)
 
-    if not (torch.transpose(ue_one_hot, 1, 2) == ue_one_hot).all():
-        raise AssertionError("Edge noise is not symmetric")
+    # Symmetry sanity check: ``ue_one_hot`` is mathematically symmetric by
+    # construction (upper-tri masked + its own transpose, two lines above).
+    # The ``.all()`` host branch syncs the GPU stream every sample-loop
+    # init. Guarded by ``__debug__`` so production runs (Python -O /
+    # PYTHONOPTIMIZE=1) skip the sync.
+    if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+        if not (torch.transpose(ue_one_hot, 1, 2) == ue_one_hot).all():
+            raise AssertionError("Edge noise is not symmetric")
 
     return GraphData(
         y=uy,

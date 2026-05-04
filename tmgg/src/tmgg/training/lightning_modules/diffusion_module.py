@@ -405,6 +405,8 @@ class DiffusionModule(BaseGraphModule):
         optimizer_type: str = "adam",
         amsgrad: bool = False,
         scheduler_config: dict[str, Any] | None = None,
+        compile_model: bool = False,
+        compile_mode: str = "default",
         # Diffusion-specific params
         noise_process: NoiseProcess,
         sampler: Sampler | None = None,
@@ -430,6 +432,8 @@ class DiffusionModule(BaseGraphModule):
             optimizer_type=optimizer_type,
             amsgrad=amsgrad,
             scheduler_config=scheduler_config,
+            compile_model=compile_model,
+            compile_mode=compile_mode,
         )
         # Re-save hparams at the DiffusionModule level, excluding objects
         # that cannot be reliably pickled for checkpoint reconstruction.
@@ -1003,13 +1007,17 @@ class DiffusionModule(BaseGraphModule):
         # same x-axis and so the train accumulator covers a meaningful
         # window (eval_every_n_steps × bs samples ≫ n_t_bins).
         if self.global_step > 0 and self.global_step % self.eval_every_n_steps == 0:
-            for i in range(self.n_t_bins):
-                count = int(self._train_loss_t_count[i].item())
+            # Single GPU→CPU sync via ``.tolist()`` for both buffers,
+            # then iterate Python-side. Was N small ``.item()`` calls
+            # in a tight loop — each forced its own stream sync.
+            counts = self._train_loss_t_count.tolist()
+            sums = self._train_loss_t_sum.tolist()
+            for i, count in enumerate(counts):
                 if count == 0:
                     continue
                 self.log(
                     f"diagnostics-train/progress/loss_per_t/bin_{i}",
-                    self._train_loss_t_sum[i] / float(count),
+                    sums[i] / float(count),
                     on_step=True,
                     on_epoch=False,
                     batch_size=self._cur_bs,
@@ -1074,13 +1082,16 @@ class DiffusionModule(BaseGraphModule):
         ``0.0`` and hide a "bin never sampled" condition behind a
         plausible-looking value.
         """
-        for i in range(self.n_t_bins):
-            count = int(count_buf[i].item())
+        # Single sync via ``.tolist()`` for both buffers; was N
+        # ``.item()`` calls each syncing the stream.
+        counts = count_buf.tolist()
+        sums = sum_buf.tolist()
+        for i, count in enumerate(counts):
             if count == 0:
                 continue
             self.log(
                 f"{prefix}/bin_{i}",
-                sum_buf[i] / float(count),
+                sums[i] / float(count),
                 on_epoch=True,
             )
 
@@ -1996,6 +2007,7 @@ class DiffusionModule(BaseGraphModule):
         num_graphs: int,
         *,
         collector: StepMetricCollector | None = None,
+        chunk_size: int | None = None,
     ) -> list[GraphData]:
         """Generate graphs using the sampler and return as ``GraphData``.
 
@@ -2050,14 +2062,44 @@ class DiffusionModule(BaseGraphModule):
         if chain_recorder is not None:
             del self._pending_chain_recorder
 
-        graph_data_list = self.sampler.sample(
-            model=self.model,
-            noise_process=self.noise_process,
-            num_graphs=num_graphs,
-            num_nodes=num_nodes_arg,
-            device=device,
-            collector=collector,
-            chain_recorder=chain_recorder,
-        )
+        # ``chunk_size`` splits the requested ``num_graphs`` into
+        # consecutive sampler.sample calls. Without chunking, a one-shot
+        # eval pass at ``num_graphs=32`` runs the diffusion sample loop
+        # on a (32, n_max, ...) batch — which forces a fresh
+        # ``torch.compile`` trace whenever the training-time batch_size
+        # was different (e.g. 12). Chunking by the train batch_size
+        # keeps the compiled trace re-usable.
+        if chunk_size is None or chunk_size >= num_graphs:
+            return self.sampler.sample(
+                model=self.model,
+                noise_process=self.noise_process,
+                num_graphs=num_graphs,
+                num_nodes=num_nodes_arg,
+                device=device,
+                collector=collector,
+                chain_recorder=chain_recorder,
+            )
 
+        graph_data_list: list[GraphData] = []
+        n_remaining = num_graphs
+        nodes_offset = 0
+        while n_remaining > 0:
+            this_chunk = min(chunk_size, n_remaining)
+            chunk_num_nodes = (
+                num_nodes_arg
+                if isinstance(num_nodes_arg, int)
+                else num_nodes_arg[nodes_offset : nodes_offset + this_chunk]
+            )
+            chunk = self.sampler.sample(
+                model=self.model,
+                noise_process=self.noise_process,
+                num_graphs=this_chunk,
+                num_nodes=chunk_num_nodes,
+                device=device,
+                collector=collector,
+                chain_recorder=chain_recorder,
+            )
+            graph_data_list.extend(chunk)
+            n_remaining -= this_chunk
+            nodes_offset += this_chunk
         return graph_data_list

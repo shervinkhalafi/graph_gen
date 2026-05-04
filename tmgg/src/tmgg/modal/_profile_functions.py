@@ -25,6 +25,7 @@ from typing import Any
 import modal
 
 from tmgg.modal._lib.image import create_tmgg_image
+from tmgg.modal._lib.paths import discover_source_checkout_path
 from tmgg.modal._lib.volumes import get_volume_mounts
 from tmgg.modal.app import (
     CPU_PROFILES,
@@ -37,10 +38,14 @@ PROFILE_TIMEOUT = 1800  # 30 minutes — both runners are intentionally short
 
 app = modal.App(PROFILE_APP_NAME, include_source=False)
 
-experiment_image = create_tmgg_image()
+# ``PYTHONOPTIMIZE=1`` is set centrally in ``_lib/image._runtime_env``
+# so the profile container Python boots with ``__debug__=False`` —
+# matches production training and strips the symmetry / mask /
+# row-stochastic asserts that would otherwise distort the profile.
+experiment_image = create_tmgg_image(discover_source_checkout_path())
 
 wandb_secret = modal.Secret.from_name(
-    "wandb-secret-graph-denoise",
+    "wandb-credentials",
     required_keys=["WANDB_API_KEY"],
 )
 
@@ -110,6 +115,9 @@ def profile_eval(
     val_batch_limit: int | None = None,
     viz_count: int = 4,
     use_ema: str = "auto",
+    compile_model: bool = False,
+    compile_mode: str = "default",
+    sample_chunk_size: int | None = None,
 ) -> dict[str, Any]:
     """Profile one ``evaluate_checkpoint`` cycle on a checkpoint.
 
@@ -127,4 +135,7 @@ def profile_eval(
         viz_count=viz_count,
         device="cuda",
         use_ema=use_ema,
+        compile_model=compile_model,
+        compile_mode=compile_mode,
+        sample_chunk_size=sample_chunk_size,
     )

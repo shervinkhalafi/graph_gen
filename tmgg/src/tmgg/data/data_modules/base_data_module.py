@@ -63,6 +63,7 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         pin_memory: bool = True,
         prefetch_factor: int = 4,
         seed: int = 42,
+        drop_last_train: bool = True,
     ) -> None:
         super().__init__()
         self.batch_size = batch_size
@@ -70,6 +71,13 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         self.pin_memory = pin_memory
         self.prefetch_factor = prefetch_factor
         self.seed = seed
+        # ``drop_last_train`` defaults to ``True`` so the train loader
+        # emits only full batches. The trailing partial batch is the
+        # dominant source of dynamic-shape recompiles under
+        # ``torch.compile`` (a 128-graph fixture at bs=12 yields a
+        # size-8 tail every epoch). Validation and test loaders never
+        # drop the tail — losing eval samples would skew metrics.
+        self.drop_last_train = drop_last_train
 
     # ------------------------------------------------------------------
     # DataLoader factory
@@ -109,6 +117,10 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
             pin_memory=self.pin_memory,
             persistent_workers=self.num_workers > 0,
             collate_fn=collate_fn,
+            # Train loader (shuffle=True) drops the tail to keep batch
+            # shapes stable for compile/CUDA-graph capture. Val/test
+            # loaders preserve every sample so metrics aren't biased.
+            drop_last=shuffle and self.drop_last_train,
         )
         if self.num_workers > 0:
             kwargs["prefetch_factor"] = self.prefetch_factor

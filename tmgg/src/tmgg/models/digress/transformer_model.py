@@ -1034,6 +1034,19 @@ class GraphTransformer(GraphModel):
                 node_mask, self.input_dims["X"]
             ).to(device=E.device, dtype=E.dtype)
 
+        # Fail-loud guard against the vestigial Long-cast that used to
+        # live in ``diffusion_sampling.sample_discrete_feature_noise``:
+        # ``y`` must be Float so the cats below (with Float ``extra_y``
+        # and the Float-cast ``t``) don't silently widen / mismatch
+        # under ``torch.compile``. Gated by ``__debug__`` so production
+        # runs (``PYTHONOPTIMIZE=1``) skip the per-step bool check.
+        if __debug__:
+            assert y.is_floating_point(), (
+                f"GraphTransformerModel.forward: y must be a floating-point "
+                f"tensor, got {y.dtype}. See diffusion_sampling.py:351 for "
+                "the canonical-dtype convention."
+            )
+
         if self.extra_features is not None:
             extra_X, extra_E, extra_y = self.extra_features(X, E, y, node_mask)
             X = torch.cat([X, extra_X], dim=-1)

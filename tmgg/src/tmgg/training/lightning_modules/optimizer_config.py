@@ -83,7 +83,15 @@ def configure_optimizers_from_config(
         element is a ``SchedulerInfo`` when the ``"cosine_warmup"`` scheduler
         is used, ``None`` otherwise.
     """
-    # Select optimizer based on type
+    # Select optimizer based on type.
+    #
+    # ``fused=True`` collapses every per-parameter-tensor AdamW/Adam math op
+    # into a single multi-tensor CUDA kernel. On the round-5 Greedy profile
+    # the unfused path spent ~135 ms host-side per step launching ~250+
+    # tiny kernels for a 28 K-param model; the fused path issues 1 launch.
+    # CPU fall-through keeps tests / host-only paths working since the
+    # fused kernel is CUDA-only.
+    use_fused = torch.cuda.is_available()
     optimizer: torch.optim.Optimizer
     if optimizer_type == "adamw":
         optimizer = torch.optim.AdamW(
@@ -91,12 +99,14 @@ def configure_optimizers_from_config(
             lr=learning_rate,
             weight_decay=weight_decay,
             amsgrad=amsgrad,
+            fused=use_fused,
         )
     else:  # default to adam
         optimizer = torch.optim.Adam(
             module.parameters(),
             lr=learning_rate,
             amsgrad=amsgrad,
+            fused=use_fused,
         )
 
     if scheduler_config is None:

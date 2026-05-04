@@ -370,6 +370,9 @@ def evaluate_checkpoint(
     output_dir: str | Path | None = None,
     val_batch_limit: int | None = None,
     viz_count: int = 32,
+    compile_model: bool = False,
+    compile_mode: str = "default",
+    sample_chunk_size: int | None = None,
 ) -> dict[str, Any]:
     """Load a discrete diffusion checkpoint and compute the full metric set.
 
@@ -446,6 +449,27 @@ def evaluate_checkpoint(
     module = module.to(device)
     module.eval()
 
+    # Optional ``torch.compile`` wrap for the eval path. Independent of
+    # whether the checkpoint was trained with compile — we wrap
+    # post-load so a non-compile checkpoint can still be eval-profiled
+    # under compile. ``module.model`` is the inner GraphTransformer; the
+    # outer LightningModule remains uncompiled to keep Lightning hooks
+    # working.
+    if compile_model:
+        # ``dynamic=True`` is essential on the eval path: even with
+        # ``sample_chunk_size`` matching train batch_size, the val
+        # capture phase hits the val dataloader's tail (32 graphs / 12 =
+        # 8) which would otherwise force a fresh recompile costing
+        # ~80 s per shape variant. Symbolic dim-0 lets one trace cover
+        # all batch sizes encountered.
+        print(
+            f"# wrapping module.model with torch.compile("
+            f"mode={compile_mode!r}, dynamic=True)"
+        )
+        module.model = torch.compile(  # pyright: ignore[reportAttributeAccessIssue]
+            module.model, mode=compile_mode, dynamic=True
+        )
+
     # Re-load the raw checkpoint dict to inspect EMA callback state.
     # ``load_from_checkpoint`` does not expose the callback section.
     raw_checkpoint = torch.load(
@@ -512,7 +536,9 @@ def evaluate_checkpoint(
     print(f"Sampling {num_generated} graphs from model...")
     sample_t = stage_timer()
     with torch.no_grad():
-        generated_graphs = module.generate_graphs(num_generated)
+        generated_graphs = module.generate_graphs(
+            num_generated, chunk_size=sample_chunk_size
+        )
     timings.sample_s = sample_t()
 
     eval_t = stage_timer()

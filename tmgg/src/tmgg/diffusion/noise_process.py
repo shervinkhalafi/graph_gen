@@ -750,12 +750,19 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
         mean = coeff_x0 * x0_val + coeff_xt * zt_val
 
         raw_var = beta_t * (1.0 - alpha_bar_s) / one_minus_alpha_bar_t
-        if (raw_var < -1e-6).any():
-            raise RuntimeError(
-                "Negative posterior variance detected "
-                f"(min={raw_var.min().item():.6f}); the noise schedule is "
-                "non-monotonic between the requested timesteps."
-            )
+        # Negative-variance sanity check: ``raw_var`` is mathematically
+        # non-negative whenever ``alpha_bar`` is monotone in t (the
+        # constructor invariant). The ``.any()`` host branch syncs the GPU
+        # stream every call. Guarded by ``__debug__`` so production runs
+        # (Python -O / PYTHONOPTIMIZE=1) skip the sync; ``var.clamp(min=1e-8)``
+        # below already neutralises tiny numerical underflows.
+        if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+            if (raw_var < -1e-6).any():
+                raise RuntimeError(
+                    "Negative posterior variance detected "
+                    f"(min={raw_var.min().item():.6f}); the noise schedule is "
+                    "non-monotonic between the requested timesteps."
+                )
         var = raw_var.clamp(min=1e-8)
         std = torch.sqrt(var).expand_as(mean)
         return {"mean": mean, "std": std}
@@ -819,13 +826,18 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
 
         # Posterior variance (Ho et al. 2020, Eq. 7).
         raw_var = beta_t * (1.0 - alpha_bar_s) / one_minus_alpha_bar_t
-        if (raw_var < -1e-6).any():
-            raise RuntimeError(
-                f"Negative posterior variance detected "
-                f"(min={raw_var.min().item():.6f}). "
-                f"This indicates alpha_bar_s > alpha_bar_t, i.e. the noise "
-                f"schedule is non-monotonic between the requested timesteps."
-            )
+        # Negative-variance sanity check: same monotone-schedule invariant as
+        # the Gaussian helper above. Guarded by ``__debug__`` so production
+        # runs (Python -O / PYTHONOPTIMIZE=1) skip the per-step ``.any()``
+        # sync; ``var.clamp(min=1e-8)`` below absorbs numerical underflow.
+        if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+            if (raw_var < -1e-6).any():
+                raise RuntimeError(
+                    f"Negative posterior variance detected "
+                    f"(min={raw_var.min().item():.6f}). "
+                    f"This indicates alpha_bar_s > alpha_bar_t, i.e. the noise "
+                    f"schedule is non-monotonic between the requested timesteps."
+                )
         var = raw_var.clamp(min=1e-8)
         std = torch.sqrt(var).expand_as(mean)
 

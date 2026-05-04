@@ -51,6 +51,12 @@ app = modal.App(EVAL_ALL_APP_NAME, include_source=False)
 try:
     from tmgg.modal._lib.paths import discover_source_checkout_path
 
+    # ``PYTHONOPTIMIZE=1`` is now baked into the shared image env in
+    # ``_lib/image._runtime_env`` so this in-process eval-all app gets
+    # the same production-faithful behaviour the training subprocess
+    # has always had — strips the symmetry / row-stochastic /
+    # mask-correctness ``if __debug__:`` blocks at bytecode compile
+    # time. Was a silent ~10 s/eval-cycle host-sync regression before.
     experiment_image = create_tmgg_image(discover_source_checkout_path())
 except (ImportError, RuntimeError):
     experiment_image = None

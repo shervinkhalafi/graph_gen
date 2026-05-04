@@ -8,7 +8,8 @@ artefacts live under::
     <tmgg-outputs volume>/profiles/<run_tag>/{train,eval}/{trace.json, summary.txt}
 
 Pull them back to the host with ``modal volume get tmgg-outputs
-profiles/<run_tag>/ ./local_profiles``.
+profiles/<run_tag>/ ./local_profiles`` (the leading ``/data/outputs``
+maps to the volume root, so volume-side paths drop that prefix).
 
 Defaults profile the round-5 winning config (Greedy: n_layers=4,
 dx=16, dim_ffX=16, dim_ffy=32) for training, and the latest Greedy
@@ -50,7 +51,7 @@ GREEDY_OVERRIDES_BASE = [
 ]
 
 DEFAULT_GREEDY_CKPT = (
-    "/outputs/discrete_diffusion_DiffusionModule_dSpectreSBMDataModule_lr2e-4_wd1e-12_L4_s0_fresh_20260501T111030/"
+    "/data/outputs/discrete_diffusion/discrete_diffusion_DiffusionModule_dSpectreSBMDataModule_lr2e-4_wd1e-12_L4_s0_fresh_20260501T111030/"
     "checkpoints/last.ckpt"
 )
 
@@ -82,6 +83,27 @@ def parse_args() -> argparse.Namespace:
     _ = p.add_argument("--no-train", action="store_true")
     _ = p.add_argument("--no-eval", action="store_true")
     _ = p.add_argument(
+        "--eval-compile",
+        action="store_true",
+        help="Wrap module.model in torch.compile post-load for the eval profile.",
+    )
+    _ = p.add_argument(
+        "--eval-compile-mode",
+        default="default",
+        help="torch.compile mode for the eval profile (default, reduce-overhead, max-autotune).",
+    )
+    _ = p.add_argument(
+        "--eval-sample-chunk-size",
+        type=int,
+        default=None,
+        help=(
+            "Chunk the sample loop into batches of this size (default: "
+            "no chunking). Set to the train batch_size when running with "
+            "--eval-compile so the compiled trace is reusable across the "
+            "sample loop instead of recompiling for num_samples."
+        ),
+    )
+    _ = p.add_argument(
         "--rounds-jsonl",
         type=Path,
         default=Path("docs/experiments/sweep/smallest-config-2026-04-29/rounds.jsonl"),
@@ -107,7 +129,7 @@ def main() -> int:
     ]
     overrides_list.append(f"trainer.max_steps={args.num_train_steps}")
 
-    output_root = f"/outputs/profiles/{args.run_tag}"
+    output_root = f"/data/outputs/profiles/{args.run_tag}"
     print(f"# run_tag={args.run_tag}")
     print(f"# output_root={output_root}")
 
@@ -141,6 +163,9 @@ def main() -> int:
             checkpoint_path=args.checkpoint_path,
             output_dir_on_volume=f"{output_root}/eval",
             num_samples=args.num_eval_samples,
+            compile_model=args.eval_compile,
+            compile_mode=args.eval_compile_mode,
+            sample_chunk_size=args.eval_sample_chunk_size,
         )
         print(f"  EVAL  spawned: call_id={eval_call.object_id}")
         spawned.append(

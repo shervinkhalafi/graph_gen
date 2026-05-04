@@ -34,13 +34,12 @@ DEFAULT_TIMEOUTS = {
 }
 
 # How long containers stay warm after completing a task (in seconds).
-# 1 s is Modal's hard minimum (validation in modal._functions:
-# ``raise InvalidError("`scaledown_window` must be > 0")``). We pin
-# at the floor: cold-start cost on this app is dominated by image
-# fetch + GPU schedule, both of which a 60 s warm-pool would not
-# meaningfully amortise across our typical inter-sweep gaps. Trading
-# cheap container reuse for zero idle billing.
-DEFAULT_SCALEDOWN_WINDOW = 1
+# 2 s is Modal's hard minimum (validation requires the value to be in
+# [2, 3600]). We pin at the floor: cold-start cost on this app is
+# dominated by image fetch + GPU schedule, neither of which a longer
+# warm-pool would meaningfully amortise across our typical inter-sweep
+# gaps. Trading cheap container reuse for near-zero idle billing.
+DEFAULT_SCALEDOWN_WINDOW = 2
 
 
 def resolve_modal_function_name(base_name: str, gpu_tier: str) -> str:

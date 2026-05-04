@@ -6,5 +6,5 @@ pin_memory: true
 prefetch_factor: 4
 seed: 42
 cache_root: null
-num_nodes_max_static: 9
-pad_to_static_n_max: false
+num_nodes_max_static: 9  # QM9 max heavy atoms (Ramakrishnan et al. 2014)
+pad_to_static_n_max: true  # static-shape batches → torch.compile-friendly

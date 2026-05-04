@@ -1,24 +1,40 @@
 """Two profile runners reused by host CLIs and Modal wrappers.
 
-* ``run_train_profile`` — exercises the *training* inner loop. Builds
-  the same Hydra config the trainer would build, swaps in a tiny
-  ``trainer.max_steps`` so the profile finishes quickly, attaches
-  Lightning's ``PyTorchProfiler`` (which wraps ``torch.profiler``) as
-  the trainer's ``profiler``, runs ``trainer.fit`` once, returns paths
-  to the trace + summary artefacts.
+Each runner emits a *bundle* of artefacts so a single profile run gives
+full-stack coverage without re-execution. Layers, cheapest first:
 
-* ``run_eval_profile`` — exercises the *eval/sampling* path on an
-  existing checkpoint. Wraps a single ``evaluate_checkpoint`` call in
-  ``torch.profiler.profile``, dumps the chrome trace + table.
+1. ``trace.json`` — chrome-format ``torch.profiler`` trace
+   (CUDA-kernel detail, per-op shapes, per-op memory). Streams to disk
+   during the run; never aggregated in-container. Aggregate locally
+   with ``scripts/profile/aggregate_chrome_trace.py``.
+2. ``cprofile.pstats`` + ``cprofile.txt`` — Python call-graph timing
+   (cProfile dump + human-readable top-50). Catches Lightning hook
+   overhead, dataloader fetch, callback dispatch, and anything spending
+   wall-time in Python that the kernel profiler can't see.
+3. ``dynamo_counters.json`` — ``torch._dynamo`` recompile / graph-break
+   counters. Empty when ``compile_model=False``; populated and
+   diagnostic when compile is enabled. Use to spot uncaught recompiles.
 
-Both runners write to ``<output_dir>/{trace.json, summary.txt}``. The
-caller is responsible for wiring ``output_dir`` to a path that
-survives the run (e.g. a Modal volume mount).
+For Python line-level + GPU attribution (scalene), wrap the launcher
+script externally:
+``scalene --outfile scalene.html -m scripts.profile.launch_profile``
+— this only profiles the launcher process, so it captures Modal client
+overhead, not in-container work. cProfile + chrome trace are the
+in-container coverage.
+
+Both runners write to ``<output_dir>/{trace.json, cprofile.pstats,
+cprofile.txt, dynamo_counters.json}``. The caller is responsible for
+wiring ``output_dir`` to a path that survives the run (e.g. a Modal
+volume mount).
 """
 
 from __future__ import annotations
 
+import cProfile
+import json
+import pstats
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +49,59 @@ def _activities() -> list[ProfilerActivity]:
     if torch.cuda.is_available():
         activities.append(ProfilerActivity.CUDA)
     return activities
+
+
+# Dynamo recompile + graph-break logging is now enabled via the
+# ``TORCH_LOGS=recompiles,graph_breaks`` env var baked into the Modal
+# image (see ``tmgg/modal/_lib/image._runtime_env``). Doing it via env
+# is more reliable than the ``torch._logging.set_logs`` API: the env is
+# read at torch import time, so setting it post-import (which is all an
+# in-process helper could do) has no effect anyway. The ``dynamo_
+# counters.json`` artefact dumped at fit-end is the canonical compile-
+# diagnostic surface; the live log lines are just a convenience.
+
+
+def _dump_dynamo_counters(output_dir: Path) -> None:
+    """Snapshot ``torch._dynamo.utils.counters`` to a JSON artefact.
+
+    Empty / mostly-zero when ``torch.compile`` is off; rich and
+    diagnostic when on (compile_count, recompile_count,
+    graph_break_count, per-frame breakdown, etc.).
+    """
+    try:
+        import torch._dynamo
+
+        snap = {
+            section: dict(counters)
+            for section, counters in torch._dynamo.utils.counters.items()
+        }
+    except (ImportError, AttributeError):
+        snap = {}
+    (output_dir / "dynamo_counters.json").write_text(
+        json.dumps(snap, default=str, indent=2)
+    )
+
+
+@contextmanager
+def _cprofile_to(output_dir: Path):
+    """Run a block under cProfile, dump pstats + a human-readable txt.
+
+    The ``.pstats`` dump is the canonical artefact (loadable in any
+    pstats viewer / snakeviz / py-spy speedscope); the ``.txt`` is for
+    quick ``cat`` inspection.
+    """
+    pr = cProfile.Profile()
+    pr.enable()
+    try:
+        yield pr
+    finally:
+        pr.disable()
+        pr.dump_stats(str(output_dir / "cprofile.pstats"))
+        with (output_dir / "cprofile.txt").open("w") as fh:
+            stats = pstats.Stats(pr, stream=fh).sort_stats("cumulative")
+            stats.print_stats(50)
+            fh.write("\n\n# Sorted by tottime (own time, excl. children)\n")
+            stats.sort_stats("tottime").print_stats(50)
 
 
 def run_train_profile(
@@ -72,9 +141,11 @@ def run_train_profile(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    import gc
+
     import hydra
     import pytorch_lightning as pl
-    from pytorch_lightning.profilers import PyTorchProfiler
+    from pytorch_lightning.callbacks import Callback as _PLCallback
 
     with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
         config = compose(config_name=config_name, overrides=overrides)
@@ -90,65 +161,119 @@ def run_train_profile(
     data_module = hydra.utils.instantiate(config.data)
     model = hydra.utils.instantiate(config.model)
 
-    # Lightning's PyTorchProfiler wraps torch.profiler with the trainer
-    # hooks that mark per-step boundaries (so the trace shows distinct
-    # train_step / val_step rows), and dumps both .pt.trace.json and
-    # the `key_averages().table()` summary on teardown.
-    pl_profiler = PyTorchProfiler(
-        dirpath=str(output_dir),
-        filename="train",
-        export_to_chrome=True,
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=False,
-        sort_by_key="cuda_time_total"
-        if torch.cuda.is_available()
-        else "cpu_time_total",
-        row_limit=30,
-        activities=_activities(),
-        schedule=schedule(
-            wait=0,
-            warmup=warmup_steps,
-            active=active_steps,
-            repeat=1,
-        ),
-    )
-
+    # Use raw ``torch.profiler.profile`` instead of Lightning's
+    # ``PyTorchProfiler`` wrapper. The Lightning wrapper is convenient
+    # (it adds per-step span annotations to the trace) but it
+    # unconditionally calls ``key_averages()`` and a Python-side summary
+    # walk at fit teardown — that walk took 30-60 s on the v3 train
+    # profile and is otherwise un-disable-able without subclassing.
+    # We re-emit the per-step boundaries via a manual ``prof.step()``
+    # call inside an ``on_train_batch_end`` callback below, which is
+    # the same mechanism Lightning uses internally.
+    #
+    # ``enable_progress_bar=False`` skips the rich-progress teardown
+    # (another 58 s on Modal's non-TTY stdout). Production training
+    # keeps the bar; this only applies to profile runs.
     trainer = pl.Trainer(
         max_steps=num_steps,
         accelerator="auto",
         devices=1,
         precision=config.trainer.get("precision", "bf16-mixed"),
-        profiler=pl_profiler,
         logger=False,
         enable_checkpointing=False,
+        enable_progress_bar=False,
         num_sanity_val_steps=0,
         limit_val_batches=0,  # PURE train; no eval cycles
+        callbacks=[_make_profiler_step_callback(_PLCallback)],
     )
 
+    # The torch.profiler context wraps the entire fit; the callback
+    # above advances ``prof.step()`` after each training batch so the
+    # warmup/active schedule fires on real per-step boundaries.
     t0 = time.time()
-    trainer.fit(model, data_module)
+    with (
+        _cprofile_to(output_dir),
+        profile(
+            activities=_activities(),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=False,
+            schedule=schedule(
+                wait=0,
+                warmup=warmup_steps,
+                active=active_steps,
+                repeat=1,
+            ),
+        ) as prof,
+    ):
+        # Hand the live profile context to the per-batch callback via
+        # the mutable holder it captured by closure (see
+        # ``_make_profiler_step_callback``). Avoids stashing on
+        # ``trainer`` (Lightning's ``Trainer`` doesn't declare
+        # arbitrary attributes) and keeps the callback's reference
+        # explicit.
+        _profile_holder.append(prof)
+        try:
+            trainer.fit(model, data_module)
+        finally:
+            _profile_holder.clear()
     elapsed = time.time() - t0
 
-    # Lightning writes the summary table to a sibling file when fit
-    # ends. We additionally export a clean key_averages table for easy
-    # `tail` reading.
-    summary_path = output_dir / "summary.txt"
-    if hasattr(pl_profiler, "summary"):
-        try:
-            summary_path.write_text(pl_profiler.summary())
-        except Exception as exc:  # noqa: BLE001 — diagnostic, broad-catch is OK
-            summary_path.write_text(f"# summary() failed: {exc}\n")
+    trace_path = output_dir / "trace.json"
+    prof.export_chrome_trace(str(trace_path))
+
+    _dump_dynamo_counters(output_dir)
+
+    # Force-shut the Trainer + dataloader workers immediately so the
+    # function can return. Without this, ``trainer.__del__`` waits on
+    # the persistent dataloader workers' join (~59 s on v3) before
+    # control returns to the Modal entry point.
+    del trainer, model, data_module
+    gc.collect()
 
     return {
         "kind": "train_profile",
         "output_dir": str(output_dir),
+        "trace_path": str(trace_path),
         "elapsed_s": elapsed,
         "num_steps": num_steps,
         "warmup_steps": warmup_steps,
         "active_steps": active_steps,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
     }
+
+
+# Module-level mutable holder for the active ``torch.profiler.profile``
+# context. The Lightning callback factory below captures this list by
+# closure; ``run_train_profile`` appends the live ``prof`` after the
+# context manager opens and clears on exit. Avoids monkey-patching
+# attributes onto ``pl.Trainer`` (whose ``__init_subclass__``-style
+# attribute checks reject unknown attributes under basedpyright).
+_profile_holder: list[Any] = []
+
+
+def _make_profiler_step_callback(callback_base: type) -> Any:
+    """Build a Lightning callback that advances ``prof.step()`` per batch.
+
+    Replaces what Lightning's ``PyTorchProfiler`` wrapper does
+    internally so we can use the raw ``torch.profiler.profile`` (and
+    skip its expensive end-of-fit aggregation walk). Constructed via a
+    factory so the ``pytorch_lightning.callbacks.Callback`` import
+    stays inside ``run_train_profile`` (consistent with the rest of the
+    Lightning imports being function-local).
+    """
+
+    class _TorchProfilerStepCallback(callback_base):  # type: ignore[misc, valid-type]
+        def on_train_batch_end(
+            self,
+            _trainer: Any,
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> None:
+            if _profile_holder:
+                _profile_holder[0].step()
+
+    return _TorchProfilerStepCallback()
 
 
 def run_eval_profile(
@@ -160,6 +285,9 @@ def run_eval_profile(
     viz_count: int = 4,
     device: str = "cuda",
     use_ema: str = "auto",
+    compile_model: bool = False,
+    compile_mode: str = "default",
+    sample_chunk_size: int | None = None,
 ) -> dict[str, Any]:
     """Run one ``evaluate_checkpoint`` cycle wrapped in ``torch.profiler``.
 
@@ -188,12 +316,20 @@ def run_eval_profile(
     print(f"# num_samples={num_samples}, device={device}")
 
     t0 = time.time()
-    with profile(
-        activities=_activities(),
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=False,
-    ) as prof:
+    with (
+        _cprofile_to(output_dir),
+        profile(
+            activities=_activities(),
+            # ``record_shapes`` and ``profile_memory`` stay on so the host-side
+            # aggregator can attribute time by tensor shape and surface
+            # memory high-water marks per op. The eval trace is large
+            # (~12 GB at num_samples=32) but only the host-side aggregator
+            # consumes it — Modal-side aggregation is no longer attempted.
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=False,
+        ) as prof,
+    ):
         result = evaluate_checkpoint(
             checkpoint_path=Path(checkpoint_path),
             num_samples=num_samples,
@@ -203,15 +339,19 @@ def run_eval_profile(
             output_dir=output_dir / "eval_dump",
             val_batch_limit=val_batch_limit,
             viz_count=viz_count,
+            compile_model=compile_model,
+            compile_mode=compile_mode,
+            sample_chunk_size=sample_chunk_size,
         )
     elapsed = time.time() - t0
 
+    _dump_dynamo_counters(output_dir)
+
+    # Chrome trace is the canonical kernel artefact. Aggregation runs on
+    # the host via ``scripts/profile/aggregate_chrome_trace.py``; the
+    # cprofile.{pstats,txt} bundle covers Python-side overhead.
     trace_path = output_dir / "trace.json"
     prof.export_chrome_trace(str(trace_path))
-
-    sort_key = "cuda_time_total" if torch.cuda.is_available() else "cpu_time_total"
-    summary = prof.key_averages().table(sort_by=sort_key, row_limit=30)
-    (output_dir / "summary.txt").write_text(summary)
 
     return {
         "kind": "eval_profile",

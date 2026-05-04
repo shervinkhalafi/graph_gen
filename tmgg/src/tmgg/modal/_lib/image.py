@@ -152,6 +152,26 @@ def _runtime_env() -> dict[str, str]:
         "WANDB_MODE": "online",
         "PYTHONUNBUFFERED": "1",
         "OPENBLAS_CORETYPE": "Haswell",
+        # Production-faithful default: container Python boots with
+        # ``__debug__=False`` so all ``if __debug__:`` blocks (symmetry
+        # / row-stochastic / mask-correctness asserts in noise_process,
+        # graph_types, transformer_model) are stripped at bytecode
+        # compile time. Eliminates ~10 s of host-GPU sync overhead per
+        # eval cycle and matches the behaviour the training subprocess
+        # already opts into via ``_functions.py:524``. The training
+        # subprocess override (``cli_env.pop("PYTHONOPTIMIZE", None)``
+        # when ``modal_debug=true``) still works: it strips the env
+        # only from the subprocess inheritance, leaving the parent
+        # container Python's already-frozen ``__debug__=False`` intact.
+        # Any in-process Modal app (eval-all, profile, async eval) gets
+        # the same optimisation automatically.
+        "PYTHONOPTIMIZE": "1",
+        # Surface ``torch.compile`` recompile + graph-break diagnostics
+        # in the modal log when ``compile_model=True`` is used. Read by
+        # ``torch._logging`` at torch import time, so an env var is the
+        # only reliable surface (in-process API calls are racy and not
+        # publicly typed). No-op when compile is off.
+        "TORCH_LOGS": "recompiles,graph_breaks",
     }
 
 
