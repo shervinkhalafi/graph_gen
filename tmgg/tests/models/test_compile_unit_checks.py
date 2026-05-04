@@ -106,6 +106,38 @@ def test_pearl_embedding_random_compiles_clean() -> None:
     _assert_no_graph_breaks("PEARLEmbedding(random)")
 
 
+def test_pearl_embedding_random_eval_compiles_clean() -> None:
+    """R-PEARL EVAL forward must compile graph-break-free.
+
+    Regression test for the 2026-05-04 fix that replaced
+    ``torch.Generator(device=device).manual_seed(42)`` (which dynamo
+    cannot trace — "Unsupported: UserDefinedObjectVariable(Generator)")
+    with a fixed-seed ``_eval_random_features`` buffer pre-allocated
+    at ``__init__``. The earlier ``train()``-mode test missed this
+    because the eval branch was untaken.
+    """
+    _reset_dynamo()
+    device = _device()
+    layer = PEARLEmbedding(
+        output_dim=8,
+        num_layers=3,
+        mode="random",
+        hidden_dim=16,
+        input_samples=8,
+        max_nodes=20,  # buffer ceiling
+    ).to(device)
+    layer.eval()  # ← this is the key — exercises the buffer-slice branch
+    compiled = torch.compile(layer)
+
+    bs, n = 2, 12
+    A = torch.rand(bs, n, n, device=device)
+    A = (A + A.transpose(-1, -2)) / 2
+
+    out = compiled(A)
+    assert out.shape == (bs, n, 8)
+    _assert_no_graph_breaks("PEARLEmbedding(random, eval)")
+
+
 def test_pearl_embedding_basis_compiles_clean() -> None:
     """B-PEARL forward must also compile without graph-breaks.
 
