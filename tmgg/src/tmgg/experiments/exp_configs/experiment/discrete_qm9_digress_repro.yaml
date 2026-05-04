@@ -1,5 +1,11 @@
 # @package _global_
 # DiGress QM9 reproduction (Vignac et al., ICLR 2023, Table 4).
+#
+# Faithful to upstream cvignac/DiGress @ main:
+#   configs/experiment/qm9_no_h.yaml + configs/model/discrete.yaml +
+#   configs/train/train_default.yaml + configs/dataset/qm9.yaml.
+# See ``docs/experiments/digress-repro/config_drift_2026-05-04.md`` for
+# the full upstream → ours comparison this yaml addresses.
 
 defaults:
   - /data: qm9_digress
@@ -11,8 +17,20 @@ wandb_project: discrete-qm9-digress-repro
 
 seed: 0
 
+# Top-level optimizer hyperparameters. The model preset's
+# ``learning_rate: 2e-4`` already binds to the optimizer correctly; we
+# pin the *top-level* fields here so the run-name builder
+# (``training/orchestration/run_experiment.py:267``) records the same
+# values that the model actually uses, instead of inheriting the
+# spectral-arch defaults from ``_base_infra.yaml`` (lr=1e-3, wd=1e-4)
+# that mislabel every digress-repro run name.
+learning_rate: 2e-4
+weight_decay: 1e-12
+
 trainer:
-  max_steps: 50000
+  # Upstream qm9_no_h.yaml: n_epochs=1000, batch_size=1024.
+  # ⌈98000 / 1024⌉ * 1000 ≈ 96,000 steps. Round to 100k for a clean cap.
+  max_steps: 100000
   val_check_interval: 1000
   check_val_every_n_epoch: null
   gradient_clip_val: null
@@ -22,13 +40,45 @@ model:
   num_nodes: 9
   evaluator:
     _target_: tmgg.evaluation.molecular.MolecularEvaluator.for_qm9
+  # Upstream qm9_no_h.yaml uses configs/model/discrete.yaml defaults
+  # (n_layers=5 in the file; qm9_no_h.yaml overrides to n_layers=9).
+  # hidden_dims = {dx:256, de:64, dy:64, n_head:8, dim_ffX:256,
+  #                dim_ffE:128, dim_ffy:128}
+  # hidden_mlp_dims = {X:256, E:128, y:128}
+  # diffusion_steps = 500
+  # extra_features = 'all'
+  noise_schedule:
+    timesteps: 500
   model:
+    n_layers: 9
     input_dims: { X: 4, E: 5, y: 0 }
     output_dims: { X: 4, E: 5, y: 0 }
     output_dims_x_class: 4
     output_dims_x_feat: null
     output_dims_e_class: 5
     output_dims_e_feat: null
+    hidden_dims:
+      dx: 256
+      de: 64
+      dy: 64
+      n_head: 8
+      dim_ffX: 256
+      dim_ffE: 128
+      dim_ffy: 128
+    hidden_mlp_dims:
+      X: 256
+      E: 128
+      y: 128
+    # Upstream activates extra_features='all' (cycle counts + Laplacian
+    # eigenfeatures). Cf. discrete_planar_digress_repro.yaml:48-51 for
+    # the analogous SPECTRE-side activation. Without this, the model
+    # trains without spectral / cycle features and the gap to paper FCD
+    # has both a "model class" component and a "training duration"
+    # component (see config_drift_2026-05-04.md §4).
+    extra_features:
+      _target_: tmgg.models.digress.extra_features.ExtraFeatures
+      extra_features_type: all
+      max_n_nodes: ${data.num_nodes_max_static}
   # The ``discrete_sbm_official`` model preset defaults
   # ``noise_process.x_classes=2``, ``e_classes=2`` (SBM convention).
   # QM9 has 4 atom types + 5 bond types (no-bond + 4 bond orders); the

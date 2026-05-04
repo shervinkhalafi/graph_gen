@@ -75,15 +75,18 @@ spectral/cycle features.
 | `ema_decay` | 0 (off) | (inherits) | not configured | match in effect |
 | `amsgrad` | (not set; default false) | — | **true** | drift, ours uses AMSGrad |
 
-**Run-name mismatch.** All three actual training-run W&B records
-have names containing `..._lr1e-3_wd1e-4_...`. YAML+preset specify
-`lr=2e-4, wd=1e-12`. So the runs were launched with a CLI override
-of `model.learning_rate=1e-3 model.weight_decay=1e-4`. Since the
-W&B run name is the only persisted record of the actual launch
-hyperparameters (the YAMLs check in the wrong values), this is
-a silent-drift hazard. The run-name lr is **5×** the upstream lr
-and **5× the YAML lr**; the run-name wd is **8 orders of magnitude
-larger** than the YAML wd.
+**Run-name mislabeling (cosmetic; corrected 2026-05-04).** W&B run
+names contain `..._lr1e-3_wd1e-4_...`, but the actual optimizer is
+constructed from `model.learning_rate=2e-4` and
+`model.weight_decay=1e-12` from the `discrete_sbm_official` preset.
+The mismatch comes from `training/orchestration/run_experiment.py:267`
+reading the *top-level* `learning_rate` field (which inherits the
+spectral-arch defaults `1e-3`/`1e-4` from `_base_infra.yaml:27-28`)
+instead of `model.learning_rate`. Confirmed via Hydra resolve:
+`cfg.learning_rate = 0.001`, `cfg.model.learning_rate = 0.0002`. The
+fix in the next commit pins top-level `learning_rate=2e-4`,
+`weight_decay=1e-12` in each repro yaml so the run name matches the
+optimizer. **No actual optimizer drift; only labelling drift.**
 
 ### Schedule (n_epochs vs max_steps)
 
@@ -171,10 +174,9 @@ This needs W&B run-summary inspection to resolve (separate task).
 3. **`extra_features='all'` not configured.** Upstream relies on
    spectral + cycle features; we train without them. This is a
    structural model-class drift independent of training duration.
-4. **`lr=1e-3` CLI override** (5× upstream's 2e-4). Possibly
-   load-bearing in our short-training regime — large LR + few
-   steps could bias toward a different optimum. But since the
-   YAMLs say 2e-4, this is also a reproducibility hazard.
+4. **(Removed; the lr=1e-3 was a run-name labelling artifact, not
+   an optimizer override. Actual training used the upstream
+   2e-4 / 1e-12 from the `discrete_sbm_official` preset.)**
 5. **Architecture: n_layers 8 vs 12 (MOSES/GuacaMol).** ~33% fewer
    transformer layers; meaningful but secondary to the step budget.
 6. **`diffusion_steps=1000` vs upstream 500.** Doubles the reverse

@@ -1,5 +1,10 @@
 # @package _global_
 # DiGress GuacaMol reproduction (Vignac et al., ICLR 2023, Table 6).
+#
+# Faithful to upstream cvignac/DiGress @ main:
+#   configs/experiment/guacamol.yaml + configs/train/train_default.yaml +
+#   configs/dataset/guacamol.yaml.
+# See ``docs/experiments/digress-repro/config_drift_2026-05-04.md``.
 
 defaults:
   - /data: guacamol_digress
@@ -11,8 +16,18 @@ wandb_project: discrete-guacamol-digress-repro
 
 seed: 0
 
+# See QM9 yaml for the rationale behind pinning at top-level.
+learning_rate: 2e-4
+weight_decay: 1e-12
+
 trainer:
-  max_steps: 500000
+  # Upstream guacamol.yaml: n_epochs=1000, batch_size=32.
+  # GuacaMol train ≈ 1,273,104; ⌈1.27M / 32⌉ * 1000 ≈ 39,720,000 steps.
+  # NOTE: 39.7M steps is multiple weeks of wall-clock on a single A100
+  # at current throughput. This config records the upstream-equivalent
+  # target faithfully; in practice you will want to run a fraction
+  # (e.g. 5M-10M steps via a CLI override) and report the truncation.
+  max_steps: 39720000
   val_check_interval: 10000
   check_val_every_n_epoch: null
   gradient_clip_val: null
@@ -20,15 +35,45 @@ trainer:
 model:
   eval_every_n_steps: 50000
   num_nodes: 88
+  # Upstream guacamol.yaml::train.optimizer = 'adam' (not adamw),
+  # without amsgrad. Override the SBM preset's adamw + amsgrad=true.
+  optimizer_type: adam
+  amsgrad: false
   evaluator:
     _target_: tmgg.evaluation.molecular.MolecularEvaluator.for_guacamol
+  # Upstream guacamol.yaml overrides:
+  #   n_layers=12
+  #   hidden_dims = {dx:256, de:64, dy:128, n_head:8, dim_ffX:256,
+  #                  dim_ffE:128, dim_ffy:256}
+  #   hidden_mlp_dims = {X:256, E:128, y:256}
+  #   diffusion_steps = 500
+  #   extra_features = 'all'
+  noise_schedule:
+    timesteps: 500
   model:
+    n_layers: 12
     input_dims: { X: 12, E: 5, y: 0 }
     output_dims: { X: 12, E: 5, y: 0 }
     output_dims_x_class: 12
     output_dims_x_feat: null
     output_dims_e_class: 5
     output_dims_e_feat: null
+    hidden_dims:
+      dx: 256
+      de: 64
+      dy: 128
+      n_head: 8
+      dim_ffX: 256
+      dim_ffE: 128
+      dim_ffy: 256
+    hidden_mlp_dims:
+      X: 256
+      E: 128
+      y: 256
+    extra_features:
+      _target_: tmgg.models.digress.extra_features.ExtraFeatures
+      extra_features_type: all
+      max_n_nodes: ${data.num_nodes_max_static}
   # GuacaMol vocab: 12 atom types + 5 bond types (no-bond + 4 bond
   # orders). Override ``noise_process.{x,e}_classes`` away from the
   # SBM preset default (2/2) so the empirical-marginal initialiser
