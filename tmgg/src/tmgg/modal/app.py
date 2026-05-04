@@ -19,8 +19,12 @@ GPU_CONFIGS = {
     "h100": "H100",
 }
 
-# Default timeouts per GPU tier (in seconds)
-# Set to 24 hours to avoid premature termination during long experiments
+# Default timeouts per GPU tier (in seconds).
+# 86400 s = 24 h is Modal's hard maximum
+# (https://modal.com/docs/guide/timeouts: "users may specify timeout
+# durations between 1 second and 24 hours"). Set to the ceiling so no
+# training run is ever cut by the per-call timeout — only by
+# explicit `max_steps` / `max_epochs`.
 DEFAULT_TIMEOUTS = {
     "debug": 86400,
     "standard": 86400,
@@ -29,9 +33,14 @@ DEFAULT_TIMEOUTS = {
     "h100": 86400,
 }
 
-# How long containers stay warm after completing a task (in seconds)
-# Higher values improve container reuse during sweeps but cost more
-DEFAULT_SCALEDOWN_WINDOW = 60
+# How long containers stay warm after completing a task (in seconds).
+# 1 s is Modal's hard minimum (validation in modal._functions:
+# ``raise InvalidError("`scaledown_window` must be > 0")``). We pin
+# at the floor: cold-start cost on this app is dominated by image
+# fetch + GPU schedule, both of which a 60 s warm-pool would not
+# meaningfully amortise across our typical inter-sweep gaps. Trading
+# cheap container reuse for zero idle billing.
+DEFAULT_SCALEDOWN_WINDOW = 1
 
 
 def resolve_modal_function_name(base_name: str, gpu_tier: str) -> str:
