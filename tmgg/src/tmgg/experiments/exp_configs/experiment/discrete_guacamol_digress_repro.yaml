@@ -31,14 +31,22 @@ trainer:
   val_check_interval: 10000
   check_val_every_n_epoch: null
   gradient_clip_val: null
+  # See QM9 yaml for rationale.
+  precision: bf16-mixed
+
+modal_debug: false
 
 model:
   eval_every_n_steps: 50000
   num_nodes: 88
-  # Upstream guacamol.yaml::train.optimizer = 'adam' (not adamw),
-  # without amsgrad. Override the SBM preset's adamw + amsgrad=true.
-  optimizer_type: adam
-  amsgrad: false
+  # Optimizer left at preset default (adamw + amsgrad=true). Upstream's
+  # guacamol.yaml literally says ``train.optimizer: 'adam'``, but
+  # upstream's ``DiscreteDenoisingDiffusion.configure_optimizers``
+  # (`/tmp/digress_upstream/src/diffusion_model_discrete.py:122-123`)
+  # hardcodes ``torch.optim.AdamW(..., amsgrad=True)`` and ignores
+  # ``cfg.train.optimizer`` — so upstream's yaml field is a dead
+  # setting. Matching upstream *runtime* requires keeping adamw +
+  # amsgrad=true.
   evaluator:
     _target_: tmgg.evaluation.molecular.MolecularEvaluator.for_guacamol
   # Upstream guacamol.yaml overrides:

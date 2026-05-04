@@ -1,7 +1,7 @@
 # @package data
 _target_: tmgg.data.data_modules.molecular.qm9.QM9DataModule
 batch_size: 1024  # upstream cvignac/DiGress qm9_no_h.yaml::train.batch_size
-num_workers: 4
+num_workers: 16  # upstream cvignac/DiGress qm9_no_h.yaml::dataset.num_workers
 pin_memory: true
 prefetch_factor: 4
 seed: 42

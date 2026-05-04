@@ -32,6 +32,11 @@ trainer:
   val_check_interval: 5000
   check_val_every_n_epoch: null
   gradient_clip_val: null
+  # See QM9 yaml for rationale (pin so launcher overrides are
+  # identity-redundant).
+  precision: bf16-mixed
+
+modal_debug: false
 
 model:
   eval_every_n_steps: 25000

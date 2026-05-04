@@ -34,6 +34,18 @@ trainer:
   val_check_interval: 1000
   check_val_every_n_epoch: null
   gradient_clip_val: null
+  # Pin precision so the YAML is the source of truth instead of
+  # ``scripts/run-digress-repro-modal.zsh:62`` (`PRECISION` env var).
+  # Both currently agree, but the launcher's unconditional override
+  # would otherwise let ``PRECISION=fp32`` silently retune training
+  # without the YAML reflecting it.
+  precision: bf16-mixed
+
+# Same rationale as ``trainer.precision``: pin so the launcher's
+# unconditional ``modal_debug=${MODAL_DEBUG}`` (zsh:63) is identity-
+# redundant. ``false`` enables ``PYTHONOPTIMIZE=1`` in the Modal
+# subprocess (strips asserts) per ``modal/_functions.py:521-528``.
+modal_debug: false
 
 model:
   eval_every_n_steps: 5000
