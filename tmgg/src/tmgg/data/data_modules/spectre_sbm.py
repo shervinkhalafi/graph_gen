@@ -11,12 +11,27 @@ yields dense :class:`~tmgg.data.datasets.graph_types.GraphData` batches
 via :class:`~tmgg.data.data_modules.multigraph_data_module.GraphDataCollator`,
 so ``DiffusionModule`` picks this datamodule up unchanged.
 
-Static-pad opt-in: set ``pad_to_static_n_max=True`` on the datamodule
-to have the collator pad every batch to ``num_nodes_max_static`` (200
-by default for the SPECTRE fixture). This unlocks ``torch.compile``
-and ``cuda.graph`` capture downstream by removing the variable
-per-batch ``n_max``. Off by default; see
+Static-pad default: ``pad_to_static_n_max=True`` makes the collator
+pad every batch to ``num_nodes_max_static`` (200 by default for the
+SPECTRE fixture). Unlocks ``torch.compile`` and ``cuda.graph`` capture
+downstream by removing the variable per-batch ``n_max``. Flipped from
+the historical ``False`` default in commit ``0d07fb63``; see
+``docs/performance-toggles.md`` and
 ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6.
+
+**Upstream-parity note:** the static pad is mathematically equivalent
+to upstream cvignac/DiGress's per-batch dynamic padding for both the
+loss and the extra-features (cycles, eigenvalues, eigenvectors).
+``ExtraFeatures`` masks ``A`` to zero on padded positions before
+computing the Laplacian and adds a ``2*N`` sentinel on the padded
+diagonal (``extra_features.py:518-525``); the eigenvalues of the real
+sub-block are independent of the surrounding zero/sentinel block,
+which gets discarded by ``get_eigenvalues_features``'s "first k
+non-zero" filter. Eigenvectors are masked back to zero on padded
+positions before being returned. So whether ``N=200`` (our static
+pad) or ``N=150`` (some batch's dynamic pad), features at real
+nodes are byte-equivalent — only padded compute differs (a wash
+under ``node_mask`` zeroing downstream).
 
 See :mod:`tmgg.data.datasets.spectre_sbm` for the load/split helpers
 and ``docs/reports/2026-04-15-upstream-digress-parity-audit.md`` for
