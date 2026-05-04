@@ -256,17 +256,27 @@ class TopKEigenLayer(nn.Module):
         sign_multipliers = first_signs.sum(dim=1)  # (batch, k)
 
         # Handle case where eigenvector is all zeros (shouldn't happen in practice)
-        # This can indicate k > rank(A) or numerical issues
+        # This can indicate k > rank(A) or numerical issues. The actual
+        # sign correction below uses ``torch.where`` (branch-free), so it
+        # composes with ``torch.compile`` without graph breaks. The warning
+        # emission, by contrast, requires a Python-level bool branch on
+        # ``mask.any()`` — that triggers a torch._dynamo Dynamic-control-flow
+        # error under compile. Gating the warning under ``if __debug__:``
+        # makes it disappear entirely under ``PYTHONOPTIMIZE=1`` (production
+        # default in the Modal image env, see
+        # ``tmgg/modal/_lib/image._runtime_env``), so the compile trace
+        # never sees the data-dependent branch.
         zero_eigenvector_mask = sign_multipliers == 0
-        if zero_eigenvector_mask.any():
-            import warnings
+        if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+            if zero_eigenvector_mask.any():
+                import warnings
 
-            warnings.warn(
-                "Zero eigenvector detected in sign normalization; may indicate k > rank(A) "
-                "or numerical issues in eigendecomposition.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+                warnings.warn(
+                    "Zero eigenvector detected in sign normalization; may indicate k > rank(A) "
+                    "or numerical issues in eigendecomposition.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         sign_multipliers = torch.where(
             zero_eigenvector_mask, torch.ones_like(sign_multipliers), sign_multipliers
         )

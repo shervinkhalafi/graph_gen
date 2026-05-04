@@ -106,6 +106,17 @@ class PEARLEmbedding(nn.Module):
             [nn.LayerNorm(hidden_dim) for _ in range(num_layers)]
         )
 
+        # Pre-compute per-layer "use residual" flags at construction time
+        # (Python bools, not tensor comparisons). Layer 0 maps
+        # ``input_dim → hidden_dim`` so residual is shape-incompatible;
+        # layers 1+ all map ``hidden_dim → hidden_dim`` so residual is
+        # safe. Storing as a Python list of bools keeps the forward
+        # branch-free under ``torch.compile`` — the previous form
+        # ``X = X + H if H.shape == X.shape else H`` triggered a
+        # data-dependent shape comparison that dynamo could specialize
+        # on but emitted as a guard, complicating recompile semantics.
+        self._has_residual = [i > 0 for i in range(num_layers)]
+
     def forward(self, A: torch.Tensor) -> torch.Tensor:
         """Generate PEARL embeddings from adjacency matrix.
 
@@ -155,15 +166,18 @@ class PEARLEmbedding(nn.Module):
         A_norm = sym_normalize_adjacency(A.to(dtype=torch.float32))
 
         # GNN message passing
-        for layer, norm in zip(self.layers, self.layer_norms, strict=True):
+        for layer, norm, use_residual in zip(
+            self.layers, self.layer_norms, self._has_residual, strict=True
+        ):
             # Aggregate neighbor features
             H = torch.bmm(A_norm, X)  # (batch, n, in_dim)
             # Transform
             H = layer(H)
             # Normalize
             H = norm(H)
-            # Residual if dimensions match
-            X = X + H if H.shape == X.shape else H
+            # Residual via Python-time bool (compile-friendly: dynamo
+            # specializes per call site without a tensor-shape branch).
+            X = X + H if use_residual else H
 
         # Output projection
         embeddings = self.out_proj(X)

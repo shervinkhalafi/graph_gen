@@ -111,7 +111,15 @@ class SpectralProjectionLayer(nn.Module):
         # Compute W = Σ Λ^ℓ ⊙ H^{(ℓ)}
         from tmgg.models.layers.graph_ops import spectral_polynomial
 
-        W = spectral_polynomial(Lambda_used, list(self.H))
+        # Iterate ``ParameterList`` directly into a fresh Python list
+        # rather than calling ``list(self.H)`` — dynamo cannot trace the
+        # ``list()`` builtin on a ``ParameterList`` (graph-break:
+        # "Failed to trace builtin operator list with argument types
+        # ['ParameterList']"). The list-comprehension form unrolls at
+        # trace time into a fixed-length Python list of Parameter refs,
+        # which the spectral_polynomial helper iterates via a Python
+        # ``for`` loop — both compile cleanly.
+        W = spectral_polynomial(Lambda_used, [h for h in self.H])
 
         # Apply spectral filter: Y = V @ W
         Y = torch.matmul(V, W)  # (batch, n, k)
