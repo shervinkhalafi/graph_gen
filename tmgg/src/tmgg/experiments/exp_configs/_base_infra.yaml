@@ -99,9 +99,15 @@ seed: 42
 # semantics (e.g. recovering from a transient OOM mid-training).
 force_fresh: true
 
-# When true (default), training continues without W&B logging if WANDB_API_KEY
-# is unset. Set false to enforce W&B and crash without the key.
-allow_no_wandb: true
+# When true, training continues without W&B logging if WANDB_API_KEY
+# is unset. Set false (the default) to enforce W&B and crash without
+# the key — keeps every Modal run fully observable and surfaces secret
+# misconfiguration as a hard, unambiguous error rather than as a
+# downstream callback misconfiguration (the LearningRateMonitor crash
+# pattern that masked a missing-logger bug for an entire 2026-05-04
+# debugging session). Override to ``true`` only for genuinely
+# loggerless local runs (e.g. CI smoke tests).
+allow_no_wandb: false
 
 # Stage identifier for multi-stage experiments (stage1_poc, stage2_validation, etc.)
 # Set automatically by stage runners; null when running experiments directly
