@@ -6,6 +6,7 @@
 #   "pandas",
 #   "pyarrow",
 #   "matplotlib",
+#   "numpy",
 #   "Pillow",
 # ]
 # ///
@@ -79,7 +80,13 @@ RUNS: list[tuple[str, str, str]] = [
     ),
 ]
 
-TRAIN_KEYS = ["trainer/global_step", "train/loss_step", "train/loss_epoch", "train/lr"]
+TRAIN_KEYS = [
+    "trainer/global_step",
+    "train/loss_step",
+    "train/loss_epoch",
+    "train/lr",
+    "impl-perf/train/step_time_s",
+]
 VAL_KEYS = ["trainer/global_step", "val/epoch_NLL", "val/loss"]
 GEN_KEYS = [
     "trainer/global_step",
@@ -101,7 +108,74 @@ CURVE_PLOTS = [
     ("orbit_mmd", "gen-val/orbit_mmd", "Generated orbit MMD", "linear"),
     ("spectral_mmd", "gen-val/spectral_mmd", "Generated spectral MMD", "linear"),
     ("sbm_accuracy", "gen-val/sbm_accuracy", "SBM block-recovery accuracy", "linear"),
+    ("step_time_s", "impl-perf/train/step_time_s", "Train step time (s)", "linear"),
 ]
+
+# Per-variant architectural deltas. Everything else (n_layers=8, dx=256,
+# de=64, dy=64, n_head=8, ffN, AdamW, bf16-mixed, no EMA, …) is shared
+# verbatim across the 5 runs.
+VARIANT_DELTAS: dict[str, dict[str, str]] = {
+    "vignac": {
+        "extra_features": "ExtraFeatures (cycles + spectral, eigh per step)",
+        "projection_q": "Linear",
+        "projection_k": "Linear",
+        "projection_v": "Linear",
+        "extra_X width": "6",
+        "extra_y width": "11",
+    },
+    "pearl": {
+        "extra_features": "PEARLExtraFeatures (cycles + R-PEARL GNN, no eigh)",
+        "projection_q": "Linear",
+        "projection_k": "Linear",
+        "projection_v": "Linear",
+        "extra_X width": "3 + pearl_dim=16 = 19",
+        "extra_y width": "5",
+    },
+    "pearl-spec": {
+        "extra_features": "PEARLExtraFeatures (cycles + R-PEARL GNN)",
+        "projection_q": "SpectralProjectionLayer (eigh, k=16, K=3)",
+        "projection_k": "SpectralProjectionLayer (eigh, k=16, K=3)",
+        "projection_v": "SpectralProjectionLayer (eigh, k=16, K=3)",
+        "extra_X width": "19",
+        "extra_y width": "5",
+    },
+    "pearl-gnnconv-norm": {
+        "extra_features": "PEARLExtraFeatures (cycles + R-PEARL GNN)",
+        "projection_q": "BareGraphConvolution (Σ A_norm^i ⊗ H_i, K=3)",
+        "projection_k": "BareGraphConvolution (Σ A_norm^i ⊗ H_i, K=3)",
+        "projection_v": "BareGraphConvolution (Σ A_norm^i ⊗ H_i, K=3)",
+        "extra_X width": "19",
+        "extra_y width": "5",
+    },
+    "pearl-gnnconv-raw": {
+        "extra_features": "PEARLExtraFeatures (cycles + R-PEARL GNN)",
+        "projection_q": "BareGraphConvolution (Σ A^i ⊗ H_i, K=3, raw A)",
+        "projection_k": "BareGraphConvolution (Σ A^i ⊗ H_i, K=3, raw A)",
+        "projection_v": "BareGraphConvolution (Σ A^i ⊗ H_i, K=3, raw A)",
+        "extra_X width": "19",
+        "extra_y width": "5",
+    },
+}
+
+SHARED_HYPERPARAMS = {
+    "transformer layers": "8",
+    "node embedding dx": "256",
+    "edge embedding de": "64",
+    "global y embedding dy": "64",
+    "attention heads": "8",
+    "feed-forward dx → dx": "256",
+    "feed-forward de → de": "64",
+    "feed-forward dy → dy": "2048",
+    "optimizer": "AdamW (fused), lr=1e-3, wd=1e-4",
+    "mixed precision": "bf16-mixed (TF32 enabled)",
+    "torch.compile": "enabled (compile_model=true)",
+    "EMA": "disabled (matches upstream)",
+    "diffusion": "discrete D3PM, 500 steps",
+    "data": "SPECTRE SBM (200 train graphs)",
+    "batch size": "12 (drop_last_train=true)",
+    "max nodes (static pad)": "200",
+    "seed": "666",
+}
 
 
 @dataclass
@@ -114,6 +188,8 @@ class VariantData:
     state: str
     url: str
     images: dict[str, list[tuple[int, Path]]]  # kind -> [(step, path), ...]
+    metadata: dict  # GPU, host, CPU count, started_at, …
+    config: dict  # Hydra-resolved config fragments (model_config, etc.)
 
 
 def load_api_key() -> str:
@@ -165,23 +241,9 @@ def fetch_run_history_idempotent(
     r = runs[0]
     state, url = r.state, r.url
 
-    if parquet_path.exists() and summary_path.exists() and not refresh:
-        print(
-            f"[{label}] cached history ({parquet_path.stat().st_size//1024} KB) — skip fetch",
-            flush=True,
-        )
-        return (
-            pd.read_parquet(parquet_path),
-            json.loads(summary_path.read_text()),
-            state,
-            url,
-        )
-
-    print(f"[{label}] fetching history…", flush=True)
     # Per-metric fetch: scan_history(keys=[...]) requires every key present
     # in every row, so we fetch each non-step metric paired with global_step
     # and concat.
-    frames: list[pd.DataFrame] = []
     metric_keys = sorted(
         set(
             k
@@ -190,6 +252,33 @@ def fetch_run_history_idempotent(
             if k != "trainer/global_step"
         )
     )
+
+    cached_df: pd.DataFrame | None = None
+    if parquet_path.exists() and not refresh:
+        loaded = pd.read_parquet(parquet_path)
+        assert isinstance(loaded, pd.DataFrame)
+        cached_df = loaded
+        cached_metrics = set(loaded.columns) - {"trainer/global_step"}
+        missing = [m for m in metric_keys if m not in cached_metrics]
+        if not missing:
+            print(
+                f"[{label}] cached history ({parquet_path.stat().st_size//1024} KB) — skip fetch",
+                flush=True,
+            )
+            if summary_path.exists():
+                return cached_df, json.loads(summary_path.read_text()), state, url
+        else:
+            print(
+                f"[{label}] cached history present, fetching {len(missing)} new metric(s)…",
+                flush=True,
+            )
+            metric_keys = missing  # only fetch the new ones
+    else:
+        print(f"[{label}] fetching history…", flush=True)
+
+    frames: list[pd.DataFrame] = []
+    if cached_df is not None and not cached_df.empty:
+        frames.append(cached_df)
     for metric in metric_keys:
         sub = fetch_history(api, project, rid, ["trainer/global_step", metric])
         if sub.empty:
@@ -209,14 +298,37 @@ def fetch_run_history_idempotent(
     )
     if not df.empty:
         df.to_parquet(parquet_path, index=False)
+    # ``r.summary`` is the legacy ``wandb.old.summary.HTTPSummary`` —
+    # ``__iter__`` is not implemented and falls back to ``__getitem__(0)``,
+    # which raises KeyError. Use ``.keys()`` explicitly. (ruff SIM118
+    # complains; ignore it for this object.)
+    summary_keys = list(r.summary.keys())  # noqa: SIM118
     summary = {
         k: r.summary.get(k)
-        for k in r.summary
+        for k in summary_keys
         if any(t in k for t in ("trainer/", "val/", "gen-val/", "train/", "epoch"))
     }
     summary["_state"] = state
     summary["_url"] = url
     summary["_runtime"] = float(r.summary.get("_runtime", 0))
+    # Persist metadata + select config alongside summary so the report
+    # can describe compute and architecture without an extra W&B round-trip.
+    summary["_metadata"] = dict(r.metadata or {})
+    cfg_dict = dict(r.config)
+    summary["_config"] = {
+        k: cfg_dict[k]
+        for k in (
+            "compile_model",
+            "model_class",
+            "model_name",
+            "model_config",
+            "trainer",
+            "data",
+            "optimizer",
+            "model",
+        )
+        if k in cfg_dict
+    }
     summary_path.write_text(json.dumps(summary, indent=2, default=str))
     return df, summary, state, url
 
@@ -294,13 +406,21 @@ def plot_curve(
     title: str,
     yscale: str,
     out_path: Path,
+    y_clip_percentile: float | None = None,
 ) -> bool:
     """Per-variant overlay. Noisy series (>500 points) get a faint raw line
     plus a rolling-mean (~1% of length) emphasised line so trends survive
-    visual saturation."""
+    visual saturation.
+
+    ``y_clip_percentile`` (e.g. 99) caps the y-axis at that percentile across
+    all variants so a few outliers don't crush the visible range — used for
+    step-time plots where compile/checkpoint pauses produce 10-20× spikes
+    that would otherwise hide the steady-state difference.
+    """
     fig, ax = plt.subplots(figsize=(9, 5))
     plotted = False
     cmap = plt.get_cmap("tab10")
+    all_y: list[float] = []
     for i, v in enumerate(variants):
         if v.history.empty or metric_key not in v.history.columns:
             continue
@@ -310,6 +430,7 @@ def plot_curve(
             continue
         x = sub["trainer/global_step"].to_numpy()
         y = sub[metric_key].to_numpy()
+        all_y.extend(y.tolist())
         color = cmap(i)
         if len(sub) > 500:
             ax.plot(x, y, color=color, linewidth=0.6, alpha=0.18)
@@ -338,6 +459,21 @@ def plot_curve(
     if not plotted:
         plt.close(fig)
         return False
+    if y_clip_percentile is not None and all_y:
+        import numpy as np
+
+        ymax = float(np.percentile(all_y, y_clip_percentile))
+        ymin = max(0.0, float(np.percentile(all_y, 0.5)))
+        ax.set_ylim(ymin * 0.95, ymax * 1.1)
+        ax.text(
+            0.02,
+            0.97,
+            f"(y clipped to {y_clip_percentile:.0f}th pctile)",
+            transform=ax.transAxes,
+            fontsize=8,
+            alpha=0.6,
+            va="top",
+        )
     ax.set_xlabel("trainer/global_step")
     ax.set_ylabel(metric_key)
     ax.set_yscale(yscale)
@@ -459,6 +595,217 @@ def fmt_typst_table(title: str, df: pd.DataFrame, direction: str = "↓") -> str
     )
 
 
+def compute_table_rows(variants: list[VariantData]) -> pd.DataFrame:
+    """Per-variant compute summary derived from W&B metadata + history."""
+    rows = []
+    for v in variants:
+        md = v.metadata or {}
+        runtime_s = float(v.summary.get("_runtime", 0) or 0)
+        step = v.summary.get("trainer/global_step")
+        # Median step time from history (post-compile, so excludes warmup)
+        median_step_s = None
+        if not v.history.empty and "impl-perf/train/step_time_s" in v.history.columns:
+            ser = v.history["impl-perf/train/step_time_s"].dropna()
+            if not ser.empty:
+                # Drop the first 5% as compile/warmup
+                cutoff = max(1, int(len(ser) * 0.05))
+                median_step_s = float(ser.iloc[cutoff:].median())
+        steps_per_min = 60.0 / median_step_s if median_step_s else None
+        gpu_h = runtime_s / 3600.0
+        rows.append(
+            {
+                "variant": v.label,
+                "GPU": md.get("gpu", "—"),
+                "host": md.get("host", "—"),
+                "CPUs": md.get("cpu_count", "—"),
+                "step": step if step is not None else "—",
+                "wall (h)": round(gpu_h, 2),
+                "med step (s)": round(median_step_s, 4) if median_step_s else "—",
+                "steps/min": round(steps_per_min, 1) if steps_per_min else "—",
+                "started": (md.get("startedAt") or "")[:19],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def plot_throughput_timeline(variants: list[VariantData], out_path: Path) -> bool:
+    """Plot rolling-mean step time across training for each variant."""
+    fig, ax = plt.subplots(figsize=(9, 5))
+    cmap = plt.get_cmap("tab10")
+    plotted = False
+    for i, v in enumerate(variants):
+        if v.history.empty or "impl-perf/train/step_time_s" not in v.history.columns:
+            continue
+        sub = v.history[["trainer/global_step", "impl-perf/train/step_time_s"]].dropna()
+        if sub.empty:
+            continue
+        sub = sub.sort_values("trainer/global_step")
+        x = sub["trainer/global_step"].to_numpy()
+        y = sub["impl-perf/train/step_time_s"].to_numpy()
+        color = cmap(i)
+        ax.plot(x, y, color=color, linewidth=0.5, alpha=0.15)
+        window = max(11, len(sub) // 100)
+        smooth = (
+            sub["impl-perf/train/step_time_s"]
+            .rolling(window=window, min_periods=1, center=True)
+            .mean()
+            .to_numpy()
+        )
+        ax.plot(x, smooth, label=v.label, color=color, linewidth=1.6, alpha=0.95)
+        plotted = True
+    if not plotted:
+        plt.close(fig)
+        return False
+    ax.set_xlabel("trainer/global_step")
+    ax.set_ylabel("step time (s)")
+    ax.set_title("Train step time per variant (lower = faster, A100 SXM4 40GB)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=130)
+    plt.close(fig)
+    return True
+
+
+def write_d2_diagrams(out: Path, fig_dir: Path) -> dict[str, Path]:
+    """Emit D2 source for the shared DiGress base + the swap-point overlay,
+    then compile each to PNG. Returns ``{label: png_path}`` for whatever
+    compiled successfully (silent skip if d2 missing)."""
+    d2_dir = out / "diagrams"
+    d2_dir.mkdir(exist_ok=True)
+    diagrams: dict[str, str] = {}
+
+    # 1) Shared DiGress backbone (base architecture, identical across all 5)
+    diagrams["digress_base"] = """
+direction: down
+title: |md
+  # Shared DiGress backbone
+  All five variants instantiate this graph, differing only in the
+  `extra_features` block and the Q/K/V projection class.
+| {near: top-center}
+
+inputs: {
+  shape: rectangle
+  X_t: "X_t (bs, n, |X|)\\nnoised node 1-hot"
+  E_t: "E_t (bs, n, n, |E|)\\nnoised edge 1-hot"
+  y_t: "y_t (bs, dy)\\ntimestep + globals"
+}
+
+extra_features: "extra_features(X, E, y, mask)\\n→ extra_X, extra_E, extra_y" {
+  style.fill: "#fff3a0"
+  style.stroke-width: 3
+}
+
+cat: "Concatenate\\nX ⊕ extra_X | E ⊕ extra_E | y ⊕ extra_y"
+
+mlp_in: "mlp_in_X / E / y\\n(linear projections to dx=256, de=64, dy=64)"
+
+block_loop: "× 8 transformer layers" {
+  style.stroke-dash: 3
+  attn: "Q/K/V projection\\n(swappable: Linear | Spectral | BareGraphConv)" {
+    style.fill: "#a0e0ff"
+    style.stroke-width: 3
+  }
+  flin: "FiLM(λ_E from E_t) on attn weights"
+  ff_x: "feed-forward (dx → dx)"
+  ff_e: "feed-forward (de → de)"
+  ff_y: "feed-forward (dy → 2048 → dy)"
+  attn -> flin -> ff_x
+  attn -> flin -> ff_e
+  ff_x -> ff_y
+  ff_e -> ff_y
+}
+
+mlp_out: "mlp_out_X / E / y → output_dims"
+heads: "p_θ(X_{t-1}, E_{t-1} | X_t, E_t, y_t)"
+loss: "discrete D3PM cross-entropy"
+
+inputs.X_t -> extra_features
+inputs.E_t -> extra_features
+inputs.y_t -> extra_features
+inputs.X_t -> cat
+inputs.E_t -> cat
+inputs.y_t -> cat
+extra_features -> cat
+cat -> mlp_in -> block_loop -> mlp_out -> heads -> loss
+"""
+
+    # 2) The two swap points (extra_features and projection_q/k/v) shown
+    #    side-by-side for each variant
+    diagrams["variant_swaps"] = """
+direction: right
+title: |md
+  # What each variant swaps in
+  Two configurable slots in the backbone. Variants differ only in
+  which class fills these slots.
+| {near: top-center}
+
+shared: "Shared backbone\\n(see digress_base diagram)" {
+  style.fill: "#eeeeee"
+}
+
+ef_slot: "extra_features slot" {
+  style.fill: "#fff3a0"
+  vignac: "ExtraFeatures\\n(eigh per step)"
+  pearl_class: "PEARLExtraFeatures\\n(R-PEARL GNN, no eigh)"
+  vignac.style.fill: "#fde68a"
+  pearl_class.style.fill: "#bbf7d0"
+}
+
+proj_slot: "Q/K/V projection slot" {
+  style.fill: "#a0e0ff"
+  linear: "Linear (default)"
+  spectral: "SpectralProjectionLayer\\n(eigh, k=16, K=3)"
+  gnn_norm: "BareGraphConvolution\\nA_norm, K=3"
+  gnn_raw: "BareGraphConvolution\\nA raw, K=3"
+  linear.style.fill: "#bae6fd"
+  spectral.style.fill: "#fbcfe8"
+  gnn_norm.style.fill: "#bbf7d0"
+  gnn_raw.style.fill: "#fecaca"
+}
+
+variants: "Variant → (extra_features, projection)" {
+  v_vignac: "vignac\\n= (ExtraFeatures, Linear)"
+  v_pearl: "pearl\\n= (PEARLExtraFeatures, Linear)"
+  v_pearl_spec: "pearl-spec\\n= (PEARLExtraFeatures, SpectralProjection)"
+  v_pearl_norm: "pearl-gnnconv-norm\\n= (PEARLExtraFeatures, BareGraphConv A_norm)"
+  v_pearl_raw: "pearl-gnnconv-raw\\n= (PEARLExtraFeatures, BareGraphConv A raw)"
+}
+
+shared -> ef_slot
+shared -> proj_slot
+ef_slot -> variants
+proj_slot -> variants
+"""
+
+    out_paths: dict[str, Path] = {}
+    for name, src in diagrams.items():
+        d2_path = d2_dir / f"{name}.d2"
+        d2_path.write_text(src.strip() + "\n")
+        png_path = fig_dir / f"diagram_{name}.png"
+        if shutil.which("d2") is None:
+            continue
+        # --layout=dagre, --pad=20 for tighter PNGs
+        res = subprocess.run(
+            [
+                "d2",
+                "--layout=dagre",
+                "--theme=0",
+                "--pad=20",
+                str(d2_path),
+                str(png_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode == 0:
+            out_paths[name] = png_path
+            print(f"  ✓ {png_path.name}", flush=True)
+        else:
+            print(f"  ✘ d2 compile failed for {name}:\n{res.stderr[:300]}", flush=True)
+    return out_paths
+
+
 def write_typst_report(variants: list[VariantData], out: Path, fig_dir: Path) -> Path:
     typ = []
     typ.append('#set page(paper: "a4", margin: 1.8cm)')
@@ -482,8 +829,73 @@ def write_typst_report(variants: list[VariantData], out: Path, fig_dir: Path) ->
     typ.append(",\n".join(rows))
     typ.append(")\n")
 
+    # Architecture description
+    typ.append("== Architecture: shared backbone and per-variant deltas\n")
+    typ.append(
+        "All five runs use the same DiGress graph-transformer backbone "
+        "(8 layers, dx=256, de=64, dy=64, 8 attention heads, FiLM "
+        "conditioning on the noise-level eigenvalues) trained on the "
+        "SPECTRE SBM dataset under bf16-mixed with `torch.compile` "
+        "enabled. They differ only in two slots: the `extra_features` "
+        "block that produces the per-node positional encoding, and the "
+        "Q/K/V projection class inside each transformer layer.\n"
+    )
+    base_png = fig_dir / "diagram_digress_base.png"
+    if base_png.exists():
+        typ.append("=== Backbone (shared)\n")
+        typ.append('#image("figures/diagram_digress_base.png", width: 95%)\n')
+    swap_png = fig_dir / "diagram_variant_swaps.png"
+    if swap_png.exists():
+        typ.append("=== Swap points and variant assignments\n")
+        typ.append('#image("figures/diagram_variant_swaps.png", width: 95%)\n')
+
+    typ.append("=== Shared hyperparameters\n")
+    typ.append(
+        "#table(\n  columns: 2, align: (left, left),\n  [*setting*], [*value*],\n  "
+    )
+    typ.append(",\n  ".join(f"[{k}], [{v}]" for k, v in SHARED_HYPERPARAMS.items()))
+    typ.append("\n)\n\n")
+
+    typ.append("=== Per-variant deltas\n")
+    delta_keys = list(next(iter(VARIANT_DELTAS.values())).keys())
+    n_cols = 1 + len(VARIANT_DELTAS)
+    typ.append(f"#table(\n  columns: {n_cols}, align: (left,) * {n_cols},")
+    typ.append(
+        "  [*setting*], " + ", ".join(f"[*{lab}*]" for lab in VARIANT_DELTAS) + ","
+    )
+    body = []
+    for k in delta_keys:
+        cells = [f"[{k}]"] + [
+            f"[{VARIANT_DELTAS[v].get(k, '—')}]" for v in VARIANT_DELTAS
+        ]
+        body.append(", ".join(cells))
+    typ.append("  " + ",\n  ".join(body) + "\n)\n\n")
+
+    # Compute summary
+    typ.append("== Compute and runtime\n")
+    compute_df = compute_table_rows(variants)
+    typ.append("=== Compute summary\n")
+    n_cols = len(compute_df.columns)
+    typ.append(f"#table(\n  columns: {n_cols}, align: (left,) * {n_cols},")
+    typ.append("  " + ", ".join(f"[*{c}*]" for c in compute_df.columns) + ",")
+    rows_typ = []
+    for _, r in compute_df.iterrows():
+        cells = []
+        for c in compute_df.columns:
+            v = r[c]
+            cells.append(f"[{v}]")
+        rows_typ.append(", ".join(cells))
+    typ.append("  " + ",\n  ".join(rows_typ) + "\n)\n\n")
+
+    perf_png = fig_dir / "curves_step_time_s.png"
+    if perf_png.exists():
+        typ.append("=== Step-time over training\n")
+        typ.append('#image("figures/curves_step_time_s.png", width: 100%)\n')
+
     typ.append("== Training and validation curves\n")
     for slug, _, title, _ in CURVE_PLOTS:
+        if slug == "step_time_s":  # already shown in compute section
+            continue
         path = fig_dir / f"curves_{slug}.png"
         if path.exists():
             typ.append(f"=== {title}\n")
@@ -551,12 +963,22 @@ def main() -> None:
         images = fetch_media_idempotent(
             api, label, proj, rid, args.out, args.refresh, args.n_images_per_kind
         )
-        variants.append(VariantData(label, proj, rid, df, summary, state, url, images))
+        metadata = summary.get("_metadata", {}) or {}
+        config = summary.get("_config", {}) or {}
+        variants.append(
+            VariantData(
+                label, proj, rid, df, summary, state, url, images, metadata, config
+            )
+        )
 
     print("\nrendering curve plots…", flush=True)
     for slug, key, title, yscale in CURVE_PLOTS:
         out_path = fig_dir / f"curves_{slug}.png"
-        ok = plot_curve(variants, key, title, yscale, out_path)
+        # Step-time has compile/checkpoint outliers ~10× steady state; clip
+        # the y-axis so the per-variant differences (0.15-0.20 s/step) are
+        # visible.
+        clip = 99.0 if slug == "step_time_s" else None
+        ok = plot_curve(variants, key, title, yscale, out_path, y_clip_percentile=clip)
         print(f"  {'✓' if ok else '·'} {out_path.name}", flush=True)
 
     print("rendering timeline plots…", flush=True)
@@ -564,6 +986,9 @@ def main() -> None:
         out_path = fig_dir / f"timeline_{kind}.png"
         ok = plot_timeline(variants, kind, out_path)
         print(f"  {'✓' if ok else '·'} {out_path.name}", flush=True)
+
+    print("rendering D2 architecture diagrams…", flush=True)
+    write_d2_diagrams(args.out, fig_dir)
 
     print("writing typst report…", flush=True)
     typ_path = write_typst_report(variants, args.out, fig_dir)
