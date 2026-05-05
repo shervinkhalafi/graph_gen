@@ -114,46 +114,44 @@ CURVE_PLOTS = [
 # Per-variant architectural deltas. Everything else (n_layers=8, dx=256,
 # de=64, dy=64, n_head=8, ffN, AdamW, bf16-mixed, no EMA, …) is shared
 # verbatim across the 5 runs.
+# Three projection_{q,k,v} rows are always identical per variant, so we
+# collapse them to a single ``projection`` row. Strings stay short so
+# the table fits a portrait page without text overflow.
 VARIANT_DELTAS: dict[str, dict[str, str]] = {
     "vignac": {
-        "extra_features": "ExtraFeatures (cycles + spectral, eigh per step)",
-        "projection_q": "Linear",
-        "projection_k": "Linear",
-        "projection_v": "Linear",
-        "extra_X width": "6",
-        "extra_y width": "11",
+        "extra_features": "ExtraFeatures",
+        "projection": "Linear",
+        "eigh/step": "yes (extra_features)",
+        "extra_X": "6",
+        "extra_y": "11",
     },
     "pearl": {
-        "extra_features": "PEARLExtraFeatures (cycles + R-PEARL GNN, no eigh)",
-        "projection_q": "Linear",
-        "projection_k": "Linear",
-        "projection_v": "Linear",
-        "extra_X width": "3 + pearl_dim=16 = 19",
-        "extra_y width": "5",
+        "extra_features": "PEARLExtraFeatures",
+        "projection": "Linear",
+        "eigh/step": "no",
+        "extra_X": "19",
+        "extra_y": "5",
     },
     "pearl-spec": {
-        "extra_features": "PEARLExtraFeatures (cycles + R-PEARL GNN)",
-        "projection_q": "SpectralProjectionLayer (eigh, k=16, K=3)",
-        "projection_k": "SpectralProjectionLayer (eigh, k=16, K=3)",
-        "projection_v": "SpectralProjectionLayer (eigh, k=16, K=3)",
-        "extra_X width": "19",
-        "extra_y width": "5",
+        "extra_features": "PEARLExtraFeatures",
+        "projection": "SpectralProjection (k=16, K=3)",
+        "eigh/step": "yes (projection)",
+        "extra_X": "19",
+        "extra_y": "5",
     },
     "pearl-gnnconv-norm": {
-        "extra_features": "PEARLExtraFeatures (cycles + R-PEARL GNN)",
-        "projection_q": "BareGraphConvolution (Σ A_norm^i ⊗ H_i, K=3)",
-        "projection_k": "BareGraphConvolution (Σ A_norm^i ⊗ H_i, K=3)",
-        "projection_v": "BareGraphConvolution (Σ A_norm^i ⊗ H_i, K=3)",
-        "extra_X width": "19",
-        "extra_y width": "5",
+        "extra_features": "PEARLExtraFeatures",
+        "projection": "BareGraphConv A_norm (K=3)",
+        "eigh/step": "no",
+        "extra_X": "19",
+        "extra_y": "5",
     },
     "pearl-gnnconv-raw": {
-        "extra_features": "PEARLExtraFeatures (cycles + R-PEARL GNN)",
-        "projection_q": "BareGraphConvolution (Σ A^i ⊗ H_i, K=3, raw A)",
-        "projection_k": "BareGraphConvolution (Σ A^i ⊗ H_i, K=3, raw A)",
-        "projection_v": "BareGraphConvolution (Σ A^i ⊗ H_i, K=3, raw A)",
-        "extra_X width": "19",
-        "extra_y width": "5",
+        "extra_features": "PEARLExtraFeatures",
+        "projection": "BareGraphConv A raw (K=3)",
+        "eigh/step": "no",
+        "extra_X": "19",
+        "extra_y": "5",
     },
 }
 
@@ -489,37 +487,75 @@ def plot_curve(
 def plot_timeline(
     variants: list[VariantData], kind: str, out_path: Path, max_cols: int = 4
 ) -> bool:
-    """Grid: rows = variants, cols = checkpoint steps."""
+    """Grid of generated samples: rows = variants, cols = steps.
+
+    Columns are derived from the *union* of steps across variants (rounded
+    to a tolerance bucket since each variant logs at slightly different
+    step numbers — vignac may log at step 31547, others at 31548). Cells
+    where a variant has no image at a given step are blanked (axis turned
+    off entirely, no border) so the grid does not show empty boxes.
+    """
     rows_data: list[tuple[str, list[tuple[int, Path]]]] = []
     for v in variants:
         if kind in v.images and v.images[kind]:
-            rows_data.append((v.label, v.images[kind][:max_cols]))
+            rows_data.append((v.label, v.images[kind]))
     if not rows_data:
         return False
+
+    # Bucket steps by 5% tolerance so close-but-not-identical step numbers
+    # share a column (variants log at different exact steps depending on
+    # epoch-end vs cadence).
+    all_steps = sorted({s for _, lst in rows_data for s, _ in lst})
+    if not all_steps:
+        return False
+    tol = max(100, int(0.025 * max(all_steps)))
+    bucket_centers: list[int] = []
+    for s in all_steps:
+        if not bucket_centers or abs(s - bucket_centers[-1]) > tol:
+            bucket_centers.append(s)
+    bucket_centers = bucket_centers[:max_cols]
+
+    def lookup(imgs: list[tuple[int, Path]], target: int) -> Path | None:
+        for s, p in imgs:
+            if abs(s - target) <= tol:
+                return p
+        return None
+
     n_rows = len(rows_data)
-    n_cols = max(len(r[1]) for r in rows_data)
+    n_cols = len(bucket_centers)
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.5 * n_cols, 2.6 * n_rows))
     if n_rows == 1:
         axes = [axes]
     if n_cols == 1:
         axes = [[a] for a in axes]
     for r, (label, imgs) in enumerate(rows_data):
-        for c in range(n_cols):
+        for c, target in enumerate(bucket_centers):
             ax = axes[r][c]
-            ax.set_xticks([])
-            ax.set_yticks([])
-            if c < len(imgs):
-                step, path = imgs[c]
-                try:
-                    ax.imshow(Image.open(path))
-                    ax.set_title(f"step {step}", fontsize=9)
-                except Exception as e:
-                    ax.text(
-                        0.5, 0.5, f"err: {e}"[:40], ha="center", va="center", fontsize=7
-                    )
-            if c == 0:
+            path = lookup(imgs, target)
+            if path is None:
+                # Blank cell: kill all visual furniture so empty slots
+                # don't read as bordered placeholder boxes.
+                ax.axis("off")
+            else:
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.imshow(Image.open(path))
+                if r == 0:
+                    ax.set_title(f"≈ step {target:,}", fontsize=10)
+            if c == 0 and path is not None:
                 ax.set_ylabel(
                     label, fontsize=10, rotation=0, ha="right", va="center", labelpad=40
+                )
+            elif c == 0 and path is None:
+                # Use text on a still-axis-off subplot to keep the row label.
+                ax.text(
+                    -0.05,
+                    0.5,
+                    label,
+                    fontsize=10,
+                    ha="right",
+                    va="center",
+                    transform=ax.transAxes,
                 )
     fig.suptitle(f"Generated samples timeline — {kind}", fontsize=13)
     fig.tight_layout()
@@ -566,32 +602,55 @@ def latest_at_common_steps(
 
 
 def fmt_typst_table(title: str, df: pd.DataFrame, direction: str = "↓") -> str:
+    """Render a Typst table at 9pt with a per-row best-cell highlight.
+
+    Best cell per row (excluding the ``step`` column) is bolded; for
+    metrics where higher is better (``↑``) the maximum wins, otherwise
+    the minimum.
+    """
     if df.empty:
         return f"_{title}: no data_\n"
     cols = list(df.columns)
     n = len(cols)
     align_str = "(" + ", ".join(["right"] * n) + ")"
-    header = " , ".join(f"[*{c}*]" for c in cols)
+    header = ", ".join(f"[*{c}*]" for c in cols)
     body_rows = []
+    higher_better = direction == "↑"
     for _, r in df.iterrows():
+        # Decide best cell index for non-step numeric values.
+        numeric_idx = [
+            i
+            for i, c in enumerate(cols)
+            if c != "step"
+            and r[c] is not None
+            and isinstance(r[c], int | float)
+            and not (isinstance(r[c], float) and (r[c] != r[c]))
+        ]
+        best_i = None
+        if numeric_idx:
+            best_i = (max if higher_better else min)(
+                numeric_idx, key=lambda i: float(r[cols[i]])
+            )
         cells = []
-        for c in cols:
+        for i, c in enumerate(cols):
             v = r[c]
             if v is None or (isinstance(v, float) and (v != v)):
                 cells.append("[—]")
             elif c == "step":
                 cells.append(f"[{int(v):,}]")
             else:
-                cells.append(f"[{v:.4f}]")
+                txt = f"{v:.4f}"
+                cells.append(f"[*{txt}*]" if i == best_i else f"[{txt}]")
         body_rows.append(", ".join(cells))
     body = ",\n  ".join(body_rows)
     return (
         f"=== {title} ({direction} better)\n\n"
+        f"#text(size: 9pt)[\n"
         f"#table(\n"
         f"  columns: {n}, align: {align_str},\n"
-        f"  {header},\n"
+        f"  table.header({header}),\n"
         f"  {body}\n"
-        f")\n\n"
+        f")\n]\n\n"
     )
 
 
@@ -622,7 +681,8 @@ def compute_table_rows(variants: list[VariantData]) -> pd.DataFrame:
                 "wall (h)": round(gpu_h, 2),
                 "med step (s)": round(median_step_s, 4) if median_step_s else "—",
                 "steps/min": round(steps_per_min, 1) if steps_per_min else "—",
-                "started": (md.get("startedAt") or "")[:19],
+                # Trim ISO timestamp to "YYYY-MM-DD HH:MM" for table width.
+                "started": ((md.get("startedAt") or "")[:16]).replace("T", " "),
             }
         )
     return pd.DataFrame(rows)
@@ -829,7 +889,7 @@ def write_typst_report(variants: list[VariantData], out: Path, fig_dir: Path) ->
     typ.append(",\n".join(rows))
     typ.append(")\n")
 
-    # Architecture description
+    # ========== Architecture ==========
     typ.append("== Architecture: shared backbone and per-variant deltas\n")
     typ.append(
         "All five runs use the same DiGress graph-transformer backbone "
@@ -842,50 +902,74 @@ def write_typst_report(variants: list[VariantData], out: Path, fig_dir: Path) ->
     )
     base_png = fig_dir / "diagram_digress_base.png"
     if base_png.exists():
+        # The backbone diagram is portrait; constrain by ``height`` (not
+        # ``width``) so it fits on a single page instead of overflowing
+        # to the next.
         typ.append("=== Backbone (shared)\n")
-        typ.append('#image("figures/diagram_digress_base.png", width: 95%)\n')
+        typ.append(
+            '#align(center)[#image("figures/diagram_digress_base.png", height: 80%)]\n'
+        )
     swap_png = fig_dir / "diagram_variant_swaps.png"
     if swap_png.exists():
         typ.append("=== Swap points and variant assignments\n")
-        typ.append('#image("figures/diagram_variant_swaps.png", width: 95%)\n')
+        typ.append('#image("figures/diagram_variant_swaps.png", width: 100%)\n')
 
+    # Shared hyperparameters in a 2-up layout to halve vertical space.
     typ.append("=== Shared hyperparameters\n")
+    items = list(SHARED_HYPERPARAMS.items())
+    half = (len(items) + 1) // 2
+    left, right = items[:half], items[half:]
+    typ.append("#text(size: 9pt)[")
     typ.append(
-        "#table(\n  columns: 2, align: (left, left),\n  [*setting*], [*value*],\n  "
+        "#table(\n  columns: (auto, 1fr, auto, 1fr), align: (left, left, left, left),"
     )
-    typ.append(",\n  ".join(f"[{k}], [{v}]" for k, v in SHARED_HYPERPARAMS.items()))
-    typ.append("\n)\n\n")
+    typ.append("  [*setting*], [*value*], [*setting*], [*value*],")
+    pair_rows = []
+    for i in range(half):
+        l_key, l_val = left[i]
+        r_key, r_val = right[i] if i < len(right) else ("", "")
+        pair_rows.append(f"  [{l_key}], [{l_val}], [{r_key}], [{r_val}]")
+    typ.append(",\n".join(pair_rows) + "\n)\n]\n\n")
 
+    # Transposed delta table: variants are rows, settings are columns.
+    # 6 columns (variant + 5 settings) at 9pt fits portrait A4 cleanly.
     typ.append("=== Per-variant deltas\n")
     delta_keys = list(next(iter(VARIANT_DELTAS.values())).keys())
-    n_cols = 1 + len(VARIANT_DELTAS)
+    n_cols = 1 + len(delta_keys)
+    typ.append("#text(size: 9pt)[")
     typ.append(f"#table(\n  columns: {n_cols}, align: (left,) * {n_cols},")
-    typ.append(
-        "  [*setting*], " + ", ".join(f"[*{lab}*]" for lab in VARIANT_DELTAS) + ","
-    )
+    typ.append("  [*variant*], " + ", ".join(f"[*{k}*]" for k in delta_keys) + ",")
     body = []
-    for k in delta_keys:
-        cells = [f"[{k}]"] + [
-            f"[{VARIANT_DELTAS[v].get(k, '—')}]" for v in VARIANT_DELTAS
+    for variant_label, deltas in VARIANT_DELTAS.items():
+        cells = [f"[`{variant_label}`]"] + [
+            f"[{deltas.get(k, '—')}]" for k in delta_keys
         ]
-        body.append(", ".join(cells))
-    typ.append("  " + ",\n  ".join(body) + "\n)\n\n")
+        body.append("  " + ", ".join(cells))
+    typ.append(",\n".join(body) + "\n)\n]\n\n")
 
-    # Compute summary
+    # ========== Compute summary ==========
     typ.append("== Compute and runtime\n")
     compute_df = compute_table_rows(variants)
-    typ.append("=== Compute summary\n")
-    n_cols = len(compute_df.columns)
+    # Lift uniform columns out of the table when every row carries the
+    # same value (typically GPU=A100, host=modal, CPUs=24) — saves width.
+    uniform_cols = [
+        c
+        for c in compute_df.columns
+        if c not in ("variant",) and compute_df[c].nunique(dropna=False) == 1
+    ]
+    uniform_caption = ", ".join(f"{c}={compute_df[c].iloc[0]}" for c in uniform_cols)
+    table_df = compute_df.drop(columns=uniform_cols)
+    if uniform_caption:
+        typ.append(f"_All runs share: {uniform_caption}._\n\n")
+    typ.append("#text(size: 9pt)[")
+    n_cols = len(table_df.columns)
     typ.append(f"#table(\n  columns: {n_cols}, align: (left,) * {n_cols},")
-    typ.append("  " + ", ".join(f"[*{c}*]" for c in compute_df.columns) + ",")
+    typ.append("  " + ", ".join(f"[*{c}*]" for c in table_df.columns) + ",")
     rows_typ = []
-    for _, r in compute_df.iterrows():
-        cells = []
-        for c in compute_df.columns:
-            v = r[c]
-            cells.append(f"[{v}]")
-        rows_typ.append(", ".join(cells))
-    typ.append("  " + ",\n  ".join(rows_typ) + "\n)\n\n")
+    for _, r in table_df.iterrows():
+        cells = [f"[{r[c]}]" for c in table_df.columns]
+        rows_typ.append("  " + ", ".join(cells))
+    typ.append(",\n".join(rows_typ) + "\n)\n]\n\n")
 
     perf_png = fig_dir / "curves_step_time_s.png"
     if perf_png.exists():
