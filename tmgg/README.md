@@ -279,6 +279,51 @@ uv run basedpyright --project pyproject.toml
 uv run tach check
 ```
 
+## SBM Repro Report Script
+
+`scripts/sbm_repro_report.py` — self-contained `uv run --script`
+(inline deps: `wandb`, `pandas`, `pyarrow`, `matplotlib`, `Pillow`)
+that builds a comparison report across the 5 SBM repro variants
+running on W&B (`vignac`, `pearl`, `pearl-spec`, `pearl-gnnconv-norm`,
+`pearl-gnnconv-raw`).
+
+```bash
+./scripts/sbm_repro_report.py            # cache-aware (idempotent)
+./scripts/sbm_repro_report.py --refresh  # bypass cache, re-fetch from W&B
+```
+
+The W&B API key is read from `GRAPH_DENOISE_TEAM_SERVICE` in `.env`.
+
+**Outputs** (under `wandb_export/sbm-repro-report-2026-05-05/`):
+
+- `data/<variant>/history.parquet` — per-metric `scan_history()` dump.
+  One `(global_step, metric)` pair at a time, because
+  `scan_history(keys=[...])` only emits rows that contain *every*
+  listed key, and train/val/gen-val log on different cadences, so a
+  single multi-key fetch returns the empty intersection.
+- `data/<variant>/summary.json` — last-known summary metrics, run
+  state, and W&B URL.
+- `media/<variant>/<kind>_step<N>.png` — evenly spaced graph and
+  adjacency sample renderings (`--n-images-per-kind`, default 4).
+- `figures/curves_<metric>.png` — overlay plots of train loss
+  (step + epoch), val NLL, the four gen-val MMDs, and sbm_accuracy.
+  Long traces (>500 points) get a faint raw line plus a rolling-mean
+  overlay (window ~1% of length) so trends survive visual saturation.
+- `figures/timeline_{graph,adj}.png` — variant × step grids of the
+  generated samples, for visual quality progression.
+- `report.typ` — Typst document embedding all figures plus
+  like-to-like comparison tables at the steps every variant evaluated.
+- `report.pdf` — auto-compiled when `typst` is on `PATH`.
+
+**Idempotency:** parquet/json/png artefacts are reused when present;
+re-runs without `--refresh` skip the W&B fetch entirely. Figure
+regeneration and Typst compile always run (they are cheap).
+
+To extend the script to a new variant, append a `(label, project,
+display_name)` triple to `RUNS` at the top of the file. To track
+new metrics, add the W&B key to `TRAIN_KEYS`, `VAL_KEYS`, or `GEN_KEYS`
+and append a `CURVE_PLOTS` entry.
+
 ## License
 
 See LICENSE file for details.
