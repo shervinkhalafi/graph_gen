@@ -167,7 +167,9 @@ def fetch_run_media(
     saved: list[Path] = []
     for key in ("gen-val/adjacency_samples", "gen-val/graph_samples"):
         media = summary.get(key)
-        if not isinstance(media, dict):
+        # wandb returns SummarySubDict (not a dict subclass) for media
+        # entries — duck-type via .get rather than isinstance(media, dict).
+        if media is None or not hasattr(media, "get"):
             continue
         rel_path = media.get("path")
         if not rel_path:
