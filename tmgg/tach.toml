@@ -28,6 +28,7 @@ depends_on = [
     "tmgg.training.orchestration",  # Uses run_experiment, generate_run_id
     "tmgg.experiments",             # Evaluation function uses datamodule and checkpoint utils
     "tmgg.data",                    # Dataset prepare/validate functions orchestrate dataset classes + SPECTRE fixture loaders
+    "tmgg.evaluation",              # tmgg-mmd-baselines app calls compute_baseline + save_baseline
 ]
 # Modal platform integration - depends on cloud abstraction and run_experiment
 
