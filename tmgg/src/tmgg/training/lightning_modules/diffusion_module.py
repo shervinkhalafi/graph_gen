@@ -1972,6 +1972,10 @@ class DiffusionModule(BaseGraphModule):
             # live under the top-level ``gen-val/`` group so the W&B view
             # cleanly separates "core training/loss" from "what does the
             # generated sample distribution look like".
+            #
+            # Unit note: the ``gen-val/{degree,clustering,orbit,spectral}_mmd``
+            # keys hold V-statistic squared-MMD values (the literature's
+            # unsuffixed "MMD"); see ``docs/eval/mmd-units-and-protocol.md``.
             for key, value in results.to_dict().items():
                 if value is not None:
                     self.log(f"gen-val/{key}", value, on_epoch=True)

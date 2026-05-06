@@ -2,18 +2,25 @@
 # Provenance lives next to each metric. Edit ONLY when a paper number
 # is found wrong; re-run check_threshold over rounds.jsonl on edit.
 #
-# Reconciliation note (2026-04-29):
+# Reconciliation note (2026-04-29; unit-clarified 2026-05-06):
 #   The DiGress paper (Vignac et al. 2022, ICLR 2023, arXiv:2209.14734v3)
 #   Table 1 reports SBM "Deg/Clus/Orb" as MMD-ratios r = MMD(gen,test)^2 /
-#   MMD(train,test)^2 -- not raw MMD. Quote from Appendix F.1: "We do not
-#   report raw numbers but ratios computed as follows: r = MMD(generated,
-#   test)^2 / MMD(training, test)^2". The DiGress paper's own SBM row is
-#   "DiGress 1.6 1.5 1.7 74%". HiGen Table 1 reports raw MMD values
-#   (degree=0.0013, clustering=0.0498, orbit=0.0433), which match the
-#   units our in-house GraphGen evaluation pipeline emits. We therefore
-#   anchor on HiGen's raw MMD numbers (paper > HiGen for raw values is
-#   not applicable -- the paper does not report raw values for SBM), and
-#   keep the DiGress-paper VUN/ratio as a secondary cross-check below.
+#   MMD(train,test)^2 -- not raw MMD^2. Quote from Appendix F.1: "We do
+#   not report raw numbers but ratios computed as follows: r = MMD(
+#   generated, test)^2 / MMD(training, test)^2". The DiGress paper's own
+#   SBM row is "DiGress 1.6 1.5 1.7 74%". HiGen Table 1 reports raw MMD^2
+#   values (degree=0.0013, clustering=0.0498, orbit=0.0433), which match
+#   the units our in-house pipeline emits. We therefore anchor on HiGen's
+#   raw MMD^2 numbers (paper > HiGen for raw values is not applicable --
+#   the paper does not report raw values for SBM), and keep the
+#   DiGress-paper VUN/ratio as a secondary cross-check below.
+#
+#   Unit convention: when this file says "raw MMD" or "MMD" for the
+#   target/tolerance values below, the underlying quantity is squared
+#   MMD (V-statistic biased estimator) under the GraphRNN/GRAN
+#   convention. The literature drops the squared label and so do the
+#   target values here. See docs/eval/mmd-units-and-protocol.md for the
+#   canonical reference and what HiGen / DiGress each report.
 
 spectre_sbm:
   degree_mmd:

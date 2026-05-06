@@ -93,16 +93,22 @@ if not _ORCA_AVAILABLE:
 class EvaluationResults:
     """Flat container for all graph generation evaluation metrics.
 
+    All ``*_mmd`` fields hold **squared MMD values** (V-statistic biased
+    estimator), not square-root MMD distances — this is the
+    GraphRNN/GRAN convention that DiGress and HiGen also use. See
+    ``docs/eval/mmd-units-and-protocol.md`` for unit conventions and
+    cross-paper comparison rules.
+
     Attributes
     ----------
     degree_mmd
-        MMD on degree distributions (always computed).
+        MMD² on degree histograms (always computed).
     clustering_mmd
-        MMD on clustering coefficient distributions (always computed).
+        MMD² on clustering coefficient histograms (always computed).
     spectral_mmd
-        MMD on normalized Laplacian eigenvalue distributions (always computed).
+        MMD² on normalized Laplacian eigenvalue histograms (always computed).
     orbit_mmd
-        MMD on ORCA orbit counts. None if orca binary is unavailable.
+        MMD² on ORCA orbit counts. None if orca binary is unavailable.
     sbm_accuracy
         Fraction of generated graphs consistent with an SBM. None if
         graph-tool is unavailable.
@@ -176,7 +182,12 @@ def compute_orbit_mmd(
     kernel: Literal["gaussian", "gaussian_tv"] = "gaussian_tv",
     sigma: float = 30.0,
 ) -> float:
-    """Compute MMD on normalized ORCA orbit count vectors.
+    """Compute MMD² on normalized ORCA orbit count vectors.
+
+    Returns the V-statistic biased squared-MMD value (the "orbit MMD"
+    column in the GraphRNN/GRAN/DiGress/HiGen literature is this same
+    quantity, not its square root). See
+    ``docs/eval/mmd-units-and-protocol.md`` for the unit convention.
 
     Parameters
     ----------
@@ -192,7 +203,7 @@ def compute_orbit_mmd(
     Returns
     -------
     float
-        Orbit MMD value.
+        Orbit MMD² value (despite the literature calling it "orbit MMD").
     """
     ref_counts: list[np.ndarray] = [
         _orca_normalized_counts(g) for g in ref_graphs if g.number_of_nodes() >= 2

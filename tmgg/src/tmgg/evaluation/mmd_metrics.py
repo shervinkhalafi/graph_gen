@@ -25,16 +25,22 @@ from scipy.linalg import toeplitz
 
 @dataclass
 class MMDResults:
-    """Results from MMD computation (DiGress-compatible).
+    """Results from MMD² computation (DiGress-compatible).
+
+    All fields hold **squared MMD values** (V-statistic biased estimator),
+    not square-root MMD distances. This matches the GraphRNN/GRAN
+    convention that DiGress and HiGen also follow — see
+    ``docs/eval/mmd-units-and-protocol.md`` for why this matters when
+    comparing to published anchors.
 
     Attributes
     ----------
     degree_mmd
-        MMD on degree distributions.
+        MMD² on degree histograms.
     clustering_mmd
-        MMD on clustering coefficient distributions.
+        MMD² on clustering coefficient histograms.
     spectral_mmd
-        MMD on normalized Laplacian eigenvalue distributions (DiGress "spectre").
+        MMD² on normalized Laplacian eigenvalue histograms (DiGress "spectre").
     """
 
     degree_mmd: float
@@ -390,16 +396,27 @@ def compute_mmd(
     distance_scaling: float = 1.0,
     is_hist: bool = True,
 ) -> float:
-    """Compute the **biased V-statistic** MMD between two sample sets.
+    """Compute the **biased V-statistic squared MMD** between two sample sets.
 
-    Uses the biased estimator
-    ``MMD^2 = (1/n^2) sum_{i,j} k(x_i,x_j) + (1/m^2) sum_{i,j} k(y_i,y_j)
-              - (2/(n*m)) sum_{i,j} k(x_i,y_j)``
-    where ``i==j`` terms are *included* in the within-set sums. This
-    matches upstream DiGress's MMD implementation
-    (``src/analysis/dist_helper.py::compute_mmd``); using the unbiased
-    U-statistic instead would shift our reported numbers by O(1/n) and
-    make them not directly comparable to published DiGress results.
+    Returns the V-statistic estimator of MMD² (squared MMD), not the
+    square-root MMD distance:
+
+    ``MMD² = (1/n²) Σ_{i,j} k(x_i,x_j) + (1/m²) Σ_{i,j} k(y_i,y_j)
+            - (2/(n·m)) Σ_{i,j} k(x_i,y_j)``
+
+    where ``i==j`` terms are *included* in the within-set sums (this is
+    the biased estimator; the unbiased U-statistic excludes them and
+    would shift reported numbers by O(1/n)). Matches upstream DiGress's
+    MMD implementation (``src/analysis/dist_helper.py::compute_mmd``)
+    bit-for-bit, which is why the function name is unsuffixed "mmd"
+    rather than "mmd_squared" — the GraphRNN/GRAN/SPECTRE/DiGress/HiGen
+    literature uniformly calls this quantity "MMD" without the square,
+    and we follow that convention so values are directly comparable to
+    published anchors.
+
+    See ``docs/eval/mmd-units-and-protocol.md`` for the unit convention
+    and how it interacts with DiGress's MMD-ratio reporting and HiGen's
+    raw-MMD anchors.
 
     Parameters
     ----------
@@ -427,7 +444,9 @@ def compute_mmd(
     Returns
     -------
     float
-        Biased MMD value (non-negative).
+        Biased squared-MMD value, non-negative. Despite being labelled
+        "MMD" in the literature and in the W&B logging keys, this is
+        MMD², not the square-root MMD distance.
     """
     if len(samples1) < 2 or len(samples2) < 2:
         return float("inf")
@@ -471,7 +490,10 @@ def compute_mmd_metrics(
     clustering_sigma: float | None = None,
     spectral_sigma: float | None = None,
 ) -> MMDResults:
-    """Compute MMD metrics between reference and generated graph distributions.
+    """Compute MMD² metrics between reference and generated graph distributions.
+
+    Each returned value is a biased V-statistic squared MMD — see
+    :func:`compute_mmd` and ``docs/eval/mmd-units-and-protocol.md``.
 
     Parameters
     ----------
@@ -496,7 +518,7 @@ def compute_mmd_metrics(
     Returns
     -------
     MMDResults
-        MMD values for each graph statistic.
+        Squared-MMD values (V-statistic) for each graph statistic.
     """
     ref_stats = compute_graph_statistics(ref_graphs, max_workers)
     gen_stats = compute_graph_statistics(gen_graphs, max_workers)

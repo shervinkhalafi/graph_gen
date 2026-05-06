@@ -92,7 +92,7 @@ uv run tmgg-discrete-gen \
 
 The discrete diffusion model uses categorical transitions (identity to uniform interpolation) and trains a `DiscreteGraphTransformer` backbone to predict clean graph structure.
 
-**What success looks like:** `val/epoch_NLL` decreasing over training. MMD metrics (`val/degree_mmd`, `val/clustering_mmd`, `val/spectral_mmd`) logged at each validation epoch — lower is better.
+**What success looks like:** `val/epoch_NLL` decreasing over training. MMD metrics (`val/degree_mmd`, `val/clustering_mmd`, `val/spectral_mmd`) logged at each validation epoch — lower is better. The `*_mmd` keys hold squared MMD values (V-statistic, GraphRNN/GRAN convention) — see [`docs/eval/mmd-units-and-protocol.md`](eval/mmd-units-and-protocol.md) before comparing to DiGress / HiGen tables.
 
 > **Loss comparability caveat:** `val/loss` from denoising (BCEWithLogits), Gaussian generative (MSE), and discrete diffusion (VLB/NLL) are on fundamentally different scales. Use MMD metrics to compare across experiment families.
 
