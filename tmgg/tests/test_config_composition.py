@@ -176,6 +176,30 @@ class TestConfigComposition:
         assert "noise_type" not in cfg.data
         assert "noise_levels" not in cfg.data
 
+    def test_sbm_vignac_repro_exact_uses_live_upstream_transformer_parity(
+        self, exp_config_path: Path
+    ) -> None:
+        """The exact repro config should opt into live upstream DiGress behavior.
+
+        Rationale: upstream ``experiment/sbm.yaml`` records ``dim_ffy=256``,
+        but the upstream ``GraphTransformer`` constructor does not pass
+        that field into ``XEyTransformerLayer`` and therefore uses the
+        layer default ``dim_ffy=2048`` at runtime. ``repro_exact`` also
+        needs the padding-only hidden-edge mask so local outputs match
+        the live upstream forward path under equal weights.
+        """
+        with initialize_config_dir(
+            version_base=None,
+            config_dir=str(exp_config_path),
+        ):
+            cfg = compose(
+                config_name="base_config_discrete_diffusion_generative",
+                overrides=["+experiment=discrete_sbm_vignac_repro_exact"],
+            )
+
+        assert cfg.model.model.use_upstream_hidden_edge_diagonal is True
+        assert cfg.model.model.hidden_dims.dim_ffy == 2048
+
 
 # Configs that use standard adjacency matrix input
 ADJACENCY_INPUT_CONFIGS = [

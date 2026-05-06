@@ -14,10 +14,10 @@
 # * ``cvignac/DiGress/configs/model/discrete.yaml``
 #
 # Differs from ``discrete_sbm_vignac_repro`` (GDPO-aligned) on:
-# * ``dim_ffy``: 256 (matches Vignac's ``experiment/sbm.yaml``).
-#   The GDPO-aligned variant uses 2048 because ``gdpo_sbm.ckpt`` was
-#   trained that way (see ``.local-storage/digress-checkpoints/
-#   gdpo_sbm/README.md``); Vignac's own training used 256.
+# * ``dim_ffy``: 2048 (matches Vignac's live ``GraphTransformer``).
+#   The upstream YAML says 256, but the upstream constructor does not
+#   pass ``hidden_dims.dim_ffy`` into ``XEyTransformerLayer``, so the
+#   runtime layer default 2048 is what actually trains.
 # * ``seed``: 0 (Vignac's ``train_default.yaml`` default).
 #   The GDPO-aligned variant uses 666.
 # * ``amsgrad``: false (PyTorch default).
@@ -80,9 +80,9 @@ trainer:
 
 # Model overrides on top of ``discrete_sbm_official``
 # ---------------------------------------------------
-# Two architectural deltas (same as the GDPO-aligned variant for
-# upstream parity) plus three optimiser/cadence deltas to match
-# Vignac's published config (where the GDPO-aligned variant diverges).
+# Model and optimiser/cadence deltas to match Vignac's live upstream
+# implementation and published config where the GDPO-aligned variant
+# diverges.
 model:
   # Sample/MMD cadence inside validation. Upstream samples every 4
   # val checks; with val every 100 epochs (~1100 steps) that is
@@ -110,10 +110,14 @@ model:
       _target_: tmgg.models.digress.extra_features.ExtraFeatures
       extra_features_type: all
       max_n_nodes: ${data.num_nodes_max_static}
-    # ``dim_ffy`` intentionally NOT overridden — inherits 256 from
-    # ``discrete_sbm_official.yaml``, which matches Vignac's
-    # ``experiment/sbm.yaml::model.hidden_dims.dim_ffy=256``. Compare
-    # to the GDPO-aligned variant which forces 2048 here.
+    # Match Vignac's live upstream implementation, not the dead YAML
+    # field. Upstream ``GraphTransformer`` omits ``dim_ffy`` when it
+    # builds ``XEyTransformerLayer``, so the runtime default is 2048.
+    hidden_dims:
+      dim_ffy: 2048
+    # Upstream padding-masks the hidden edge tensor after ``mlp_in_E``
+    # but does not zero its diagonal until the final residual output.
+    use_upstream_hidden_edge_diagonal: true
   noise_process:
     x_classes: 1
     e_classes: 2
@@ -123,6 +127,7 @@ model:
 # Inherited from ``discrete_sbm_official.yaml`` (no override needed,
 # matches upstream verbatim):
 # * ``n_layers=8``, ``dx=256``, ``de=64``, ``dy=64``, ``n_head=8``;
+# * ``dim_ffX=256``, ``dim_ffE=64``, ``dim_ffy=2048``;
 # * ``hidden_mlp_dims={X:128, E:64, y:128}``;
 # * ``transition='empirical_marginal'`` (≡ upstream's ``transition='marginal'``,
 #   both call ``MarginalUniformTransition`` with empirical x/e marginals);

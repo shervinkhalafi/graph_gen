@@ -564,6 +564,10 @@ class _GraphTransformer(nn.Module):
         Transformer hidden dimensions with keys "dx", "de", "dy", "n_head".
     output_dims
         Output dimensions dict with keys "X", "E", "y".
+    use_upstream_hidden_edge_diagonal
+        If True, use upstream DiGress's padding-only mask for hidden edge
+        states after ``mlp_in_E``. The default keeps TMGG's existing behavior
+        and zeros the hidden edge diagonal before the transformer stack.
     act_fn_in
         Activation function for input MLPs. Defaults to ReLU.
     act_fn_out
@@ -625,6 +629,7 @@ class _GraphTransformer(nn.Module):
         act_fn_in: nn.Module | None = None,
         act_fn_out: nn.Module | None = None,
         projection_config: dict[str, bool | int] | None = None,
+        use_upstream_hidden_edge_diagonal: bool = False,
     ) -> None:
         super().__init__()
         self.n_layers = n_layers
@@ -632,6 +637,7 @@ class _GraphTransformer(nn.Module):
         self.hidden_mlp_dims = hidden_mlp_dims
         self.hidden_dims = hidden_dims
         self.output_dims = output_dims
+        self.use_upstream_hidden_edge_diagonal = use_upstream_hidden_edge_diagonal
 
         self.out_dim_X = output_dims["X"]
         self.out_dim_E = output_dims["E"]
@@ -831,7 +837,12 @@ class _GraphTransformer(nn.Module):
             node_mask=node_mask,
             X_class=self.mlp_in_X(X_cat),
             E_class=E_hidden,
-        ).mask_zero_diag()
+        )
+        hidden = (
+            hidden.mask()
+            if self.use_upstream_hidden_edge_diagonal
+            else hidden.mask_zero_diag()
+        )
         assert hidden.X_class is not None and hidden.E_class is not None
         X_hid: torch.Tensor = hidden.X_class
         E_hid: torch.Tensor = hidden.E_class
@@ -857,8 +868,8 @@ class _GraphTransformer(nn.Module):
             E_class=E_symmetric,
         )
         # Upstream parity: padding-only mask on the output. The diagonal
-        # of E has already been zeroed above via ``* diag_mask`` at line
-        # 777, mirroring upstream DiGress transformer_model.py:279
+        # of E has already been zeroed above via ``* diag_mask``,
+        # mirroring upstream DiGress transformer_model.py:279
         # (`E = (E + E_to_out) * diag_mask`). Do not zero again here.
         return out.mask()
 
@@ -898,6 +909,9 @@ class GraphTransformer(GraphModel):
     use_timestep
         If True, append the normalised diffusion timestep ``t`` to ``y``
         before the inner transformer, adding one dimension to ``y``.
+    use_upstream_hidden_edge_diagonal
+        If True, preserve hidden edge diagonal values after ``mlp_in_E`` to
+        match live upstream DiGress. The default remains False.
     """
 
     n_layers: int
@@ -924,6 +938,7 @@ class GraphTransformer(GraphModel):
         output_dims_x_feat: int | None = None,
         output_dims_e_class: int | None = None,
         output_dims_e_feat: int | None = None,
+        use_upstream_hidden_edge_diagonal: bool = False,
     ) -> None:
         super().__init__()
         self.n_layers = n_layers
@@ -947,6 +962,7 @@ class GraphTransformer(GraphModel):
 
         self.extra_features = extra_features
         self._use_timestep = use_timestep
+        self.use_upstream_hidden_edge_diagonal = use_upstream_hidden_edge_diagonal
 
         adjusted_input_dims = dict(input_dims)
         if extra_features is not None:
@@ -966,6 +982,7 @@ class GraphTransformer(GraphModel):
             act_fn_in=act_fn_in,
             act_fn_out=act_fn_out,
             projection_config=projection_config,
+            use_upstream_hidden_edge_diagonal=use_upstream_hidden_edge_diagonal,
         )
 
     @override
@@ -1077,4 +1094,5 @@ class GraphTransformer(GraphModel):
             if self.extra_features
             else None,
             "use_timestep": self._use_timestep,
+            "use_upstream_hidden_edge_diagonal": self.use_upstream_hidden_edge_diagonal,
         }
