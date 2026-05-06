@@ -50,6 +50,13 @@ class MMDBaselineParams:
     Anything that influences ``compute_mmd`` output belongs here so two
     baselines computed with different settings cannot silently overwrite
     or be mistaken for each other.
+
+    The ``subsample_*`` fields are present because molecular datasets
+    (QM9, MOSES, GuacaMol) have 1e5–1e6 graphs per split — full
+    pairwise MMD is N², so we cap each split to a deterministic random
+    subsample. ``None`` (the default) means "use the full split". When
+    set, the resulting MMD² value depends on ``subsample_seed``, so all
+    three fields participate in the fingerprint.
     """
 
     kernel: str
@@ -59,6 +66,9 @@ class MMDBaselineParams:
     orbit_sigma: float
     clustering_bins: int
     spectral_bins: int
+    subsample_n_train: int | None = None
+    subsample_n_test: int | None = None
+    subsample_seed: int = 42
 
     def fingerprint(self) -> str:
         """16-hex-char content hash over the parameter tuple."""
