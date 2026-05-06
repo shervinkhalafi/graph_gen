@@ -1,7 +1,8 @@
-# `discrete_sbm_pearl_gnnconv_raw_repro` / `g1g6xpx1` ⚠ blew up
+# `discrete_sbm_pearl_gnnconv_raw_repro` / `g1g6xpx1` ⚠ blew up — killed
 
 **Launched:** 2026-05-05 18:56 UTC
-**Status:** running but numerically diverged (heartbeat 2026-05-06 07:12 UTC; runtime 44533s ≈ 12.4h at last query)
+**Ended:** 2026-05-06 09:36 UTC (killed — runtime 14.67h, step 271049)
+**Status:** failed (container stopped via `modal container stop` 2026-05-06 ≈09:35 UTC; final W&B state `failed`)
 
 ## Identity
 
@@ -65,6 +66,8 @@
 ## Notes
 
 Second attempt at the `_raw_` SBM variant. First attempt `qao36vwu` (2026-05-04 22:10 → 2026-05-05 18:51 UTC) also blew up; this relaunch reproduces the same failure mode and on a worse trajectory (degree MMD 0.43 vs 0.30 on the first run).
+
+**Killed via `modal container stop` 2026-05-06 09:36 UTC** to free Modal capacity. Modal then reassigned the underlying function call's input to a new container, spawning a chain of further reassigns: `uuifd9v3` (failed in 4 min) → `bepjqwqz` (failed in 3 min) → `g6y8ubfg` (crashed in 7 min). Eventually the call was cancelled at the function-call level (via the Modal web UI) and the chain terminated. Together with the first run `qao36vwu`, this is the second confirmed numerical instability of the `BareGraphConv` Q/K/V variant on raw (un-normalised) adjacency. The variant is unviable as currently configured.
 
 **Together with the enzymes-side `dt0ux9zh`** — which also shows huge `grad_norm_total` (7600) and out-of-band `effective_lr` (1.10e-3) on the same `_raw_` config — the variant is unviable as configured. The `_norm_` sister variant (normalised adjacency) trains cleanly on both datasets; the issue is specifically the un-normalised Q/K/V projection.
 

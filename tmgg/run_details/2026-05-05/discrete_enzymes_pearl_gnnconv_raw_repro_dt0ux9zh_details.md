@@ -1,7 +1,8 @@
-# `discrete_enzymes_pearl_gnnconv_raw_repro` / `dt0ux9zh` ⚠ blew up
+# `discrete_enzymes_pearl_gnnconv_raw_repro` / `dt0ux9zh` ⚠ blew up — killed
 
 **Launched:** 2026-05-05 15:42 UTC
-**Status:** running but numerically diverged (heartbeat 2026-05-06 07:12 UTC; runtime 56145s ≈ 15.6h at last query)
+**Ended:** 2026-05-06 09:36 UTC (killed — runtime 17.90h, step 438799)
+**Status:** failed (container stopped via `modal container stop` 2026-05-06 ≈09:35 UTC; final W&B state `failed`)
 
 ## Identity
 
@@ -71,3 +72,5 @@ R-PEARL features + `BareGraphConv` Q/K/V (raw, un-normalised adjacency).
 The clustering MMD 0.094 looks superficially good, but is meaningless on a run that has clearly diverged on the other metrics — do not cite.
 
 **Action:** kill, fix (normalisation + gradient clipping + lower lr), or document-as-known-broken. See `runlog.md` "Backfill checklist" item 8.
+
+**Killed via `modal container stop` 2026-05-06 09:36 UTC** to free Modal capacity. The function call's input was reassigned once to `b7lqqac8` (failed at step 1849 in 6 min) before the call was cancelled at the function-call level via the Modal web UI. Unlike the SBM-side `_raw_` chain (which spawned three reassigns before the call was cancelled), the enzymes side stopped cleanly after one reassign.

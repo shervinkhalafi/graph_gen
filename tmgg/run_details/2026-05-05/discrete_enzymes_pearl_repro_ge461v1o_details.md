@@ -1,7 +1,9 @@
 # `discrete_enzymes_pearl_repro` / `ge461v1o`
 
 **Launched:** 2026-05-05 15:42 UTC
-**Status:** running (heartbeat 2026-05-06 07:12 UTC; runtime 56133s ≈ 15.6h at last query)
+**Ended:** 2026-05-06 10:00 UTC (collateral kill — runtime 18.29h, step 398249)
+**Status:** crashed (container caught up in the `_gnnconv_raw` cancellation; W&B heartbeat timed out shortly after; final state `crashed`)
+**Resumed by:** [`vejeny0f`](../../run_details/2026-05-06/discrete_enzymes_pearl_repro_vejeny0f_details.md) — fresh container picks up from `last.ckpt` at step ~395k via `force_fresh=false`.
 
 ## Identity
 
@@ -69,3 +71,5 @@ R-PEARL extra features, plain Linear Q/K/V.
 **Cross-dataset finding:** PEARL's orbit-MMD benefit on SBM (0.095 vs vignac's 0.142) does *not* transfer to enzymes (0.198 vs vignac's 0.119 — regression). Hypothesis: PEARL's GNN-on-random-features encoding captures SBM's block-mixing pattern but not enzyme tertiary-structure motifs. Spectral attention recovers the enzyme orbit gain — see `discrete_enzymes_pearl_spectral_repro_4n28svrj` (orbit 0.097).
 
 This is the first concrete signal that PEARL is dataset-dependent. Worth re-checking once eval cycles converge and once MMD ratios are computed.
+
+**Collateral kill 2026-05-06 ≈09:35 UTC.** The `_gnnconv_raw` enzymes container (`dt0ux9zh`) and this run's container were both at 17:40 CEST in `modal container list` — when the user stopped the divergent `_gnnconv_raw` containers, this run's container was caught in the same SIGINT pass. W&B continued reporting `state=running` for ≈25 min until the heartbeat finally timed out. Modal then reassigned the function call's input to a fresh container, which produced [`bhqss75w`](../../run_details/2026-05-06/discrete_enzymes_pearl_repro_bhqss75w_details.md) — a `force_fresh=true` restart that *discarded* this run's 18.3h of progress. `bhqss75w` was killed shortly after; the call was finally relaunched with `force_fresh=false` and the original `run_id`, producing [`vejeny0f`](../../run_details/2026-05-06/discrete_enzymes_pearl_repro_vejeny0f_details.md), which is properly resuming from this run's `last.ckpt`.

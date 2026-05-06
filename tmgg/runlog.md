@@ -128,6 +128,10 @@ these look like timeouts rather than mid-training crashes.
 
 - [`12s2b4a7`](run_details/2026-05-04/discrete_sbm_vignac_repro_12s2b4a7_details.md) — launched 2026-05-04 16:23 UTC, crashed (≈24h timeout), ✓ stable. Anchor for the panel.
 
+### `discrete_sbm_vignac_repro_exact` (paper-anchor parity)
+
+- [`lptjvfbe`](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_lptjvfbe_details.md) — launched 2026-05-06 09:39 UTC, running. Drops the GDPO-checkpoint compat tweaks (`dim_ffy=2048`, `seed=666`, `amsgrad=true`) that `discrete_sbm_vignac_repro` carries; matches Vignac's published config byte-for-byte. See [`docs/eval/2026-05-06-mmd-ratio-analysis.md`](docs/eval/2026-05-06-mmd-ratio-analysis.md) "GDPO reference" for context.
+
 ### `discrete_sbm_vignac_spectral_repro`
 
 - [`e5pd9drt`](run_details/2026-05-05/discrete_sbm_vignac_spectral_repro_e5pd9drt_details.md) — launched 2026-05-05 21:22 UTC, running, ✓ stable but ~3× slower per step (no eval cycle yet).
@@ -146,8 +150,11 @@ these look like timeouts rather than mid-training crashes.
 
 ### `discrete_sbm_pearl_gnnconv_raw_repro`
 
+Variant **terminally killed 2026-05-06 09:35–09:59 UTC** after numerical instability across two real runs and three short auto-reassigns. Function call cancelled via Modal web UI to break the reassign chain.
+
 - [`qao36vwu`](run_details/2026-05-04/discrete_sbm_pearl_gnnconv_raw_repro_qao36vwu_details.md) — launched 2026-05-04 22:10 UTC, crashed at 21h, ✗ blew up (grad_norm 2.4e18, lr Infinity).
-- [`g1g6xpx1`](run_details/2026-05-05/discrete_sbm_pearl_gnnconv_raw_repro_g1g6xpx1_details.md) — launched 2026-05-05 18:56 UTC, running, ✗ also blew up (grad_norm 2.2e16, lr 2.5e9).
+- [`g1g6xpx1`](run_details/2026-05-05/discrete_sbm_pearl_gnnconv_raw_repro_g1g6xpx1_details.md) — launched 2026-05-05 18:56 UTC, ran 14.7h until killed 2026-05-06 09:36 UTC. Same blow-up signature.
+- [`uuifd9v3`](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_uuifd9v3_details.md), [`bepjqwqz`](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_bepjqwqz_details.md), [`g6y8ubfg`](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_g6y8ubfg_details.md) — Modal auto-reassign chain after the kill, each <10 min. Chain ended via call cancellation 2026-05-06 09:59 UTC.
 
 ---
 
@@ -163,7 +170,9 @@ a 5-minute window on 2026-05-05 (≈ 15:37–15:42 UTC).
 
 ### `discrete_enzymes_pearl_repro`
 
-- [`ge461v1o`](run_details/2026-05-05/discrete_enzymes_pearl_repro_ge461v1o_details.md) — launched 2026-05-05 15:42 UTC, running, ✓ stable. Orbit MMD *worse* than vignac (0.198 vs 0.119) — opposite sign to SBM.
+- [`ge461v1o`](run_details/2026-05-05/discrete_enzymes_pearl_repro_ge461v1o_details.md) — launched 2026-05-05 15:42 UTC, ran 18.3h to step 398k. Killed as collateral of the `_gnnconv_raw` cancellation 2026-05-06 ≈09:35 UTC; W&B state crashed once heartbeat timed out.
+- [`bhqss75w`](run_details/2026-05-06/discrete_enzymes_pearl_repro_bhqss75w_details.md) — Modal auto-reassign 2026-05-06 10:01 UTC. `force_fresh=True` (launcher default) discarded `ge461v1o`'s checkpoint and started from step 0; user killed after 8 min.
+- [`vejeny0f`](run_details/2026-05-06/discrete_enzymes_pearl_repro_vejeny0f_details.md) — manual relaunch with `force_fresh=false +run_id=…fresh_20260505T154023` resumed from `ge461v1o`'s `last.ckpt` at step ~395k. Currently running. Effectively continues the original 18.3h trajectory.
 
 ### `discrete_enzymes_pearl_spectral_repro`
 
@@ -179,37 +188,53 @@ Three attempts. The first two failed with healthy gradients at point of failure 
 
 ### `discrete_enzymes_pearl_gnnconv_raw_repro`
 
-- [`dt0ux9zh`](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_raw_repro_dt0ux9zh_details.md) — launched 2026-05-05 15:42 UTC, running, ✗ blew up (grad_norm 7600, lr 1.1e-3, orbit MMD 0.54).
+Variant **terminally killed 2026-05-06 09:35–09:44 UTC** after one numerically-divergent run and one short auto-reassign. Function call cancelled cleanly via Modal web UI; chain ended with no further reassigns.
+
+- [`dt0ux9zh`](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_raw_repro_dt0ux9zh_details.md) — launched 2026-05-05 15:42 UTC, ran 17.9h until killed 2026-05-06 09:36 UTC. ✗ blew up (grad_norm 7600, lr 1.1e-3, orbit MMD 0.54).
+- [`b7lqqac8`](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_raw_repro_b7lqqac8_details.md) — Modal auto-reassign 2026-05-06 09:38 UTC, failed in 6 min (chain end).
 
 ---
 
 ## Quick status table
 
-Snapshot 2026-05-06 07:12–07:25 UTC. `degree_mmd` is the headline
-metric (raw MMD², gen-val); see per-run detail files for full MMD
-tuples plus loss / gradient / throughput. **Stable** flags whether
-gradient norm and effective_lr are in the expected range
-(healthy ≈ grad_norm < 5, lr ~1e-7..1e-6).
+Snapshot 2026-05-06 10:23 UTC. `degree_mmd` is the headline metric
+(raw MMD², gen-val); see per-run detail files for full MMD tuples plus
+loss / gradient / throughput. **Stable** flags whether gradient norm
+and effective_lr are in the expected range (healthy ≈ grad_norm < 5,
+lr ~1e-7..1e-6).
 
 | Config | Run ID | Launched (UTC) | Status | Step | degree MMD² | grad_norm | Stable? | Detail |
 |--------|--------|----------------|:------:|-----:|------------:|----------:|:-------:|--------|
 | `discrete_sbm_vignac_repro`               | `12s2b4a7` | 2026-05-04 16:23 | crashed (≈24h) | 430k | 0.185 | 0.071 | ✓ | [link](run_details/2026-05-04/discrete_sbm_vignac_repro_12s2b4a7_details.md) |
-| `discrete_sbm_vignac_spectral_repro`      | `e5pd9drt` | 2026-05-05 21:22 | running | 63k  | _no eval yet_ | 0.261 | ✓ (3× slower step) | [link](run_details/2026-05-05/discrete_sbm_vignac_spectral_repro_e5pd9drt_details.md) |
+| **`discrete_sbm_vignac_repro_exact`**     | `lptjvfbe` | 2026-05-06 09:39 | running | 2.5k  | _no eval yet_ | _too early_ | ✓ | [link](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_lptjvfbe_details.md) |
+| `discrete_sbm_vignac_spectral_repro`      | `e5pd9drt` | 2026-05-05 21:22 | running | 81k  | _no eval yet_ | 0.261 | ✓ (3× slower step) | [link](run_details/2026-05-05/discrete_sbm_vignac_spectral_repro_e5pd9drt_details.md) |
 | `discrete_sbm_pearl_repro`                | `s07qwx3b` | 2026-05-04 21:38 | crashed (≈24h) | 514k | 0.186 | 0.089 | ✓ | [link](run_details/2026-05-04/discrete_sbm_pearl_repro_s07qwx3b_details.md) |
 | `discrete_sbm_pearl_spectral_repro`       | `jbraoj7o` | 2026-05-04 21:52 | crashed (≈24h) | 403k | 0.187 | 0.080 | ✓ | [link](run_details/2026-05-04/discrete_sbm_pearl_spectral_repro_jbraoj7o_details.md) |
 | `discrete_sbm_pearl_gnnconv_norm_repro`   | `rarihsee` | 2026-05-04 22:09 | crashed (≈24h) | 443k | 0.184 | 1.49  | ⚠ (high norm) | [link](run_details/2026-05-04/discrete_sbm_pearl_gnnconv_norm_repro_rarihsee_details.md) |
-| `discrete_sbm_pearl_gnnconv_raw_repro` (1)| `qao36vwu` | 2026-05-04 22:10 | crashed (~21h) | 376k | 0.299 | 2.4e18 | ✗ blew up | [link](run_details/2026-05-04/discrete_sbm_pearl_gnnconv_raw_repro_qao36vwu_details.md) |
-| `discrete_sbm_pearl_gnnconv_raw_repro` (2)| `g1g6xpx1` | 2026-05-05 18:56 | running | 228k | 0.433 | 2.2e16 | ✗ blew up | [link](run_details/2026-05-05/discrete_sbm_pearl_gnnconv_raw_repro_g1g6xpx1_details.md) |
-| `discrete_enzymes_vignac_repro`           | `l1nk0622` | 2026-05-05 15:42 | running | 443k | 0.187 | 0.399 | ✓ | [link](run_details/2026-05-05/discrete_enzymes_vignac_repro_l1nk0622_details.md) |
-| `discrete_enzymes_pearl_repro`            | `ge461v1o` | 2026-05-05 15:42 | running | 340k | 0.186 | 0.189 | ✓ | [link](run_details/2026-05-05/discrete_enzymes_pearl_repro_ge461v1o_details.md) |
-| `discrete_enzymes_pearl_spectral_repro`   | `4n28svrj` | 2026-05-05 15:37 | running | 358k | 0.187 | 0.173 | ✓ | [link](run_details/2026-05-05/discrete_enzymes_pearl_spectral_repro_4n28svrj_details.md) |
+| `discrete_sbm_pearl_gnnconv_raw_repro` (1) | `qao36vwu` | 2026-05-04 22:10 | crashed (~21h) | 376k | 0.299 | 2.4e18 | ✗ blew up | [link](run_details/2026-05-04/discrete_sbm_pearl_gnnconv_raw_repro_qao36vwu_details.md) |
+| `discrete_sbm_pearl_gnnconv_raw_repro` (2) | `g1g6xpx1` | 2026-05-05 18:56 | failed (killed) | 271k | 0.433 | 2.2e16 | ✗ blew up | [link](run_details/2026-05-05/discrete_sbm_pearl_gnnconv_raw_repro_g1g6xpx1_details.md) |
+| `discrete_sbm_pearl_gnnconv_raw_repro` (3, reassign) | `uuifd9v3` | 2026-05-06 09:40 | failed | — | — | — | ✗ chain | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_uuifd9v3_details.md) |
+| `discrete_sbm_pearl_gnnconv_raw_repro` (4, reassign) | `bepjqwqz` | 2026-05-06 09:46 | failed | 339 | — | — | ✗ chain | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_bepjqwqz_details.md) |
+| `discrete_sbm_pearl_gnnconv_raw_repro` (5, reassign) | `g6y8ubfg` | 2026-05-06 09:52 | crashed | 1.2k | — | — | ✗ chain end | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_g6y8ubfg_details.md) |
+| `discrete_enzymes_vignac_repro`           | `l1nk0622` | 2026-05-05 15:42 | running | 528k | 0.187 | 0.399 | ✓ | [link](run_details/2026-05-05/discrete_enzymes_vignac_repro_l1nk0622_details.md) |
+| `discrete_enzymes_pearl_repro` (orig)     | `ge461v1o` | 2026-05-05 15:42 | crashed (collateral kill) | 398k | 0.186 | 0.189 | ✓ at kill | [link](run_details/2026-05-05/discrete_enzymes_pearl_repro_ge461v1o_details.md) |
+| `discrete_enzymes_pearl_repro` (force-fresh restart) | `bhqss75w` | 2026-05-06 10:01 | failed (killed; force_fresh wrong) | 3.6k | — | — | _killed by user_ | [link](run_details/2026-05-06/discrete_enzymes_pearl_repro_bhqss75w_details.md) |
+| **`discrete_enzymes_pearl_repro` (resumed)** | `vejeny0f` | 2026-05-06 10:17 | running | 397k (resumed from `ge461v1o`'s `last.ckpt`) | _no fresh eval yet_ | _resume_ | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_repro_vejeny0f_details.md) |
+| `discrete_enzymes_pearl_spectral_repro`   | `4n28svrj` | 2026-05-05 15:37 | running | 428k | 0.187 | 0.173 | ✓ | [link](run_details/2026-05-05/discrete_enzymes_pearl_spectral_repro_4n28svrj_details.md) |
 | `discrete_enzymes_pearl_gnnconv_norm_repro` (1) | `txfr1vms` | 2026-05-05 15:42 | failed | 103k | _not pulled_ | _—_ | _infra_ | [link](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_norm_repro_txfr1vms_details.md) |
 | `discrete_enzymes_pearl_gnnconv_norm_repro` (2) | `ly0d6lyi` | 2026-05-05 20:06 | failed | 251k | 0.184 | 0.294 | ✓ at fail (infra cause) | [link](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_norm_repro_ly0d6lyi_details.md) |
-| `discrete_enzymes_pearl_gnnconv_norm_repro` (3) | `zyawhwrx` | 2026-05-06 07:07 | running | 3k   | _no eval yet_ | 0.316 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_zyawhwrx_details.md) |
-| `discrete_enzymes_pearl_gnnconv_raw_repro`| `dt0ux9zh` | 2026-05-05 15:42 | running | 382k | 0.211 | 7600 | ✗ blew up | [link](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_raw_repro_dt0ux9zh_details.md) |
+| `discrete_enzymes_pearl_gnnconv_norm_repro` (3) | `zyawhwrx` | 2026-05-06 07:07 | running | 66k  | _no eval yet_ | 0.316 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_zyawhwrx_details.md) |
+| `discrete_enzymes_pearl_gnnconv_raw_repro` | `dt0ux9zh` | 2026-05-05 15:42 | failed (killed) | 439k | 0.211 | 7600 | ✗ blew up | [link](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_raw_repro_dt0ux9zh_details.md) |
+| `discrete_enzymes_pearl_gnnconv_raw_repro` (reassign) | `b7lqqac8` | 2026-05-06 09:38 | failed | 1.8k | — | — | ✗ chain end | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_raw_repro_b7lqqac8_details.md) |
 
 ## Cross-cutting findings
 
+> **Session note 2026-05-06: cancellation, reassign, and resume.** During the cleanup of the divergent `_gnnconv_raw` chains, three operationally important things happened that future-us should remember.
+>
+> 1. **`modal container stop` reassigns inputs, doesn't cancel them.** Stopping `g1g6xpx1`'s container spawned a chain `uuifd9v3 → bepjqwqz → g6y8ubfg`; only cancelling at the *function-call* level (Modal web UI → app → function → call → cancel) breaks the chain. The enzymes side stopped after one reassign (`b7lqqac8`) because the call was cancelled cleanly via the UI; the SBM side took three reassigns before the call was cancelled.
+> 2. **Container stops can collateral-damage healthy runs that share a start-time bucket.** `ge461v1o`'s container was at the same 17:40 CEST timestamp as the divergent `dt0ux9zh`'s container; the user's stop signal hit both. Modal then auto-reassigned `ge461v1o`'s input to a fresh container — but with the project's default `force_fresh=True`, that reassign discarded the run's 18.3h of training and started from step 0 (run `bhqss75w`).
+> 3. **Resume from checkpoint via `force_fresh=false` + explicit `+run_id`.** To rescue `ge461v1o`'s training we relaunched with `force_fresh=false +run_id=<original-fresh-suffix-name>`, which routed Lightning's `_find_last_checkpoint` to the existing `last.ckpt` and resumed at step ~395k (run `vejeny0f`). The mechanism is documented in `src/tmgg/training/orchestration/run_experiment.py:310,462–472`. The `+` prefix is required because `run_id` is not in the base config.
+>
 > **Ratio comparison vs published anchors** — see [`docs/eval/2026-05-06-mmd-ratio-analysis.md`](docs/eval/2026-05-06-mmd-ratio-analysis.md). Headlines:
 > - SBM clustering converges towards DiGress paper r=1.5 (HiGen reproduces this exactly; our healthy panel sits at 4.0); orbit similar, ~2× from paper.
 > - SBM degree blows up to r≈540 vs paper r=1.6 — real undertraining (our run terminated at 78% of intended steps), the smallest-baseline / most-amplified metric.
