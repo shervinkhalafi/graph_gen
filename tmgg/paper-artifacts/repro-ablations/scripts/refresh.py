@@ -355,6 +355,17 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         if not history_df.empty:
+            # Coerce object-dtype columns to numeric. Wandb history sometimes
+            # logs values that pandas stores as object (e.g. occasional ints
+            # in a metric column), and pyarrow rejects out-of-IEEE-754-range
+            # ints that it can't exactly represent as float64. Matches what
+            # melt_history does for the long-format CSV.
+            keep_index = {"_step", "_timestamp", "trainer/global_step", "epoch"}
+            for col in history_df.columns:
+                if col in keep_index:
+                    continue
+                if history_df[col].dtype == object:
+                    history_df[col] = pd.to_numeric(history_df[col], errors="coerce")
             history_df.to_parquet(HISTORY_DIR / f"{run_id}.parquet", index=False)
 
         index_rows.append(
