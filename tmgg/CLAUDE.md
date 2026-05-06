@@ -49,6 +49,19 @@ land or runs finish/crash, refresh both files together: `runlog.md`
 captures *operational* state, this file captures *measurement*
 state. Update the snapshot timestamp at the top when you do.
 
+### Paper-bound supplementary bundles
+
+Self-contained bundles intended for inclusion in a paper as figure
+source / supplementary tables live under `paper-artifacts/<topic>/`
+and have stable schemas. Each bundle contains: a long-format data
+CSV, raw history parquets per run, configs (pre-fix + post-fix),
+baseline + anchor context markdown, snapshots of relevant analysis
+docs, and a `HOW-TO-UPDATE.md` per folder. The first example is
+`paper-artifacts/repro-ablations/`. Use this when the bundle's
+purpose is "drop into the paper / share externally with stable
+schemas". Ad-hoc analysis reports continue to live under
+`wandb_export/<analysis-slug>/`.
+
 ## W&B Data Exports
 
 Exported W&B data lives in `wandb_export/`. Check existing exports before re-exporting to avoid redundant API calls.
