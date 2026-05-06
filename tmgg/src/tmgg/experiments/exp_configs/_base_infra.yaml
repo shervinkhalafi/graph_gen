@@ -88,15 +88,48 @@ modal_debug: false
 # Random seed for reproducibility
 seed: 42
 
-# Training resumption: when true, generate_run_id appends a _fresh_<UTC>
-# suffix and Lightning skips checkpoint resume — every run gets its own
-# Modal output dir. Default true after the round-1 contamination
-# incident in the smallest-config sweep (2026-04-30): when two runs
-# computed the same deterministic run_id, the async-eval worker's
-# checkpoint-by-step lookup loaded a leftover ckpt from the prior run
-# and reported its metrics under the new run's display name. Set false
-# explicitly only for genuine continuation runs that need resume
-# semantics (e.g. recovering from a transient OOM mid-training).
+# Training resumption. The resolved behavior depends on whether
+# ``run_id`` is auto-generated (anonymous) or set explicitly via a
+# Hydra override (``+run_id=<name>`` — the "named, resumable" path
+# used to handle Modal preemptions gracefully).
+#
+# Behavior matrix:
+#
+# | invocation                                  | suffix?     | resumed? | wandb resumed? |
+# |---------------------------------------------|-------------|----------|----------------|
+# | (default, no overrides)                     | YES `_fresh_<UTC>` | n/a    | n/a    |
+# | `+run_id=foo force_fresh=false`             | NO          | YES (1)  | YES (2)        |
+# | `+run_id=foo force_fresh=true`              | NO          | NO (3)   | NO (4)         |
+#
+# (1) If `<output_dir>/checkpoints/last.ckpt` exists.
+# (2) If `<output_dir>/wandb_run_id.txt` sidecar exists. Without the
+#     sidecar (e.g. first launch) a fresh W&B run is created and its
+#     id is persisted into the sidecar for the next launch.
+# (3) The destructive-wipe gate in ``run_experiment`` rmtree's the
+#     existing dir before mkdir, so no last.ckpt can survive.
+# (4) Same wipe also removes the sidecar, so a fresh W&B run is
+#     started with a fresh id.
+#
+# Default ``force_fresh: true`` retained from the round-1 contamination
+# incident (2026-04-30): when two runs computed the same deterministic
+# run_id, the async-eval worker's checkpoint-by-step lookup loaded a
+# leftover ckpt from the prior run and reported its metrics under the
+# new run's display name. The auto ``_fresh_<UTC>`` suffix on anonymous
+# runs guarantees a fresh dir per launch; the cost (no checkpoint resume
+# after a transient crash) is negligible next to silent contamination.
+#
+# For the named-resumable path used in Modal preempt-resume cycles:
+# pass ``+run_id=<name> force_fresh=false`` together. The sidecar +
+# Lightning resume path then makes "re-launch identical command after
+# preempt" land you back at the last checkpoint in the same W&B run.
+#
+# Lint warning for future editors of base configs: do NOT add a
+# ``run_id: null`` (or any default value) to base configs. The
+# explicit-vs-auto detection in ``run_experiment.py`` keys on
+# ``config.get("run_id") is None``; presetting any value would make
+# every launch look "explicit" and break the auto-suffix for anonymous
+# runs. The Hydra override ``+run_id=<name>`` syntax already requires
+# the leading ``+`` precisely because the key is absent by design.
 force_fresh: true
 
 # When true, training continues without W&B logging if WANDB_API_KEY

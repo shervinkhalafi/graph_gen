@@ -171,6 +171,18 @@ def create_loggers(config: DictConfig) -> list[Logger]:
                         if optional_key in logger_params:
                             wandb_kwargs[optional_key] = logger_params.get(optional_key)
 
+                    # Resume the same W&B run on Modal-preempt restart.
+                    # ``run_experiment`` reads ``<output_dir>/wandb_run_id.txt``
+                    # before this call and stashes the persisted id at
+                    # ``config.wandb_run_id_resume`` when present. Passing
+                    # ``id=`` to ``WandbLogger`` together with Lightning's
+                    # default ``resume="allow"`` makes the W&B server append
+                    # to the existing run instead of fragmenting metrics
+                    # across multiple same-named runs.
+                    resume_id = config.get("wandb_run_id_resume")
+                    if resume_id:
+                        wandb_kwargs["id"] = str(resume_id)
+
                     wandb_logger = WandbLogger(**wandb_kwargs)
                     loggers.append(wandb_logger)
 

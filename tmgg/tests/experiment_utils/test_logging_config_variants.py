@@ -342,6 +342,84 @@ class TestCreateLoggers:
         assert len(captured_csv) == 1
         assert captured_csv[0]["save_dir"] == f"{tmp_path}/csv"
 
+    def test_wandb_logger_passes_id_when_resume_id_set(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """``cfg.wandb_run_id_resume`` must propagate to ``WandbLogger(id=...)``.
+
+        Rationale
+        ---------
+        ``run_experiment`` reads ``<output_dir>/wandb_run_id.txt`` before
+        calling ``create_loggers`` and stashes the persisted W&B run id
+        at ``cfg.wandb_run_id_resume`` when present. ``create_loggers``
+        must forward that value as the ``id=`` kwarg so ``WandbLogger``
+        (with its default ``resume="allow"``) appends to the same W&B
+        run on the second launch — the property that makes Modal-preempt
+        restart land in one continuous trajectory rather than fragmenting
+        the dashboard across two same-named runs.
+        """
+        cfg = _compose_config(tmp_path, "base_config_spectral_arch")
+        with open_dict(cfg):
+            cfg.run_id = "preempt_smoke_test_1"
+            cfg.wandb_run_id_resume = "wandb_internal_abc123"
+        captured: list[dict[str, Any]] = []
+
+        class DummyWandbLogger:
+            def __init__(self, **kwargs: Any) -> None:
+                captured.append(kwargs)
+
+        monkeypatch.setattr(
+            "tmgg.training.logging._has_wandb_credentials", lambda: True
+        )
+        monkeypatch.setattr("tmgg.training.logging.WandbLogger", DummyWandbLogger)
+
+        _ = create_loggers(cfg)
+
+        assert len(captured) == 1
+        assert captured[0].get("id") == "wandb_internal_abc123", (
+            "wandb_run_id_resume must be forwarded as the WandbLogger id "
+            f"kwarg; got id={captured[0].get('id')!r}"
+        )
+
+    def test_wandb_logger_omits_id_when_resume_id_unset(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """No ``wandb_run_id_resume`` → no ``id=`` kwarg, fresh W&B run.
+
+        First launch of a named run has no sidecar yet; the absence of
+        ``cfg.wandb_run_id_resume`` must NOT pass an empty / None id to
+        WandbLogger (W&B would either reject or accept-and-create with a
+        random id depending on version, neither is what we want). The
+        kwarg should simply be omitted so Lightning's default behavior
+        (auto-generate a fresh id) takes over.
+        """
+        cfg = _compose_config(tmp_path, "base_config_spectral_arch")
+        with open_dict(cfg):
+            cfg.run_id = "first_launch_named_run"
+            # Intentionally do NOT set cfg.wandb_run_id_resume.
+        captured: list[dict[str, Any]] = []
+
+        class DummyWandbLogger:
+            def __init__(self, **kwargs: Any) -> None:
+                captured.append(kwargs)
+
+        monkeypatch.setattr(
+            "tmgg.training.logging._has_wandb_credentials", lambda: True
+        )
+        monkeypatch.setattr("tmgg.training.logging.WandbLogger", DummyWandbLogger)
+
+        _ = create_loggers(cfg)
+
+        assert len(captured) == 1
+        assert "id" not in captured[0], (
+            "Without cfg.wandb_run_id_resume, WandbLogger must be called "
+            f"without an id= kwarg; got kwargs={list(captured[0])}"
+        )
+
     def test_wandb_logger_honors_wandb_name_override(
         self,
         monkeypatch: pytest.MonkeyPatch,
