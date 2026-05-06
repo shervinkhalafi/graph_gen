@@ -13,9 +13,30 @@ the operational protocol.
 
 ## Prereqs
 
-- `wandb` authenticated for the `graph_denoise_team` entity.
+- `wandb` authenticated for the `graph_denoise_team` entity. The
+  on-host machine's `~/.netrc` may hold a different (non-team) wandb
+  token; in that case use `doppler run` to inject the team-member key
+  (see "Running with doppler" below).
 - `uv` available on PATH.
+- `doppler` CLI available and configured for this project (only if
+  using the doppler-managed key).
 - Repo at the commit you want the snapshots to reflect.
+
+### Running with doppler
+
+If your `~/.netrc` wandb token isn't for a `graph_denoise_team`
+member, use the team-member key from doppler:
+
+```bash
+cd paper-artifacts/repro-ablations
+doppler run -- uv run scripts/refresh.py --summary "..."
+```
+
+`doppler run` injects `WANDB_API_KEY` (and any other doppler-managed
+secrets) into the environment before invoking the script; the wandb
+SDK reads `WANDB_API_KEY` and overrides `~/.netrc`. The doppler
+project + config used for this repo is whatever `doppler configure`
+prints (typically `shervin-graph` / `prd`).
 
 ## Steps
 
@@ -46,6 +67,10 @@ new entry pointing to the parent.
 
 ```bash
 cd paper-artifacts/repro-ablations
+# preferred — works regardless of which wandb account the host's ~/.netrc holds
+doppler run -- uv run scripts/refresh.py --summary "post-eval-cycle-N refresh"
+
+# alternative — only if your ~/.netrc is already for a graph_denoise_team member
 uv run scripts/refresh.py --summary "post-eval-cycle-N refresh"
 ```
 
@@ -61,11 +86,11 @@ yaml_count=$(uv run --with pyyaml python -c "import yaml,pathlib;print(len(yaml.
 csv_count=$(($(wc -l < data/runs_index.csv) - 1))
 echo "yaml=$yaml_count csv=$csv_count"
 
-# Long CSV has rows for each run
-uv run --with pandas python -c "
+# Long parquet has rows for each run
+uv run --with pandas --with pyarrow python -c "
 import pandas as pd
 idx = pd.read_csv('data/runs_index.csv')
-long = pd.read_csv('data/all_metrics_long.csv')
+long = pd.read_parquet('data/all_metrics_long.parquet')
 missing = set(idx.run_slug) - set(long.run_slug)
 print('runs without metrics:', missing or 'none')
 "
@@ -87,7 +112,7 @@ git commit -m "data(paper-artifacts): refresh repro-ablations YYYY-MM-DD"
 | path | behaviour |
 |------|-----------|
 | `data/runs_index.csv` | mutated in place |
-| `data/all_metrics_long.csv` | mutated in place |
+| `data/all_metrics_long.parquet` | mutated in place; **gitignored, not committed** (large derived view of the per-run parquets) |
 | `data/per_run_history/*.parquet` | mutated in place (full overwrite) |
 | `media/per_run/<run_id>/*.png` | mutated in place |
 | `snapshots/*.md` | accumulate (existing same-day snapshots not overwritten — script warns) |

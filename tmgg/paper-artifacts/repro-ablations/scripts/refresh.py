@@ -14,7 +14,7 @@
 Reads data/runs_index.source.yaml, queries wandb for each run's history
 + metadata + media, and writes:
   - data/runs_index.csv
-  - data/all_metrics_long.csv
+  - data/all_metrics_long.parquet (gitignored — regenerated locally)
   - data/per_run_history/<run_id>.parquet
   - media/per_run/<run_id>/*.png
   - snapshots/runlog-<date>.md, snapshots/ablations-measurement-<date>.md
@@ -95,7 +95,7 @@ BUNDLE_ROOT = SCRIPT_DIR.parent
 REPO_ROOT = BUNDLE_ROOT.parent.parent
 SOURCE_YAML = BUNDLE_ROOT / "data" / "runs_index.source.yaml"
 INDEX_CSV = BUNDLE_ROOT / "data" / "runs_index.csv"
-METRICS_LONG_CSV = BUNDLE_ROOT / "data" / "all_metrics_long.csv"
+METRICS_LONG_PARQUET = BUNDLE_ROOT / "data" / "all_metrics_long.parquet"
 HISTORY_DIR = BUNDLE_ROOT / "data" / "per_run_history"
 MEDIA_DIR = BUNDLE_ROOT / "media" / "per_run"
 SNAPSHOTS_DIR = BUNDLE_ROOT / "snapshots"
@@ -361,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
             # logs values that pandas stores as object (e.g. occasional ints
             # in a metric column), and pyarrow rejects out-of-IEEE-754-range
             # ints that it can't exactly represent as float64. Matches what
-            # melt_history does for the long-format CSV.
+            # melt_history does for the long-format parquet.
             keep_index = {"_step", "_timestamp", "trainer/global_step", "epoch"}
             for col in history_df.columns:
                 if col in keep_index:
@@ -423,9 +423,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if long_frames:
         long_df = pd.concat(long_frames, ignore_index=True)
-        long_df.to_csv(METRICS_LONG_CSV, index=False)
+        long_df.to_parquet(METRICS_LONG_PARQUET, index=False)
         print(
-            f"[refresh] wrote {METRICS_LONG_CSV.relative_to(REPO_ROOT)} ({len(long_df)} rows)"
+            f"[refresh] wrote {METRICS_LONG_PARQUET.relative_to(REPO_ROOT)} ({len(long_df)} rows)"
         )
     else:
         print("[refresh] no metric data fetched", file=sys.stderr)
