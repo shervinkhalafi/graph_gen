@@ -17,6 +17,26 @@ log retrieval from the CLI. Reproduce under a live stream (`DETACH=0` on
 the launch wrapper, tee'd to a file) or attach `modal app logs tmgg-spectral`
 in parallel immediately after launch.
 
+## Run log
+
+Track every launched Modal run via two pieces:
+
+- `runlog.md` (repo root) is the index — quick-status table, panel
+  sections that link out, cross-cutting findings, open questions,
+  backfill checklist.
+- `run_details/<launch-date-iso>/<config>_<run_id>_details.md` is the
+  per-run detail file — identity, timeline, fetched data, structured
+  diagnostics block (MMDs, loss, gradient health, throughput),
+  visualisations, notes.
+
+On launch, create the detail file and add a one-line link in
+`runlog.md`. On state change, update the detail file (status,
+ended_at, notes) and refresh the runlog row. On data fetch, edit the
+detail file's `Fetched` block. On scoring, fill `Diagnostics` and link
+visualisations under `Visuals`. The runlog index is the single source
+of truth for "what's running, what finished, what's been pulled,
+what's been measured" — check it before relaunching the same config.
+
 ## W&B Data Exports
 
 Exported W&B data lives in `wandb_export/`. Check existing exports before re-exporting to avoid redundant API calls.
