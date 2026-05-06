@@ -41,6 +41,23 @@
 
 **Health:** ✗ blew up — same divergence signature as the SBM-side runs `qao36vwu` and `g1g6xpx1`.
 
+## Anchor comparison
+
+> Computed against the cached train↔test baseline at `data/eval/mmd_baselines/pyg_enzymes.json` (see [`docs/eval/mmd-units-and-protocol.md`](../../docs/eval/mmd-units-and-protocol.md) for unit semantics). All MMD values are V-statistic squared MMD (GraphRNN/GRAN convention).
+
+- `r_run` = MMD²(gen-val, this run) / MMD²(train, test).
+- `r_higen` = HiGen Table 1's reported MMD² for DiGress on this dataset, divided by our baseline. Expresses HiGen's reproduction in our pipeline's ratio units.
+- `r_paper` = DiGress paper Table 1 ratio, verbatim. ENZYMES: paper has no ENZYMES — column blank.
+
+| metric | run mmd² | baseline mmd² | r_run | r_higen | r_paper |
+|--------|---------:|--------------:|------:|--------:|--------:|
+| degree     | 0.2113 | 2.9976e-04 | 704.89 | 13.34 | n/a |
+| clustering | 0.0942 | 1.0443e-02 | 9.02 | 7.95 | n/a |
+| orbit      | 0.5380 | 1.7318e-04 | 3106.56 | 11.55 | n/a |
+| spectral   | 0.1954 | 2.8479e-03 | 68.61 | n/a | n/a |
+
+**Caveat:** run-side MMD is gen↔val; baseline is train↔test. [`PICKUP-MMD-RATIOS-2026-05-06.md`](../../PICKUP-MMD-RATIOS-2026-05-06.md) Task 3 §2 flags this. Effect likely O(1) given i.i.d. splits, but a train↔val baseline would tighten the comparison.
+
 ## Visuals
 
 - none — would not be diagnostic on a divergent run.
