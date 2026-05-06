@@ -132,11 +132,60 @@ The configs are **not byte-equivalent reproductions**:
 | Code path | `cvignac/DiGress/src/...` | `tmgg.models.digress.*` (port) | Semantically aligned but not byte-equivalent. Micro-bugs are possible. |
 | Run completion | 50000 epochs (≈550k steps) | **430k steps reached** before 24h Modal timeout | 78% of intended training. Real undertraining. |
 
+The four "different from Vignac config" items above (`dim_ffy`,
+`seed`, `amsgrad`, eval cadence) all originate from a deliberate
+choice in the `discrete_sbm_vignac_repro` config to track GDPO's
+trained checkpoint rather than Vignac's published config — see the
+"GDPO reference" section below for context.
+
+### GDPO reference
+
+GDPO (Liu et al., NeurIPS 2024, `sail-sg/GDPO`) builds on DiGress and
+publishes a *trained* SBM checkpoint at `gdpo_sbm.ckpt`. Their
+pretraining yaml (`sail-sg/GDPO/configs/experiment/sbm.yaml`) is
+byte-equivalent to Vignac's *modulo* `wandb=disabled` and a default
+`seed=666` (vs Vignac's 0). GDPO's loss-side modifications live in
+their separate `*_ppo.yaml` configs (`train_method='olppo'`,
+`val_method='ppo'`, `lr=1e-5`, `ppo_sr`, `innerloop`, etc.) and are
+explicitly out of scope for our reproduction.
+
+But GDPO's actual checkpoint was trained with `dim_ffy=2048`, not the
+256 their config (and Vignac's) declares. This drift between the
+written config and the trained model is documented in our local
+audit at `.local-storage/digress-checkpoints/gdpo_sbm/README.md`
+and verified via `safe_inspect.py` over the checkpoint's tensor
+shapes (`mlp_in_y.0.weight=(128, 12)`, layer FF widths consistent
+with `dim_ffy=2048`). The yaml comments in
+`src/tmgg/experiments/exp_configs/experiment/discrete_sbm_vignac_repro.yaml`
+spell this out.
+
+Why this matters for the ratio comparison:
+
+- Our **`discrete_sbm_vignac_repro`** (the panel run that produced
+  the SBM ratios above) is GDPO-checkpoint-aligned. It uses
+  `dim_ffy=2048`, `seed=666`, and `amsgrad=true`. This config makes
+  cross-loading weights with `gdpo_sbm.ckpt` possible for
+  diagnostics / comparison, but it is **not** the configuration
+  whose output should be expected to match DiGress paper Table 1
+  numbers exactly.
+- A separate **`discrete_sbm_vignac_repro_exact`** config (added
+  2026-05-06, `src/tmgg/experiments/exp_configs/experiment/`) drops
+  the four GDPO tweaks and tracks Vignac's *published* config
+  byte-for-byte: `dim_ffy=256`, `seed=0`, `amsgrad=false`, eval
+  cadence `every 1100 / 4400 steps`. This is the configuration
+  expected to land closest to DiGress paper Table 1 ratios. It has
+  not yet been run end-to-end; numbers in this file are still from
+  the GDPO-aligned variant. Once `_exact` runs, append a second
+  panel with its ratios — the gap between the two panels will
+  quantify the GDPO-vs-Vignac drift.
+
 For ENZYMES, **DiGress paper does not configure or evaluate ENZYMES at
 all**. Our `discrete_enzymes_vignac_repro` is the SBM recipe
 transplanted onto ENZYMES — a heuristic baseline, not a paper
 reproduction. HiGen's reported ENZYMES numbers come from a custom
-DiGress run by HiGen's authors that has never been released.
+DiGress run by HiGen's authors that has never been released. There
+is no equivalent of GDPO for ENZYMES — no released checkpoint to
+align against, so an "exact" enzymes variant has no reference target.
 
 ## Open questions
 
