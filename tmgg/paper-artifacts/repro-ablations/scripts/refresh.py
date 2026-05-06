@@ -257,30 +257,40 @@ def melt_history(history_df: pd.DataFrame, run_meta: dict) -> pd.DataFrame:
 
 def snapshot_runlog_and_measurement(date_str: str) -> list[Path]:
     """Copy runlog.md + the latest ablations-measurement doc into snapshots/."""
-    saved = []
-    for src, prefix in (
-        (RUNLOG_SOURCE, "runlog"),
-        (None, "ablations-measurement"),
-    ):
-        if prefix == "ablations-measurement":
-            measurement_files = sorted(DOCS_EVAL_DIR.glob("*-ablations_measurment.md"))
-            if not measurement_files:
-                warnings.warn(
-                    "no docs/eval/<date>-ablations_measurment.md found; skipping snapshot",
-                    stacklevel=2,
-                )
-                continue
-            src = measurement_files[-1]
-        dest = SNAPSHOTS_DIR / f"{prefix}-{date_str}.md"
-        if dest.exists():
-            print(
-                f"  warn: snapshot {dest.name} already exists; not overwriting",
-                file=sys.stderr,
-            )
-            saved.append(dest)
-            continue
-        shutil.copy2(src, dest)
-        saved.append(dest)
+    saved: list[Path] = []
+
+    # runlog.md is always at a fixed path
+    runlog_dest = SNAPSHOTS_DIR / f"runlog-{date_str}.md"
+    if runlog_dest.exists():
+        print(
+            f"  warn: snapshot {runlog_dest.name} already exists; not overwriting",
+            file=sys.stderr,
+        )
+        saved.append(runlog_dest)
+    else:
+        shutil.copy2(RUNLOG_SOURCE, runlog_dest)
+        saved.append(runlog_dest)
+
+    # ablations-measurement doc resolved by glob
+    measurement_files = sorted(DOCS_EVAL_DIR.glob("*-ablations_measurment.md"))
+    if not measurement_files:
+        warnings.warn(
+            "no docs/eval/<date>-ablations_measurment.md found; skipping snapshot",
+            stacklevel=2,
+        )
+        return saved
+    measurement_src = measurement_files[-1]
+    measurement_dest = SNAPSHOTS_DIR / f"ablations-measurement-{date_str}.md"
+    if measurement_dest.exists():
+        print(
+            f"  warn: snapshot {measurement_dest.name} already exists; not overwriting",
+            file=sys.stderr,
+        )
+        saved.append(measurement_dest)
+    else:
+        shutil.copy2(measurement_src, measurement_dest)
+        saved.append(measurement_dest)
+
     return saved
 
 
@@ -337,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[refresh] {slug}")
 
         try:
-            history_df, summary, state, meta = fetch_run_history(
+            history_df, _summary, state, meta = fetch_run_history(
                 api, WANDB_ENTITY, project, run_id
             )
         except Exception as e:

@@ -192,6 +192,11 @@ exclude = [
     # ``guacamol``); skip pyright resolution here to avoid host-side
     # false positives. The Modal-side CI runs these directly.
     "tests/modal",
+    # paper-artifacts/ scripts are uv-self-contained PEP-723 inline-deps
+    # scripts (pandas, wandb, pyyaml, requests are not in the project's
+    # main pyproject deps), so pyright cannot resolve their imports
+    # against the project venv. Skip them here.
+    "paper-artifacts/**",
 ]
 # Point pyright at the uv-managed venv so ad-hoc scripts outside `include`
 # (e.g. analysis/**) can still resolve project deps when the pre-commit hook
