@@ -210,6 +210,13 @@ gradient norm and effective_lr are in the expected range
 
 ## Cross-cutting findings
 
+> **Ratio comparison vs published anchors** — see [`docs/eval/2026-05-06-mmd-ratio-analysis.md`](docs/eval/2026-05-06-mmd-ratio-analysis.md). Headlines:
+> - SBM clustering converges towards DiGress paper r=1.5 (HiGen reproduces this exactly; our healthy panel sits at 4.0); orbit similar, ~2× from paper.
+> - SBM degree blows up to r≈540 vs paper r=1.6 — real undertraining (our run terminated at 78% of intended steps), the smallest-baseline / most-amplified metric.
+> - ENZYMES clustering at r≈10 vs HiGen-implied 7.95 (1.3× off, plausibly converging). Degree and orbit hundreds-of-times worse than HiGen's reproduction. DiGress paper has no ENZYMES anchor.
+> - The `_raw_` variant is unviable across both datasets — degree ratios 877–1269 on SBM, orbit 3107 on ENZYMES.
+> - Caveat: our `vignac_repro` is **not byte-equivalent** to upstream DiGress (`dim_ffy=2048` vs 256, `amsgrad=true`, code is a tmgg port). See the analysis file's "Reproduction caveats" section.
+
 1. **`gnnconv_raw_repro` is numerically unstable across datasets.** Both SBM runs (`qao36vwu`, `g1g6xpx1`) and the enzymes run (`dt0ux9zh`) show grad_norm in the 1e3–1e18 range and effective_lr at 1e-3 or higher (healthy is ~3e-7). The `_norm_` sister variant uses normalised adjacency and stays stable, so the issue is specifically the un-normalised Q/K/V projection. Either fix the normalisation, add gradient clipping, or drop the variant.
 2. **`gnnconv_norm` SBM run has elevated grad_norm (1.49) but trains stably.** Worth checking the per-layer `grad_cosine` / `grad_snr` rows in the W&B history before declaring this variant fully clean.
 3. **`vignac_spectral_repro` is ~3× slower per step than the Linear-Q/K/V variants** (0.56s vs 0.18s). Step counts at the same wall-clock differ by that factor; cross-variant comparison must control for step count, not wall-clock.
