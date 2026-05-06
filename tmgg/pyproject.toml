@@ -207,7 +207,7 @@ venv = ".venv"
 # `from scripts.sweep.X import ...` under reportImplicitRelativeImport
 # (because both `scripts/` and `tests/` would then be sibling packages
 # at the project root and pyright cannot disambiguate the resolution).
-extraPaths = ["."]
+extraPaths = [".", "paper-artifacts/repro-ablations/scripts"]
 reportMissingImports = true
 reportMissingTypeStubs = false  # Don't complain about missing stubs for torch etc.
 reportConstantRedefinition = false  # Allow uppercase tensor vars (X, E, Q, K, V) to be reassigned
