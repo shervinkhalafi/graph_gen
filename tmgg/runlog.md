@@ -130,23 +130,27 @@ these look like timeouts rather than mid-training crashes.
 
 ### `discrete_sbm_vignac_repro_exact` (paper-anchor parity)
 
-- [`lptjvfbe`](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_lptjvfbe_details.md) — launched 2026-05-06 09:39 UTC, running. Drops the GDPO-checkpoint compat tweaks (`dim_ffy=2048`, `seed=666`, `amsgrad=true`) that `discrete_sbm_vignac_repro` carries; matches Vignac's published config byte-for-byte. See [`docs/eval/2026-05-06-mmd-ratio-analysis.md`](docs/eval/2026-05-06-mmd-ratio-analysis.md) "GDPO reference" for context.
+- [`lptjvfbe`](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_lptjvfbe_details.md) — launched 2026-05-06 09:39 UTC, **cancelled 2026-05-06 at step ~15k**. Killed because `_GraphTransformer.forward` calls `.mask_zero_diag()` on the post-`mlp_in_E` hidden state (zeroes hidden E diagonal) where upstream DiGress calls `.mask(node_mask)` (padding-only, diagonal preserved until output mask) — outputs not byte-equivalent to upstream even with identical weights (state-dict diff `X=0.0087, E=0.0010` → 0 under monkey-patch). Re-launch after `transformer_model.py:834` fix. See [`docs/eval/2026-05-06-mmd-ratio-analysis.md`](docs/eval/2026-05-06-mmd-ratio-analysis.md) "GDPO reference" for prior context.
+- [`2026-05-06-sbm-vignac-1`](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_2026-05-06-sbm-vignac-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC, running with `force_fresh=false` (preempt-resume via wandb-id sidecar). `fc-01KQYRNJ9S0STFDZBEPFBY5WZQ`.
 
 ### `discrete_sbm_vignac_spectral_repro`
 
-- [`e5pd9drt`](run_details/2026-05-05/discrete_sbm_vignac_spectral_repro_e5pd9drt_details.md) — launched 2026-05-05 21:22 UTC, running, ✓ stable but ~3× slower per step (no eval cycle yet).
+- [`e5pd9drt`](run_details/2026-05-05/discrete_sbm_vignac_spectral_repro_e5pd9drt_details.md) — launched 2026-05-05 21:22 UTC, **killed 2026-05-06 ~13:30 UTC** (mask-bug invalidation). No post-fix successor in the 2026-05-06 relaunch batch (architectural variant deferred pending budget).
 
 ### `discrete_sbm_pearl_repro`
 
 - [`s07qwx3b`](run_details/2026-05-04/discrete_sbm_pearl_repro_s07qwx3b_details.md) — launched 2026-05-04 21:38 UTC, crashed (≈24h timeout), ✓ stable. Cleanest improvement signal: orbit MMD ~0.10 vs vignac ~0.14.
+- [`2026-05-06-sbm-pearl-1`](run_details/2026-05-06/discrete_sbm_pearl_repro_exact_2026-05-06-sbm-pearl-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC under `discrete_sbm_pearl_repro_exact`, running, preempt-resume enabled. `fc-01KQYRNSEK23MRX1ATF9T3BMYZ`.
 
 ### `discrete_sbm_pearl_spectral_repro`
 
 - [`jbraoj7o`](run_details/2026-05-04/discrete_sbm_pearl_spectral_repro_jbraoj7o_details.md) — launched 2026-05-04 21:52 UTC, crashed (≈24h timeout), ✓ stable. Within noise of plain pearl.
+- [`2026-05-06-sbm-pearl-spectral-1`](run_details/2026-05-06/discrete_sbm_pearl_spectral_repro_exact_2026-05-06-sbm-pearl-spectral-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC under `discrete_sbm_pearl_spectral_repro_exact`, running, preempt-resume enabled. `fc-01KQYRNZRZ0MD33VYHM6TDCB7T`.
 
 ### `discrete_sbm_pearl_gnnconv_norm_repro`
 
 - [`rarihsee`](run_details/2026-05-04/discrete_sbm_pearl_gnnconv_norm_repro_rarihsee_details.md) — launched 2026-05-04 22:09 UTC, crashed (≈24h timeout), ⚠ elevated grad_norm (1.49 vs ~0.08 elsewhere) but converged.
+- [`2026-05-06-sbm-pearl-gnnconv-1`](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_norm_repro_exact_2026-05-06-sbm-pearl-gnnconv-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC under `discrete_sbm_pearl_gnnconv_norm_repro_exact`, running, preempt-resume enabled. `fc-01KQYRP5Z0SB93YEFW4Y6JSMZE`.
 
 ### `discrete_sbm_pearl_gnnconv_raw_repro`
 
@@ -166,25 +170,29 @@ a 5-minute window on 2026-05-05 (≈ 15:37–15:42 UTC).
 
 ### `discrete_enzymes_vignac_repro`
 
-- [`l1nk0622`](run_details/2026-05-05/discrete_enzymes_vignac_repro_l1nk0622_details.md) — launched 2026-05-05 15:42 UTC, running, ✓ stable. Degree MMD² ≈ 0.187 vs HiGen-reported DiGress 0.004 → ~10⁴× anchor gap.
+- [`l1nk0622`](run_details/2026-05-05/discrete_enzymes_vignac_repro_l1nk0622_details.md) — launched 2026-05-05 15:42 UTC, **finished at 525k step (550k target)**, ✓ stable. Degree MMD² ≈ 0.187 vs HiGen-reported DiGress 0.004 → ~10⁴× anchor gap. Mask-bug invalidated; not a usable reference.
+- [`2026-05-06-enzymes-vignac-1`](run_details/2026-05-06/discrete_enzymes_vignac_repro_exact_2026-05-06-enzymes-vignac-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC under `discrete_enzymes_vignac_repro_exact`, running, preempt-resume enabled. `fc-01KQYRPC8G81QSZ9QQ8E05RCPC`.
 
 ### `discrete_enzymes_pearl_repro`
 
 - [`ge461v1o`](run_details/2026-05-05/discrete_enzymes_pearl_repro_ge461v1o_details.md) — launched 2026-05-05 15:42 UTC, ran 18.3h to step 398k. Killed as collateral of the `_gnnconv_raw` cancellation 2026-05-06 ≈09:35 UTC; W&B state crashed once heartbeat timed out.
 - [`bhqss75w`](run_details/2026-05-06/discrete_enzymes_pearl_repro_bhqss75w_details.md) — Modal auto-reassign 2026-05-06 10:01 UTC. `force_fresh=True` (launcher default) discarded `ge461v1o`'s checkpoint and started from step 0; user killed after 8 min.
-- [`vejeny0f`](run_details/2026-05-06/discrete_enzymes_pearl_repro_vejeny0f_details.md) — manual relaunch with `force_fresh=false +run_id=…fresh_20260505T154023` resumed from `ge461v1o`'s `last.ckpt` at step ~395k. Currently running. Effectively continues the original 18.3h trajectory.
+- [`vejeny0f`](run_details/2026-05-06/discrete_enzymes_pearl_repro_vejeny0f_details.md) — manual relaunch with `force_fresh=false +run_id=…fresh_20260505T154023` resumed from `ge461v1o`'s `last.ckpt` at step ~395k. **Killed 2026-05-06 ~13:30 UTC** as part of mask-bug cleanup.
+- [`2026-05-06-enzymes-pearl-1`](run_details/2026-05-06/discrete_enzymes_pearl_repro_exact_2026-05-06-enzymes-pearl-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC under `discrete_enzymes_pearl_repro_exact`, running, preempt-resume enabled. `fc-01KQYRPK5RP70YGEZ795ASDM7K`.
 
 ### `discrete_enzymes_pearl_spectral_repro`
 
-- [`4n28svrj`](run_details/2026-05-05/discrete_enzymes_pearl_spectral_repro_4n28svrj_details.md) — launched 2026-05-05 15:37 UTC, running, ✓ stable. Best orbit MMD on enzymes panel (0.097); spectral attention recovers what plain pearl loses.
+- [`4n28svrj`](run_details/2026-05-05/discrete_enzymes_pearl_spectral_repro_4n28svrj_details.md) — launched 2026-05-05 15:37 UTC, **killed 2026-05-06 ~13:30 UTC** (mask-bug invalidation). Best orbit MMD on (buggy) enzymes panel: 0.097.
+- [`2026-05-06-enzymes-pearl-spectral-1`](run_details/2026-05-06/discrete_enzymes_pearl_spectral_repro_exact_2026-05-06-enzymes-pearl-spectral-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC under `discrete_enzymes_pearl_spectral_repro_exact`, running, preempt-resume enabled. `fc-01KQYRPSDQAY1P5BAW1Y1ABYFD`.
 
 ### `discrete_enzymes_pearl_gnnconv_norm_repro`
 
-Three attempts. The first two failed with healthy gradients at point of failure → cause is infra, not numerical.
+Three attempts pre-fix; the first two failed with healthy gradients at point of failure → cause is infra, not numerical.
 
 - [`txfr1vms`](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_norm_repro_txfr1vms_details.md) — launched 2026-05-05 15:42 UTC, failed at 4.4h. Diagnostics not yet pulled.
 - [`ly0d6lyi`](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_norm_repro_ly0d6lyi_details.md) — launched 2026-05-05 20:06 UTC, failed at 11h, ✓ stable at point of failure.
-- [`zyawhwrx`](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_zyawhwrx_details.md) — launched 2026-05-06 07:07 UTC, running, ✓ healthy at startup but elevated effective_lr (1.5e-6) — verify intent.
+- [`zyawhwrx`](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_zyawhwrx_details.md) — launched 2026-05-06 07:07 UTC, **killed 2026-05-06 ~13:30 UTC** (mask-bug invalidation; only 75k cycle, never matured).
+- [`2026-05-06-enzymes-pearl-gnnconv-1`](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_exact_2026-05-06-enzymes-pearl-gnnconv-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC under `discrete_enzymes_pearl_gnnconv_norm_repro_exact`, running, preempt-resume enabled. `fc-01KQYRPZKRW6PJHP1QDMKKVDAY`.
 
 ### `discrete_enzymes_pearl_gnnconv_raw_repro`
 
@@ -197,7 +205,7 @@ Variant **terminally killed 2026-05-06 09:35–09:44 UTC** after one numerically
 
 ## Quick status table
 
-Snapshot 2026-05-06 10:23 UTC. `degree_mmd` is the headline metric
+Snapshot 2026-05-06 11:56 UTC. `degree_mmd` is the headline metric
 (raw MMD², gen-val); see per-run detail files for full MMD tuples plus
 loss / gradient / throughput. **Stable** flags whether gradient norm
 and effective_lr are in the expected range (healthy ≈ grad_norm < 5,
@@ -206,8 +214,8 @@ lr ~1e-7..1e-6).
 | Config | Run ID | Launched (UTC) | Status | Step | degree MMD² | grad_norm | Stable? | Detail |
 |--------|--------|----------------|:------:|-----:|------------:|----------:|:-------:|--------|
 | `discrete_sbm_vignac_repro`               | `12s2b4a7` | 2026-05-04 16:23 | crashed (≈24h) | 430k | 0.185 | 0.071 | ✓ | [link](run_details/2026-05-04/discrete_sbm_vignac_repro_12s2b4a7_details.md) |
-| **`discrete_sbm_vignac_repro_exact`**     | `lptjvfbe` | 2026-05-06 09:39 | running | 2.5k  | _no eval yet_ | _too early_ | ✓ | [link](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_lptjvfbe_details.md) |
-| `discrete_sbm_vignac_spectral_repro`      | `e5pd9drt` | 2026-05-05 21:22 | running | 81k  | _no eval yet_ | 0.261 | ✓ (3× slower step) | [link](run_details/2026-05-05/discrete_sbm_vignac_spectral_repro_e5pd9drt_details.md) |
+| **`discrete_sbm_vignac_repro_exact`**     | `lptjvfbe` | 2026-05-06 09:39 | cancelled (mask bug) | 15k  | _no eval logged_ | 0.036 | n/a — invalidated | [link](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_lptjvfbe_details.md) |
+| `discrete_sbm_vignac_spectral_repro`      | `e5pd9drt` | 2026-05-05 21:22 | killed (mask bug) | 91k  | 0.225 (step 75k) | 0.107 | n/a — invalidated | [link](run_details/2026-05-05/discrete_sbm_vignac_spectral_repro_e5pd9drt_details.md) |
 | `discrete_sbm_pearl_repro`                | `s07qwx3b` | 2026-05-04 21:38 | crashed (≈24h) | 514k | 0.186 | 0.089 | ✓ | [link](run_details/2026-05-04/discrete_sbm_pearl_repro_s07qwx3b_details.md) |
 | `discrete_sbm_pearl_spectral_repro`       | `jbraoj7o` | 2026-05-04 21:52 | crashed (≈24h) | 403k | 0.187 | 0.080 | ✓ | [link](run_details/2026-05-04/discrete_sbm_pearl_spectral_repro_jbraoj7o_details.md) |
 | `discrete_sbm_pearl_gnnconv_norm_repro`   | `rarihsee` | 2026-05-04 22:09 | crashed (≈24h) | 443k | 0.184 | 1.49  | ⚠ (high norm) | [link](run_details/2026-05-04/discrete_sbm_pearl_gnnconv_norm_repro_rarihsee_details.md) |
@@ -216,16 +224,24 @@ lr ~1e-7..1e-6).
 | `discrete_sbm_pearl_gnnconv_raw_repro` (3, reassign) | `uuifd9v3` | 2026-05-06 09:40 | failed | — | — | — | ✗ chain | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_uuifd9v3_details.md) |
 | `discrete_sbm_pearl_gnnconv_raw_repro` (4, reassign) | `bepjqwqz` | 2026-05-06 09:46 | failed | 339 | — | — | ✗ chain | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_bepjqwqz_details.md) |
 | `discrete_sbm_pearl_gnnconv_raw_repro` (5, reassign) | `g6y8ubfg` | 2026-05-06 09:52 | crashed | 1.2k | — | — | ✗ chain end | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_raw_repro_g6y8ubfg_details.md) |
-| `discrete_enzymes_vignac_repro`           | `l1nk0622` | 2026-05-05 15:42 | running | 528k | 0.187 | 0.399 | ✓ | [link](run_details/2026-05-05/discrete_enzymes_vignac_repro_l1nk0622_details.md) |
-| `discrete_enzymes_pearl_repro` (orig)     | `ge461v1o` | 2026-05-05 15:42 | crashed (collateral kill) | 398k | 0.186 | 0.189 | ✓ at kill | [link](run_details/2026-05-05/discrete_enzymes_pearl_repro_ge461v1o_details.md) |
+| **`discrete_enzymes_vignac_repro`**       | `l1nk0622` | 2026-05-05 15:42 | finished (mask-bug invalidated) | 550k | 0.190 | 0.212 | n/a — invalidated | [link](run_details/2026-05-05/discrete_enzymes_vignac_repro_l1nk0622_details.md) |
+| `discrete_enzymes_pearl_repro` (orig)     | `ge461v1o` | 2026-05-05 15:42 | crashed (collateral kill) | 398k | 0.186 | 0.189 | n/a — invalidated | [link](run_details/2026-05-05/discrete_enzymes_pearl_repro_ge461v1o_details.md) |
 | `discrete_enzymes_pearl_repro` (force-fresh restart) | `bhqss75w` | 2026-05-06 10:01 | failed (killed; force_fresh wrong) | 3.6k | — | — | _killed by user_ | [link](run_details/2026-05-06/discrete_enzymes_pearl_repro_bhqss75w_details.md) |
-| **`discrete_enzymes_pearl_repro` (resumed)** | `vejeny0f` | 2026-05-06 10:17 | running | 397k (resumed from `ge461v1o`'s `last.ckpt`) | _no fresh eval yet_ | _resume_ | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_repro_vejeny0f_details.md) |
-| `discrete_enzymes_pearl_spectral_repro`   | `4n28svrj` | 2026-05-05 15:37 | running | 428k | 0.187 | 0.173 | ✓ | [link](run_details/2026-05-05/discrete_enzymes_pearl_spectral_repro_4n28svrj_details.md) |
+| `discrete_enzymes_pearl_repro` (resumed)  | `vejeny0f` | 2026-05-06 10:17 | killed (mask bug) | 430k (resumed) | _no eval logged_ | 0.302 | n/a — invalidated | [link](run_details/2026-05-06/discrete_enzymes_pearl_repro_vejeny0f_details.md) |
+| `discrete_enzymes_pearl_spectral_repro`   | `4n28svrj` | 2026-05-05 15:37 | killed (mask bug) | 462k | 0.188 | 0.150 | n/a — invalidated | [link](run_details/2026-05-05/discrete_enzymes_pearl_spectral_repro_4n28svrj_details.md) |
 | `discrete_enzymes_pearl_gnnconv_norm_repro` (1) | `txfr1vms` | 2026-05-05 15:42 | failed | 103k | _not pulled_ | _—_ | _infra_ | [link](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_norm_repro_txfr1vms_details.md) |
 | `discrete_enzymes_pearl_gnnconv_norm_repro` (2) | `ly0d6lyi` | 2026-05-05 20:06 | failed | 251k | 0.184 | 0.294 | ✓ at fail (infra cause) | [link](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_norm_repro_ly0d6lyi_details.md) |
-| `discrete_enzymes_pearl_gnnconv_norm_repro` (3) | `zyawhwrx` | 2026-05-06 07:07 | running | 66k  | _no eval yet_ | 0.316 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_zyawhwrx_details.md) |
+| `discrete_enzymes_pearl_gnnconv_norm_repro` (3) | `zyawhwrx` | 2026-05-06 07:07 | killed (mask bug) | 96k  | 0.181 (step 75k) | 0.472 | n/a — invalidated | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_zyawhwrx_details.md) |
 | `discrete_enzymes_pearl_gnnconv_raw_repro` | `dt0ux9zh` | 2026-05-05 15:42 | failed (killed) | 439k | 0.211 | 7600 | ✗ blew up | [link](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_raw_repro_dt0ux9zh_details.md) |
 | `discrete_enzymes_pearl_gnnconv_raw_repro` (reassign) | `b7lqqac8` | 2026-05-06 09:38 | failed | 1.8k | — | — | ✗ chain end | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_raw_repro_b7lqqac8_details.md) |
+| **`discrete_sbm_vignac_repro_exact`** (post-fix) | `2026-05-06-sbm-vignac-1` | 2026-05-06 13:46 | running | _start_ | _pending_ | _pending_ | _pending_ | [link](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_2026-05-06-sbm-vignac-1_details.md) |
+| **`discrete_sbm_pearl_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-1` | 2026-05-06 13:46 | running | _start_ | _pending_ | _pending_ | _pending_ | [link](run_details/2026-05-06/discrete_sbm_pearl_repro_exact_2026-05-06-sbm-pearl-1_details.md) |
+| **`discrete_sbm_pearl_spectral_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-spectral-1` | 2026-05-06 13:46 | running | _start_ | _pending_ | _pending_ | _pending_ | [link](run_details/2026-05-06/discrete_sbm_pearl_spectral_repro_exact_2026-05-06-sbm-pearl-spectral-1_details.md) |
+| **`discrete_sbm_pearl_gnnconv_norm_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-gnnconv-1` | 2026-05-06 13:46 | running | _start_ | _pending_ | _pending_ | _pending_ | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_norm_repro_exact_2026-05-06-sbm-pearl-gnnconv-1_details.md) |
+| **`discrete_enzymes_vignac_repro_exact`** (post-fix) | `2026-05-06-enzymes-vignac-1` | 2026-05-06 13:46 | running | _start_ | _pending_ | _pending_ | _pending_ | [link](run_details/2026-05-06/discrete_enzymes_vignac_repro_exact_2026-05-06-enzymes-vignac-1_details.md) |
+| **`discrete_enzymes_pearl_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-1` | 2026-05-06 13:46 | running | _start_ | _pending_ | _pending_ | _pending_ | [link](run_details/2026-05-06/discrete_enzymes_pearl_repro_exact_2026-05-06-enzymes-pearl-1_details.md) |
+| **`discrete_enzymes_pearl_spectral_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-spectral-1` | 2026-05-06 13:46 | running | _start_ | _pending_ | _pending_ | _pending_ | [link](run_details/2026-05-06/discrete_enzymes_pearl_spectral_repro_exact_2026-05-06-enzymes-pearl-spectral-1_details.md) |
+| **`discrete_enzymes_pearl_gnnconv_norm_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-gnnconv-1` | 2026-05-06 13:46 | running | _start_ | _pending_ | _pending_ | _pending_ | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_exact_2026-05-06-enzymes-pearl-gnnconv-1_details.md) |
 
 ## Cross-cutting findings
 
