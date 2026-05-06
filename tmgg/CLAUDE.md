@@ -37,6 +37,18 @@ visualisations under `Visuals`. The runlog index is the single source
 of truth for "what's running, what finished, what's been pulled,
 what's been measured" — check it before relaunching the same config.
 
+### Cross-panel measurement summary
+
+Second file to keep current alongside `runlog.md` when checking
+results: [`docs/eval/2026-05-06-ablations_measurment.md`](docs/eval/2026-05-06-ablations_measurment.md).
+It is the consolidated cross-panel view — per-step MMD CSV, raw
+last-cycle and ratio tables, anchor conversions to absolute MMD²
+via our measured train↔test baselines, and the best-per-metric / gap
+table against DiGress paper and HiGen anchors. When new eval cycles
+land or runs finish/crash, refresh both files together: `runlog.md`
+captures *operational* state, this file captures *measurement*
+state. Update the snapshot timestamp at the top when you do.
+
 ## W&B Data Exports
 
 Exported W&B data lives in `wandb_export/`. Check existing exports before re-exporting to avoid redundant API calls.
