@@ -34,7 +34,7 @@ uv run tmgg-spectral-arch model.k=50
 WANDB_API_KEY="your-api-key" uv run tmgg-spectral-arch
 ```
 
-Note: Training is configured in **steps**, not epochs (see [Configuration](docs/configuration.md)).
+Note: Training is configured in **steps**, not epochs (set `trainer.max_steps` in the experiment config).
 
 ## Environment Variables
 
@@ -216,21 +216,8 @@ tmgg/
 │       ├── models/
 │       ├── data/
 │       └── stage/
-├── tests/                   # Test suite
-└── docs/                    # Detailed documentation
+└── tests/                   # Test suite
 ```
-
-## Documentation
-
-For detailed documentation, see the [docs/](docs/) folder:
-
-- [Architecture](docs/architecture.md) - System design and module organization
-- [Configuration](docs/configuration.md) - Hydra config system and common overrides
-- [Models](docs/models.md) - Model architectures and parameters
-- [Data](docs/data.md) - Data pipeline, datasets, and noise types
-- [Experiments](docs/experiments.md) - Running experiments and interpreting results
-- [Cloud](docs/cloud.md) - Cloud execution with Modal
-- [Extending](docs/extending.md) - Adding new models, datasets, and backends
 
 ## Model Architectures
 

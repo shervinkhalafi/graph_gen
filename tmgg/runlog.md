@@ -85,7 +85,7 @@ columns, and field names follows the GraphRNN/GRAN/DiGress/HiGen
 convention of dropping the squared label, but every number is MMD².
 **Don't sqrt** when comparing to HiGen Table 1 (also MMD²). **Don't
 double-square** when comparing to DiGress Table 1 (ratios of MMD²).
-Full detail and rationale: `docs/eval/mmd-units-and-protocol.md`.
+Full detail and rationale: `paper-artifacts/repro-ablations/context/mmd-units-and-protocol.md`.
 
 ## Volume / fetch conventions
 
@@ -137,7 +137,7 @@ these look like timeouts rather than mid-training crashes.
 
 ### `discrete_sbm_vignac_repro_exact` (paper-anchor parity)
 
-- [`lptjvfbe`](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_lptjvfbe_details.md) — launched 2026-05-06 09:39 UTC, **cancelled 2026-05-06 at step ~15k**. Killed because `_GraphTransformer.forward` calls `.mask_zero_diag()` on the post-`mlp_in_E` hidden state (zeroes hidden E diagonal) where upstream DiGress calls `.mask(node_mask)` (padding-only, diagonal preserved until output mask) — outputs not byte-equivalent to upstream even with identical weights (state-dict diff `X=0.0087, E=0.0010` → 0 under monkey-patch). Re-launch after `transformer_model.py:834` fix. See [`docs/eval/2026-05-06-mmd-ratio-analysis.md`](docs/eval/2026-05-06-mmd-ratio-analysis.md) "GDPO reference" for prior context.
+- [`lptjvfbe`](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_lptjvfbe_details.md) — launched 2026-05-06 09:39 UTC, **cancelled 2026-05-06 at step ~15k**. Killed because `_GraphTransformer.forward` calls `.mask_zero_diag()` on the post-`mlp_in_E` hidden state (zeroes hidden E diagonal) where upstream DiGress calls `.mask(node_mask)` (padding-only, diagonal preserved until output mask) — outputs not byte-equivalent to upstream even with identical weights (state-dict diff `X=0.0087, E=0.0010` → 0 under monkey-patch). Re-launch after `transformer_model.py:834` fix.
 - [`2026-05-06-sbm-vignac-1`](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_2026-05-06-sbm-vignac-1_details.md) — **post-fix re-launch** 2026-05-06 13:46 UTC, running with `force_fresh=false` (preempt-resume via wandb-id sidecar). `fc-01KQYRNJ9S0STFDZBEPFBY5WZQ`.
 
 ### `discrete_sbm_vignac_spectral_repro`
@@ -272,7 +272,7 @@ before re-snapshotting this table.
 > correctness defect (state-dict non-equivalence to upstream), not the
 > source of the published-anchor gap. Anchor-gap analysis stands.
 > Best post-fix metrics so far: SBM orbit 0.0909 (`cgfv3f85`), ENZYMES
-> clustering 0.0967 (`7yi627fv`). See [`docs/eval/2026-05-06-ablations_measurment.md`](docs/eval/2026-05-06-ablations_measurment.md) post-fix tables for full numbers.
+> clustering 0.0967 (`7yi627fv`). See [`paper-artifacts/repro-ablations/snapshots/ablations-measurement-2026-05-06.md`](paper-artifacts/repro-ablations/snapshots/ablations-measurement-2026-05-06.md) post-fix tables for full numbers.
 >
 > **Session note 2026-05-07 ~07:20 UTC: 17h 32m post-fix progress check.** Bundle
 > refresh via `paper-artifacts/repro-ablations/scripts/refresh.py`. All 8 post-fix
@@ -288,7 +288,7 @@ before re-snapshotting this table.
 > See `paper-artifacts/repro-ablations/snapshots/{runlog,ablations-measurement}-2026-05-07.md`
 > for the date-stamped snapshot pair.
 >
-> **Ratio comparison vs published anchors** — see [`docs/eval/2026-05-06-mmd-ratio-analysis.md`](docs/eval/2026-05-06-mmd-ratio-analysis.md). Headlines:
+> **Ratio comparison vs published anchors** — see `paper-artifacts/repro-ablations/context/ANCHORS.md`. Headlines:
 > - SBM clustering converges towards DiGress paper r=1.5 (HiGen reproduces this exactly; our healthy panel sits at 4.0); orbit similar, ~2× from paper.
 > - SBM degree blows up to r≈540 vs paper r=1.6 — real undertraining (our run terminated at 78% of intended steps), the smallest-baseline / most-amplified metric.
 > - ENZYMES clustering at r≈10 vs HiGen-implied 7.95 (1.3× off, plausibly converging). Degree and orbit hundreds-of-times worse than HiGen's reproduction. DiGress paper has no ENZYMES anchor.
