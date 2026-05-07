@@ -1,21 +1,24 @@
 """Typed containers for categorical graph data and structural context.
 
-``GraphData`` is the universal batch type for all experiments. It holds
-batched node/edge features alongside a ``node_mask`` that tracks which
-node positions are real versus padding. The four split feature fields
-(``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat``) are all optional;
-at least one of the edge fields MUST be populated.
+``GraphData`` is the abstract base of a 2x2 type grid: sparse vs dense
+carrier, state vs distribution content. The four concrete leaves
+(``GraphState``, ``GraphDistribution``, ``DenseGraphState``,
+``DenseGraphDistribution``) all carry the universal fields and split feature
+fields (``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat``); at least one
+of the edge fields MUST be populated.
 
 ``GraphStructure`` bundles pre-computed topological features (adjacency,
-eigenvectors, eigenvalues) derived from a ``GraphData`` instance before
+eigenvectors, eigenvalues) derived from a ``DenseGraphState`` instance before
 any learned transformations. These remain constant across transformer
 layer iterations.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import replace as _dc_replace
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import torch
@@ -28,17 +31,13 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class _GraphDataNew:
+class GraphData:
     """Abstract base for every concrete graph carrier (sparse or dense).
 
     Carries only the universal fields (per-graph node count, graph-level y).
     Concrete subtypes add carrier-specific fields. This class is not
     instantiated directly; use one of `GraphState`, `GraphDistribution`,
     `DenseGraphState`, `DenseGraphDistribution`.
-
-    Note: temporarily named ``_GraphDataNew`` while the original
-    ``GraphData`` dataclass is being renamed to ``DenseGraphState``;
-    a final rename to ``GraphData`` happens once the legacy name is free.
     """
 
     num_nodes_per_graph: Tensor  # (B,)        per-graph node count, int64
@@ -72,7 +71,7 @@ class _GraphDataNew:
         raise NotImplementedError("Concrete subclasses must override dense_adjacency.")
 
 
-class _StateGraph(_GraphDataNew):
+class _StateGraph(GraphData):
     """Marker: state-content semantics.
 
     Per-element data on a chosen edge_index (sparse) or per-position content
@@ -84,7 +83,7 @@ class _StateGraph(_GraphDataNew):
         raise NotImplementedError
 
 
-class _DistributionGraph(_GraphDataNew):
+class _DistributionGraph(GraphData):
     """Marker: distribution-content semantics.
 
     Per-position values on a complete edge_index (sparse) or
@@ -99,114 +98,355 @@ class _DistributionGraph(_GraphDataNew):
         raise NotImplementedError
 
 
-@dataclass(frozen=True, slots=True)
-class GraphData:
-    """Batched graph features with a node validity mask and split feature fields.
+# ---- Helpers for sparse invariant checks --------------------------------
 
-    The dataclass owns only the unified-spec fields from
-    ``docs/specs/2026-04-15-unified-graph-features-spec.md §5``: two
-    required fields (``y``, ``node_mask``) and four optional split
-    feature fields (``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat``).
-    At construction time at least one of the edge fields MUST be
-    non-``None``; every other field is free to be empty.
+
+def _check_sparse_invariants(
+    *,
+    batch: Tensor,
+    num_nodes_per_graph: Tensor,
+    edge_index: Tensor,
+    edge_class: Tensor | None,
+    edge_feat: Tensor | None,
+) -> None:
+    """Cheap, unconditional invariants shared by GraphState and GraphDistribution.
+
+    Symmetry of edge_index is checked under __debug__ separately
+    (expensive: O(sum_E log sum_E)).
+    """
+    if batch.dtype != torch.long:
+        raise ValueError(f"batch must be int64; got {batch.dtype}.")
+    if edge_index.dtype != torch.long or edge_index.shape[0] != 2:
+        raise ValueError(
+            f"edge_index must be int64 of shape (2, sum_E); got dtype "
+            f"{edge_index.dtype} shape {tuple(edge_index.shape)}."
+        )
+    if edge_class is not None and edge_class.shape[0] != edge_index.shape[1]:
+        raise ValueError(
+            f"edge_class.shape[0] ({edge_class.shape[0]}) must match "
+            f"edge_index.shape[1] ({edge_index.shape[1]})."
+        )
+    if edge_feat is not None and edge_feat.shape[0] != edge_index.shape[1]:
+        raise ValueError(
+            f"edge_feat.shape[0] ({edge_feat.shape[0]}) must match "
+            f"edge_index.shape[1] ({edge_index.shape[1]})."
+        )
+    if edge_class is None and edge_feat is None:
+        raise ValueError("At least one of edge_class or edge_feat must be populated.")
+    # Endpoint integrity.
+    bs = int(num_nodes_per_graph.shape[0])
+    counts = torch.bincount(batch, minlength=bs)
+    if not torch.equal(counts, num_nodes_per_graph):
+        raise ValueError(
+            f"batch.bincount() {counts.tolist()} disagrees with "
+            f"num_nodes_per_graph {num_nodes_per_graph.tolist()}."
+        )
+    if edge_index.shape[1] > 0:
+        if (edge_index[0] == edge_index[1]).any():
+            raise ValueError("edge_index contains self-loops.")
+        if not torch.equal(batch[edge_index[0]], batch[edge_index[1]]):
+            raise ValueError("edge_index endpoints span different graphs.")
+    if __debug__:
+        _assert_edge_index_symmetric(edge_index)
+
+
+def _assert_edge_index_symmetric(edge_index: Tensor) -> None:
+    """Verify both directions present for every undirected edge.
+
+    PyG convention: an undirected edge (u, v) appears as (u, v) and (v, u)
+    in `edge_index`. The symmetric closure of the column set must equal
+    the column set itself.
+    """
+    if edge_index.shape[1] == 0:
+        return
+    fwd0 = edge_index[0].to(torch.int64)
+    fwd1 = edge_index[1].to(torch.int64)
+    # Membership test via row-encoded ints (assumes each node id < 2**31).
+    enc_fwd = fwd0 * (1 << 32) + fwd1
+    enc_rev = fwd1 * (1 << 32) + fwd0
+    if not torch.equal(torch.sort(enc_fwd).values, torch.sort(enc_rev).values):
+        raise AssertionError(
+            "edge_index is not symmetric (PyG convention requires both "
+            "directions for undirected graphs)."
+        )
+
+
+def _no_edge_one_hot_fill(edge_class: Tensor | None) -> Tensor | None:
+    """Build a `(d_ec,)` no-edge one-hot fill vector, or None if edge_class is None."""
+    if edge_class is None:
+        return None
+    d_ec = int(edge_class.shape[-1])
+    fill = torch.zeros(d_ec, dtype=edge_class.dtype, device=edge_class.device)
+    if d_ec >= 1:
+        fill[0] = 1.0
+    return fill
+
+
+# ---- Sparse leaf types --------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class GraphState(_StateGraph):
+    """Sparse + state. PyG-flat layout. edge_index covers a chosen subset of
+    off-diagonal pairs; per-element content is unconstrained by type.
+
+    Invariant: sum_E ≤ sum_i n_i (n_i - 1) (no self-loops, both directions
+    for undirected).
+    """
+
+    batch: Tensor  # (sum_n,)         node → graph index, int64
+    x_class: Tensor | None  # (sum_n, d_xc)
+    x_feat: Tensor | None  # (sum_n, d_xf)
+    edge_index: Tensor  # (2, sum_E)       directed entries (PyG)
+    edge_class: Tensor | None  # (sum_E, d_ec)
+    edge_feat: Tensor | None  # (sum_E, d_ef)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        _check_sparse_invariants(
+            batch=self.batch,
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            edge_index=self.edge_index,
+            edge_class=self.edge_class,
+            edge_feat=self.edge_feat,
+        )
+
+    def to(self, device: torch.device | str) -> GraphState:
+        return GraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph.to(device),
+            y=self.y.to(device),
+            batch=self.batch.to(device),
+            x_class=None if self.x_class is None else self.x_class.to(device),
+            x_feat=None if self.x_feat is None else self.x_feat.to(device),
+            edge_index=self.edge_index.to(device),
+            edge_class=None if self.edge_class is None else self.edge_class.to(device),
+            edge_feat=None if self.edge_feat is None else self.edge_feat.to(device),
+        )
+
+    def type_as(self, x: Tensor) -> GraphState:
+        """Cast floating-point feature tensors to match `x`'s dtype.
+
+        `batch`, `num_nodes_per_graph`, and `edge_index` stay int64.
+        """
+        return GraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y.type_as(x),
+            batch=self.batch,
+            x_class=None if self.x_class is None else self.x_class.type_as(x),
+            x_feat=None if self.x_feat is None else self.x_feat.type_as(x),
+            edge_index=self.edge_index,
+            edge_class=None if self.edge_class is None else self.edge_class.type_as(x),
+            edge_feat=None if self.edge_feat is None else self.edge_feat.type_as(x),
+        )
+
+    def dense_adjacency(self) -> Tensor:
+        """Convert to dense and return the binary adjacency."""
+        return self.to_dense(
+            edge_class_fill=_no_edge_one_hot_fill(self.edge_class),
+        ).dense_adjacency()
+
+    def to_dense(
+        self,
+        *,
+        edge_class_fill: Tensor | None = None,
+        edge_feat_fill: Tensor | float = 0.0,
+        x_class_fill: Tensor | None = None,
+        x_feat_fill: Tensor | float = 0.0,
+        n_max: int | None = None,
+    ) -> DenseGraphState:
+        raise NotImplementedError("Implemented in Task 1.6.")
+
+    def to_distribution(self) -> GraphDistribution:
+        raise NotImplementedError("Implemented in Task 1.7.")
+
+
+@dataclass(frozen=True, slots=True)
+class GraphDistribution(_DistributionGraph):
+    """Sparse + distribution. edge_index covers EVERY off-diagonal pair within
+    each graph; edge_class / edge_feat carry per-pair content (logits/probs
+    for diffusion outputs, continuous values for Gaussian noise).
+
+    Invariant: sum_E == sum_i n_i (n_i - 1).
+    """
+
+    batch: Tensor
+    x_class: Tensor | None
+    x_feat: Tensor | None
+    edge_index: Tensor  # (2, sum_E_complete)
+    edge_class: Tensor | None
+    edge_feat: Tensor | None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        _check_sparse_invariants(
+            batch=self.batch,
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            edge_index=self.edge_index,
+            edge_class=self.edge_class,
+            edge_feat=self.edge_feat,
+        )
+        n = self.num_nodes_per_graph
+        expected_E = int((n * (n - 1)).sum().item())
+        actual_E = int(self.edge_index.shape[1])
+        if actual_E != expected_E:
+            raise ValueError(
+                f"GraphDistribution requires complete off-diagonal edge_index: "
+                f"expected sum n_i(n_i-1) = {expected_E}, got {actual_E}."
+            )
+
+    def to(self, device: torch.device | str) -> GraphDistribution:
+        return GraphDistribution(
+            num_nodes_per_graph=self.num_nodes_per_graph.to(device),
+            y=self.y.to(device),
+            batch=self.batch.to(device),
+            x_class=None if self.x_class is None else self.x_class.to(device),
+            x_feat=None if self.x_feat is None else self.x_feat.to(device),
+            edge_index=self.edge_index.to(device),
+            edge_class=None if self.edge_class is None else self.edge_class.to(device),
+            edge_feat=None if self.edge_feat is None else self.edge_feat.to(device),
+        )
+
+    def type_as(self, x: Tensor) -> GraphDistribution:
+        return GraphDistribution(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y.type_as(x),
+            batch=self.batch,
+            x_class=None if self.x_class is None else self.x_class.type_as(x),
+            x_feat=None if self.x_feat is None else self.x_feat.type_as(x),
+            edge_index=self.edge_index,
+            edge_class=None if self.edge_class is None else self.edge_class.type_as(x),
+            edge_feat=None if self.edge_feat is None else self.edge_feat.type_as(x),
+        )
+
+    def dense_adjacency(self) -> Tensor:
+        return self.to_dense().dense_adjacency()
+
+    def to_dense(self) -> DenseGraphDistribution:
+        raise NotImplementedError("Implemented in Task 1.6.")
+
+    def argmax(self) -> GraphState:
+        raise NotImplementedError("Implemented in Task 1.7.")
+
+    def sample(self, *, generator: torch.Generator | None = None) -> GraphState:
+        raise NotImplementedError("Implemented in Task 1.7.")
+
+
+@dataclass(frozen=True, slots=True)
+class DenseGraphState(_StateGraph):
+    """Dense + state. (B, n_max, ...) padded carrier with state-typed content.
+
+    Content invariant is convention-bound, not enforced (e.g., one-hot for
+    DiGress samples, logits for classification predictions). The TYPE only
+    guarantees you are *interpreting* this data as state.
 
     Parameters
     ----------
-    y : Tensor
-        Global features. Batched: ``(bs, dy)``; single: ``(dy,)``.
-    node_mask : Tensor
-        Boolean or float mask indicating real (vs padded) nodes.
-        Batched: ``(bs, n)``; single: ``(n,)``.
     X_class : Tensor, optional
         Categorical node features (one-hot / PMF), shape
-        ``(bs, n, dx_class)`` or ``(n, dx_class)``. ``None`` for
-        structure-only graphs.
+        ``(bs, n, dx_class)``. ``None`` for structure-only graphs.
     X_feat : Tensor, optional
-        Continuous node features, shape ``(bs, n, dx_feat)`` or
-        ``(n, dx_feat)``.
+        Continuous node features, shape ``(bs, n, dx_feat)``.
     E_class : Tensor, optional
         Categorical edge features (one-hot / PMF), shape
-        ``(bs, n, n, de_class)`` or ``(n, n, de_class)``. Channel 0
-        conventionally encodes "no edge".
+        ``(bs, n, n, de_class)``. Channel 0 conventionally encodes "no edge".
     E_feat : Tensor, optional
-        Continuous edge features, shape ``(bs, n, n, de_feat)`` or
-        ``(n, n, de_feat)``. Single-channel adjacency weights use
-        ``de_feat == 1``.
+        Continuous edge features, shape ``(bs, n, n, de_feat)``. Single-channel
+        adjacency weights use ``de_feat == 1``.
+
+    Notes
+    -----
+    The legacy ``node_mask`` field is now derived as a :func:`functools.cached_property`
+    from ``num_nodes_per_graph`` and the populated split tensors' ``n_max``.
     """
 
-    y: Tensor
-    node_mask: Tensor
     X_class: Tensor | None = None
     X_feat: Tensor | None = None
     E_class: Tensor | None = None
     E_feat: Tensor | None = None
 
     def __post_init__(self) -> None:
-        """Validate shapes and the "at least one E_*" invariant.
-
-        Raises
-        ------
-        ValueError
-            When ``node_mask`` is missing, has the wrong rank, neither
-            split edge field is populated, or a non-``None`` split
-            field's leading dimensions disagree with ``node_mask``.
-            Messages reference
-            ``docs/specs/2026-04-15-unified-graph-features-spec.md §5``.
-        """
+        super().__post_init__()
         spec_ref = "docs/specs/2026-04-15-unified-graph-features-spec.md §5"
 
-        # (1) node_mask present, 1D or 2D.
-        nm = self.node_mask
-        if nm is None:  # pyright: ignore[reportUnnecessaryComparison]
-            raise ValueError(
-                f"GraphData requires a non-None node_mask (see {spec_ref})."
-            )
-        if nm.dim() not in (1, 2):
-            raise ValueError(
-                "GraphData.node_mask must be 1D (n,) or 2D (bs, n); "
-                f"got shape {tuple(nm.shape)} (see {spec_ref})."
-            )
-
-        # (2) At least one edge field present.
         if self.E_class is None and self.E_feat is None:
             raise ValueError(
-                "GraphData requires at least one of E_class or E_feat "
-                f"to be populated (see {spec_ref})."
+                f"DenseGraphState requires at least one of E_class or E_feat "
+                f"populated (see {spec_ref})."
             )
 
-        # (3) Leading-dim agreement with node_mask for any split field.
-        if nm.dim() == 1:
-            expected_n_dims: tuple[int, ...] = (int(nm.shape[0]),)
-            expected_e_dims: tuple[int, ...] = (
-                int(nm.shape[0]),
-                int(nm.shape[0]),
-            )
-        else:
-            expected_n_dims = (int(nm.shape[0]), int(nm.shape[1]))
-            expected_e_dims = (
-                int(nm.shape[0]),
-                int(nm.shape[1]),
-                int(nm.shape[1]),
-            )
+        bs = int(self.num_nodes_per_graph.shape[0])
 
-        def _check_leading(name: str, t: Tensor, expected: tuple[int, ...]) -> None:
+        def _leading(name: str, t: Tensor, expected: tuple[int, ...]) -> None:
             got = tuple(int(s) for s in t.shape[: len(expected)])
             if got != expected:
                 raise ValueError(
-                    f"GraphData.{name} leading dims {got} must match "
-                    f"node_mask-derived {expected} (see {spec_ref})."
+                    f"DenseGraphState.{name} leading dims {got} must match "
+                    f"({expected[0]}, n_max...)."
                 )
 
         if self.X_class is not None:
-            _check_leading("X_class", self.X_class, expected_n_dims)
-        if self.X_feat is not None:
-            _check_leading("X_feat", self.X_feat, expected_n_dims)
-        if self.E_class is not None:
-            _check_leading("E_class", self.E_class, expected_e_dims)
-        if self.E_feat is not None:
-            _check_leading("E_feat", self.E_feat, expected_e_dims)
+            n_max = int(self.X_class.shape[1])
+            _leading("X_class", self.X_class, (bs, n_max))
+        elif self.X_feat is not None:
+            n_max = int(self.X_feat.shape[1])
+            _leading("X_feat", self.X_feat, (bs, n_max))
+        elif self.E_class is not None:
+            n_max = int(self.E_class.shape[1])
+        else:
+            assert self.E_feat is not None  # invariant above
+            n_max = int(self.E_feat.shape[1])
 
-    def replace(self, **kwargs: object) -> GraphData:
+        if self.E_class is not None:
+            _leading("E_class", self.E_class, (bs, n_max, n_max))
+        if self.E_feat is not None:
+            _leading("E_feat", self.E_feat, (bs, n_max, n_max))
+        if self.X_class is not None:
+            _leading("X_class", self.X_class, (bs, n_max))
+        if self.X_feat is not None:
+            _leading("X_feat", self.X_feat, (bs, n_max))
+
+    @cached_property
+    def node_mask(self) -> Tensor:
+        bs = int(self.num_nodes_per_graph.shape[0])
+        if self.E_class is not None:
+            n_max = int(self.E_class.shape[1])
+        elif self.E_feat is not None:
+            n_max = int(self.E_feat.shape[1])
+        elif self.X_class is not None:
+            n_max = int(self.X_class.shape[1])
+        else:
+            assert self.X_feat is not None
+            n_max = int(self.X_feat.shape[1])
+        arange = torch.arange(n_max, device=self.num_nodes_per_graph.device)
+        return arange.unsqueeze(0).expand(bs, -1) < self.num_nodes_per_graph.unsqueeze(
+            1
+        )
+
+    def dense_adjacency(self) -> Tensor:
+        if self.E_class is not None and self.E_class.shape[-1] > 1:
+            adj = (self.E_class.argmax(dim=-1) > 0).float()
+        elif self.E_class is not None:
+            adj = self.E_class[..., 0].clone()
+        elif self.E_feat is not None:
+            e = self.E_feat
+            scalar = e.squeeze(-1) if e.shape[-1] == 1 else e[..., 0]
+            adj = (scalar > 0.5).float()
+        else:
+            raise ValueError("dense_adjacency() requires E_class or E_feat.")
+        mask_2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
+        return adj * mask_2d.float()
+
+    def to_sparse(
+        self,
+        *,
+        edge_active: Callable[[Tensor], Tensor] | None = None,
+    ) -> GraphState:
+        raise NotImplementedError("Implemented in Task 1.6.")
+
+    def to_distribution(self) -> DenseGraphDistribution:
+        raise NotImplementedError("Implemented in Task 1.7.")
+
+    def replace(self, **kwargs: object) -> DenseGraphState:
         """Return a copy with selected fields overridden.
 
         Thin typed wrapper over :func:`dataclasses.replace`. Accepts any
@@ -215,7 +455,7 @@ class GraphData:
         """
         return _dc_replace(self, **kwargs)
 
-    def mask(self, collapse: bool = False) -> GraphData:
+    def mask(self, collapse: bool = False) -> DenseGraphState:
         """Zero out features at masked positions, optionally collapsing to indices.
 
         Operates on every populated split field; skips ``None`` fields.
@@ -240,7 +480,7 @@ class GraphData:
 
         Returns
         -------
-        GraphData
+        DenseGraphState
             New instance with masked values zeroed (or, when
             ``collapse=True``, with categorical fields argmaxed to
             integer indices).
@@ -301,16 +541,16 @@ class GraphData:
                         f"Max asymmetry: {(E_feat_masked - torch.transpose(E_feat_masked, -3, -2)).abs().max().item():.2e}"
                     )
 
-        return GraphData(
+        return DenseGraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph,
             y=self.y,
-            node_mask=self.node_mask,
             X_class=X_class_masked,
             X_feat=X_feat_masked,
             E_class=E_class_masked,
             E_feat=E_feat_masked,
         )
 
-    def mask_zero_diag(self) -> GraphData:
+    def mask_zero_diag(self) -> DenseGraphState:
         """Zero masked positions and the diagonal of every edge tensor.
 
         Used inside the transformer where self-loops are excluded from
@@ -333,40 +573,39 @@ class GraphData:
         E_class_masked = self.E_class * e_mask if self.E_class is not None else None
         E_feat_masked = self.E_feat * e_mask if self.E_feat is not None else None
 
-        return GraphData(
+        return DenseGraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph,
             y=self.y,
-            node_mask=self.node_mask,
             X_class=X_class_masked,
             X_feat=X_feat_masked,
             E_class=E_class_masked,
             E_feat=E_feat_masked,
         )
 
-    def type_as(self, x: Tensor) -> GraphData:
+    def type_as(self, x: Tensor) -> DenseGraphState:
         """Return a new instance with feature tensors cast to match ``x``.
 
-        The ``node_mask`` is left unchanged (it is boolean, not a feature).
         Split ``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat`` fields
-        are cast when present.
+        are cast when present. ``num_nodes_per_graph`` stays int64.
         """
-        return GraphData(
+        return DenseGraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph,
             y=self.y.type_as(x),
-            node_mask=self.node_mask,
             X_class=self.X_class.type_as(x) if self.X_class is not None else None,
             X_feat=self.X_feat.type_as(x) if self.X_feat is not None else None,
             E_class=self.E_class.type_as(x) if self.E_class is not None else None,
             E_feat=self.E_feat.type_as(x) if self.E_feat is not None else None,
         )
 
-    def to(self, device: torch.device | str) -> GraphData:
+    def to(self, device: torch.device | str) -> DenseGraphState:
         """Move all tensors to ``device``, returning a new instance.
 
         Needed for Lightning's ``transfer_batch_to_device`` since frozen
         dataclasses are not supported by ``apply_to_collection``.
         """
-        return GraphData(
+        return DenseGraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph.to(device),
             y=self.y.to(device),
-            node_mask=self.node_mask.to(device),
             X_class=self.X_class.to(device) if self.X_class is not None else None,
             X_feat=self.X_feat.to(device) if self.X_feat is not None else None,
             E_class=self.E_class.to(device) if self.E_class is not None else None,
@@ -376,7 +615,9 @@ class GraphData:
     # ---- Conversion classmethods / methods ----------------------------
 
     @classmethod
-    def from_structure_only(cls, node_mask: Tensor, edge_scalar: Tensor) -> GraphData:
+    def from_structure_only(
+        cls, node_mask: Tensor, edge_scalar: Tensor
+    ) -> DenseGraphState:
         """Construct a structure-only graph with only ``E_feat`` populated.
 
         Wraps a dense scalar adjacency as a single-channel ``E_feat`` tensor
@@ -392,7 +633,7 @@ class GraphData:
 
         Returns
         -------
-        GraphData
+        DenseGraphState
             Instance with ``E_feat`` set and every other feature field
             ``None``.
         """
@@ -423,14 +664,12 @@ class GraphData:
 
         e_feat = edge_scalar.float().unsqueeze(-1)
         y = torch.zeros(bs, 0, device=edge_scalar.device, dtype=e_feat.dtype)
-
-        if single:
-            return cls(
-                y=y.squeeze(0),
-                node_mask=node_mask.squeeze(0),
-                E_feat=e_feat.squeeze(0),
-            )
-        return cls(y=y, node_mask=node_mask, E_feat=e_feat)
+        num_nodes_per_graph = node_mask.sum(dim=-1).long()
+        return cls(
+            num_nodes_per_graph=num_nodes_per_graph,
+            y=y,
+            E_feat=e_feat,
+        )
 
     @classmethod
     def from_edge_scalar(
@@ -439,7 +678,7 @@ class GraphData:
         *,
         node_mask: Tensor,
         target: Literal["E_class", "E_feat"],
-    ) -> GraphData:
+    ) -> DenseGraphState:
         """Construct a graph populating exactly one split edge field from a scalar.
 
         Parameters
@@ -458,7 +697,7 @@ class GraphData:
 
         Returns
         -------
-        GraphData
+        DenseGraphState
             Instance with the selected split edge field populated and
             the other split fields ``None``.
         """
@@ -496,14 +735,12 @@ class GraphData:
         e_class[..., 1] = adj
 
         y = torch.zeros(bs, 0, device=adj.device, dtype=adj.dtype)
-
-        if single:
-            return cls(
-                y=y.squeeze(0),
-                node_mask=node_mask.squeeze(0),
-                E_class=e_class.squeeze(0),
-            )
-        return cls(y=y, node_mask=node_mask, E_class=e_class)
+        num_nodes_per_graph = node_mask.sum(dim=-1).long()
+        return cls(
+            num_nodes_per_graph=num_nodes_per_graph,
+            y=y,
+            E_class=e_class,
+        )
 
     def to_edge_scalar(self, *, source: Literal["class", "feat"]) -> Tensor:
         """Return a dense scalar adjacency from the requested split edge field.
@@ -551,36 +788,6 @@ class GraphData:
         mask2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
         return edge_scalar * mask2d.to(edge_scalar.dtype)
 
-    def binarised_adjacency(self) -> Tensor:
-        """Return a hard 0/1 adjacency view from whichever edge field is populated.
-
-        When ``E_class`` is present we take ``argmax > 0`` (two-channel
-        DiGress layout treats channel 0 as "no edge"); otherwise we
-        threshold ``E_feat`` at 0.5. The result is masked by the outer
-        product of ``node_mask`` so padded positions are zero.
-
-        Raises
-        ------
-        ValueError
-            If neither edge field is populated.
-        """
-        if self.E_class is not None:
-            if self.E_class.shape[-1] > 1:
-                adj = (self.E_class.argmax(dim=-1) > 0).float()
-            else:
-                adj = self.E_class[..., 0].clone()
-        elif self.E_feat is not None:
-            e = self.E_feat
-            scalar = e.squeeze(-1) if e.shape[-1] == 1 else e[..., 0]
-            adj = (scalar > 0.5).float()
-        else:  # pragma: no cover - __post_init__ enforces at least one.
-            raise ValueError(
-                "binarised_adjacency() requires E_class or E_feat to be populated."
-            )
-
-        mask_2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
-        return adj * mask_2d.float()
-
     def to_networkx(self, batch_index: int | None = None) -> nx.Graph[Any]:
         """Convert one graph slice to a NetworkX ``Graph``.
 
@@ -597,8 +804,8 @@ class GraphData:
         Parameters
         ----------
         batch_index
-            For 2-D (batched) ``GraphData`` pass the row to extract.
-            For 1-D (single) ``GraphData`` pass ``None`` (the
+            For 2-D (batched) ``DenseGraphState`` pass the row to extract.
+            For 1-D (single) ``DenseGraphState`` pass ``None`` (the
             default) — the call is a no-op slice.
 
         Returns
@@ -613,23 +820,23 @@ class GraphData:
             dimension.
         ValueError
             ``batch_index`` was supplied for a non-batched
-            ``GraphData`` (or omitted for a batched one).
+            ``DenseGraphState`` (or omitted for a batched one).
         """
         import networkx as nx
 
         is_batched = self.node_mask.dim() == 2
         if is_batched and batch_index is None:
             raise ValueError(
-                "batch_index is required for batched GraphData; pass an "
+                "batch_index is required for batched DenseGraphState; pass an "
                 "int or call to_networkx_list() to expand the whole batch."
             )
         if not is_batched and batch_index is not None:
             raise ValueError(
-                "batch_index is not allowed for unbatched GraphData "
+                "batch_index is not allowed for unbatched DenseGraphState "
                 "(node_mask is 1-D)."
             )
 
-        adj = self.binarised_adjacency()
+        adj = self.dense_adjacency()
         if is_batched:
             adj = adj[batch_index]
             node_mask_row = self.node_mask[batch_index]
@@ -657,7 +864,7 @@ class GraphData:
         return graph
 
     def to_networkx_list(self) -> list[nx.Graph[Any]]:
-        """Expand a batched ``GraphData`` into a per-graph nx list.
+        """Expand a batched ``DenseGraphState`` into a per-graph nx list.
 
         Equivalent to ``[self.to_networkx(i) for i in range(bs)]`` for
         batched data; on unbatched data returns a single-element
@@ -710,7 +917,7 @@ class GraphData:
             # Zero padding rows so loss predicates exclude them
             return synth * node_ind.unsqueeze(-1)
         raise ValueError(
-            "GraphData.synth_structure_only_x_class: synthesis is only "
+            "DenseGraphState.synth_structure_only_x_class: synthesis is only "
             f"defined for C_x in {{1, 2}}; got C_x={c_x}. C_x>=3 implies "
             "real categorical content; the dataset MUST populate "
             "X_class. See 2026-04-27-x-class-synth-unification-spec §3."
@@ -724,8 +931,8 @@ class GraphData:
         n_max_static: int | None = None,
         num_atom_types_x: int | None = None,
         num_bond_types_e: int | None = None,
-    ) -> GraphData:
-        """Convert a PyG Batch to a dense GraphData.
+    ) -> DenseGraphState:
+        """Convert a PyG Batch to a dense DenseGraphState.
 
         Parameters
         ----------
@@ -773,7 +980,7 @@ class GraphData:
 
         Returns
         -------
-        GraphData
+        DenseGraphState
             Dense batched representation with ``E_class`` always
             populated. When ``edge_attr`` is present in ``batch``, the
             width matches ``num_bond_types_e`` (or the inferred maximum)
@@ -818,10 +1025,9 @@ class GraphData:
         else:
             n_max = n_packed
 
-        # Node mask from batch vector
+        # Per-graph node count (replaces the legacy node_mask field; the
+        # cached_property on DenseGraphState derives the boolean mask on demand).
         node_counts = torch.bincount(batch_vec, minlength=bs)
-        arange = torch.arange(n_max, device=adj.device).unsqueeze(0).expand(bs, -1)
-        node_mask = arange < node_counts.unsqueeze(1)
 
         # Symmetrise. Self-loops were already removed pre-densification.
         diag = torch.arange(n_max, device=adj.device)
@@ -980,10 +1186,15 @@ class GraphData:
             )
             X_class[batch_vec, pos_in_graph, idx_long] = 1.0
 
-        return cls(y=y, node_mask=node_mask, E_class=E_class, X_class=X_class)
+        return cls(
+            num_nodes_per_graph=node_counts.long(),
+            y=y,
+            E_class=E_class,
+            X_class=X_class,
+        )
 
     def to_pyg(self) -> Data:
-        """Convert this (unbatched) GraphData to a PyG Data object.
+        """Convert this (unbatched) DenseGraphState to a PyG Data object.
 
         Returns
         -------
@@ -993,16 +1204,16 @@ class GraphData:
         Raises
         ------
         ValueError
-            If the GraphData has batch size > 1.
+            If the DenseGraphState has batch size > 1.
         """
         from torch_geometric.data import Data
         from torch_geometric.utils import dense_to_sparse
 
-        adj = self.binarised_adjacency()
+        adj = self.dense_adjacency()
         if adj.ndim == 3:
             if adj.shape[0] != 1:
                 raise ValueError(
-                    f"to_pyg() requires unbatched or batch-size-1 GraphData, "
+                    f"to_pyg() requires unbatched or batch-size-1 DenseGraphState, "
                     f"got batch size {adj.shape[0]}"
                 )
             adj = adj.squeeze(0)
@@ -1017,36 +1228,37 @@ class GraphData:
         return Data(edge_index=edge_index, num_nodes=n)
 
     @staticmethod
-    def collate(graphs: list[GraphData]) -> GraphData:
+    def collate(graphs: list[DenseGraphState]) -> DenseGraphState:
         """Collate variable-size graphs into a padded batch.
 
         Pads every populated split field to the maximum node count.
         Padded node positions receive "no-node" (one-hot index 0) in
         categorical fields, padded edge positions receive "no-edge"
-        (one-hot index 0), and ``node_mask`` is ``False`` for padded
-        slots.
+        (one-hot index 0), and the derived ``node_mask`` cached_property
+        is ``False`` for padded slots.
 
         Parameters
         ----------
         graphs
-            Individual (unbatched) ``GraphData`` instances. All graphs
+            Individual (B=1) ``DenseGraphState`` instances. All graphs
             MUST share the same set of populated split fields.
 
         Returns
         -------
-        GraphData
+        DenseGraphState
             Batched instance with shapes ``(bs, n_max, ...)``.
         """
         if not graphs:
-            raise ValueError("GraphData.collate() requires a non-empty list.")
+            raise ValueError("DenseGraphState.collate() requires a non-empty list.")
 
         bs = len(graphs)
-        ns = [g.node_mask.shape[0] for g in graphs]
+        # Each input is B=1; n_i is num_nodes_per_graph[0] for that input.
+        ns = [int(g.num_nodes_per_graph[0].item()) for g in graphs]
         n_max = max(ns)
-        dy = graphs[0].y.shape[0]
+        dy = int(graphs[0].y.shape[-1])
 
-        mask_batch = torch.zeros(bs, n_max, dtype=torch.bool)
-        y_batch = torch.zeros(bs, dy)
+        num_nodes_per_graph = torch.tensor(ns, dtype=torch.long)
+        y_batch = torch.zeros(bs, dy, dtype=graphs[0].y.dtype)
 
         def _pad_field(
             field_name: Literal["X_class", "X_feat", "E_class", "E_feat"],
@@ -1057,7 +1269,7 @@ class GraphData:
                 for g in graphs[1:]:
                     if getattr(g, field_name) is not None:
                         raise ValueError(
-                            f"GraphData.collate(): {field_name} populated "
+                            f"DenseGraphState.collate(): {field_name} populated "
                             "inconsistently across graphs."
                         )
                 return None
@@ -1073,36 +1285,38 @@ class GraphData:
                 tensor = getattr(g, field_name)
                 if tensor is None:
                     raise ValueError(
-                        f"GraphData.collate(): {field_name} missing on graph {i} "
+                        f"DenseGraphState.collate(): {field_name} missing on graph {i} "
                         "but present on graph 0."
                     )
                 ni = ns[i]
+                # Each input is B=1, so tensor has shape (1, ni, ...) for nodes
+                # or (1, ni, ni, ...) for edges; squeeze the leading batch dim.
+                t_unb = tensor[0] if tensor.dim() in (3, 4) else tensor
                 if is_edge:
-                    batch[i, :ni, :ni] = tensor
+                    batch[i, :ni, :ni] = t_unb
                     # Padded edge positions -> "no edge" (class 0) when
                     # categorical; continuous fields stay at zero.
                     if field_name == "E_class":
                         batch[i, :ni, ni:, 0] = 1.0
                         batch[i, ni:, :, 0] = 1.0
                 else:
-                    batch[i, :ni] = tensor
+                    batch[i, :ni] = t_unb
                     if field_name == "X_class":
                         batch[i, ni:, 0] = 1.0
             return batch
 
-        for i, (g, ni) in enumerate(zip(graphs, ns, strict=False)):
+        for i, g in enumerate(graphs):
             if dy > 0:
-                y_batch[i] = g.y
-            mask_batch[i, :ni] = True
+                y_batch[i] = g.y[0] if g.y.dim() == 2 else g.y
 
         X_class = _pad_field("X_class")
         X_feat = _pad_field("X_feat")
         E_class = _pad_field("E_class")
         E_feat = _pad_field("E_feat")
 
-        return GraphData(
+        return DenseGraphState(
+            num_nodes_per_graph=num_nodes_per_graph,
             y=y_batch,
-            node_mask=mask_batch,
             X_class=X_class,
             X_feat=X_feat,
             E_class=E_class,
@@ -1110,12 +1324,12 @@ class GraphData:
         )
 
 
-def collapse_to_indices(data: GraphData) -> tuple[Tensor, Tensor | None]:
+def collapse_to_indices(data: DenseGraphState) -> tuple[Tensor, Tensor | None]:
     """Argmax ``E_class`` (and optionally ``X_class``) to class indices.
 
     Thin tuple-returning alias for ``data.mask(collapse=True)``, kept so
     external callers that pre-date the merge keep working. The canonical
-    form is ``GraphData.mask(collapse=True)`` (mirrors upstream's
+    form is ``DenseGraphState.mask(collapse=True)`` (mirrors upstream's
     ``PlaceHolder.mask(node_mask, collapse=True)``).
 
     Parameters
@@ -1144,10 +1358,105 @@ def collapse_to_indices(data: GraphData) -> tuple[Tensor, Tensor | None]:
 
 
 @dataclass(frozen=True, slots=True)
+class DenseGraphDistribution(_DistributionGraph):
+    """Dense + distribution. (B, n_max, ...) padded carrier with
+    distribution-typed content.
+    """
+
+    X_class: Tensor | None = None
+    X_feat: Tensor | None = None
+    E_class: Tensor | None = None
+    E_feat: Tensor | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # Reuse the same shape checks as DenseGraphState.
+        if self.E_class is None and self.E_feat is None:
+            raise ValueError(
+                "DenseGraphDistribution requires at least one of E_class or E_feat."
+            )
+        bs = int(self.num_nodes_per_graph.shape[0])
+        if self.E_class is not None:
+            n_max = int(self.E_class.shape[1])
+            if tuple(self.E_class.shape[:3]) != (bs, n_max, n_max):
+                raise ValueError(
+                    f"E_class shape mismatch: {tuple(self.E_class.shape)} vs "
+                    f"({bs}, {n_max}, {n_max}, *)."
+                )
+        if self.E_feat is not None:
+            n_max = int(self.E_feat.shape[1])
+            if tuple(self.E_feat.shape[:3]) != (bs, n_max, n_max):
+                raise ValueError(
+                    f"E_feat shape mismatch: {tuple(self.E_feat.shape)} vs "
+                    f"({bs}, {n_max}, {n_max}, *)."
+                )
+
+    def to(self, device: torch.device | str) -> DenseGraphDistribution:
+        return DenseGraphDistribution(
+            num_nodes_per_graph=self.num_nodes_per_graph.to(device),
+            y=self.y.to(device),
+            X_class=None if self.X_class is None else self.X_class.to(device),
+            X_feat=None if self.X_feat is None else self.X_feat.to(device),
+            E_class=None if self.E_class is None else self.E_class.to(device),
+            E_feat=None if self.E_feat is None else self.E_feat.to(device),
+        )
+
+    def type_as(self, x: Tensor) -> DenseGraphDistribution:
+        return DenseGraphDistribution(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y.type_as(x),
+            X_class=None if self.X_class is None else self.X_class.type_as(x),
+            X_feat=None if self.X_feat is None else self.X_feat.type_as(x),
+            E_class=None if self.E_class is None else self.E_class.type_as(x),
+            E_feat=None if self.E_feat is None else self.E_feat.type_as(x),
+        )
+
+    def to_sparse(self) -> GraphDistribution:
+        raise NotImplementedError("Implemented in Task 1.6.")
+
+    def argmax(self) -> DenseGraphState:
+        raise NotImplementedError("Implemented in Task 1.7.")
+
+    def sample(self, *, generator: torch.Generator | None = None) -> DenseGraphState:
+        raise NotImplementedError("Implemented in Task 1.7.")
+
+    @cached_property
+    def node_mask(self) -> Tensor:
+        bs = int(self.num_nodes_per_graph.shape[0])
+        if self.E_class is not None:
+            n_max = int(self.E_class.shape[1])
+        elif self.E_feat is not None:
+            n_max = int(self.E_feat.shape[1])
+        elif self.X_class is not None:
+            n_max = int(self.X_class.shape[1])
+        else:
+            assert self.X_feat is not None
+            n_max = int(self.X_feat.shape[1])
+        arange = torch.arange(n_max, device=self.num_nodes_per_graph.device)
+        return arange.unsqueeze(0).expand(bs, -1) < self.num_nodes_per_graph.unsqueeze(
+            1
+        )
+
+    def dense_adjacency(self) -> Tensor:
+        if self.E_class is not None and self.E_class.shape[-1] > 1:
+            adj = (self.E_class.argmax(dim=-1) > 0).float()
+        elif self.E_class is not None:
+            adj = self.E_class[..., 0].clone()
+        elif self.E_feat is not None:
+            e = self.E_feat
+            scalar = e.squeeze(-1) if e.shape[-1] == 1 else e[..., 0]
+            adj = (scalar > 0.5).float()
+        else:
+            raise ValueError("dense_adjacency() requires E_class or E_feat.")
+        mask_2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
+        return adj * mask_2d.float()
+
+
+@dataclass(frozen=True, slots=True)
 class GraphStructure:
     """Pre-computed structural features of a graph's topology.
 
-    Derived from the categorical edge features of a ``GraphData`` instance
+    Derived from the categorical edge features of a ``DenseGraphState`` instance
     before any learned transformations. These tensors remain constant
     across transformer layer iterations — they describe the input graph's
     structure, not the evolving hidden state.
