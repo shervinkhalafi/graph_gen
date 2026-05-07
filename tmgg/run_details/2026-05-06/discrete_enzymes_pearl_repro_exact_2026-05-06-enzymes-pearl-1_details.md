@@ -15,7 +15,7 @@ Post-fix re-launch of ENZYMES PEARL features arm.
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_repro_exact/2026-05-06-enzymes-pearl-1/` |
 | modal_function_call_id | `fc-01KQYRPK5RP70YGEZ795ASDM7K` |
 | gpu_tier | `fast` |
-| W&B URL | search `2026-05-06-enzymes-pearl-1` in <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-repro-exact> |
+| W&B URL | search `2026-05-06-enzymes-pearl-1` in <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-repro-exact> |
 
 ## Fetched
 

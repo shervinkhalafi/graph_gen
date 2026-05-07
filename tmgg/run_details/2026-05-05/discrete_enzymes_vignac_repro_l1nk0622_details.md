@@ -13,7 +13,7 @@
 | run_id | `l1nk0622` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_vignac_repro/l1nk0622/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-vignac-repro/runs/l1nk0622> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-vignac-repro/runs/l1nk0622> |
 
 ## Fetched
 

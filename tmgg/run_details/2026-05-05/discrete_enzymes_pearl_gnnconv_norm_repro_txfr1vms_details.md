@@ -12,7 +12,7 @@
 | run_id | `txfr1vms` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_gnnconv_norm_repro/txfr1vms/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-gnnconv-norm-repro/runs/txfr1vms> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-gnnconv-norm-repro/runs/txfr1vms> |
 
 ## Fetched
 
@@ -21,7 +21,7 @@
 
 ## Diagnostics
 
-> _Not pulled yet — only the W&B inventory metadata below is available. To get diagnostics, query `api.run("graph_denoise_team/discrete-enzymes-pearl-gnnconv-norm-repro/txfr1vms").summary` and merge into this file._
+> _Not pulled yet — only the W&B inventory metadata below is available. To get diagnostics, query `api.run("<TEAM-ENTITY>/discrete-enzymes-pearl-gnnconv-norm-repro/txfr1vms").summary` and merge into this file._
 
 | metric | value |
 |--------|------:|

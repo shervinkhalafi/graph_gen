@@ -21,8 +21,8 @@ Credentials:
     4. Default wandb credentials (~/.netrc)
 
 Usage:
-    uv run wandb-tools/export_runs.py --entity graph_denoise_team --project spectral_denoising
-    uv run wandb-tools/export_runs.py -e graph_denoise_team -p "*" -o wandb_export/
+    uv run wandb-tools/export_runs.py --entity <TEAM-ENTITY> --project spectral_denoising
+    uv run wandb-tools/export_runs.py -e <TEAM-ENTITY> -p "*" -o wandb_export/
     uv run wandb-tools/export_runs.py -e igorkraw --since 7d --include-history
 """
 
@@ -371,7 +371,7 @@ def main() -> None:
         "-e",
         action="append",
         default=[],
-        help="W&B entity (can specify multiple). Default: igorkraw, graph_denoise_team",
+        help="W&B entity (can specify multiple). Default: igorkraw, <TEAM-ENTITY>",
     )
     parser.add_argument(
         "--project",
@@ -405,7 +405,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Default entities
-    entities = args.entity if args.entity else ["igorkraw", "graph_denoise_team"]
+    entities = args.entity if args.entity else ["igorkraw", "<TEAM-ENTITY>"]
 
     # Parse since date
     since_date = None

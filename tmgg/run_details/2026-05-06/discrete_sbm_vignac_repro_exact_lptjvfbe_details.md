@@ -22,7 +22,7 @@ The `_repro_exact` config aims for byte-for-byte parity with Vignac's published 
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_vignac_repro_exact/discrete_sbm_vignac_repro_exact_DiffusionModule_dSpectreSBMDataModule_lr1e-3_wd1e-4_L8_s0_fresh_20260506T093958/` |
 | modal_function_call_id | `fc-01KQYAH4XVTE4F505EEC0DCMNK` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-sbm-vignac-repro-exact/runs/lptjvfbe> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-vignac-repro-exact/runs/lptjvfbe> |
 
 ## Fetched
 

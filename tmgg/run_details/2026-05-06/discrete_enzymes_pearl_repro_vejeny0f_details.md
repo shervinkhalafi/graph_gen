@@ -15,7 +15,7 @@
 | modal_function_call_id | `fc-01KQYCHAQKH30SEY7PDPSWA9G8` |
 | modal_container_id (initial) | `ta-01KQYCHB9P1Q697RZ8PXFK973E` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-repro/runs/vejeny0f> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-repro/runs/vejeny0f> |
 
 ## Launch invocation
 

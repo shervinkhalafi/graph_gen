@@ -12,7 +12,7 @@
 | run_id | `e5pd9drt` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_vignac_spectral_repro/e5pd9drt/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-sbm-vignac-spectral-repro/runs/e5pd9drt> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-vignac-spectral-repro/runs/e5pd9drt> |
 
 ## Fetched
 

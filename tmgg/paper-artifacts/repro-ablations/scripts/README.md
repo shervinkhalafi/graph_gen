@@ -6,7 +6,7 @@ protocol.
 ## `refresh.py`
 
 Self-contained `uv run` script with PEP-723 inline deps. Hits the
-W&B API; needs `WANDB_API_KEY` for a `graph_denoise_team` member
+W&B API; needs `WANDB_API_KEY` for a `<TEAM-ENTITY>` member
 (via `doppler run` if your `~/.netrc` is for a different account).
 
 ```bash

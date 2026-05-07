@@ -204,7 +204,7 @@ def fetch_history(
     api: wandb.Api, project: str, rid: str, keys: Iterable[str]
 ) -> pd.DataFrame:
     runs = list(
-        api.runs(f"graph_denoise_team/{project}", filters={"display_name": rid})
+        api.runs(f"<TEAM-ENTITY>/{project}", filters={"display_name": rid})
     )
     if not runs:
         return pd.DataFrame()
@@ -231,7 +231,7 @@ def fetch_run_history_idempotent(
     summary_path = var_dir / "summary.json"
 
     runs = list(
-        api.runs(f"graph_denoise_team/{project}", filters={"display_name": rid})
+        api.runs(f"<TEAM-ENTITY>/{project}", filters={"display_name": rid})
     )
     if not runs:
         print(f"[{label}] WARN: run not found", flush=True)
@@ -344,7 +344,7 @@ def fetch_media_idempotent(
     media_dir.mkdir(parents=True, exist_ok=True)
 
     runs = list(
-        api.runs(f"graph_denoise_team/{project}", filters={"display_name": rid})
+        api.runs(f"<TEAM-ENTITY>/{project}", filters={"display_name": rid})
     )
     if not runs:
         return {}

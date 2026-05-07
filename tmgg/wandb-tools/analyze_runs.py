@@ -32,7 +32,7 @@ console = Console()
 
 # Default export location
 DEFAULT_EXPORT_DIR = Path("wandb_export")
-DEFAULT_PROJECT = "graph_denoise_team_spectral_denoising_runs.parquet"
+DEFAULT_PROJECT = "<TEAM-ENTITY>_spectral_denoising_runs.parquet"
 
 
 def find_latest_export() -> Path | None:

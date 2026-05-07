@@ -12,7 +12,7 @@
 | run_id | `ly0d6lyi` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_gnnconv_norm_repro/ly0d6lyi/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-gnnconv-norm-repro/runs/ly0d6lyi> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-gnnconv-norm-repro/runs/ly0d6lyi> |
 
 ## Fetched
 

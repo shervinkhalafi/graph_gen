@@ -4,7 +4,7 @@
 # do not inherit _base_infra (which pulls optimizer, trainer, data group).
 # Only keys that must stay consistent across studies belong here.
 
-wandb_entity: graph_denoise_team
+wandb_entity: <TEAM-ENTITY>
 seed: 42
 
 paths:

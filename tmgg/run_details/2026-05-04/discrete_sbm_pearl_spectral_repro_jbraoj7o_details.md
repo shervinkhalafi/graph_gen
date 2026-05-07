@@ -12,7 +12,7 @@
 | run_id | `jbraoj7o` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_pearl_spectral_repro/jbraoj7o/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-sbm-pearl-spectral-repro/runs/jbraoj7o> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-pearl-spectral-repro/runs/jbraoj7o> |
 
 ## Fetched
 

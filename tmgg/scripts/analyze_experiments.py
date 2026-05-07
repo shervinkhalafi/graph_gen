@@ -36,7 +36,7 @@ console = Console()
 OUTPUT_DIR = Path("eigenstructure_results_full")
 PARQUET_FILE = OUTPUT_DIR / "all_runs.parquet"
 
-ENTITY = "graph_denoise_team"
+ENTITY = "<TEAM-ENTITY>"
 PROJECTS = [
     "spectral_arch_denoising",
     "tmgg-stage2_validation",

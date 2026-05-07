@@ -12,7 +12,7 @@
 | run_id | `4n28svrj` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_spectral_repro/4n28svrj/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-spectral-repro/runs/4n28svrj> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-spectral-repro/runs/4n28svrj> |
 
 ## Fetched
 

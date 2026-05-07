@@ -22,12 +22,12 @@ Use these tools to export, aggregate, and analyze W&B experiment data.
 
 ### 1. Discovery
 ```bash
-uv run wandb-tools/list_entities.py --entity graph_denoise_team
+uv run wandb-tools/list_entities.py --entity <TEAM-ENTITY>
 ```
 
 ### 2. Export
 ```bash
-uv run wandb-tools/export_runs.py -e graph_denoise_team -p spectral_denoising -o wandb_export/
+uv run wandb-tools/export_runs.py -e <TEAM-ENTITY> -p spectral_denoising -o wandb_export/
 ```
 
 ### 3. Aggregate (if multiple sources)

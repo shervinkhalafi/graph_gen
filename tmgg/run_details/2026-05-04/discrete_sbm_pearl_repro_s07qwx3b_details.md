@@ -12,7 +12,7 @@
 | run_id | `s07qwx3b` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_pearl_repro/s07qwx3b/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-sbm-pearl-repro/runs/s07qwx3b> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-pearl-repro/runs/s07qwx3b> |
 
 ## Fetched
 

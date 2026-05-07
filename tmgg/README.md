@@ -166,7 +166,7 @@ W&B experiment data is managed through standalone scripts in `wandb-tools/`:
 
 ```bash
 # Export runs from a W&B project
-uv run wandb-tools/export_runs.py --entity graph_denoise_team --project architecture-study
+uv run wandb-tools/export_runs.py --entity <TEAM-ENTITY> --project architecture-study
 ```
 
 ### Key Findings (Eigenstructure Study)

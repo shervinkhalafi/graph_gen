@@ -13,7 +13,7 @@
 | run_id | `g1g6xpx1` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_pearl_gnnconv_raw_repro/g1g6xpx1/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-sbm-pearl-gnnconv-raw-repro/runs/g1g6xpx1> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-pearl-gnnconv-raw-repro/runs/g1g6xpx1> |
 
 ## Fetched
 

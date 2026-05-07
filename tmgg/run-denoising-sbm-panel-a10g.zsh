@@ -36,7 +36,7 @@ set -euo pipefail
 : "${DEPLOY_FIRST:=1}"
 : "${DRY_RUN:=0}"
 : "${GPU_TIER:=standard}"
-: "${WANDB_ENTITY:=graph_denoise_team}"
+: "${WANDB_ENTITY:=<TEAM-ENTITY>}"
 : "${WANDB_PROJECT:=architecture-study}"
 : "${MPLCONFIGDIR:=${TMPDIR:-/tmp}/tmgg-mpl-cache}"
 

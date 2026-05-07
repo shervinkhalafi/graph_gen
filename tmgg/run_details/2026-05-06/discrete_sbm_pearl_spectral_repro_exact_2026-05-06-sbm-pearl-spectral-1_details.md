@@ -16,7 +16,7 @@ Stacks spectral Q/K/V projections on top of the pearl exact config.
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_pearl_spectral_repro_exact/2026-05-06-sbm-pearl-spectral-1/` |
 | modal_function_call_id | `fc-01KQYRNZRZ0MD33VYHM6TDCB7T` |
 | gpu_tier | `fast` |
-| W&B URL | search `2026-05-06-sbm-pearl-spectral-1` in <https://wandb.ai/graph_denoise_team/discrete-sbm-pearl-spectral-repro-exact> |
+| W&B URL | search `2026-05-06-sbm-pearl-spectral-1` in <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-pearl-spectral-repro-exact> |
 
 ## Fetched
 

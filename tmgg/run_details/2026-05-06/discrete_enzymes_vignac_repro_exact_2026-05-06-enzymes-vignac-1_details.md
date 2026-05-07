@@ -18,7 +18,7 @@ the existing ENZYMES data + cadence pipeline.
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_vignac_repro_exact/2026-05-06-enzymes-vignac-1/` |
 | modal_function_call_id | `fc-01KQYRPC8G81QSZ9QQ8E05RCPC` |
 | gpu_tier | `fast` |
-| W&B URL | search `2026-05-06-enzymes-vignac-1` in <https://wandb.ai/graph_denoise_team/discrete-enzymes-vignac-repro-exact> |
+| W&B URL | search `2026-05-06-enzymes-vignac-1` in <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-vignac-repro-exact> |
 
 ## Fetched
 

@@ -13,7 +13,7 @@
 | run_id | `dt0ux9zh` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_gnnconv_raw_repro/dt0ux9zh/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-gnnconv-raw-repro/runs/dt0ux9zh> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-gnnconv-raw-repro/runs/dt0ux9zh> |
 
 ## Fetched
 

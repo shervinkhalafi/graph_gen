@@ -15,7 +15,7 @@ wandb metadata. Hand edits are overwritten on next refresh — modify
 | `run_id` | str | no | wandb 8-char ID. Immutable. |
 | `display_name` | str | no | wandb display name. Mutable; do not use for joins. |
 | `config_name` | str | no | hydra experiment config (e.g. `discrete_sbm_vignac_repro_exact`). |
-| `wandb_project` | str | no | wandb project string under `graph_denoise_team`. |
+| `wandb_project` | str | no | wandb project string under `<TEAM-ENTITY>`. |
 | `wandb_url` | str | no | full URL. |
 | `dataset` | enum | no | `sbm` \| `enzymes`. |
 | `variant` | enum | no | `vignac`, `vignac_spectral`, `pearl`, `pearl_spectral`, `pearl_gnnconv_norm`, `pearl_gnnconv_raw`. |

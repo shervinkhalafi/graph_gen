@@ -112,7 +112,7 @@ when included in a published report.
 
 The W&B inventory below was pulled 2026-05-06 07:12–07:25 UTC via
 `/tmp/query_repro_runs_json.py` and `/tmp/query_specific_runs.py`
-against the 11 per-variant projects under `graph_denoise_team`. Re-run
+against the 11 per-variant projects under `<TEAM-ENTITY>`. Re-run
 those scripts (or their source-controlled successor — see backfill
 checklist) to refresh.
 

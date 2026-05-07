@@ -16,7 +16,7 @@ Post-fix re-launch of ENZYMES PEARL features + BareGraphConv
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_gnnconv_norm_repro_exact/2026-05-06-enzymes-pearl-gnnconv-1/` |
 | modal_function_call_id | `fc-01KQYRPZKRW6PJHP1QDMKKVDAY` |
 | gpu_tier | `fast` |
-| W&B URL | search `2026-05-06-enzymes-pearl-gnnconv-1` in <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-gnnconv-norm-repro-exact> |
+| W&B URL | search `2026-05-06-enzymes-pearl-gnnconv-1` in <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-gnnconv-norm-repro-exact> |
 
 ## Fetched
 

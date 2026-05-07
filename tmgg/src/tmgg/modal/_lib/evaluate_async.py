@@ -1,7 +1,6 @@
 """Async-evaluation worker that logs back into the trainer's W&B run.
 
-Step 1 of the async-eval plan
-(``/home/igork/.claude/plans/compressed-tumbling-whale.md``). The trainer
+Step 1 of the async-eval plan. The trainer
 fires-and-forgets a Modal call against this module on every scheduled
 eval step; the eval container then resumes the trainer's W&B run, runs
 MMD evaluation, logs gen-val/* metrics under the trainer's custom step

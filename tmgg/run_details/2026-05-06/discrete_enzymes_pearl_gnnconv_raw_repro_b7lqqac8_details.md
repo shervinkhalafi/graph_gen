@@ -11,7 +11,7 @@
 | wandb_project | `discrete-enzymes-pearl-gnnconv-raw-repro` |
 | run_id | `b7lqqac8` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_gnnconv_raw_repro/discrete_enzymes_pearl_gnnconv_raw_repro_DiffusionModule_dGraphDataModule_lr1e-3_wd1e-4_L8_s666_fresh_20260505T154027/` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-gnnconv-raw-repro/runs/b7lqqac8> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-gnnconv-raw-repro/runs/b7lqqac8> |
 
 ## Notes
 

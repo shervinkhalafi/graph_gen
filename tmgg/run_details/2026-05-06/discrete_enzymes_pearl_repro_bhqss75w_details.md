@@ -12,7 +12,7 @@
 | wandb_project | `discrete-enzymes-pearl-repro` |
 | run_id | `bhqss75w` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_repro/discrete_enzymes_pearl_repro_DiffusionModule_dGraphDataModule_lr1e-3_wd1e-4_L8_s666_fresh_20260505T154023/` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-repro/runs/bhqss75w> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-repro/runs/bhqss75w> |
 
 ## Notes
 

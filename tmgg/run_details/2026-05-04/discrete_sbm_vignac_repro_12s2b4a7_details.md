@@ -12,7 +12,7 @@
 | run_id | `12s2b4a7` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_vignac_repro/12s2b4a7/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-sbm-vignac-repro/runs/12s2b4a7> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-vignac-repro/runs/12s2b4a7> |
 
 ## Fetched
 

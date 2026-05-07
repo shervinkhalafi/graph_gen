@@ -87,7 +87,7 @@ Exports all experiment runs from W&B to JSON format.
 
 ```bash
 uv run scripts/fetch_wandb_runs.py
-uv run scripts/fetch_wandb_runs.py --entity graph_denoise_team
+uv run scripts/fetch_wandb_runs.py --entity <TEAM-ENTITY>
 uv run scripts/fetch_wandb_runs.py --output results/wandb_export.json
 ```
 

@@ -1,6 +1,6 @@
 """Reader helpers for the async-eval manifest.
 
-The async-eval architecture (plan: ``compressed-tumbling-whale``) has
+The async-eval architecture has
 two writers record per-step events at
 ``/data/outputs/{run_id}/eval_manifest.d/`` (or, in legacy runs,
 ``eval_manifest.jsonl``): the trainer-side ``AsyncEvalSpawnCallback``

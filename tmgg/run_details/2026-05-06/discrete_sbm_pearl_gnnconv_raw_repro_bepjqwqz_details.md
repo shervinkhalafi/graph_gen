@@ -11,7 +11,7 @@
 | wandb_project | `discrete-sbm-pearl-gnnconv-raw-repro` |
 | run_id | `bepjqwqz` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_pearl_gnnconv_raw_repro/discrete_sbm_pearl_gnnconv_raw_repro_DiffusionModule_dSpectreSBMDataModule_lr1e-3_wd1e-4_L8_s666_fresh_20260504T220549/` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-sbm-pearl-gnnconv-raw-repro/runs/bepjqwqz> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-pearl-gnnconv-raw-repro/runs/bepjqwqz> |
 
 ## Notes
 

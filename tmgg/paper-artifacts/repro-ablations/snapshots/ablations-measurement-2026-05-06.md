@@ -312,7 +312,7 @@ gaps are unlikely to move much.**
 
 - Run state and per-step MMDs: W&B via `mcp__wandb__get_run_history_tool`,
   pulled 2026-05-06 11:56 UTC. Project per variant
-  (`graph_denoise_team/discrete-{sbm,enzymes}-<variant>-repro`).
+  (`<TEAM-ENTITY>/discrete-{sbm,enzymes}-<variant>-repro`).
 - Baselines: `data/eval/mmd_baselines/{spectre_sbm,pyg_enzymes}.json`,
   computed by `tmgg-mmd-baselines` 2026-05-06.
 - Anchors: DiGress (`arXiv:2209.14734v3` Table 1), HiGen

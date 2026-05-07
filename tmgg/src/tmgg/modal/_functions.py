@@ -725,7 +725,7 @@ def modal_evaluate_mmd_fast(task_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------
-# Async-eval wrappers (Step 2 of compressed-tumbling-whale plan).
+# Async-eval wrappers (Step 2 of the async-eval plan).
 #
 # Same per-tier triple as ``modal_evaluate_mmd*`` above, but each
 # delegates to ``evaluate_mmd_async`` from

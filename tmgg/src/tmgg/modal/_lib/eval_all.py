@@ -432,7 +432,7 @@ def eval_all_checkpoints_impl(
     config = _load_run_config(exp_dir)
 
     wandb_project = str(config.get("wandb_project") or "tmgg-eval-all")
-    wandb_entity = str(config.get("wandb_entity") or "graph_denoise_team")
+    wandb_entity = str(config.get("wandb_entity") or "<TEAM-ENTITY>")
     eval_project = f"{wandb_project}{wandb_project_suffix}"
 
     run_name = _resolve_wandb_run_name(exp_dir, wandb_run_id_override)

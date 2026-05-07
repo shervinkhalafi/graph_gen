@@ -23,7 +23,7 @@ commit both together.
 
 ## Prereqs
 
-- `wandb` authenticated for the `graph_denoise_team` entity. The
+- `wandb` authenticated for the `<TEAM-ENTITY>` entity. The
   on-host machine's `~/.netrc` may hold a different (non-team) wandb
   token; in that case use `doppler run` to inject the team-member key
   (see "Running with doppler" below).
@@ -34,7 +34,7 @@ commit both together.
 
 ### Running with doppler
 
-If your `~/.netrc` wandb token isn't for a `graph_denoise_team`
+If your `~/.netrc` wandb token isn't for a `<TEAM-ENTITY>`
 member, use the team-member key from doppler:
 
 ```bash
@@ -80,7 +80,7 @@ cd paper-artifacts/repro-ablations
 # preferred — works regardless of which wandb account the host's ~/.netrc holds
 doppler run -- uv run scripts/refresh.py --summary "post-eval-cycle-N refresh"
 
-# alternative — only if your ~/.netrc is already for a graph_denoise_team member
+# alternative — only if your ~/.netrc is already for a <TEAM-ENTITY> member
 uv run scripts/refresh.py --summary "post-eval-cycle-N refresh"
 ```
 

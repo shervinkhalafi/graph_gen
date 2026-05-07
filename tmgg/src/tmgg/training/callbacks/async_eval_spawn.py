@@ -1,7 +1,6 @@
 """Lightning callback that drives the async-eval loop from training.
 
-Step 3 of the async-eval plan
-(``/home/igork/.claude/plans/compressed-tumbling-whale.md``). The trainer
+Step 3 of the async-eval plan. The trainer
 fires-and-forgets a Modal eval call on every scheduled step; this
 callback owns the schedule cursor, the step-stamped checkpoint write,
 the volume commit, the spawn, the manifest append, and the at-fit-end

@@ -14,7 +14,7 @@
 | run_id | `ge461v1o` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_enzymes_pearl_repro/ge461v1o/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-enzymes-pearl-repro/runs/ge461v1o> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-enzymes-pearl-repro/runs/ge461v1o> |
 
 ## Fetched
 

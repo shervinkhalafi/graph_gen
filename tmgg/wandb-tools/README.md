@@ -13,7 +13,7 @@ The tools support multiple authentication methods (checked in order):
 3. **Project .env file**: `GRAPH_DENOISE_TEAM_SERVICE` key
 4. **Default credentials**: `~/.netrc` (from `wandb login`)
 
-For team access (`graph_denoise_team`), create a `.env` file in the project root:
+For team access (`<TEAM-ENTITY>`), create a `.env` file in the project root:
 
 ```bash
 # .env
@@ -33,7 +33,7 @@ List accessible W&B teams/entities and their projects with run statistics.
 uv run wandb-tools/list_entities.py
 
 # List projects for a specific entity
-uv run wandb-tools/list_entities.py --entity graph_denoise_team
+uv run wandb-tools/list_entities.py --entity <TEAM-ENTITY>
 
 # Output as JSON
 uv run wandb-tools/list_entities.py --json > entities.json
@@ -52,16 +52,16 @@ Export W&B runs with full configs and metrics to parquet files. Each run record 
 
 ```bash
 # Export a specific project
-uv run wandb-tools/export_runs.py --entity graph_denoise_team --project spectral_denoising
+uv run wandb-tools/export_runs.py --entity <TEAM-ENTITY> --project spectral_denoising
 
 # Export all projects from an entity
-uv run wandb-tools/export_runs.py -e graph_denoise_team -p "*" -o wandb_export/
+uv run wandb-tools/export_runs.py -e <TEAM-ENTITY> -p "*" -o wandb_export/
 
 # Export with date filter
 uv run wandb-tools/export_runs.py -e igorkraw --since 7d
 
 # Include training history (slower, larger files)
-uv run wandb-tools/export_runs.py -e graph_denoise_team -p spectral_denoising --include-history
+uv run wandb-tools/export_runs.py -e <TEAM-ENTITY> -p spectral_denoising --include-history
 ```
 
 **Output structure:**
@@ -140,10 +140,10 @@ uv run wandb-tools/analyze_runs.py --schema
 
 ```bash
 # 1. Check what's available
-uv run wandb-tools/list_entities.py --entity graph_denoise_team
+uv run wandb-tools/list_entities.py --entity <TEAM-ENTITY>
 
 # 2. Export runs from target projects
-uv run wandb-tools/export_runs.py -e graph_denoise_team -p spectral_denoising -o wandb_export/
+uv run wandb-tools/export_runs.py -e <TEAM-ENTITY> -p spectral_denoising -o wandb_export/
 
 # 3. Quick analysis (uses latest export automatically)
 uv run wandb-tools/analyze_runs.py --filter "stage3_pyg_dist" --pivot --descending
@@ -153,7 +153,7 @@ uv run wandb-tools/aggregate_runs.py wandb_export/ -o analysis/unified.parquet -
 uv run wandb-tools/analyze_runs.py analysis/unified.parquet --group-by architecture,dataset
 
 # 5. Load in polars for custom analysis
-python -c "import polars as pl; df = pl.read_parquet('wandb_export/graph_denoise_team_spectral_denoising_runs.parquet'); print(df.schema)"
+python -c "import polars as pl; df = pl.read_parquet('wandb_export/<TEAM-ENTITY>_spectral_denoising_runs.parquet'); print(df.schema)"
 ```
 
 ## Data Preservation
@@ -191,10 +191,10 @@ For large projects (2000+ runs), exports may run for several minutes. The tool p
 ... fetched 100 runs
 ... fetched 200 runs
 ...
-Saved 2163 runs to wandb_export/graph_denoise_team_spectral_denoising_runs.parquet
+Saved 2163 runs to wandb_export/<TEAM-ENTITY>_spectral_denoising_runs.parquet
 ```
 
-## Current Data (graph_denoise_team)
+## Current Data (<TEAM-ENTITY>)
 
 As of 2026-01-18, the following projects were exported:
 

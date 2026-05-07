@@ -12,7 +12,7 @@
 | run_id | `rarihsee` |
 | volume_path | `tmgg-outputs:/data/outputs/discrete_sbm_pearl_gnnconv_norm_repro/rarihsee/` |
 | gpu_tier | `fast` |
-| W&B URL | <https://wandb.ai/graph_denoise_team/discrete-sbm-pearl-gnnconv-norm-repro/runs/rarihsee> |
+| W&B URL | <https://wandb.ai/<TEAM-ENTITY>/discrete-sbm-pearl-gnnconv-norm-repro/runs/rarihsee> |
 
 ## Fetched
 

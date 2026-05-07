@@ -31,7 +31,7 @@ set -euo pipefail
 : "${DEPLOY_FIRST:=1}"
 : "${DRY_RUN:=0}"
 : "${GPU_TIER:=standard}"
-: "${WANDB_ENTITY:=graph_denoise_team}"
+: "${WANDB_ENTITY:=<TEAM-ENTITY>}"
 : "${WANDB_PROJECT:=digress-arch-panel}"
 # MODAL_DEBUG=0 (default) → container sets PYTHONOPTIMIZE=1 inside the
 # training subprocess, stripping ``assert`` and ``if __debug__:`` blocks

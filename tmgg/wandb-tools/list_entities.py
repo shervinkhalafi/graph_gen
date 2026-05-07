@@ -12,7 +12,7 @@ along with project counts and run statistics.
 
 Usage:
     uv run wandb-tools/list_entities.py
-    uv run wandb-tools/list_entities.py --entity graph_denoise_team
+    uv run wandb-tools/list_entities.py --entity <TEAM-ENTITY>
     uv run wandb-tools/list_entities.py --json > entities.json
 """
 
@@ -130,7 +130,7 @@ def discover_entities(api: wandb.Api) -> list[str]:
         pass
 
     # Known team entities for this project
-    known_teams = ["graph_denoise_team", "igorkraw"]
+    known_teams = ["<TEAM-ENTITY>", "igorkraw"]
     for team in known_teams:
         if team not in entities:
             try:
@@ -234,7 +234,7 @@ def main() -> None:
             console.print(f"[dim]Discovered entities: {entity_names}[/dim]\n")
     else:
         # Default entities
-        entity_names = ["igorkraw", "graph_denoise_team"]
+        entity_names = ["igorkraw", "<TEAM-ENTITY>"]
 
     # Fetch entity info
     entities = []

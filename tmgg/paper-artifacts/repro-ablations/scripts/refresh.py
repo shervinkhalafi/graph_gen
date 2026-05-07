@@ -103,7 +103,7 @@ CHANGELOG = BUNDLE_ROOT / "CHANGELOG.md"
 RUNLOG_SOURCE = REPO_ROOT / "runlog.md"
 DOCS_EVAL_DIR = REPO_ROOT / "docs" / "eval"
 
-WANDB_ENTITY = "graph_denoise_team"
+WANDB_ENTITY = "<TEAM-ENTITY>"
 
 
 def _wandb_project_for(config_name: str) -> str:
