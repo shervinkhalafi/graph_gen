@@ -1,5 +1,11 @@
 # Unified graph-feature representation: separating edge encoding from edge features
 
+> **Superseded for the carrier dimension** by
+> `docs/superpowers/specs/2026-05-07-sparse-default-graphdata-design.md`.
+> The unified-feature schema (X_class / X_feat / E_class / E_feat) carries
+> through; the carrier (sparse vs dense) and content kind (state vs
+> distribution) are now type-encoded in a 2x2 grid.
+
 **Status:** Draft
 **Type:** Design doc
 **Author:** Claude + Igor (2026-04-15 pairing)

@@ -77,6 +77,10 @@ Exported W&B data lives in `wandb_export/`. Check existing exports before re-exp
 
 **Export tools:** `wandb-tools/export_runs.py`, `wandb-tools/aggregate_runs.py`, `wandb-tools/analyze_runs.py`
 
+## Codebase Facts
+
+- The pipeline carrier is sparse `GraphState` by default; dense path is `DenseGraphState` / `DenseGraphDistribution`. Models accept `GraphData` (universal abstract base) and emit `GraphDistribution` (default) or `DenseGraphDistribution` (`output_dense=True`). See `docs/superpowers/specs/2026-05-07-sparse-default-graphdata-design.md` for the 2×2 carrier-vs-content type grid.
+
 ## TODOs
 
 - [ ] Make `wandb-tools/export_runs.py` auto-deduplicate and cache exports: check existing parquet files, compare timestamps/run counts, only fetch new runs since last export (incremental sync)
