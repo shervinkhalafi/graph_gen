@@ -254,7 +254,97 @@ class GraphState(_StateGraph):
         x_feat_fill: Tensor | float = 0.0,
         n_max: int | None = None,
     ) -> DenseGraphState:
-        raise NotImplementedError("Implemented in Task 1.6.")
+        bs = int(self.num_nodes_per_graph.shape[0])
+        n_max_actual = (
+            int(self.num_nodes_per_graph.max().item()) if n_max is None else int(n_max)
+        )
+        device = self.batch.device
+
+        # Per-row position within graph.
+        cum = torch.zeros(bs + 1, dtype=torch.long, device=device)
+        cum[1:] = torch.cumsum(self.num_nodes_per_graph, dim=0)
+        pos_in_graph = (
+            torch.arange(self.batch.shape[0], device=device) - cum[self.batch]
+        )
+
+        X_class_dense: Tensor | None = None
+        if self.x_class is not None:
+            d_xc = int(self.x_class.shape[-1])
+            fill_xc = (
+                x_class_fill
+                if x_class_fill is not None
+                else torch.zeros(d_xc, dtype=self.x_class.dtype, device=device)
+            )
+            X_class_dense = fill_xc.expand(bs, n_max_actual, d_xc).clone()
+            X_class_dense[self.batch, pos_in_graph] = self.x_class
+
+        X_feat_dense: Tensor | None = None
+        if self.x_feat is not None:
+            d_xf = int(self.x_feat.shape[-1])
+            if isinstance(x_feat_fill, Tensor):
+                base_xf = x_feat_fill.to(self.x_feat.dtype).to(device)
+            else:
+                base_xf = torch.full(
+                    (d_xf,),
+                    float(x_feat_fill),
+                    dtype=self.x_feat.dtype,
+                    device=device,
+                )
+            X_feat_dense = base_xf.expand(bs, n_max_actual, d_xf).clone()
+            X_feat_dense[self.batch, pos_in_graph] = self.x_feat
+
+        # Edge tensors: scatter from edge_index.
+        src_in_graph = self.edge_index[0] - cum[self.batch[self.edge_index[0]]]
+        dst_in_graph = self.edge_index[1] - cum[self.batch[self.edge_index[1]]]
+        graph_ids = self.batch[self.edge_index[0]]
+
+        E_class_dense: Tensor | None = None
+        if self.edge_class is not None:
+            d_ec = int(self.edge_class.shape[-1])
+            if edge_class_fill is None:
+                raise ValueError(
+                    "GraphState.to_dense(): edge_class_fill is required when "
+                    "edge_class is populated. Pass a (d_ec,) vector — e.g. "
+                    "use the `state_to_dense_sample` convenience for "
+                    "no-edge-one-hot fill, or `state_to_dense_logits` for zeros."
+                )
+            fill_ec = edge_class_fill.to(self.edge_class.dtype).to(device)
+            if fill_ec.shape != (d_ec,):
+                raise ValueError(
+                    f"edge_class_fill must have shape ({d_ec},); got "
+                    f"{tuple(fill_ec.shape)}."
+                )
+            E_class_dense = fill_ec.expand(bs, n_max_actual, n_max_actual, d_ec).clone()
+            E_class_dense[graph_ids, src_in_graph, dst_in_graph] = self.edge_class
+            # Diagonal zeroed.
+            diag = torch.arange(n_max_actual, device=device)
+            E_class_dense[:, diag, diag, :] = 0.0
+
+        E_feat_dense: Tensor | None = None
+        if self.edge_feat is not None:
+            d_ef = int(self.edge_feat.shape[-1])
+            if isinstance(edge_feat_fill, Tensor):
+                base_ef = edge_feat_fill.to(self.edge_feat.dtype).to(device)
+            else:
+                base_ef = torch.full(
+                    (d_ef,),
+                    float(edge_feat_fill),
+                    dtype=self.edge_feat.dtype,
+                    device=device,
+                )
+            E_feat_dense = base_ef.expand(bs, n_max_actual, n_max_actual, d_ef).clone()
+            E_feat_dense[graph_ids, src_in_graph, dst_in_graph] = self.edge_feat
+            diag = torch.arange(n_max_actual, device=device)
+            E_feat_dense[:, diag, diag, :] = 0.0
+
+        return DenseGraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y,
+            X_class=X_class_dense,
+            X_feat=X_feat_dense,
+            E_class=E_class_dense,
+            E_feat=E_feat_dense,
+        )
 
     def to_distribution(self) -> GraphDistribution:
         raise NotImplementedError("Implemented in Task 1.7.")
@@ -322,7 +412,74 @@ class GraphDistribution(_DistributionGraph):
         return self.to_dense().dense_adjacency()
 
     def to_dense(self) -> DenseGraphDistribution:
-        raise NotImplementedError("Implemented in Task 1.6.")
+        bs = int(self.num_nodes_per_graph.shape[0])
+        n_max = int(self.num_nodes_per_graph.max().item())
+        device = self.batch.device
+
+        cum = torch.zeros(bs + 1, dtype=torch.long, device=device)
+        cum[1:] = torch.cumsum(self.num_nodes_per_graph, dim=0)
+        pos_in_graph = (
+            torch.arange(self.batch.shape[0], device=device) - cum[self.batch]
+        )
+
+        X_class_d: Tensor | None = None
+        if self.x_class is not None:
+            d_xc = int(self.x_class.shape[-1])
+            X_class_d = torch.zeros(
+                bs, n_max, d_xc, dtype=self.x_class.dtype, device=device
+            )
+            X_class_d[self.batch, pos_in_graph] = self.x_class
+
+        X_feat_d: Tensor | None = None
+        if self.x_feat is not None:
+            d_xf = int(self.x_feat.shape[-1])
+            X_feat_d = torch.zeros(
+                bs, n_max, d_xf, dtype=self.x_feat.dtype, device=device
+            )
+            X_feat_d[self.batch, pos_in_graph] = self.x_feat
+
+        src = self.edge_index[0] - cum[self.batch[self.edge_index[0]]]
+        dst = self.edge_index[1] - cum[self.batch[self.edge_index[1]]]
+        graphs = self.batch[self.edge_index[0]]
+
+        E_class_d: Tensor | None = None
+        if self.edge_class is not None:
+            d_ec = int(self.edge_class.shape[-1])
+            E_class_d = torch.zeros(
+                bs,
+                n_max,
+                n_max,
+                d_ec,
+                dtype=self.edge_class.dtype,
+                device=device,
+            )
+            E_class_d[graphs, src, dst] = self.edge_class
+            diag = torch.arange(n_max, device=device)
+            E_class_d[:, diag, diag, :] = 0.0
+
+        E_feat_d: Tensor | None = None
+        if self.edge_feat is not None:
+            d_ef = int(self.edge_feat.shape[-1])
+            E_feat_d = torch.zeros(
+                bs,
+                n_max,
+                n_max,
+                d_ef,
+                dtype=self.edge_feat.dtype,
+                device=device,
+            )
+            E_feat_d[graphs, src, dst] = self.edge_feat
+            diag = torch.arange(n_max, device=device)
+            E_feat_d[:, diag, diag, :] = 0.0
+
+        return DenseGraphDistribution(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y,
+            X_class=X_class_d,
+            X_feat=X_feat_d,
+            E_class=E_class_d,
+            E_feat=E_feat_d,
+        )
 
     def argmax(self) -> GraphState:
         raise NotImplementedError("Implemented in Task 1.7.")
@@ -441,7 +598,61 @@ class DenseGraphState(_StateGraph):
         *,
         edge_active: Callable[[Tensor], Tensor] | None = None,
     ) -> GraphState:
-        raise NotImplementedError("Implemented in Task 1.6.")
+        bs = int(self.num_nodes_per_graph.shape[0])
+        device = self.num_nodes_per_graph.device
+
+        # Build active mask per (b, i, j) over off-diagonal positions.
+        if self.E_class is not None:
+            ref = self.E_class
+            active = ref.argmax(dim=-1) > 0 if edge_active is None else edge_active(ref)
+        elif self.E_feat is not None:
+            ref = self.E_feat
+            active = (
+                ref.abs().sum(dim=-1) > 0 if edge_active is None else edge_active(ref)
+            )
+        else:
+            raise ValueError("to_sparse() requires E_class or E_feat populated.")
+
+        # Mask out positions outside node_mask × node_mask and the diagonal.
+        nm = self.node_mask
+        pair_mask = nm.unsqueeze(-1) & nm.unsqueeze(-2)  # (B, n_max, n_max)
+        n_max = int(nm.shape[1])
+        eye = torch.eye(n_max, dtype=torch.bool, device=device).unsqueeze(0)
+        active = active.bool() & pair_mask & ~eye
+
+        # Build sparse edge_index.
+        b_idx, i_idx, j_idx = active.nonzero(as_tuple=True)
+        # Convert (b, i) → global node id.
+        cum = torch.zeros(bs + 1, dtype=torch.long, device=device)
+        cum[1:] = torch.cumsum(self.num_nodes_per_graph, dim=0)
+        src_global = cum[b_idx] + i_idx
+        dst_global = cum[b_idx] + j_idx
+        edge_index = torch.stack([src_global, dst_global], dim=0)
+
+        # Gather edge tensors.
+        edge_class = (
+            self.E_class[b_idx, i_idx, j_idx] if self.E_class is not None else None
+        )
+        edge_feat = (
+            self.E_feat[b_idx, i_idx, j_idx] if self.E_feat is not None else None
+        )
+
+        # Node features: gather valid positions.
+        valid_b, valid_i = nm.nonzero(as_tuple=True)
+        x_class = self.X_class[valid_b, valid_i] if self.X_class is not None else None
+        x_feat = self.X_feat[valid_b, valid_i] if self.X_feat is not None else None
+        batch = valid_b
+
+        return GraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y,
+            batch=batch,
+            x_class=x_class,
+            x_feat=x_feat,
+            edge_index=edge_index,
+            edge_class=edge_class,
+            edge_feat=edge_feat,
+        )
 
     def to_distribution(self) -> DenseGraphDistribution:
         raise NotImplementedError("Implemented in Task 1.7.")
@@ -1412,7 +1623,45 @@ class DenseGraphDistribution(_DistributionGraph):
         )
 
     def to_sparse(self) -> GraphDistribution:
-        raise NotImplementedError("Implemented in Task 1.6.")
+        bs = int(self.num_nodes_per_graph.shape[0])
+        device = self.num_nodes_per_graph.device
+        nm = self.node_mask
+        n_max = int(nm.shape[1])
+
+        # Complete edge_index = all (i, j) where i ≠ j and both in node_mask.
+        pair_mask = nm.unsqueeze(-1) & nm.unsqueeze(-2)
+        eye = torch.eye(n_max, dtype=torch.bool, device=device).unsqueeze(0)
+        select = pair_mask & ~eye
+        b_idx, i_idx, j_idx = select.nonzero(as_tuple=True)
+
+        cum = torch.zeros(bs + 1, dtype=torch.long, device=device)
+        cum[1:] = torch.cumsum(self.num_nodes_per_graph, dim=0)
+        src_global = cum[b_idx] + i_idx
+        dst_global = cum[b_idx] + j_idx
+        edge_index = torch.stack([src_global, dst_global], dim=0)
+
+        edge_class = (
+            self.E_class[b_idx, i_idx, j_idx] if self.E_class is not None else None
+        )
+        edge_feat = (
+            self.E_feat[b_idx, i_idx, j_idx] if self.E_feat is not None else None
+        )
+
+        valid_b, valid_i = nm.nonzero(as_tuple=True)
+        x_class = self.X_class[valid_b, valid_i] if self.X_class is not None else None
+        x_feat = self.X_feat[valid_b, valid_i] if self.X_feat is not None else None
+        batch = valid_b
+
+        return GraphDistribution(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y,
+            batch=batch,
+            x_class=x_class,
+            x_feat=x_feat,
+            edge_index=edge_index,
+            edge_class=edge_class,
+            edge_feat=edge_feat,
+        )
 
     def argmax(self) -> DenseGraphState:
         raise NotImplementedError("Implemented in Task 1.7.")
@@ -1450,6 +1699,26 @@ class DenseGraphDistribution(_DistributionGraph):
             raise ValueError("dense_adjacency() requires E_class or E_feat.")
         mask_2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
         return adj * mask_2d.float()
+
+
+# ---- Convenience constructors for common to_dense fill patterns ---------
+
+
+def state_to_dense_sample(state: GraphState) -> DenseGraphState:
+    """Convenience: dense conversion with no-edge one-hot fill (DiGress samples)."""
+    fill = _no_edge_one_hot_fill(state.edge_class)
+    return state.to_dense(edge_class_fill=fill)
+
+
+def state_to_dense_logits(state: GraphState) -> DenseGraphState:
+    """Convenience: dense conversion with zero fill (classification logits)."""
+    if state.edge_class is None:
+        return state.to_dense()
+    d_ec = int(state.edge_class.shape[-1])
+    fill = torch.zeros(
+        d_ec, dtype=state.edge_class.dtype, device=state.edge_class.device
+    )
+    return state.to_dense(edge_class_fill=fill)
 
 
 @dataclass(frozen=True, slots=True)
