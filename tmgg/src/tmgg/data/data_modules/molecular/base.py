@@ -4,10 +4,11 @@ Mirrors :class:`tmgg.data.data_modules.spectre_sbm.SpectreSBMDataModule`
 in dataloader plumbing. The underlying :class:`MolecularGraphDataset`
 exposes single-graph PyG :class:`~torch_geometric.data.Data` objects
 on ``__getitem__``; :class:`GraphDataCollator` then assembles the
-dense :class:`GraphData` batch — same code path as the SPECTRE
+sparse :class:`GraphState` batch — same code path as the SPECTRE
 datamodules — and densifies each graph's atom-class indices into a
-``X_class`` one-hot whose width is fixed by
-``num_atom_types_x = codec.vocab.num_atom_types``.
+per-edge ``edge_class`` one-hot whose width is fixed by
+``num_bond_types_e = codec.vocab.num_bond_types`` (and per-node
+``x_class`` by ``num_atom_types_x = codec.vocab.num_atom_types``).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from tmgg.data.data_modules.multigraph_data_module import (
     GraphDataCollator,
     RawPyGCollator,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphState
 from tmgg.data.datasets.molecular.dataset import MolecularGraphDataset
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
@@ -160,7 +161,7 @@ class MolecularDataModule(BaseGraphDataModule):
         )
 
     @override
-    def train_dataloader(self) -> DataLoader[GraphData]:
+    def train_dataloader(self) -> DataLoader[GraphState]:
         if self._train_dataset is None:
             raise RuntimeError(f"{type(self).__name__} not setup. Call setup() first.")
         return self._make_dataloader(
@@ -170,7 +171,7 @@ class MolecularDataModule(BaseGraphDataModule):
         )
 
     @override
-    def val_dataloader(self) -> DataLoader[GraphData]:
+    def val_dataloader(self) -> DataLoader[GraphState]:
         if self._val_dataset is None:
             raise RuntimeError(f"{type(self).__name__} not setup. Call setup() first.")
         return self._make_dataloader(
@@ -180,7 +181,7 @@ class MolecularDataModule(BaseGraphDataModule):
         )
 
     @override
-    def test_dataloader(self) -> DataLoader[GraphData]:
+    def test_dataloader(self) -> DataLoader[GraphState]:
         if self._test_dataset is None:
             raise RuntimeError(f"{type(self).__name__} not setup. Call setup() first.")
         return self._make_dataloader(
