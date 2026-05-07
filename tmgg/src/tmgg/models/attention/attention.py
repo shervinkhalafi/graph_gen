@@ -1,18 +1,32 @@
 """Attention-based models for graph denoising."""
 
-from typing import Any, override
+from typing import Any, ClassVar, override
 
 import torch
 import torch.nn as nn
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+)
 from tmgg.models.layers.mha_layer import MultiHeadSelfAttention
 
-from ..base import EdgeSource, GraphModel, read_edge_scalar, write_edge_scalar
+from ..base import (
+    EdgeSource,
+    GraphModel,
+    _coerce_input_to,
+    _coerce_output_to,
+    read_edge_scalar,
+)
 
 
 class MultiLayerAttention(GraphModel):
     """Multi-layer attention model for graph denoising."""
+
+    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
         self,
@@ -108,21 +122,38 @@ class MultiLayerAttention(GraphModel):
         return x
 
     @override
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> "GraphDistribution | DenseGraphDistribution":
         """Forward pass through all attention layers.
 
-        Reads the dense scalar adjacency through ``read_edge_scalar`` and
-        writes the result to the configured split edge field via
-        ``write_edge_scalar``; ``t`` is appended to ``data.y`` when
-        supplied, per the spec's two-line pattern.
+        Coerces the input to a :class:`DenseGraphState`, reads the dense
+        scalar adjacency, runs the stacked self-attention layers as
+        before, and writes the prediction to the configured split edge
+        field. The state-typed output is then converted to a distribution
+        and emitted in the requested layout via :func:`_coerce_output_to`.
         """
-        A = read_edge_scalar(data, self.edge_source)
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+        A = read_edge_scalar(d, self.edge_source)
         out_adj = self.apply_attention(A)
-        out = write_edge_scalar(data, edge_scalar=out_adj, target=self._output_target)
+        if self._output_target == "feat":
+            out_dense = DenseGraphState.from_structure_only(d.node_mask, out_adj)
+        else:  # "class"
+            out_dense = DenseGraphState.from_edge_scalar(
+                out_adj, node_mask=d.node_mask, target="E_class"
+            )
+        out_dense = out_dense.replace(y=d.y)
         if t is not None:
-            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
-            out = out.replace(y=new_y)
-        return out
+            new_y = torch.cat([out_dense.y, t.unsqueeze(-1)], dim=-1)
+            out_dense = out_dense.replace(y=new_y)
+        out_dist = out_dense.to_distribution()
+        target = DenseGraphDistribution if output_dense else GraphDistribution
+        return _coerce_output_to(out_dist, target=target)  # type: ignore[return-value]
 
     @override
     def get_config(self) -> dict[str, Any]:
