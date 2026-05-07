@@ -111,10 +111,8 @@ include = ["src/tmgg/**/*.py", "src/tmgg/**/*.yaml", "src/tmgg/**/*.yml"]
 dev = [
     "basedpyright>=1.31.1",
     "pdbpp>=0.11.6",
-    "pre-commit>=4.0.0",
     "rdkit-stubs>=0.8",
     "ruff>=0.8.0",
-    "tach>=0.32.2",
     "tomlkit>=0.13.0",
 ]
 
@@ -155,8 +153,7 @@ exclude = [
     "paper-artifacts/**",
 ]
 # Point pyright at the uv-managed venv so ad-hoc scripts outside `include`
-# can still resolve project deps when the pre-commit hook or the live
-# harness scans them on edit.
+# can still resolve project deps.
 venvPath = "."
 venv = ".venv"
 extraPaths = [".", "paper-artifacts/repro-ablations/scripts"]
