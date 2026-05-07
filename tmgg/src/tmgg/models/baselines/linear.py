@@ -4,14 +4,25 @@ A minimal model that learns a direct linear transformation of the adjacency matr
 Initialized at identity to enable learning from a reasonable starting point.
 """
 
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 import torch.nn as nn
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+)
 
-from ..base import EdgeSource, GraphModel, read_edge_scalar, write_edge_scalar
+from ..base import (
+    EdgeSource,
+    GraphModel,
+    _coerce_input_to,
+    _coerce_output_to,
+    read_edge_scalar,
+)
 
 
 class LinearBaseline(GraphModel):
@@ -45,6 +56,9 @@ class LinearBaseline(GraphModel):
     >>> probs = model.predict(logits)  # Apply sigmoid for [0, 1]
     """
 
+    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_out: ClassVar[type] = DenseGraphDistribution
+
     def __init__(
         self,
         max_nodes: int,
@@ -69,16 +83,27 @@ class LinearBaseline(GraphModel):
         self.W = nn.Parameter(torch.eye(max_nodes))
         self.b = nn.Parameter(torch.zeros(max_nodes, max_nodes))
 
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
-        """Apply linear transformation to input graph.
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> "GraphDistribution | DenseGraphDistribution":
+        """Apply learnable linear transformation to the dense adjacency.
 
-        Reads the dense scalar adjacency through ``read_edge_scalar`` (which
-        respects ``self.edge_source``) and writes the prediction to the
-        configured split edge field via ``write_edge_scalar``. When ``t`` is
-        provided it is appended to ``data.y`` following the spec's two-line
-        pattern.
+        Coerces the input to a :class:`DenseGraphState`, reads the dense
+        scalar adjacency through :func:`read_edge_scalar` (which respects
+        ``self.edge_source``), applies ``W A W^T + b``, and writes the
+        prediction to the configured split edge field. When ``t`` is
+        provided it is appended to the global ``y`` tensor following the
+        spec's two-line pattern. The state-typed output is then converted
+        to a distribution and emitted in the requested layout via
+        :func:`_coerce_output_to`.
         """
-        A = read_edge_scalar(data, self.edge_source)
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+        A = read_edge_scalar(d, self.edge_source)
         B, N, _ = A.shape
 
         W = self.W[:N, :N]
@@ -88,11 +113,19 @@ class LinearBaseline(GraphModel):
         out_adj = torch.bmm(torch.bmm(W_expanded, A), W_expanded.transpose(-2, -1))
         out_adj = out_adj + b.unsqueeze(0)
 
-        out = write_edge_scalar(data, edge_scalar=out_adj, target=self._output_target)
+        if self._output_target == "feat":
+            out_dense = DenseGraphState.from_structure_only(d.node_mask, out_adj)
+        else:  # "class"
+            out_dense = DenseGraphState.from_edge_scalar(
+                out_adj, node_mask=d.node_mask, target="E_class"
+            )
+        out_dense = out_dense.replace(y=d.y)
         if t is not None:
-            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
-            out = out.replace(y=new_y)
-        return out
+            new_y = torch.cat([out_dense.y, t.unsqueeze(-1)], dim=-1)
+            out_dense = out_dense.replace(y=new_y)
+        out_dist = out_dense.to_distribution()
+        target = DenseGraphDistribution if output_dense else GraphDistribution
+        return _coerce_output_to(out_dist, target=target)  # type: ignore[return-value]
 
     def get_config(self) -> dict[str, Any]:
         """Return model configuration."""
