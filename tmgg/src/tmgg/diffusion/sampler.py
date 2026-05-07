@@ -4,16 +4,38 @@
 parameterisation and final decoding back to ``NoiseProcess`` hooks.
 ``CategoricalSampler`` and ``ContinuousSampler`` remain as semantic aliases
 so configuration and call sites can still name the intended sampling mode.
+
+Wave 4-A note (sparse-default refactor)
+---------------------------------------
+The public-facing surface threads the new sparse type
+:class:`tmgg.data.datasets.graph_types.GraphState` for warm-start input
+and the per-graph output list. The model call uses ``output_dense=True``
+so the model emits a :class:`DenseGraphDistribution`, matching the new
+forward contract on every concrete model class. The internal step
+delegates posterior sampling to ``NoiseProcess.posterior_sample_from_model_output``
+which still consumes the legacy dense ``GraphData`` form; that call site
+will be cleaned up in Wave 5 once ``noise_process.py`` adopts the new
+types end-to-end. The Sampler keeps that bridge inert by funnelling all
+internal traffic through the ``DenseGraphState`` / ``DenseGraphDistribution``
+carriers, which are field-compatible with the legacy form
+(``node_mask``, ``X_class``, ``E_class``, ``y``).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import torch
 from torch import Tensor
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+    GraphState,
+)
 from tmgg.diffusion.chain_recorder import ChainRecorder
 from tmgg.diffusion.collectors import StepMetricCollector
 from tmgg.diffusion.noise_process import (
@@ -22,7 +44,25 @@ from tmgg.diffusion.noise_process import (
     GaussianNoiseProcess,
     NoiseProcess,
 )
-from tmgg.models.base import GraphModel
+# ``GraphModel`` resolves at runtime via the project's editable install,
+# but basedpyright fails to surface symbols added through that path
+# until a fresh `uv pip install -e .` plus an editor / language-server
+# reload. The same ignore is applied at every import site that hits this
+# false positive (see e.g. ``training/lightning_modules/base_graph_module.py``);
+# this file follows the same precedent rather than inventing a new one.
+from tmgg.models.base import GraphModel  # pyright: ignore[reportAttributeAccessIssue]
+
+# ``DenseGraphDistribution`` and ``GraphDistribution`` only appear in
+# this module's docstrings; the imports keep them resolvable for
+# documentation tooling and signal the intended public surface.
+__all__ = [
+    "CategoricalSampler",
+    "ContinuousSampler",
+    "DenseGraphDistribution",
+    "DiffusionState",
+    "GraphDistribution",
+    "Sampler",
+]
 
 
 class _BufferingCollector:
@@ -45,16 +85,31 @@ class _BufferingCollector:
 
 @dataclass(frozen=True, slots=True)
 class DiffusionState:
-    """A batched latent graph state together with its diffusion timestep."""
+    """A batched latent graph state together with its diffusion timestep.
 
-    graph: GraphData
+    Parameters
+    ----------
+    graph
+        Sparse :class:`GraphState` carrying the latent at timestep ``t``.
+        Per the Wave 4-A contract, warm starts are presented in the
+        sparse-default carrier; densification into ``DenseGraphState``
+        happens inside :meth:`Sampler.sample` at the boundary into the
+        legacy noise-process API.
+    t
+        Current diffusion timestep (``0 <= t <= max_t``).
+    max_t
+        Total number of diffusion steps owned by the active noise
+        process.
+    """
+
+    graph: GraphState
     t: int
     max_t: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.graph, GraphData):
+        if not isinstance(self.graph, GraphState):
             raise TypeError(
-                "DiffusionState.graph must be a GraphData instance, "
+                "DiffusionState.graph must be a GraphState instance, "
                 f"got {type(self.graph).__name__}"
             )
         if isinstance(self.t, bool) or not isinstance(self.t, int):
@@ -74,17 +129,11 @@ class DiffusionState:
             )
 
         graph = self.graph
-        # node_mask is mandatory and fixes batch shape; downstream
-        # finalisers trim per-graph from it. Populated split fields are
-        # validated against that shape by ``GraphData.__post_init__`` so
-        # we only need to assert the batch axis here.
-        if graph.node_mask.dim() != 2:
-            raise ValueError(
-                "DiffusionState.graph.node_mask must have shape (bs, n), "
-                f"got {tuple(graph.node_mask.shape)}"
-            )
-
-        bs, _ = graph.node_mask.shape
+        # Per-graph node-count tensor fixes the batch shape; the ``y``
+        # graph-level features must align with that batch axis. Other
+        # invariants (sparse fields, edge_index) are checked inside
+        # ``GraphState.__post_init__``.
+        bs = int(graph.num_nodes_per_graph.shape[0])
         if graph.y.dim() != 2:
             raise ValueError(
                 "DiffusionState.graph.y must be batched (bs, dy), "
@@ -146,35 +195,56 @@ class Sampler:
         return num_nodes.to(device=device, dtype=torch.long)
 
     @staticmethod
-    def _trim_batched_graphs(final: GraphData, n_nodes: Tensor) -> list[GraphData]:
-        """Split a batched final state into per-graph ``GraphData`` objects.
+    def _trim_batched_graphs(
+        final: DenseGraphState, n_nodes: Tensor
+    ) -> list[GraphState]:
+        """Split a batched final state into per-graph :class:`GraphState` items.
 
-        Preserves every populated split field (``X_class`` / ``X_feat``
-        / ``E_class`` / ``E_feat``) from ``final`` so downstream
-        consumers (notably the evaluator binarisation helpers) can read
-        split-field data when available.
+        Each per-graph slice is built as an unbatched
+        :class:`DenseGraphState` first (because
+        :meth:`NoiseProcess.finalize_sample` returns a dense-shaped
+        carrier with ``X_class`` / ``E_class`` / ``X_feat`` / ``E_feat``
+        as ``(B, n, ...)`` / ``(B, n, n, ...)`` tensors) and then
+        :meth:`DenseGraphState.to_sparse` materialises the sparse
+        :class:`GraphState`. Empty / structure-only fields pass through
+        as ``None``.
         """
-        results: list[GraphData] = []
+        results: list[GraphState] = []
         for i, n_tensor in enumerate(n_nodes, start=0):
             n = int(n_tensor.item())
-            y = final.y[i].cpu()
-            node_mask = final.node_mask[i, :n].cpu()
-            x_class = final.X_class[i, :n].cpu() if final.X_class is not None else None
-            x_feat = final.X_feat[i, :n].cpu() if final.X_feat is not None else None
-            e_class = (
-                final.E_class[i, :n, :n].cpu() if final.E_class is not None else None
+            num_nodes_per_graph_i = torch.tensor(
+                [n], dtype=torch.long, device="cpu"
             )
-            e_feat = final.E_feat[i, :n, :n].cpu() if final.E_feat is not None else None
-            results.append(
-                GraphData(
-                    y=y,
-                    node_mask=node_mask,
-                    X_class=x_class,
-                    X_feat=x_feat,
-                    E_class=e_class,
-                    E_feat=e_feat,
-                )
+            y_i = final.y[i : i + 1].cpu()
+            x_class_i = (
+                final.X_class[i : i + 1, :n].cpu()
+                if final.X_class is not None
+                else None
             )
+            x_feat_i = (
+                final.X_feat[i : i + 1, :n].cpu()
+                if final.X_feat is not None
+                else None
+            )
+            e_class_i = (
+                final.E_class[i : i + 1, :n, :n].cpu()
+                if final.E_class is not None
+                else None
+            )
+            e_feat_i = (
+                final.E_feat[i : i + 1, :n, :n].cpu()
+                if final.E_feat is not None
+                else None
+            )
+            dense = DenseGraphState(
+                num_nodes_per_graph=num_nodes_per_graph_i,
+                y=y_i,
+                X_class=x_class_i,
+                X_feat=x_feat_i,
+                E_class=e_class_i,
+                E_feat=e_feat_i,
+            )
+            results.append(dense.to_sparse())
         return results
 
     @staticmethod
@@ -214,8 +284,13 @@ class Sampler:
             return
 
         if isinstance(noise_process, CategoricalNoiseProcess):
-            posterior_probs = noise_process._posterior_probabilities(
-                z_t, posterior_param, t, s
+            # ``_posterior_probabilities`` returns the legacy dense-shaped
+            # GraphData (post-Wave-5 cleanup it will be a DenseGraphState
+            # / DenseGraphDistribution); narrow to the dense state type
+            # so the X_class / E_class field reads typecheck.
+            posterior_probs = cast(
+                DenseGraphState,
+                noise_process._posterior_probabilities(z_t, posterior_param, t, s),
             )
             x_probs = posterior_probs.X_class
             e_probs = posterior_probs.E_class
@@ -224,7 +299,12 @@ class Sampler:
                     "CategoricalNoiseProcess._posterior_probabilities must "
                     "populate X_class and E_class; got None."
                 )
-            node_mask = z_t.node_mask
+            # ``z_t`` is the categorical-branch state held by the sampler
+            # loop, which always materialises with a dense ``node_mask``
+            # (the legacy noise-process API requires it). Narrow for the
+            # field read.
+            z_t_dense = cast(DenseGraphState, z_t)
+            node_mask = z_t_dense.node_mask
             ent_x = -torch.sum(
                 x_probs * torch.log(x_probs.clamp(min=1e-30)),
                 dim=-1,
@@ -274,13 +354,17 @@ class Sampler:
         start_from: DiffusionState | None = None,
         collector: StepMetricCollector | None = None,
         chain_recorder: ChainRecorder | dict[str, ChainRecorder] | None = None,
-    ) -> list[GraphData]:
+    ) -> list[GraphState]:
         """Generate graphs via reverse diffusion.
 
         Parameters
         ----------
         model
             Trained ``GraphModel`` that predicts clean data from noisy input.
+            The forward call uses ``output_dense=True`` so the model
+            returns a :class:`DenseGraphDistribution` regardless of the
+            carrier of the input ``z_t``; this matches the Wave 3 model
+            forward contract.
         noise_process
             Module-owned diffusion process used for the reverse chain.
         num_graphs
@@ -292,8 +376,10 @@ class Sampler:
             Device on which to run sampling.
         start_from
             Starting latent graph state and timestep for partial reverse
-            chains. When ``None``, sampling starts from the process prior
-            at ``t=T``.
+            chains. The wrapped graph is a sparse :class:`GraphState`;
+            the sampler densifies it internally to feed the legacy
+            noise-process posterior interface. When ``None``, sampling
+            starts from the process prior at ``t=T``.
         collector
             Per-step metric collector. When provided,
             ``record(t, s, metrics)`` is called at each reverse step
@@ -322,9 +408,12 @@ class Sampler:
 
         Returns
         -------
-        list[GraphData]
-            One ``GraphData`` per generated graph, trimmed to its real
-            node count.
+        list[GraphState]
+            One :class:`GraphState` per generated graph, trimmed to its
+            real node count. Wave 5 cleanup will reconcile downstream
+            consumers (evaluator, callbacks) to consume the sparse
+            carrier directly instead of the legacy
+            :class:`GraphData`-shaped dense form.
         """
         if start_from is not None:
             if start_from.max_t != noise_process.timesteps:
@@ -333,15 +422,23 @@ class Sampler:
                     f"timesteps, got start_from.max_t={start_from.max_t} "
                     f"and noise_process.timesteps={noise_process.timesteps}"
                 )
-            z_t = start_from.graph.to(device)
-            bs = z_t.node_mask.shape[0]
+            sparse_start = start_from.graph.to(device)
+            bs = int(sparse_start.num_nodes_per_graph.shape[0])
             if bs != num_graphs:
                 raise ValueError(
                     "Warm-start batch size must match num_graphs, "
                     f"got batch size {bs} and num_graphs={num_graphs}"
                 )
-            n_nodes = z_t.node_mask.sum(dim=-1).long()
+            n_nodes = sparse_start.num_nodes_per_graph
             t_start = start_from.t
+            # Densify the sparse warm-start so the internal flow (model
+            # call coercion, noise_process posterior, chain_recorder)
+            # operates on the dense ``DenseGraphState`` carrier. The
+            # legacy noise-process API reads ``X_class`` / ``E_class`` /
+            # ``node_mask`` from this form.
+            z_t: GraphData = sparse_start.to_dense(
+                edge_class_fill=_default_no_edge_fill(sparse_start.edge_class),
+            )
         else:
             n_nodes = self._build_num_nodes(num_graphs, num_nodes, device)
             n_max = int(n_nodes.max().item())
@@ -359,7 +456,15 @@ class Sampler:
             s_tensor = torch.full((bs,), s_int, device=device, dtype=torch.long)
 
             condition = noise_process.process_state_condition_vector(t_tensor)
-            model_output = model(z_t, t=condition)
+            # ``output_dense=True`` selects the :class:`DenseGraphDistribution`
+            # return type on every concrete model class (Wave 3 forward
+            # contract). The sparse-default refactor flips the model
+            # output to the dense distribution at this single call site
+            # so the legacy noise-process API (which reads ``X_class`` /
+            # ``E_class`` / ``node_mask``) still receives a compatible
+            # carrier. Wave 5 will move the noise-process to native
+            # sparse and remove the carrier mismatch entirely.
+            model_output = model(z_t, t=condition, output_dense=True)
             posterior_param = noise_process.model_output_to_posterior_parameter(
                 model_output
             )
@@ -393,8 +498,18 @@ class Sampler:
             # sample_discrete_features already symmetrises; the check
             # protects against future code paths that bypass the
             # canonical symmetrisation primitive.
-            if self._assert_symmetric_e and z_t.E_class is not None:
-                e = z_t.E_class
+            #
+            # ``z_t`` here is the legacy noise-process return — dense
+            # carrier shape, with ``E_class`` of shape ``(B, n, n, d_ec)``.
+            # Narrow to ``DenseGraphState`` for typed access; Wave 5
+            # cleanup will retype the noise-process return so the cast
+            # disappears.
+            z_t_dense_post = cast(DenseGraphState, z_t)
+            if (
+                self._assert_symmetric_e
+                and z_t_dense_post.E_class is not None
+            ):
+                e = z_t_dense_post.E_class
                 if not torch.allclose(e, e.transpose(-3, -2)):
                     raise AssertionError(
                         "Sampler reverse step produced asymmetric E_class at "
@@ -416,7 +531,11 @@ class Sampler:
                     for sub_recorder in chain_recorder.values():
                         sub_recorder.maybe_record(step_index, z_t)
 
-        final = noise_process.finalize_sample(z_t)
+        # ``finalize_sample`` returns the dense-carrier state from the
+        # legacy noise-process API; narrow to ``DenseGraphState`` so the
+        # per-graph trim sees a typed split-field carrier. Wave 5 cleanup
+        # will retype the noise-process return and remove the cast.
+        final = cast(DenseGraphState, noise_process.finalize_sample(z_t))
         return self._trim_batched_graphs(final, n_nodes)
 
 
@@ -426,3 +545,23 @@ class CategoricalSampler(Sampler):
 
 class ContinuousSampler(Sampler):
     """Semantic alias for the unified sampler loop."""
+
+
+def _default_no_edge_fill(edge_class: Tensor | None) -> Tensor | None:
+    """Return the canonical no-edge one-hot fill for a sparse ``edge_class``.
+
+    Mirrors :func:`tmgg.data.datasets.graph_types._no_edge_one_hot_fill`
+    behaviour without importing the private helper: when ``edge_class``
+    is ``None`` (structure-only graph) we pass ``None`` through, which
+    instructs ``GraphState.to_dense`` to skip the edge fill. Otherwise
+    we synthesise a ``(d_ec,)`` one-hot vector with a 1.0 in channel 0
+    so padded / inactive (b, i, j) positions decode as the "no edge"
+    class on the dense form.
+    """
+    if edge_class is None:
+        return None
+    d_ec = int(edge_class.shape[-1])
+    fill = torch.zeros(d_ec, dtype=edge_class.dtype, device=edge_class.device)
+    if d_ec >= 1:
+        fill[0] = 1.0
+    return fill
