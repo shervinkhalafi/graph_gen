@@ -105,7 +105,7 @@ class TestMultiLayerAttention:
         def _raise(*_args, **_kwargs):
             raise AssertionError("binary topology should not be used here")
 
-        monkeypatch.setattr(GraphData, "binarised_adjacency", _raise)
+        monkeypatch.setattr(GraphData, "dense_adjacency", _raise)
 
         model = MultiLayerAttention(d_model=6, num_heads=2, num_layers=1)
         data = edge_scalar_graphdata(torch.randn(1, 6, 6))

@@ -242,7 +242,7 @@ class TestContinuousNoiseProcess:
         assert result.E_feat is not None
         assert (
             result.to_edge_scalar(source="feat").shape
-            == graph_data_from_adj.binarised_adjacency().shape
+            == graph_data_from_adj.dense_adjacency().shape
         )
         assert result.node_mask.shape == graph_data_from_adj.node_mask.shape
 
@@ -280,7 +280,7 @@ class TestContinuousNoiseProcess:
         assert result.E_feat is not None
         assert (
             result.to_edge_scalar(source="feat").shape
-            == graph_data_from_adj.binarised_adjacency().shape
+            == graph_data_from_adj.dense_adjacency().shape
         )
         assert result.y.shape == graph_data_from_adj.y.shape
         assert result.node_mask.shape == graph_data_from_adj.node_mask.shape
@@ -306,7 +306,7 @@ class TestContinuousNoiseProcess:
         proc = GaussianNoiseProcess(definition=gen, schedule=cosine_schedule)
         t = torch.tensor([0, 0], dtype=torch.long)
         result = proc.forward_sample(graph_data_from_adj, t).z_t
-        adj_in = graph_data_from_adj.binarised_adjacency().unsqueeze(-1)
+        adj_in = graph_data_from_adj.dense_adjacency().unsqueeze(-1)
         adj_out = result.E_feat
         assert adj_out is not None
         # alpha_bar(0) ≈ 0.998 ⇒ noise std ≈ 0.04. Allow 5 sigma headroom.
@@ -328,7 +328,7 @@ class TestContinuousNoiseProcess:
         assert isinstance(posterior, GraphData)
         assert (
             legacy_edge_scalar(posterior).shape
-            == graph_data_from_adj.binarised_adjacency().shape
+            == graph_data_from_adj.dense_adjacency().shape
         )
         assert posterior.node_mask.shape == graph_data_from_adj.node_mask.shape
 

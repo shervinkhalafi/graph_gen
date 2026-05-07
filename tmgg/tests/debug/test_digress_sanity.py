@@ -124,7 +124,7 @@ class TestDigressLevel1ConstantNoiseMemorization:
 
         with torch.no_grad():
             result = model(data_noisy)
-            predictions = result.binarised_adjacency()
+            predictions = result.dense_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
         assert (
@@ -155,7 +155,7 @@ class TestDigressLevel1ConstantNoiseMemorization:
 
         with torch.no_grad():
             result = model(data_noisy)
-            predictions = result.binarised_adjacency()
+            predictions = result.dense_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
         assert (
@@ -211,7 +211,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
 
         with torch.no_grad():
             result = model(binary_graphdata(A_noisy_eval))
-            predictions = result.binarised_adjacency()
+            predictions = result.dense_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
         assert (
@@ -239,7 +239,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
 
         with torch.no_grad():
             result = model(binary_graphdata(A_noisy_eval))
-            predictions = result.binarised_adjacency()
+            predictions = result.dense_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
         assert (

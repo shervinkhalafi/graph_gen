@@ -41,7 +41,7 @@ class TestSelfAttentionDenoiser:
         def _raise(*_args, **_kwargs):
             raise AssertionError("binary topology should not be used here")
 
-        monkeypatch.setattr(GraphData, "binarised_adjacency", _raise)
+        monkeypatch.setattr(GraphData, "dense_adjacency", _raise)
 
         model = SelfAttentionDenoiser(k=4, d_k=8)
         data = edge_scalar_graphdata(torch.randn(1, 10, 10))

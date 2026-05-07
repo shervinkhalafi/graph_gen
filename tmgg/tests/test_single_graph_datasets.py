@@ -41,7 +41,7 @@ def _graphdata_to_numpy(batch: GraphData, index: int = 0) -> np.ndarray:
     deleted graph accessors.
     """
     num_nodes = int(batch.node_mask[index].sum().item())
-    adj = batch.binarised_adjacency()[index, :num_nodes, :num_nodes]
+    adj = batch.dense_adjacency()[index, :num_nodes, :num_nodes]
     return adj.cpu().numpy()
 
 
@@ -195,7 +195,7 @@ class TestSyntheticGraphs:
         batch = next(iter(loader))
 
         assert isinstance(batch, GraphData)
-        adj = batch.binarised_adjacency()
+        adj = batch.dense_adjacency()
         assert adj.shape == (
             batch_size,
             50,

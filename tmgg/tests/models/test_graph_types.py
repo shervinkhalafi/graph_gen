@@ -240,7 +240,7 @@ class TestExplicitGraphBoundaries:
         """Binary graph boundaries round-trip through the topology accessors."""
         adj = torch.tensor([[[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]]])
         data = binary_graphdata(adj)
-        torch.testing.assert_close(data.binarised_adjacency(), adj)
+        torch.testing.assert_close(data.dense_adjacency(), adj)
 
     def test_binary_topology_lifts_into_edge_state_space(self) -> None:
         """Binary-topology graphs expose their edge indicator channel as edge state."""

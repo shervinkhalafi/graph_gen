@@ -421,7 +421,7 @@ class TestPerFieldLossIteration:
         """
         m = _make_module()
         batch = _make_batch()
-        adj = batch.binarised_adjacency()
+        adj = batch.dense_adjacency()
 
         # Fake prediction with finite logits; use the same tensor on
         # both sides so the call is deterministic.
@@ -439,7 +439,7 @@ class TestPerFieldLossIteration:
         """
         m = _make_module()
         batch = _make_batch()
-        adj = batch.binarised_adjacency()
+        adj = batch.dense_adjacency()
         output = torch.randn_like(adj)
 
         base = m._per_field_edge_loss(output, adj)  # pyright: ignore[reportPrivateUsage]

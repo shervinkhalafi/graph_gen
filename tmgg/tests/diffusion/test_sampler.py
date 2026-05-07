@@ -678,7 +678,7 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.binarised_adjacency()
+            adj = g.dense_adjacency()
             unique_vals = torch.unique(adj)
             for v in unique_vals:
                 assert v.item() in (
@@ -702,7 +702,7 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.binarised_adjacency()
+            adj = g.dense_adjacency()
             if adj.dim() == 2:
                 assert torch.equal(adj, adj.T), "Adjacency must be symmetric"
             elif adj.dim() == 3:
@@ -726,7 +726,7 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.binarised_adjacency()
+            adj = g.dense_adjacency()
             if adj.dim() == 2:
                 assert torch.diag(adj).sum() == 0, "Self-loops must be zero"
             elif adj.dim() == 3:
@@ -755,7 +755,7 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            adj = g.binarised_adjacency()
+            adj = g.dense_adjacency()
             assert not adj.requires_grad
 
     def test_warm_start_still_works_with_explicit_noise_process(

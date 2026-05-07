@@ -73,7 +73,7 @@ class TestSequentialDenoisingModel:
         def _raise(*_args, **_kwargs):
             raise AssertionError("binary topology should not be used here")
 
-        monkeypatch.setattr(GraphData, "binarised_adjacency", _raise)
+        monkeypatch.setattr(GraphData, "dense_adjacency", _raise)
 
         embedding_model = GNN(
             num_layers=1, num_terms=2, feature_dim_in=6, feature_dim_out=3

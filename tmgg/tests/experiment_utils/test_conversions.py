@@ -94,7 +94,7 @@ class TestToBinaryAdjacency:
     def test_round_trip(self, binary_adjacency: torch.Tensor) -> None:
         """Binary topology should round-trip exactly."""
         g = binary_graphdata(binary_adjacency)
-        A_recovered = g.binarised_adjacency()
+        A_recovered = g.dense_adjacency()
         # The diagonal is always zeroed (no self-loops)
         A_no_diag = binary_adjacency.clone()
         diag_idx = torch.arange(N)
@@ -107,7 +107,7 @@ class TestToBinaryAdjacency:
         A[0, 1] = A[1, 0] = 1.0
         A[2, 3] = A[3, 2] = 1.0
         g = binary_graphdata(A)
-        A_recovered = g.binarised_adjacency()
+        A_recovered = g.dense_adjacency()
         assert torch.allclose(A_recovered, A)
 
     def test_masking_zeros_invalid_edges(self) -> None:
@@ -122,7 +122,7 @@ class TestToBinaryAdjacency:
             y=torch.zeros(2, 0),
             node_mask=node_mask,
         )
-        A = g.binarised_adjacency()
+        A = g.dense_adjacency()
         # Last row/col should be zero
         assert (A[:, 3, :] == 0).all()
         assert (A[:, :, 3] == 0).all()
@@ -130,7 +130,7 @@ class TestToBinaryAdjacency:
     def test_symmetry_preservation(self, binary_adjacency: torch.Tensor) -> None:
         """Recovered adjacency should be symmetric if input edges were."""
         g = binary_graphdata(binary_adjacency)
-        A = g.binarised_adjacency()
+        A = g.dense_adjacency()
         assert torch.allclose(A, A.transpose(1, 2))
 
 

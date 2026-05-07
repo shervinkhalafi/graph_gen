@@ -78,7 +78,7 @@ class TestEndToEndTraining:
         for _ in range(5):
             epoch_loss = 0.0
             for graph_batch in dataloader:
-                batch = graph_batch.binarised_adjacency()
+                batch = graph_batch.dense_adjacency()
                 # Add noise
                 batch_noisy = add_edge_flip_noise(batch, p=0.1)
                 batch_noisy = batch_noisy.float()
@@ -147,7 +147,7 @@ class TestEndToEndTraining:
         for _ in range(5):
             epoch_loss = 0.0
             for graph_batch in dataloader:
-                batch = graph_batch.binarised_adjacency()
+                batch = graph_batch.dense_adjacency()
                 # Add rotation noise
                 batch_noisy = add_rotation_noise(batch, eps=0.1, skew=skew)
                 _, V_noisy = torch.linalg.eigh(batch_noisy.float())
@@ -213,7 +213,7 @@ class TestEndToEndTraining:
         for _ in range(5):
             epoch_loss = 0.0
             for graph_batch in dataloader:
-                batch = graph_batch.binarised_adjacency()
+                batch = graph_batch.dense_adjacency()
                 # Add Gaussian noise
                 batch_noisy = add_gaussian_noise(batch, eps=0.1)
                 batch_noisy = batch_noisy.float()
@@ -274,7 +274,7 @@ class TestEndToEndTraining:
         _ = model.train()
         for _ in range(3):
             for graph_batch in dataloader:
-                batch = graph_batch.binarised_adjacency()
+                batch = graph_batch.dense_adjacency()
                 # Sample random noise level
                 eps: float = np.random.choice(noise_levels)
 
@@ -304,7 +304,7 @@ class TestEndToEndTraining:
             sample = dataloader.dataset[0]
             assert isinstance(sample, Data)
             test_gd = GraphData.from_pyg_batch(Batch.from_data_list([sample]))
-            test_batch = test_gd.binarised_adjacency()
+            test_batch = test_gd.dense_adjacency()
 
             for eps in noise_levels:
                 test_noisy = add_edge_flip_noise(test_batch, p=eps)
@@ -339,7 +339,7 @@ class TestEndToEndTraining:
         _ = model.train()
         for _ in range(10):
             for graph_batch in dataloader:
-                batch = graph_batch.binarised_adjacency()
+                batch = graph_batch.dense_adjacency()
                 batch_noisy = add_gaussian_noise(batch, eps=0.1)
                 batch_noisy = batch_noisy.float()
                 batch = batch.float()
@@ -381,7 +381,7 @@ class TestEndToEndTraining:
         model = GNN(num_layers=2, feature_dim_out=5, eigenvalue_reg=1e-3)
         _ = model.float()
 
-        batch = next(iter(dataloader)).binarised_adjacency()
+        batch = next(iter(dataloader)).dense_adjacency()
         batch_noisy = add_edge_flip_noise(batch, p=0.1).float()
         batch = batch.float()
 
@@ -426,7 +426,7 @@ class TestEndToEndTraining:
         model = create_sequential_model(gnn_config, transformer_config)
         _ = model.float()
 
-        batch = next(iter(dataloader)).binarised_adjacency()
+        batch = next(iter(dataloader)).dense_adjacency()
         batch_noisy = add_edge_flip_noise(batch, p=0.1).float()
         batch = batch.float()
 
@@ -477,7 +477,7 @@ class TestEndToEndTraining:
         model = GNN(num_layers=2, feature_dim_out=5, eigenvalue_reg=0.0)
         _ = model.float()
 
-        batch = next(iter(dataloader)).binarised_adjacency()
+        batch = next(iter(dataloader)).dense_adjacency()
         batch = batch.float()
 
         result = model(edge_scalar_graphdata(batch))

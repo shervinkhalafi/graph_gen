@@ -304,7 +304,7 @@ class TestRoundTrip:
         g = GraphData.from_pyg_batch(batch)
 
         # Reconstruct adjacency via GraphData.to_binary_adjacency
-        recovered_adj = g.binarised_adjacency()
+        recovered_adj = g.dense_adjacency()
 
         # Build original adjacency from the one-hot E
         assert g.E_class is not None
@@ -318,7 +318,7 @@ class TestRoundTrip:
     ) -> None:
         """Collated batch edge argmax should recover E[..., 1] at real positions."""
         batch: GraphData = next(iter(small_dm.train_dataloader()))
-        recovered = batch.binarised_adjacency()
+        recovered = batch.dense_adjacency()
 
         assert batch.E_class is not None
         expected = batch.E_class[..., 1]

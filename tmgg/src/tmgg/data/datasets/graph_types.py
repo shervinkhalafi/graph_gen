@@ -1281,7 +1281,7 @@ class DenseGraphState(_StateGraph):
         """Convert one graph slice to a NetworkX ``Graph``.
 
         Honours ``node_mask`` (padding rows/cols are dropped) and
-        :meth:`binarised_adjacency` (channel 0 = "no edge"). When
+        :meth:`dense_adjacency` (channel 0 = "no edge"). When
         ``X_class`` is populated, the per-node argmax index lands as
         the ``x_class`` node attribute. When ``E_class`` is populated,
         the per-edge argmax index lands as the ``e_class`` edge

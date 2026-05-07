@@ -127,7 +127,7 @@ class TestFromPygBatch:
         batch = Batch.from_data_list([triangle])
         gd = GraphData.from_pyg_batch(batch)
 
-        adj = gd.binarised_adjacency()
+        adj = gd.dense_adjacency()
         expected = torch.tensor([[[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]])
         assert torch.allclose(
             adj, expected
@@ -195,7 +195,7 @@ class TestToPyg:
         gd_recovered = GraphData.from_pyg_batch(batch)
 
         # GraphData → adjacency (batched, shape (1, 3, 3))
-        adj_recovered = gd_recovered.binarised_adjacency().squeeze(0)
+        adj_recovered = gd_recovered.dense_adjacency().squeeze(0)
 
         assert torch.allclose(adj_recovered, adj_original), (
             f"Full round-trip failed.\nOriginal:\n{adj_original}\n"
