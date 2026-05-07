@@ -6,12 +6,13 @@ protocol.
 ## `refresh.py`
 
 Self-contained `uv run` script with PEP-723 inline deps. Hits the
-W&B API; needs `WANDB_API_KEY` for a `<TEAM-ENTITY>` member
-(via `doppler run` if your `~/.netrc` is for a different account).
+W&B API; needs `WANDB_API_KEY` set in the environment for a member
+of the entity that owns the per-variant projects.
 
 ```bash
 cd paper-artifacts/repro-ablations
-doppler run -- uv run scripts/refresh.py [--date YYYY-MM-DD] [--summary "<one-line>"] [--skip-media]
+export WANDB_API_KEY="..."
+uv run scripts/refresh.py [--date YYYY-MM-DD] [--summary "<one-line>"] [--skip-media]
 ```
 
 Reads `../data/runs_index.source.yaml`, queries wandb for each run,
@@ -24,8 +25,6 @@ and writes:
 - `../snapshots/{runlog,ablations-measurement}-<date>.md`
 - `../CHANGELOG.md` (append)
 
-Pure-function helpers (`classify_metric_namespace`, `build_run_slug`)
-are unit-tested in `tests/paper_artifacts/test_refresh_helpers.py`.
 
 ## `quickstatus.py`
 

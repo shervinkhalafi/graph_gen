@@ -23,30 +23,25 @@ commit both together.
 
 ## Prereqs
 
-- `wandb` authenticated for the `<TEAM-ENTITY>` entity. The
-  on-host machine's `~/.netrc` may hold a different (non-team) wandb
-  token; in that case use `doppler run` to inject the team-member key
-  (see "Running with doppler" below).
+- `wandb` authenticated for the entity that owns the per-variant
+  projects (substitute your own entity for `<TEAM-ENTITY>` in
+  `runs_index.source.yaml`). The script reads `WANDB_API_KEY` from
+  the environment, which overrides any `~/.netrc` token for the
+  default user.
 - `uv` available on PATH.
-- `doppler` CLI available and configured for this project (only if
-  using the doppler-managed key).
 - Repo at the commit you want the snapshots to reflect.
 
-### Running with doppler
+### Authentication
 
-If your `~/.netrc` wandb token isn't for a `<TEAM-ENTITY>`
-member, use the team-member key from doppler:
+Set `WANDB_API_KEY` in the environment before invoking the script.
+Any standard env-var injection works — direct `export`, `direnv`,
+`doppler run --`, etc. Example with a plain shell:
 
 ```bash
+export WANDB_API_KEY="..."
 cd paper-artifacts/repro-ablations
-doppler run -- uv run scripts/refresh.py --summary "..."
+uv run scripts/refresh.py --summary "..."
 ```
-
-`doppler run` injects `WANDB_API_KEY` (and any other doppler-managed
-secrets) into the environment before invoking the script; the wandb
-SDK reads `WANDB_API_KEY` and overrides `~/.netrc`. The doppler
-project + config used for this repo is whatever `doppler configure`
-prints (typically `shervin-graph` / `prd`).
 
 ## Steps
 
@@ -77,12 +72,10 @@ new entry pointing to the parent.
 
 ```bash
 cd paper-artifacts/repro-ablations
-# preferred — works regardless of which wandb account the host's ~/.netrc holds
-doppler run -- uv run scripts/refresh.py --summary "post-eval-cycle-N refresh"
-
-# alternative — only if your ~/.netrc is already for a <TEAM-ENTITY> member
 uv run scripts/refresh.py --summary "post-eval-cycle-N refresh"
 ```
+
+(Set `WANDB_API_KEY` first; see "Authentication" above.)
 
 Optional flags:
 - `--date YYYY-MM-DD` — override the snapshot date suffix (default: today UTC).
