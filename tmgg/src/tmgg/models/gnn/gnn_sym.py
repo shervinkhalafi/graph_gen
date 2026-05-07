@@ -1,12 +1,23 @@
 """Symmetric GNN variant — reconstruction via X @ X.T instead of X @ Y.T."""
 
-from typing import Any, override
+from typing import Any, ClassVar, override
 
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+)
 
-from ..base import EdgeSource, read_edge_scalar, write_edge_scalar
+from ..base import (
+    EdgeSource,
+    _coerce_input_to,
+    _coerce_output_to,
+    read_edge_scalar,
+    write_edge_scalar,
+)
 from .gnn import GNN
 
 
@@ -19,6 +30,9 @@ class GNNSymmetric(GNN):
 
     The ``out_y`` projection inherited from ``GNN`` is removed in ``__init__``.
     """
+
+    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
         self,
@@ -49,14 +63,26 @@ class GNNSymmetric(GNN):
         del self.out_y
 
     @override
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> "GraphDistribution | DenseGraphDistribution":
         """Compute denoised graph via symmetric reconstruction X @ X.T.
 
-        Reads the dense scalar adjacency through ``read_edge_scalar`` (which
-        respects ``self.edge_source``) and writes the prediction to the
-        configured split edge field via ``write_edge_scalar``.
+        Coerces ``data`` to a :class:`DenseGraphState`, reads the dense
+        scalar adjacency through ``read_edge_scalar`` (respecting
+        ``self.edge_source``), and writes the prediction to the configured
+        split edge field via ``write_edge_scalar``. The output is lifted to
+        a distribution and returned as :class:`GraphDistribution` (sparse,
+        default) or :class:`DenseGraphDistribution` when
+        ``output_dense=True``.
         """
-        A = read_edge_scalar(data, self.edge_source)
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+        A = read_edge_scalar(d, self.edge_source)
         z = self.embedding_layer(A)
 
         for layer in self.layers:
@@ -64,13 +90,17 @@ class GNNSymmetric(GNN):
 
         emb = self.out_x(z)
         result_adj = torch.bmm(emb, emb.transpose(1, 2))
-        out = write_edge_scalar(
-            data, edge_scalar=result_adj, target=self._output_target
+        out_dense_state = write_edge_scalar(
+            d, edge_scalar=result_adj, target=self._output_target
         )
         if t is not None:
-            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
-            out = out.replace(y=new_y)
-        return out
+            new_y = torch.cat([out_dense_state.y, t.unsqueeze(-1)], dim=-1)
+            out_dense_state = out_dense_state.replace(y=new_y)
+        out_dist = out_dense_state.to_distribution()
+        target = DenseGraphDistribution if output_dense else GraphDistribution
+        coerced = _coerce_output_to(out_dist, target=target)
+        assert isinstance(coerced, (GraphDistribution, DenseGraphDistribution))
+        return coerced
 
     @override
     def get_config(self) -> dict[str, Any]:
