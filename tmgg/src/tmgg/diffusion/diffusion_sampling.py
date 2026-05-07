@@ -7,7 +7,7 @@ import torch
 from torch.nn import functional as F
 
 from tmgg.data.datasets.graph_data_fields import FieldName
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 
 
 def _normalise_unnormalised_posterior(
@@ -135,10 +135,10 @@ def sample_discrete_features(
     node_mask : torch.Tensor
         Boolean node-validity mask, shape ``(bs, n)``.
     field : FieldName | None
-        Informational only. Documents which
-        :class:`tmgg.data.datasets.graph_types.GraphData` field the caller
-        intends to populate with the returned draw; the helper is
-        field-neutral.
+        Informational only. Documents which split feature field of a
+        :class:`tmgg.data.datasets.graph_types.GraphData` subtype the
+        caller intends to populate with the returned draw; the helper
+        is field-neutral.
     zero_floor
         Floor passed to :func:`_sample_from_unnormalised_posterior`.
         Defaults to ``1e-5`` to match upstream DiGress.
@@ -323,15 +323,15 @@ def sample_discrete_feature_noise(
     e_limit: torch.Tensor,
     node_mask: torch.Tensor,
     y_limit: torch.Tensor | None = None,
-) -> GraphData:
-    """Sample a one-hot categorical prior ``GraphData`` from stationary PMFs.
+) -> DenseGraphState:
+    """Sample a one-hot categorical prior :class:`DenseGraphState` from stationary PMFs.
 
     Returns
     -------
-    GraphData
-        Instance with ``X_class`` and ``E_class`` populated as one-hot
-        samples drawn from the supplied stationary PMFs and masked
-        against ``node_mask``.
+    DenseGraphState
+        Dense + state instance with ``X_class`` and ``E_class``
+        populated as one-hot samples drawn from the supplied stationary
+        PMFs and masked against ``node_mask``.
     """
     bs, n_max = node_mask.shape
     x_limit = x_limit.to(node_mask.device)[None, None, :].expand(bs, n_max, -1)
@@ -387,9 +387,14 @@ def sample_discrete_feature_noise(
         if not (torch.transpose(ue_one_hot, 1, 2) == ue_one_hot).all():
             raise AssertionError("Edge noise is not symmetric")
 
-    return GraphData(
+    # Derive ``num_nodes_per_graph`` from the boolean ``node_mask`` (1 ==
+    # valid). DenseGraphState exposes ``node_mask`` as a cached_property
+    # over ``num_nodes_per_graph``, so the carrier identity is preserved
+    # by construction.
+    num_nodes_per_graph = node_mask.long().sum(dim=1)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
         y=uy,
-        node_mask=node_mask,
         X_class=ux_one_hot,
         E_class=ue_one_hot,
     ).mask()

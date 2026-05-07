@@ -37,7 +37,11 @@ import torch
 from torch import Tensor
 
 from tests._helpers.graph_builders import binary_graphdata
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+)
 from tmgg.diffusion.chain_recorder import ChainRecorder, merge_chain_snapshots
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.sampler import CategoricalSampler
@@ -51,16 +55,21 @@ from tmgg.models.base import GraphModel
 
 def _make_pmf_graph(
     bs: int, n: int, dx: int | None, de: int, device: str = "cpu"
-) -> GraphData:
-    """Build a batched GraphData with a flat-PMF E_class (and X_class if dx)."""
-    node_mask = torch.ones(bs, n, dtype=torch.bool, device=device)
+) -> DenseGraphState:
+    """Build a batched DenseGraphState with a flat-PMF E_class (and X_class if dx).
+
+    The recorder snapshots tensors verbatim and is content-agnostic; a
+    flat-PMF in a state-typed carrier exercises the slicing path without
+    enforcing one-hot semantics.
+    """
     e_class = torch.full((bs, n, n, de), 1.0 / de, device=device)
     x_class: Tensor | None = None
     if dx is not None:
         x_class = torch.full((bs, n, dx), 1.0 / dx, device=device)
-    return GraphData(
+    num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long, device=device)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
         y=torch.zeros(bs, 0, device=device),
-        node_mask=node_mask,
         X_class=x_class,
         E_class=e_class,
     )
@@ -151,9 +160,12 @@ class TestMaybeRecord:
         rec = ChainRecorder(
             num_chains_to_save=1, snapshot_step_interval=1, meta=_STUB_META
         )
-        graph = GraphData(
+        # DenseGraphState invariants only require *one* of E_class /
+        # E_feat; the recorder enforces the stricter "E_class required"
+        # contract on top of that.
+        graph = DenseGraphState(
+            num_nodes_per_graph=torch.full((2,), 4, dtype=torch.long),
             y=torch.zeros(2, 0),
-            node_mask=torch.ones(2, 4, dtype=torch.bool),
             E_feat=torch.zeros(2, 4, 4, 1),  # populates one edge field
         )
         with pytest.raises(RuntimeError, match="E_class to be populated"):
@@ -380,16 +392,21 @@ class _UniformCategoricalModel(GraphModel):
     def get_config(self) -> dict[str, Any]:
         return {"dx": self.dx, "de": self.de}
 
-    def forward(self, data: GraphData, t: Tensor | None = None) -> GraphData:
+    def forward(
+        self, data: GraphData, t: Tensor | None = None
+    ) -> DenseGraphDistribution:
         _ = t
+        # Sampler invokes the model with a dense state (post-refactor
+        # contract: ``output_dense=True`` is the chain-snapshot path).
+        assert isinstance(data, DenseGraphState)
         assert data.X_class is not None
         assert data.E_class is not None
         bs, n, _ = data.X_class.shape
         X = torch.ones(bs, n, self.dx, device=data.X_class.device) / self.dx
         E = torch.ones(bs, n, n, self.de, device=data.E_class.device) / self.de
-        return GraphData(
+        return DenseGraphDistribution(
+            num_nodes_per_graph=data.num_nodes_per_graph,
             y=data.y,
-            node_mask=data.node_mask,
             X_class=X,
             E_class=E,
         )
