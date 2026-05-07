@@ -341,6 +341,30 @@ class GraphState(_StateGraph):
             diag = torch.arange(n_max_actual, device=device)
             E_feat_dense[:, diag, diag, :] = 0.0
 
+        # Zero out padding positions so the dense form matches the
+        # complete-pair semantics used by GraphDistribution.to_sparse +
+        # DenseGraphDistribution.to_sparse: only valid (b, i) × (b, j) pairs
+        # carry content; padding positions are zeroed regardless of fill.
+        # This makes the lift-then-carrier and carrier-then-lift paths
+        # commute on the entire (B, n_max, n_max, d_ec) tensor.
+        arange_n = torch.arange(n_max_actual, device=device)
+        valid_per_graph = arange_n.unsqueeze(0) < self.num_nodes_per_graph.unsqueeze(1)
+        pair_mask = valid_per_graph.unsqueeze(-1) & valid_per_graph.unsqueeze(-2)
+        if E_class_dense is not None:
+            E_class_dense = E_class_dense * pair_mask.unsqueeze(-1).to(
+                E_class_dense.dtype
+            )
+        if E_feat_dense is not None:
+            E_feat_dense = E_feat_dense * pair_mask.unsqueeze(-1).to(E_feat_dense.dtype)
+        if X_class_dense is not None:
+            X_class_dense = X_class_dense * valid_per_graph.unsqueeze(-1).to(
+                X_class_dense.dtype
+            )
+        if X_feat_dense is not None:
+            X_feat_dense = X_feat_dense * valid_per_graph.unsqueeze(-1).to(
+                X_feat_dense.dtype
+            )
+
         return DenseGraphState(
             num_nodes_per_graph=self.num_nodes_per_graph,
             y=self.y,
@@ -609,13 +633,11 @@ class GraphDistribution(_DistributionGraph):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        _check_sparse_invariants(
-            batch=self.batch,
-            num_nodes_per_graph=self.num_nodes_per_graph,
-            edge_index=self.edge_index,
-            edge_class=self.edge_class,
-            edge_feat=self.edge_feat,
-        )
+        # Completeness check FIRST: an incomplete edge_index is also
+        # asymmetric, but the more informative error is "incomplete" not
+        # "asymmetric". Only after a complete-pair edge_index do the
+        # general sparse invariants (dtype, endpoint integrity, symmetry
+        # under __debug__) become meaningful.
         n = self.num_nodes_per_graph
         expected_E = int((n * (n - 1)).sum().item())
         actual_E = int(self.edge_index.shape[1])
@@ -624,6 +646,13 @@ class GraphDistribution(_DistributionGraph):
                 f"GraphDistribution requires complete off-diagonal edge_index: "
                 f"expected sum n_i(n_i-1) = {expected_E}, got {actual_E}."
             )
+        _check_sparse_invariants(
+            batch=self.batch,
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            edge_index=self.edge_index,
+            edge_class=self.edge_class,
+            edge_feat=self.edge_feat,
+        )
 
     def to(self, device: torch.device | str) -> GraphDistribution:
         return GraphDistribution(
@@ -1668,25 +1697,39 @@ class DenseGraphDistribution(_DistributionGraph):
 
     def argmax(self) -> DenseGraphState:
         # Categorical: argmax along channel and re-encode as one-hot.
+        # Padding (b, i) outside node_mask and diagonal pairs are zeroed
+        # to match the complete-pair semantics of the lift→argmax round
+        # trip (see test_dense_distribution_argmax_recovers_state).
+        nm = self.node_mask  # (B, n_max)
+        pair_mask = nm.unsqueeze(-1) & nm.unsqueeze(-2)  # (B, n_max, n_max)
+        n_max = int(nm.shape[1])
+        eye = torch.eye(
+            n_max, dtype=torch.bool, device=self.num_nodes_per_graph.device
+        ).unsqueeze(0)
+        e_pair_mask = pair_mask & ~eye
         X_class_oh: Tensor | None = None
         E_class_oh: Tensor | None = None
         if self.X_class is not None:
             idx = self.X_class.argmax(dim=-1)
-            X_class_oh = F.one_hot(idx, num_classes=self.X_class.shape[-1]).to(
+            xc_oh = F.one_hot(idx, num_classes=self.X_class.shape[-1]).to(
                 self.X_class.dtype
             )
+            X_class_oh = xc_oh * nm.unsqueeze(-1).to(xc_oh.dtype)
         if self.E_class is not None:
             idx = self.E_class.argmax(dim=-1)
-            E_class_oh = F.one_hot(idx, num_classes=self.E_class.shape[-1]).to(
+            ec_oh = F.one_hot(idx, num_classes=self.E_class.shape[-1]).to(
                 self.E_class.dtype
             )
+            E_class_oh = ec_oh * e_pair_mask.unsqueeze(-1).to(ec_oh.dtype)
         # Continuous: threshold |.|>0.5 to {0,1}.
         X_feat_b: Tensor | None = None
         E_feat_b: Tensor | None = None
         if self.X_feat is not None:
-            X_feat_b = (self.X_feat.abs() > 0.5).to(self.X_feat.dtype)
+            xf_b = (self.X_feat.abs() > 0.5).to(self.X_feat.dtype)
+            X_feat_b = xf_b * nm.unsqueeze(-1).to(xf_b.dtype)
         if self.E_feat is not None:
-            E_feat_b = (self.E_feat.abs() > 0.5).to(self.E_feat.dtype)
+            ef_b = (self.E_feat.abs() > 0.5).to(self.E_feat.dtype)
+            E_feat_b = ef_b * e_pair_mask.unsqueeze(-1).to(ef_b.dtype)
         return DenseGraphState(
             num_nodes_per_graph=self.num_nodes_per_graph,
             y=self.y,
