@@ -72,6 +72,33 @@ class _GraphDataNew:
         raise NotImplementedError("Concrete subclasses must override dense_adjacency.")
 
 
+class _StateGraph(_GraphDataNew):
+    """Marker: state-content semantics.
+
+    Per-element data on a chosen edge_index (sparse) or per-position content
+    over `(B, n_max, n_max, K)` (dense). Examples: DiGress sample (z_t),
+    classification logits over input topology, continuous edge weights.
+    """
+
+    def to_distribution(self) -> _DistributionGraph:
+        raise NotImplementedError
+
+
+class _DistributionGraph(_GraphDataNew):
+    """Marker: distribution-content semantics.
+
+    Per-position values on a complete edge_index (sparse) or
+    `(B, n_max, n_max, K)` (dense), typically a probability distribution
+    or continuous noise output.
+    """
+
+    def argmax(self) -> _StateGraph:
+        raise NotImplementedError
+
+    def sample(self, *, generator: torch.Generator | None = None) -> _StateGraph:
+        raise NotImplementedError
+
+
 @dataclass(frozen=True, slots=True)
 class GraphData:
     """Batched graph features with a node validity mask and split feature fields.
