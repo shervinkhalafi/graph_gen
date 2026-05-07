@@ -347,7 +347,22 @@ class GraphState(_StateGraph):
         )
 
     def to_distribution(self) -> GraphDistribution:
-        raise NotImplementedError("Implemented in Task 1.7.")
+        # Strategy: scatter to dense (with no-edge fill for categorical, zero
+        # for continuous), then call DenseGraphDistribution.to_sparse() —
+        # which produces complete edge_index. This preserves active edges'
+        # content unchanged while filling inactive positions per the
+        # canonical convention.
+        fill = _no_edge_one_hot_fill(self.edge_class)
+        dense_state = self.to_dense(edge_class_fill=fill)
+        dense_dist = DenseGraphDistribution(
+            num_nodes_per_graph=dense_state.num_nodes_per_graph,
+            y=dense_state.y,
+            X_class=dense_state.X_class,
+            X_feat=dense_state.X_feat,
+            E_class=dense_state.E_class,
+            E_feat=dense_state.E_feat,
+        )
+        return dense_dist.to_sparse()
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,10 +497,10 @@ class GraphDistribution(_DistributionGraph):
         )
 
     def argmax(self) -> GraphState:
-        raise NotImplementedError("Implemented in Task 1.7.")
+        return self.to_dense().argmax().to_sparse()
 
     def sample(self, *, generator: torch.Generator | None = None) -> GraphState:
-        raise NotImplementedError("Implemented in Task 1.7.")
+        return self.to_dense().sample(generator=generator).to_sparse()
 
 
 @dataclass(frozen=True, slots=True)
@@ -655,7 +670,15 @@ class DenseGraphState(_StateGraph):
         )
 
     def to_distribution(self) -> DenseGraphDistribution:
-        raise NotImplementedError("Implemented in Task 1.7.")
+        # Same fields, different type tag (no tensor reshape).
+        return DenseGraphDistribution(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y,
+            X_class=self.X_class,
+            X_feat=self.X_feat,
+            E_class=self.E_class,
+            E_feat=self.E_feat,
+        )
 
     def replace(self, **kwargs: object) -> DenseGraphState:
         """Return a copy with selected fields overridden.
@@ -1664,10 +1687,67 @@ class DenseGraphDistribution(_DistributionGraph):
         )
 
     def argmax(self) -> DenseGraphState:
-        raise NotImplementedError("Implemented in Task 1.7.")
+        # Categorical: argmax along channel and re-encode as one-hot.
+        X_class_oh: Tensor | None = None
+        E_class_oh: Tensor | None = None
+        if self.X_class is not None:
+            idx = self.X_class.argmax(dim=-1)
+            X_class_oh = F.one_hot(idx, num_classes=self.X_class.shape[-1]).to(
+                self.X_class.dtype
+            )
+        if self.E_class is not None:
+            idx = self.E_class.argmax(dim=-1)
+            E_class_oh = F.one_hot(idx, num_classes=self.E_class.shape[-1]).to(
+                self.E_class.dtype
+            )
+        # Continuous: threshold |.|>0.5 to {0,1}.
+        X_feat_b: Tensor | None = None
+        E_feat_b: Tensor | None = None
+        if self.X_feat is not None:
+            X_feat_b = (self.X_feat.abs() > 0.5).to(self.X_feat.dtype)
+        if self.E_feat is not None:
+            E_feat_b = (self.E_feat.abs() > 0.5).to(self.E_feat.dtype)
+        return DenseGraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y,
+            X_class=X_class_oh,
+            X_feat=X_feat_b,
+            E_class=E_class_oh,
+            E_feat=E_feat_b,
+        )
 
     def sample(self, *, generator: torch.Generator | None = None) -> DenseGraphState:
-        raise NotImplementedError("Implemented in Task 1.7.")
+        X_class_oh: Tensor | None = None
+        E_class_oh: Tensor | None = None
+        if self.X_class is not None:
+            probs = F.softmax(self.X_class, dim=-1)
+            flat = probs.reshape(-1, probs.shape[-1])
+            idx = torch.multinomial(flat, num_samples=1, generator=generator).squeeze(
+                -1
+            )
+            idx = idx.reshape(probs.shape[:-1])
+            X_class_oh = F.one_hot(idx, num_classes=self.X_class.shape[-1]).to(
+                self.X_class.dtype
+            )
+        if self.E_class is not None:
+            probs = F.softmax(self.E_class, dim=-1)
+            flat = probs.reshape(-1, probs.shape[-1])
+            idx = torch.multinomial(flat, num_samples=1, generator=generator).squeeze(
+                -1
+            )
+            idx = idx.reshape(probs.shape[:-1])
+            E_class_oh = F.one_hot(idx, num_classes=self.E_class.shape[-1]).to(
+                self.E_class.dtype
+            )
+        # Continuous: pass through (Gaussian "sampling" upstream in the noise process).
+        return DenseGraphState(
+            num_nodes_per_graph=self.num_nodes_per_graph,
+            y=self.y,
+            X_class=X_class_oh,
+            X_feat=self.X_feat,
+            E_class=E_class_oh,
+            E_feat=self.E_feat,
+        )
 
     @cached_property
     def node_mask(self) -> Tensor:
