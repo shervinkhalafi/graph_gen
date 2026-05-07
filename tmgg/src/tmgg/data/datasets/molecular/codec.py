@@ -1,7 +1,7 @@
-"""SMILES ↔ GraphData codec — the only module that imports RDKit.
+"""SMILES ↔ DenseGraphState codec — the only module that imports RDKit.
 
 Parameterised by an :class:`AtomBondVocabulary`. Encodes a SMILES
-string into a categorical :class:`GraphData` with ``X_class`` (atom
+string into a categorical :class:`DenseGraphState` with ``X_class`` (atom
 classes) and ``E_class`` (bond classes), or returns ``None`` on
 parse failure / atom-count overflow.
 
@@ -21,7 +21,7 @@ from rdkit import Chem
 from rdkit.Chem import RWMol
 from rdkit.Chem.rdchem import BondType
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 from tmgg.data.datasets.molecular.vocabulary import AtomBondVocabulary
 
 
@@ -50,7 +50,7 @@ def _bond_name_to_rdkit(name: str) -> object:
 
 @dataclass(frozen=True)
 class SMILESCodec:
-    """SMILES ↔ GraphData round-trip parameterised by a vocabulary.
+    """SMILES ↔ DenseGraphState round-trip parameterised by a vocabulary.
 
     Parameters
     ----------
@@ -85,8 +85,8 @@ class SMILESCodec:
     # encode
     # ------------------------------------------------------------------
 
-    def encode(self, smiles: str) -> GraphData | None:
-        """Encode a SMILES string into a categorical :class:`GraphData`.
+    def encode(self, smiles: str) -> DenseGraphState | None:
+        """Encode a SMILES string into a categorical :class:`DenseGraphState`.
 
         Returns ``None`` when the molecule fails to parse, has too
         many heavy atoms, or contains an atom not in the vocabulary.
@@ -140,31 +140,32 @@ class SMILESCodec:
             e_class[0, j, i, bond_class] = 1.0
         # Diagonal stays at NONE (already set).
 
-        node_mask = torch.ones((1, n), dtype=torch.bool)
+        # ``DenseGraphState`` derives ``node_mask`` lazily from
+        # ``num_nodes_per_graph`` (cached_property). The single-graph
+        # carrier here uses bs=1 with all positions populated, so
+        # ``num_nodes_per_graph = [n]`` is the source of truth.
+        num_nodes_per_graph = torch.tensor([n], dtype=torch.long)
 
-        return GraphData(
+        return DenseGraphState(
+            num_nodes_per_graph=num_nodes_per_graph,
             X_class=x_class,
             X_feat=None,
             E_class=e_class,
             E_feat=None,
             y=torch.zeros((1, 0), dtype=torch.float32),
-            node_mask=node_mask,
         )
 
     # ------------------------------------------------------------------
     # decode
     # ------------------------------------------------------------------
 
-    def decode(self, data: GraphData) -> str | None:
-        """Decode a single-graph :class:`GraphData` back to a SMILES.
+    def decode(self, data: DenseGraphState) -> str | None:
+        """Decode a single-graph :class:`DenseGraphState` back to a SMILES.
 
-        Accepts either the unbatched form produced by the sampler and
-        by :meth:`BaseGraphDataModule.get_reference_graphs` (1-D
-        ``node_mask``, 2-D ``X_class``, 3-D ``E_class``) or the
-        batched-of-one form (2-D ``node_mask``, 3-D ``X_class``, 4-D
-        ``E_class``); both are valid post the 2026-05-01
-        universal-transport refactor where evaluator inputs come in
-        either shape depending on the producer.
+        Accepts the batched-of-one carrier form produced by the
+        sampler and by :meth:`BaseGraphDataModule.get_reference_graphs`
+        (3-D ``X_class``, 4-D ``E_class``, with ``node_mask`` derived
+        lazily from ``num_nodes_per_graph``).
 
         Returns ``None`` if the resulting molecule fails RDKit
         sanitisation. Used by :class:`ValidityMetric` and round-trip
@@ -172,23 +173,17 @@ class SMILESCodec:
         """
         if data.X_class is None or data.E_class is None:
             return None
-        x_class = data.X_class
-        e_class = data.E_class
-        node_mask = data.node_mask
-        # Normalise to the unbatched view so the rest of the function
-        # only handles one shape: X_class[n, dx], E_class[n, n, de],
-        # node_mask[n]. Either input shape collapses to that.
-        if x_class.dim() == 3:
-            if x_class.shape[0] != 1:
-                raise ValueError(
-                    f"SMILESCodec.decode expects a single-graph batch; got "
-                    f"batch size {x_class.shape[0]}."
-                )
-            x_class = x_class[0]
-            e_class = e_class[0]
-            node_mask = node_mask[0]
+        # ``DenseGraphState`` always carries a leading batch dim;
+        # decode is only defined for a single-graph batch.
+        if data.X_class.shape[0] != 1:
+            raise ValueError(
+                f"SMILESCodec.decode expects a single-graph batch; got "
+                f"batch size {data.X_class.shape[0]}."
+            )
+        x_class = data.X_class[0]
+        e_class = data.E_class[0]
 
-        n_real = int(node_mask.sum().item())
+        n_real = int(data.num_nodes_per_graph[0].item())
         atom_idx = x_class[:n_real].argmax(dim=-1).tolist()
         bond_idx = e_class[:n_real, :n_real].argmax(dim=-1).tolist()
 
@@ -217,7 +212,7 @@ class SMILESCodec:
     # batch helper
     # ------------------------------------------------------------------
 
-    def encode_dataset(self, smiles_iter: Iterable[str]) -> Iterator[GraphData]:
+    def encode_dataset(self, smiles_iter: Iterable[str]) -> Iterator[DenseGraphState]:
         """Iterate over SMILES, dropping parse failures silently.
 
         Use :meth:`encode_dataset_with_stats` if you need the
@@ -234,7 +229,7 @@ class SMILESCodec:
         *,
         progress_callback: Callable[[int, dict[str, int]], None] | None = None,
         progress_every: int = 0,
-    ) -> tuple[list[GraphData], dict[str, int]]:
+    ) -> tuple[list[DenseGraphState], dict[str, int]]:
         """Encode a list of SMILES, returning (graphs, drop_counters).
 
         Counters: ``"parse_failure"``, ``"atom_count_overflow"``,
@@ -250,7 +245,7 @@ class SMILESCodec:
             (MOSES ~1.5M molecules takes minutes); zero overhead when
             disabled.
         """
-        graphs: list[GraphData] = []
+        graphs: list[DenseGraphState] = []
         counters = {
             "input": 0,
             "parse_failure": 0,

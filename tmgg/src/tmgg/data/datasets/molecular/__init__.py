@@ -1,4 +1,4 @@
-"""Molecular datasets: SMILES → categorical GraphData pipeline.
+"""Molecular datasets: SMILES → categorical DenseGraphState pipeline.
 
 Compositional layout per
 ``docs/specs/2026-04-28-digress-repro-datasets-spec.md``:

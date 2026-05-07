@@ -24,7 +24,7 @@ from torch.utils.data import Dataset
 from torch_geometric.data import Data
 from torch_geometric.utils import dense_to_sparse
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 from tmgg.data.datasets.molecular.codec import SMILESCodec
 
 logger = logging.getLogger(__name__)
@@ -64,16 +64,15 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
     1. ``prepare_data()`` is called by the matching DataModule and
        downloads raw SMILES. Idempotent.
     2. ``setup(split)`` populates ``self._graphs`` (a list of
-       single-graph :class:`GraphData`) from the cached shards,
+       single-graph :class:`DenseGraphState`) from the cached shards,
        preprocessing on first call.
     3. ``__getitem__`` returns a sparse PyG :class:`~torch_geometric.data.Data`
        carrying ``edge_index``, ``num_nodes`` and ``x`` (integer
-       atom-class indices). The :class:`GraphData` shards are kept in
-       memory and converted on demand so the ``DataLoader`` worker
-       feeds :class:`GraphDataCollator` (which expects PyG ``Data``)
-       directly. The collator then reassembles the dense
-       :class:`GraphData` batch — a single source of densification
-       on the hot path. No RDKit calls.
+       atom-class indices). The :class:`DenseGraphState` shards are
+       kept in memory and converted on demand so the ``DataLoader``
+       worker feeds :class:`GraphDataCollator` (which expects PyG
+       ``Data``) directly. The collator then assembles the sparse
+       :class:`GraphState` batch on the hot path. No RDKit calls.
     """
 
     DATASET_NAME: str = ""  # subclass override
@@ -95,7 +94,7 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
         self.cache_root = cache_root or _local_cache_root()
         self.shard_size = shard_size
         self._codec: SMILESCodec | None = None
-        self._graphs: list[GraphData] | None = None
+        self._graphs: list[DenseGraphState] | None = None
 
     # ------------------------------------------------------------------
     # subclass hooks
@@ -208,7 +207,7 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
     # shard I/O
     # ------------------------------------------------------------------
 
-    def _write_shards(self, graphs: list[GraphData]) -> None:
+    def _write_shards(self, graphs: list[DenseGraphState]) -> None:
         # Atomic write: ``torch.save`` to a sibling ``<idx>.pt.tmp`` then
         # ``os.replace`` to the final ``<idx>.pt``. ``os.replace`` is
         # atomic on POSIX when src and dst live on the same filesystem
@@ -226,22 +225,24 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
             shard_path = shard_dir / f"{shard_idx:04d}.pt"
             tmp_path = shard_dir / f"{shard_idx:04d}.pt.tmp"
             # ``weights_only=False`` on load is required because
-            # ``GraphData`` is a dataclass; these are first-party
+            # ``DenseGraphState`` is a dataclass; these are first-party
             # files we wrote ourselves so the security memory's
             # "no third-party pickles" rule does not apply.
             torch.save(shard, tmp_path)
             os.replace(tmp_path, shard_path)
 
-    def _load_shards(self) -> list[GraphData]:
+    def _load_shards(self) -> list[DenseGraphState]:
         shard_dir = self._shard_dir()
-        graphs: list[GraphData] = []
+        graphs: list[DenseGraphState] = []
         for shard_path in sorted(shard_dir.glob("*.pt")):
-            shard: list[GraphData] = torch.load(shard_path, weights_only=False)
+            shard: list[DenseGraphState] = torch.load(
+                shard_path, weights_only=False
+            )
             graphs.extend(shard)
         return graphs
 
     # ------------------------------------------------------------------
-    # Dataset[GraphData] surface
+    # Dataset[Data] surface
     # ------------------------------------------------------------------
 
     def __len__(self) -> int:
@@ -255,8 +256,8 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
         return self._graphdata_to_pyg(self._graphs[idx])
 
     @staticmethod
-    def _graphdata_to_pyg_one_hot(gd: GraphData) -> Data:
-        """Convert codec :class:`GraphData` to PyG :class:`Data` with one-hot ``x``/``edge_attr``.
+    def _graphdata_to_pyg_one_hot(gd: DenseGraphState) -> Data:
+        """Convert codec :class:`DenseGraphState` to PyG :class:`Data` with one-hot ``x``/``edge_attr``.
 
         Variant of :meth:`_graphdata_to_pyg` for the *raw* PyG path
         consumed by :func:`count_node_classes_sparse` and
@@ -276,20 +277,20 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
         branch in that case. Molecular datasets need real per-class
         histograms, so we populate them explicitly.
 
-        The dense training path uses :meth:`_graphdata_to_pyg` (the
-        index variant) which is what :meth:`GraphData.from_pyg_batch`
-        densifies into the dense ``X_class`` / ``E_class`` collator
-        output. Don't merge the two: the dense path requires integer
-        indices for its ``F.one_hot`` densification step, and the
-        sparse counter path requires float one-hot for its
-        ``x.sum(dim=0)`` aggregation step.
+        The training path uses :meth:`_graphdata_to_pyg` (the
+        index variant) which is what :meth:`GraphState.from_pyg_batch`
+        densifies into the per-edge ``edge_class`` / per-node
+        ``x_class`` collator output. Don't merge the two: the
+        index path requires integer indices for its ``F.one_hot``
+        densification step, and the sparse counter path requires
+        float one-hot for its ``x.sum(dim=0)`` aggregation step.
         """
         if gd.X_class is None or gd.E_class is None:
             raise ValueError(
                 "MolecularGraphDataset._graphdata_to_pyg_one_hot requires "
                 "X_class and E_class to be populated by the codec."
             )
-        n = int(gd.node_mask[0].sum().item())
+        n = int(gd.num_nodes_per_graph[0].item())
         num_bond_types = int(gd.E_class.shape[-1])
         e_argmax = gd.E_class[0, :n, :n].argmax(dim=-1)
         adj = (e_argmax != 0).to(torch.float32)
@@ -309,8 +310,8 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
         )
 
     @staticmethod
-    def _graphdata_to_pyg(gd: GraphData) -> Data:
-        """Convert a single-graph codec :class:`GraphData` to PyG :class:`Data`.
+    def _graphdata_to_pyg(gd: DenseGraphState) -> Data:
+        """Convert a single-graph codec :class:`DenseGraphState` to PyG :class:`Data`.
 
         The codec emits a leading batch dim of 1 plus the dense
         categorical fields ``X_class`` (atom one-hot,
@@ -323,26 +324,26 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
           :func:`torch_geometric.utils.dense_to_sparse`.
         - ``edge_attr``: per-edge bond-class indices aligned with
           ``edge_index``, integer dtype. Mirrors the ``x`` plumbing
-          for atom classes — :class:`GraphData.from_pyg_batch`
-          densifies these into a multi-class ``E_class`` of width
+          for atom classes — :meth:`GraphState.from_pyg_batch`
+          densifies these into a multi-class ``edge_class`` of width
           ``num_bond_types_e`` so that bond multiplicity (NONE /
           SINGLE / DOUBLE / TRIPLE / AROMATIC) survives the
           dataset → collator boundary instead of collapsing to
           binary edge presence. See the diagnosis in
           ``docs/reports/2026-04-29-dataset-shims-and-hacks/README.md``
           item #3.3.
-        - ``num_nodes``: real atom count, taken from ``node_mask.sum()``.
+        - ``num_nodes``: real atom count, taken from
+          ``num_nodes_per_graph[0]``.
         - ``x``: integer atom-class indices, shape ``(n_real,)``.
-          :class:`GraphData.from_pyg_batch` densifies this back into
-          ``X_class`` on the collator side.
+          :meth:`GraphState.from_pyg_batch` densifies this back into
+          ``x_class`` on the collator side.
 
         Parameters
         ----------
         gd
-            Single-graph :class:`GraphData` produced by
-            :class:`SMILESCodec.encode_smiles`. ``X_class`` and
-            ``E_class`` MUST be populated; ``node_mask`` shape
-            ``(1, n)``.
+            Single-graph :class:`DenseGraphState` produced by
+            :meth:`SMILESCodec.encode`. ``X_class`` and ``E_class``
+            MUST be populated; ``num_nodes_per_graph`` shape ``(1,)``.
 
         Returns
         -------
@@ -354,7 +355,7 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
                 "MolecularGraphDataset._graphdata_to_pyg requires X_class "
                 "and E_class to be populated by the codec."
             )
-        n = int(gd.node_mask[0].sum().item())
+        n = int(gd.num_nodes_per_graph[0].item())
         # Per-position bond-class argmax over the codec's one-hot E_class.
         # 0 = NONE; 1+ = present bond types.
         e_argmax = gd.E_class[0, :n, :n].argmax(dim=-1)
@@ -364,7 +365,7 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
         edge_index, _ = dense_to_sparse(adj)
         # Pull the bond class out of e_argmax for each retained edge so it
         # rides alongside edge_index as edge_attr. Integer dtype because
-        # GraphData.from_pyg_batch's edge_attr branch refuses floats.
+        # GraphState.from_pyg_batch's edge_attr branch refuses floats.
         src, dst = edge_index[0], edge_index[1]
         edge_attr = e_argmax[src, dst].long()
         x = gd.X_class[0, :n].argmax(dim=-1).long()

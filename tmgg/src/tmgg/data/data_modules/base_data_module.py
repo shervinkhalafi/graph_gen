@@ -165,13 +165,15 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
     def train_dataloader_raw_pyg(self) -> DataLoader[Any]:
         """Return a training dataloader yielding *raw* PyG ``Batch`` objects.
 
-        Sits one layer below ``train_dataloader``: bypasses the dense
-        ``GraphData`` collator so consumers that need the sparse PyG
-        representation (notably the upstream-parity edge / node count
-        helpers in :mod:`tmgg.data.utils.edge_counts` and
+        Sits one layer below ``train_dataloader``: bypasses the
+        ``GraphState`` collator so consumers that need the raw PyG
+        ``Batch`` representation (notably the upstream-parity edge /
+        node count helpers in :mod:`tmgg.data.utils.edge_counts` and
         :meth:`CategoricalNoiseProcess.initialize_from_data`) can
-        iterate the same training data without going through
-        densification.
+        iterate the same training data with the source-shaped
+        per-edge / per-node tensors. Kept distinct from the GraphState
+        path so the empirical-π estimator stays a direct line-by-line
+        port of upstream DiGress's sparse counters.
 
         Marked ``@abc.abstractmethod`` so a subclass that omits the
         override fails at instantiation time (``TypeError: Can't
@@ -211,22 +213,23 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         return SizeDistribution.fixed(self.num_nodes)
 
     def get_reference_graphs(self, stage: str, max_graphs: int) -> list[Any]:
-        """Extract up to *max_graphs* from a dataset split as ``GraphData``.
+        """Extract up to *max_graphs* from a dataset split as ``DenseGraphState``.
 
-        Iterates the appropriate dataloader and slices each batched
-        ``GraphData`` along the leading dim, returning a flat list of
-        per-graph (single-instance) ``GraphData`` with a 1-D
-        ``node_mask`` and the optional split fields re-indexed to drop
-        the batch axis. Padding is preserved so downstream consumers can
-        decide whether to trim (graph evaluators) or to keep padded
-        tensors as-is (molecular SMILES decode reads ``node_mask``).
+        Iterates the appropriate dataloader (which now yields sparse
+        ``GraphState`` batches under the sparse-default convention),
+        densifies each batch via ``GraphState.to_dense`` with the
+        no-edge-one-hot fill, then slices along the leading dim,
+        returning a flat list of per-graph (single-instance)
+        ``DenseGraphState`` carriers with a leading batch dim of 1 so
+        existing downstream consumers that read ``X_class[0]``,
+        ``E_class[0]``, ``node_mask[0]`` continue to work.
 
         Per spec ``docs/specs/2026-05-01-graphdata-eval-pipeline-minispec.md``
-        the return type is ``list[GraphData]`` rather than
-        ``list[nx.Graph]``: GraphData is the universal transport format
-        for the whole evaluation pipeline. Callers that need NetworkX
-        graphs convert at the consumption site via
-        :meth:`GraphData.to_networkx` (cheap, local, lossless).
+        the return type is per-graph ``DenseGraphState`` rather than
+        ``list[nx.Graph]``: the dense state is the universal transport
+        format for the whole evaluation pipeline. Callers that need
+        NetworkX graphs convert at the consumption site via
+        :meth:`DenseGraphState.to_networkx` (cheap, local, lossless).
 
         Parameters
         ----------
@@ -237,8 +240,8 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
 
         Returns
         -------
-        list[GraphData]
-            Up to *max_graphs* per-graph ``GraphData`` from the
+        list[DenseGraphState]
+            Up to *max_graphs* per-graph ``DenseGraphState`` from the
             requested split.
 
         Raises
@@ -246,7 +249,10 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         ValueError
             If *stage* is not ``"val"`` or ``"test"``.
         """
-        from tmgg.data.datasets.graph_types import GraphData
+        from tmgg.data.datasets.graph_types import (
+            DenseGraphState,
+            state_to_dense_sample,
+        )
 
         if stage == "val":
             loader = self.val_dataloader()
@@ -257,18 +263,35 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
 
         graphs: list[Any] = []
         for batch in loader:
-            bs = int(batch.node_mask.shape[0])
+            # The collator now emits a sparse ``GraphState``. Densify so
+            # the per-graph slicing convention below (single-batch
+            # leading dim of 1, indexable per-position fields) keeps
+            # working. Phase 7+ will migrate downstream consumers to
+            # take a sparse view directly.
+            dense_batch = state_to_dense_sample(batch)
+            bs = int(dense_batch.num_nodes_per_graph.shape[0])
             for i in range(bs):
                 if len(graphs) >= max_graphs:
                     return graphs
+                # Keep a leading batch dim of 1 on every field so callers
+                # built around the old ``X_class[0]``/``E_class[0]``
+                # indexing convention keep working unchanged.
                 graphs.append(
-                    GraphData(
-                        node_mask=batch.node_mask[i],
-                        X_class=batch.X_class[i] if batch.X_class is not None else None,
-                        X_feat=batch.X_feat[i] if batch.X_feat is not None else None,
-                        E_class=batch.E_class[i] if batch.E_class is not None else None,
-                        E_feat=batch.E_feat[i] if batch.E_feat is not None else None,
-                        y=batch.y[i] if batch.y is not None else batch.y,
+                    DenseGraphState(
+                        num_nodes_per_graph=dense_batch.num_nodes_per_graph[i : i + 1],
+                        X_class=dense_batch.X_class[i : i + 1]
+                        if dense_batch.X_class is not None
+                        else None,
+                        X_feat=dense_batch.X_feat[i : i + 1]
+                        if dense_batch.X_feat is not None
+                        else None,
+                        E_class=dense_batch.E_class[i : i + 1]
+                        if dense_batch.E_class is not None
+                        else None,
+                        E_feat=dense_batch.E_feat[i : i + 1]
+                        if dense_batch.E_feat is not None
+                        else None,
+                        y=dense_batch.y[i : i + 1],
                     )
                 )
         return graphs
