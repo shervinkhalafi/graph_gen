@@ -16,14 +16,60 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import replace as _dc_replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 
 if TYPE_CHECKING:
     import networkx as nx
     from torch_geometric.data import Batch, Data
+
+
+@dataclass(frozen=True, slots=True)
+class _GraphDataNew:
+    """Abstract base for every concrete graph carrier (sparse or dense).
+
+    Carries only the universal fields (per-graph node count, graph-level y).
+    Concrete subtypes add carrier-specific fields. This class is not
+    instantiated directly; use one of `GraphState`, `GraphDistribution`,
+    `DenseGraphState`, `DenseGraphDistribution`.
+
+    Note: temporarily named ``_GraphDataNew`` while the original
+    ``GraphData`` dataclass is being renamed to ``DenseGraphState``;
+    a final rename to ``GraphData`` happens once the legacy name is free.
+    """
+
+    num_nodes_per_graph: Tensor  # (B,)        per-graph node count, int64
+    y: Tensor  # (B, dy)     graph-level features
+
+    def __post_init__(self) -> None:
+        if self.num_nodes_per_graph.dtype != torch.long:
+            raise ValueError(
+                "GraphData.num_nodes_per_graph must be int64 (torch.long); "
+                f"got {self.num_nodes_per_graph.dtype}."
+            )
+        if self.num_nodes_per_graph.dim() != 1:
+            raise ValueError(
+                "GraphData.num_nodes_per_graph must be 1D (B,); "
+                f"got shape {tuple(self.num_nodes_per_graph.shape)}."
+            )
+
+    def replace(self, **kwargs: object) -> Self:
+        return _dc_replace(self, **kwargs)
+
+    def type_as(self, x: Tensor) -> Self:
+        """Cast tensors to match `x`'s dtype/device. Override per-subtype as needed."""
+        raise NotImplementedError("Concrete subclasses must override type_as.")
+
+    def to(self, device: torch.device | str) -> Self:
+        """Move all tensors to `device`. Override per-subtype as needed."""
+        raise NotImplementedError("Concrete subclasses must override to.")
+
+    def dense_adjacency(self) -> Tensor:
+        """Return the binary `(B, n_max, n_max)` adjacency. Override per-subtype."""
+        raise NotImplementedError("Concrete subclasses must override dense_adjacency.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,7 +761,6 @@ class GraphData:
             §"Removed fields"``). ``node_mask`` reflects actual node
             counts per graph; padded positions are marked ``False``.
         """
-        import torch.nn.functional as F
         from torch_geometric.utils import remove_self_loops, to_dense_adj
 
         bs = int(batch.num_graphs)
