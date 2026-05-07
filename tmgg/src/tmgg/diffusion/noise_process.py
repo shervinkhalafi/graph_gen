@@ -353,11 +353,16 @@ def _read_categorical_e(data: GraphData, e_classes: int) -> Tensor:
 
 def _categorical_graphdata(
     x: Tensor, e: Tensor, *, y: Tensor, node_mask: Tensor
-) -> GraphData:
-    """Assemble a categorical ``GraphData`` from node/edge class tensors."""
-    return GraphData(
+) -> DenseGraphState:
+    """Assemble a categorical ``DenseGraphState`` from node/edge class tensors.
+
+    ``node_mask`` is accepted for backwards-compatibility at the call site;
+    the new ``DenseGraphState`` derives ``node_mask`` from
+    ``num_nodes_per_graph`` so we convert here.
+    """
+    return DenseGraphState(
+        num_nodes_per_graph=node_mask.long().sum(dim=-1),
         y=y,
-        node_mask=node_mask,
         X_class=x,
         E_class=e,
     )
@@ -645,7 +650,7 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
         mask_2d = z_0.node_mask.unsqueeze(-1) * z_0.node_mask.unsqueeze(-2)
         adj_final = adj_final * mask_2d.float()
 
-        decoded = GraphData.from_edge_scalar(
+        decoded = DenseGraphState.from_edge_scalar(
             adj_final, node_mask=z_0.node_mask, target="E_class"
         )
         return decoded.mask()
@@ -661,7 +666,7 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
         edge_state = edge_state + edge_state.transpose(1, 2)
         mask_2d = node_mask.unsqueeze(-1) & node_mask.unsqueeze(-2)
         edge_state = edge_state * mask_2d.float()
-        return GraphData.from_structure_only(node_mask, edge_state).mask()
+        return DenseGraphState.from_structure_only(node_mask, edge_state).mask()
 
     def forward_sample(self, x_0: GraphData, t: Tensor) -> NoisedBatch:
         """Sample ``q(z_t | x_0) = N(sqrt(alpha_bar_t) x_0, (1 - alpha_bar_t) I)``.
@@ -704,7 +709,7 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
         """Apply continuous noise via the wrapped definition (legacy path)."""
         edge_state = _continuous_edge_state(data)
         noisy_edge_state = self.definition.add_noise(edge_state, noise_level)
-        return GraphData.from_structure_only(data.node_mask, noisy_edge_state)
+        return DenseGraphState.from_structure_only(data.node_mask, noisy_edge_state)
 
     @staticmethod
     def _broadcast_alpha(alpha_bar: Tensor, like: Tensor) -> Tensor:

@@ -18,15 +18,15 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 
 
-def legacy_edge_scalar(data: GraphData) -> Tensor:
+def legacy_edge_scalar(data: DenseGraphState) -> Tensor:
     """Return a dense scalar adjacency regardless of which edge field is populated.
 
     Replaces the removed ``GraphData.to_edge_state``. Delegates to
-    :meth:`GraphData.to_edge_scalar` using whichever split edge field is
-    populated, preferring ``E_feat`` when both are present (matching the
+    :meth:`DenseGraphState.to_edge_scalar` using whichever split edge field
+    is populated, preferring ``E_feat`` when both are present (matching the
     legacy precedence).
     """
     if data.E_feat is not None:
@@ -34,14 +34,13 @@ def legacy_edge_scalar(data: GraphData) -> Tensor:
     return data.to_edge_scalar(source="class")
 
 
-def binary_graphdata(adj: Tensor) -> GraphData:
-    """Build a GraphData from a binary adjacency matching the legacy helper layout.
+def binary_graphdata(adj: Tensor) -> DenseGraphState:
+    """Build a DenseGraphState from a binary adjacency matching the legacy helper layout.
 
     Replaces the removed ``GraphData.from_binary_adjacency``. Produces the
     same two-channel ``E_class`` (``[no-edge, edge]``) with zero diagonal and
     a degenerate ``X_class`` marking every position as a "real" node. All
-    node positions are valid (``node_mask`` is all-True); padding is
-    handled separately by ``GraphData.collate``.
+    node positions are valid (``num_nodes_per_graph`` covers every row).
 
     Parameters
     ----------
@@ -51,7 +50,7 @@ def binary_graphdata(adj: Tensor) -> GraphData:
 
     Returns
     -------
-    GraphData
+    DenseGraphState
         One-hot encoded graph with ``dx_class=2`` and ``de_class=2``.
     """
     single = adj.dim() == 2
@@ -73,18 +72,11 @@ def binary_graphdata(adj: Tensor) -> GraphData:
     e_class[:, diag_idx, diag_idx, 0] = 1.0
 
     y_out = torch.zeros(bs, 0, device=adj.device, dtype=adj.dtype)
-    node_mask = torch.ones(bs, n, device=adj.device, dtype=torch.bool)
+    num_nodes_per_graph = torch.full((bs,), n, device=adj.device, dtype=torch.long)
 
-    if single:
-        return GraphData(
-            y=y_out.squeeze(0),
-            node_mask=node_mask.squeeze(0),
-            X_class=x_class.squeeze(0),
-            E_class=e_class.squeeze(0),
-        )
-    return GraphData(
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
         y=y_out,
-        node_mask=node_mask,
         X_class=x_class,
         E_class=e_class,
     )
@@ -92,8 +84,8 @@ def binary_graphdata(adj: Tensor) -> GraphData:
 
 def edge_scalar_graphdata(
     edge_state: Tensor, *, node_mask: Tensor | None = None
-) -> GraphData:
-    """Build a structure-only GraphData from a dense scalar edge tensor.
+) -> DenseGraphState:
+    """Build a structure-only DenseGraphState from a dense scalar edge tensor.
 
     Replaces the removed ``GraphData.from_edge_state``. Wraps a dense scalar
     adjacency as ``E_feat`` with shape ``(..., 1)`` and no categorical
@@ -111,7 +103,7 @@ def edge_scalar_graphdata(
 
     Returns
     -------
-    GraphData
+    DenseGraphState
         Instance with ``E_feat`` populated.
     """
     single = edge_state.dim() == 2
@@ -140,8 +132,4 @@ def edge_scalar_graphdata(
             f"got {tuple(node_mask.shape)}"
         )
 
-    if single:
-        return GraphData.from_structure_only(
-            node_mask.squeeze(0), edge_state.squeeze(0)
-        )
-    return GraphData.from_structure_only(node_mask, edge_state)
+    return DenseGraphState.from_structure_only(node_mask, edge_state)

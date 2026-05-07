@@ -38,6 +38,7 @@ from loguru import logger as loguru
 
 from tmgg.data.datasets.graph_data_fields import FieldName
 from tmgg.data.datasets.graph_types import (
+    DenseGraphState,
     GraphData,
     GraphState,
 )
@@ -296,7 +297,7 @@ class SingleStepDenoisingModule(DiffusionModule):
             node_mask = torch.ones(
                 x.shape[0], x.shape[1], dtype=torch.bool, device=x.device
             )
-        data = GraphData.from_structure_only(node_mask, x)
+        data = DenseGraphState.from_structure_only(node_mask, x)
         result: GraphData = self.model(data, t=t)  # pyright: ignore[reportUnknownVariableType]
         return result.to_edge_scalar(
             source="feat" if result.E_feat is not None else "class"
@@ -333,12 +334,12 @@ class SingleStepDenoisingModule(DiffusionModule):
         """
         # Sparse-default refactor (Phase 5.3): the dataloader emits
         # ``GraphState``; the legacy denoising bridge expects the dense
-        # adjacency view (``binarised_adjacency`` / ``node_mask`` /
+        # adjacency view (``dense_adjacency`` / ``node_mask`` /
         # ``from_structure_only``), so densify once at the top and thread
         # the dense view through the existing scalar-edge flow.
         batch_dense = batch.to_dense(edge_class_fill=_no_edge_fill_for_denoising(batch))
-        adj = batch_dense.binarised_adjacency()
-        clean_state = GraphData.from_structure_only(batch_dense.node_mask, adj)
+        adj = batch_dense.dense_adjacency()
+        clean_state = DenseGraphState.from_structure_only(batch_dense.node_mask, adj)
 
         # Sample noise level randomly from training noise levels
         eps: float = float(self._noise_rng.choice(self.noise_levels))
@@ -431,8 +432,8 @@ class SingleStepDenoisingModule(DiffusionModule):
         # Sparse-default refactor (Phase 5.3): densify once at the top so
         # the legacy adjacency-based denoising bridge keeps working.
         batch_dense = batch.to_dense(edge_class_fill=_no_edge_fill_for_denoising(batch))
-        adj = batch_dense.binarised_adjacency()
-        clean_state = GraphData.from_structure_only(batch_dense.node_mask, adj)
+        adj = batch_dense.dense_adjacency()
+        clean_state = DenseGraphState.from_structure_only(batch_dense.node_mask, adj)
         target = adj
 
         mode_loss_sum = torch.tensor(0.0, device=adj.device)
@@ -695,7 +696,7 @@ class SingleStepDenoisingModule(DiffusionModule):
         ref_node_mask = torch.ones(
             ref_adjs.shape[0], ref_adjs.shape[1], dtype=torch.bool, device=device
         )
-        ref_gd = GraphData.from_structure_only(ref_node_mask, ref_adjs)
+        ref_gd = DenseGraphState.from_structure_only(ref_node_mask, ref_adjs)
 
         with torch.no_grad():
             for eps in self.eval_noise_levels:

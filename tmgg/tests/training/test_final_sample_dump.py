@@ -185,14 +185,14 @@ class _StubSampler:
         num_nodes: Any,
         device: torch.device,
     ) -> list[Any]:
-        from tmgg.data.datasets.graph_types import GraphData
+        from tmgg.data.datasets.graph_types import DenseGraphState
 
         _ = model, noise_process, num_nodes, device
         return [
-            GraphData(
-                y=torch.zeros(0),
-                node_mask=torch.ones(3, dtype=torch.bool),
-                E_class=torch.zeros(3, 3, 2),
+            DenseGraphState(
+                num_nodes_per_graph=torch.tensor([3], dtype=torch.long),
+                y=torch.zeros(1, 0),
+                E_class=torch.zeros(1, 3, 3, 2),
             )
             for _ in range(num_graphs)
         ]

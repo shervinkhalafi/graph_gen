@@ -18,7 +18,11 @@ import pytest
 import torch
 
 from tests._helpers.graph_builders import binary_graphdata
-from tmgg.data.datasets.graph_types import GraphData, GraphStructure
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    GraphData,
+)
+from tmgg.models.digress.data_types import DenseGraphTransformerData
 from tmgg.models.digress.transformer_model import (
     GraphTransformer,
     NodeEdgeBlock,
@@ -33,6 +37,40 @@ def _random_symmetric_adjacency(bs: int, n: int) -> torch.Tensor:
     A = (A + A.transpose(1, 2)).clamp(max=1.0)
     A.diagonal(dim1=1, dim2=2).zero_()
     return A
+
+
+def _make_block_input(
+    *,
+    bs: int,
+    n: int,
+    dx: int,
+    de: int,
+    dy: int,
+    adjacency: torch.Tensor | None = None,
+    eigvec: torch.Tensor | None = None,
+    eigval: torch.Tensor | None = None,
+) -> DenseGraphTransformerData:
+    """Build a DenseGraphTransformerData carrier for direct block tests.
+
+    The transformer block consumes ``DenseGraphTransformerData`` whose
+    ``X_class`` (hidden node features), ``E_class`` (hidden edge
+    features), and ``y`` are populated. ``binary_adj`` carries the
+    input-time binary topology used by GNN projections; tests pass an
+    explicit ``adjacency`` argument when GNN projections are exercised.
+    """
+    X = torch.rand(bs, n, dx)
+    E = torch.rand(bs, n, n, de)
+    y = torch.rand(bs, dy)
+    num_nodes = torch.full((bs,), n, dtype=torch.long)
+    base = DenseGraphDistribution(
+        num_nodes_per_graph=num_nodes,
+        y=y,
+        X_class=X,
+        E_class=E,
+    )
+    return DenseGraphTransformerData.from_base(
+        base, eigvec=eigvec, eigval=eigval, binary_adj=adjacency
+    )
 
 
 class TestBareGraphConvolutionLayer:
@@ -136,17 +174,20 @@ class TestNodeEdgeBlockGNN:
         )
 
         bs, n = 2, 16
-        X = torch.rand(bs, n, 128)
-        E = torch.rand(bs, n, n, 32)
-        y = torch.rand(bs, 64)
-        node_mask = torch.ones(bs, n)
-        structure = GraphStructure(adjacency=_random_symmetric_adjacency(bs, n))
+        h = _make_block_input(
+            bs=bs,
+            n=n,
+            dx=128,
+            de=32,
+            dy=64,
+            adjacency=_random_symmetric_adjacency(bs, n),
+        )
+        out = block(h)
 
-        newX, newE, new_y = block(X, E, y, node_mask, structure)
-
-        assert newX.shape == X.shape
-        assert newE.shape == E.shape
-        assert new_y.shape == y.shape
+        assert out.X_class is not None and out.E_class is not None
+        assert out.X_class.shape == (bs, n, 128)
+        assert out.E_class.shape == (bs, n, n, 32)
+        assert out.y.shape == (bs, 64)
 
     def test_forward_mixed_projections(self):
         """Forward pass works with mixed Linear and GNN projections."""
@@ -161,17 +202,20 @@ class TestNodeEdgeBlockGNN:
         )
 
         bs, n = 2, 12
-        X = torch.rand(bs, n, 64)
-        E = torch.rand(bs, n, n, 16)
-        y = torch.rand(bs, 32)
-        node_mask = torch.ones(bs, n)
-        structure = GraphStructure(adjacency=_random_symmetric_adjacency(bs, n))
+        h = _make_block_input(
+            bs=bs,
+            n=n,
+            dx=64,
+            de=16,
+            dy=32,
+            adjacency=_random_symmetric_adjacency(bs, n),
+        )
+        out = block(h)
 
-        newX, newE, new_y = block(X, E, y, node_mask, structure)
-
-        assert newX.shape == X.shape
-        assert newE.shape == E.shape
-        assert new_y.shape == y.shape
+        assert out.X_class is not None and out.E_class is not None
+        assert out.X_class.shape == (bs, n, 64)
+        assert out.E_class.shape == (bs, n, n, 16)
+        assert out.y.shape == (bs, 32)
 
     def test_gradient_flow_through_gnn(self):
         """Gradients flow through GNN projections to input and parameters."""
@@ -186,14 +230,22 @@ class TestNodeEdgeBlockGNN:
         )
 
         bs, n = 2, 8
+        adjacency = _random_symmetric_adjacency(bs, n)
         X = torch.rand(bs, n, 64, requires_grad=True)
         E = torch.rand(bs, n, n, 16)
         y = torch.rand(bs, 32)
-        node_mask = torch.ones(bs, n)
-        structure = GraphStructure(adjacency=_random_symmetric_adjacency(bs, n))
+        num_nodes = torch.full((bs,), n, dtype=torch.long)
+        base = DenseGraphDistribution(
+            num_nodes_per_graph=num_nodes,
+            y=y,
+            X_class=X,
+            E_class=E,
+        )
+        h = DenseGraphTransformerData.from_base(base, binary_adj=adjacency)
 
-        newX, newE, new_y = block(X, E, y, node_mask, structure)
-        loss = newX.sum() + newE.sum() + new_y.sum()
+        out = block(h)
+        assert out.X_class is not None and out.E_class is not None
+        loss = out.X_class.sum() + out.E_class.sum() + out.y.sum()
         loss.backward()
 
         # Check gradient flows to input
@@ -221,28 +273,6 @@ class TestNodeEdgeBlockGNN:
         assert block.q.H.shape == (4, 64, 64)  # pyright: ignore[reportAttributeAccessIssue]
         assert block.k.H.shape == (4, 64, 64)  # pyright: ignore[reportAttributeAccessIssue]
         assert block.v.H.shape == (4, 64, 64)  # pyright: ignore[reportAttributeAccessIssue]
-
-    def test_missing_adjacency_raises(self):
-        """GNN projections without adjacency in GraphStructure raises ValueError."""
-        block = NodeEdgeBlock(
-            dx=64,
-            de=16,
-            dy=32,
-            n_head=4,
-            use_gnn_q=True,
-            use_gnn_k=False,
-            use_gnn_v=False,
-        )
-
-        bs, n = 2, 8
-        X = torch.rand(bs, n, 64)
-        E = torch.rand(bs, n, n, 16)
-        y = torch.rand(bs, 32)
-        node_mask = torch.ones(bs, n)
-        structure = GraphStructure()  # No adjacency
-
-        with pytest.raises(ValueError, match="adjacency must be populated"):
-            block(X, E, y, node_mask, structure)
 
 
 class TestXEyTransformerLayerGNN:
@@ -327,7 +357,7 @@ class TestGraphTransformerGNN:
     def test_forward_pass_with_gnn(self):
         """Full forward pass works with GNN projections.
 
-        from_binary_adjacency() produces 2-class X and E features, so input_dims
+        binary_graphdata produces 2-class X and E features, so input_dims
         must use {"X": 2, "E": 2}.
         """
         hidden_dims = {
@@ -349,7 +379,7 @@ class TestGraphTransformerGNN:
         )
 
         x = torch.rand(2, 12, 12)  # Adjacency matrix
-        result = model(binary_graphdata(x))
+        result = model(binary_graphdata(x), output_dense=True)
 
         assert isinstance(result, GraphData)
         assert result.E_class is not None
@@ -358,7 +388,7 @@ class TestGraphTransformerGNN:
     def test_forward_pass_with_eigenvectors_and_gnn(self):
         """Forward pass works with both eigenvectors and GNN projections.
 
-        from_binary_adjacency() produces X with 2 features; EigenvectorAugmentation
+        binary_graphdata produces X with 2 features; EigenvectorAugmentation
         adds k=16, so the model auto-adjusts input_dims["X"] = 2 + 16 = 18.
         """
         from tmgg.models.digress.extra_features import EigenvectorAugmentation
@@ -388,7 +418,7 @@ class TestGraphTransformerGNN:
 
         x = torch.rand(2, 20, 20)  # Adjacency matrix
         x = (x + x.transpose(-1, -2)) / 2  # Symmetrize for eigenvector extraction
-        result = model(binary_graphdata(x))
+        result = model(binary_graphdata(x), output_dense=True)
 
         assert isinstance(result, GraphData)
         assert result.E_class is not None
@@ -443,10 +473,10 @@ class TestAdjacencyExtraction:
             return original_q_forward(A, X)
 
         with patch.object(gnn_q, "forward", capturing_forward):
-            _ = model(binary_graphdata(input_adj))
+            _ = model(binary_graphdata(input_adj), output_dense=True)
 
-        # After from_binary_adjacency, adjacency is extracted via argmax on 2-class E.
-        # from_binary_adjacency zeroes diagonal (sets E[diag, 0]=1), so extracted
+        # After binary_graphdata, adjacency is extracted via argmax on 2-class E.
+        # binary_graphdata zeroes diagonal (sets E[diag, 0]=1), so extracted
         # adjacency has 0 on diagonal and binary values off-diagonal.
         expected_adj = (input_adj > 0.5).float()
         diag_idx = torch.arange(n)
@@ -487,7 +517,7 @@ class TestAdjacencyExtraction:
         assert model.transformer._use_gnn_projections is True
 
         # Run forward pass (this should work without error)
-        result = model(binary_graphdata(input_adj))
+        result = model(binary_graphdata(input_adj), output_dense=True)
         assert isinstance(result, GraphData)
         assert result.E_class is not None
         assert result.E_class.shape == (bs, n, n, 2)
@@ -619,8 +649,8 @@ class TestNormalizeAdjFlag:
         # Forward outputs must match bit-for-bit
         adj = _random_symmetric_adjacency(bs, n)
         gd = binary_graphdata(adj)
-        out_d = model_default(gd)
-        out_e = model_explicit(gd)
+        out_d = model_default(gd, output_dense=True)
+        out_e = model_explicit(gd, output_dense=True)
         assert out_d.E_class is not None and out_e.E_class is not None
         torch.testing.assert_close(out_d.E_class, out_e.E_class)
 
@@ -665,7 +695,7 @@ class TestNormalizeAdjFlag:
         # Convert dense Ã back to a {0,1} mask for binary_graphdata; we
         # only need the smoke test, not numerical fidelity here.
         gd = binary_graphdata((adj > 0).float())
-        out = model(gd)
+        out = model(gd, output_dense=True)
         assert out.E_class is not None
         assert out.E_class.shape == (bs, n, n, 2)
 
@@ -695,3 +725,10 @@ class TestNormalizeAdjFlag:
         assert isinstance(layer, XEyTransformerLayer)
         assert isinstance(layer.self_attn.q, BareGraphConvolutionLayer)
         assert layer.self_attn.q.normalize_adjacency is False
+
+
+# Note: ``test_missing_adjacency_raises`` from the legacy 5-arg-form test was
+# removed: the new ``DenseGraphTransformerData`` carrier always derives the
+# adjacency from ``E_class`` via ``dense_adjacency()``, so the "no adjacency"
+# branch is no longer reachable. That invariant is now compile-time enforced
+# by the type system rather than runtime-checked.

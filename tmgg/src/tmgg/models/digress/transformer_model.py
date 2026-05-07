@@ -466,12 +466,18 @@ class NodeEdgeBlock(nn.Module):
         e_mask1 = x_mask.unsqueeze(2)  # bs, n, 1, 1
         e_mask2 = x_mask.unsqueeze(1)  # bs, 1, n, 1
 
-        # Compute the binary adjacency once when GNN projections need it.
-        # The frozen spectral context (V / Lambda) was pre-computed at the
-        # transformer entry point and lives on ``h``; the binary adjacency
-        # is only needed for GNN projections, so we compute it lazily.
+        # Read the binary adjacency for GNN projections from the frozen
+        # transformer context. ``_GraphTransformer.forward`` precomputes
+        # it from the categorical input topology before any MLP transforms,
+        # so GNN projections see the original graph rather than an
+        # adjacency derived from the (unstructured) hidden ``E_class``.
         uses_gnn = self._use_gnn_q or self._use_gnn_k or self._use_gnn_v
-        A: Tensor | None = h.dense_adjacency() if uses_gnn else None
+        A: Tensor | None = h.binary_adj if uses_gnn else None
+        if uses_gnn and A is None:
+            raise ValueError(
+                "NodeEdgeBlock requires DenseGraphTransformerData.binary_adj "
+                "to be populated when GNN projections are enabled."
+            )
 
         uses_spectral = (
             self._use_spectral_q or self._use_spectral_k or self._use_spectral_v
@@ -925,7 +931,10 @@ class _GraphTransformer(nn.Module):
             E_feat=None,
         )
         h = DenseGraphTransformerData.from_base(
-            hidden_dist, eigvec=eigenvectors, eigval=eigenvalues
+            hidden_dist,
+            eigvec=eigenvectors,
+            eigval=eigenvalues,
+            binary_adj=binary_adj,
         )
 
         for layer in self.tf_layers:

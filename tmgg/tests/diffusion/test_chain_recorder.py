@@ -393,9 +393,9 @@ class _UniformCategoricalModel(GraphModel):
         return {"dx": self.dx, "de": self.de}
 
     def forward(
-        self, data: GraphData, t: Tensor | None = None
+        self, data: GraphData, t: Tensor | None = None, *, output_dense: bool = False
     ) -> DenseGraphDistribution:
-        _ = t
+        _ = t, output_dense
         # Sampler invokes the model with a dense state (post-refactor
         # contract: ``output_dense=True`` is the chain-snapshot path).
         assert isinstance(data, DenseGraphState)
@@ -480,11 +480,13 @@ def test_sampler_without_recorder_unchanged() -> None:
         chain_recorder=rec,
     )
     assert len(no_rec) == len(with_rec)
+    # Sampler returns sparse ``GraphState`` per-graph payloads; compare
+    # the lowercase sparse fields directly.
     for a, b in zip(no_rec, with_rec, strict=True):
-        if a.E_class is not None and b.E_class is not None:
-            torch.testing.assert_close(a.E_class, b.E_class)
-        if a.X_class is not None and b.X_class is not None:
-            torch.testing.assert_close(a.X_class, b.X_class)
+        if a.edge_class is not None and b.edge_class is not None:
+            torch.testing.assert_close(a.edge_class, b.edge_class)
+        if a.x_class is not None and b.x_class is not None:
+            torch.testing.assert_close(a.x_class, b.x_class)
 
 
 def test_sampler_accepts_recorder_dict_for_composite_fan_out() -> None:
@@ -600,8 +602,10 @@ def test_sampler_bit_identical_with_and_without_recorder_dict() -> None:
         chain_recorder=recorders,
     )
     assert len(no_rec) == len(with_rec)
+    # Sampler returns sparse ``GraphState`` per-graph payloads; compare
+    # the lowercase sparse fields directly.
     for a, b in zip(no_rec, with_rec, strict=True):
-        if a.E_class is not None and b.E_class is not None:
-            torch.testing.assert_close(a.E_class, b.E_class)
-        if a.X_class is not None and b.X_class is not None:
-            torch.testing.assert_close(a.X_class, b.X_class)
+        if a.edge_class is not None and b.edge_class is not None:
+            torch.testing.assert_close(a.edge_class, b.edge_class)
+        if a.x_class is not None and b.x_class is not None:
+            torch.testing.assert_close(a.x_class, b.x_class)

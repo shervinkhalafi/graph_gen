@@ -19,13 +19,38 @@ import pytest
 import torch
 
 from tests._helpers.graph_builders import binary_graphdata
-from tmgg.data.datasets.graph_types import GraphData, GraphStructure
+from tmgg.data.datasets.graph_types import DenseGraphDistribution, GraphData
+from tmgg.models.digress.data_types import DenseGraphTransformerData
 from tmgg.models.digress.transformer_model import (
     GraphTransformer,
     NodeEdgeBlock,
     XEyTransformerLayer,
 )
 from tmgg.models.layers import SpectralProjectionLayer
+
+
+def _make_block_input(
+    *,
+    bs: int,
+    n: int,
+    dx: int,
+    de: int,
+    dy: int,
+    eigvec: torch.Tensor | None = None,
+    eigval: torch.Tensor | None = None,
+) -> DenseGraphTransformerData:
+    """Build a DenseGraphTransformerData carrier for direct block tests."""
+    X = torch.rand(bs, n, dx)
+    E = torch.rand(bs, n, n, de)
+    y = torch.rand(bs, dy)
+    num_nodes = torch.full((bs,), n, dtype=torch.long)
+    base = DenseGraphDistribution(
+        num_nodes_per_graph=num_nodes,
+        y=y,
+        X_class=X,
+        E_class=E,
+    )
+    return DenseGraphTransformerData.from_base(base, eigvec=eigvec, eigval=eigval)
 
 
 class TestNodeEdgeBlockSpectral:
@@ -121,21 +146,21 @@ class TestNodeEdgeBlockSpectral:
         )
 
         bs, n = 2, 20
-        X = torch.rand(bs, n, 128)
-        E = torch.rand(bs, n, n, 32)
-        y = torch.rand(bs, 64)
-        node_mask = torch.ones(bs, n)
-
-        structure = GraphStructure(
-            eigenvectors=torch.rand(bs, n, 16),
-            eigenvalues=torch.rand(bs, 16),
+        h = _make_block_input(
+            bs=bs,
+            n=n,
+            dx=128,
+            de=32,
+            dy=64,
+            eigvec=torch.rand(bs, n, 16),
+            eigval=torch.rand(bs, 16),
         )
+        out = block(h)
 
-        newX, newE, new_y = block(X, E, y, node_mask, structure)
-
-        assert newX.shape == X.shape
-        assert newE.shape == E.shape
-        assert new_y.shape == y.shape
+        assert out.X_class is not None and out.E_class is not None
+        assert out.X_class.shape == (bs, n, 128)
+        assert out.E_class.shape == (bs, n, n, 32)
+        assert out.y.shape == (bs, 64)
 
     def test_forward_mixed_projections(self):
         """Forward pass works with mixed Linear and Spectral projections."""
@@ -151,21 +176,21 @@ class TestNodeEdgeBlockSpectral:
         )
 
         bs, n = 2, 16
-        X = torch.rand(bs, n, 64)
-        E = torch.rand(bs, n, n, 16)
-        y = torch.rand(bs, 32)
-        node_mask = torch.ones(bs, n)
-
-        structure = GraphStructure(
-            eigenvectors=torch.rand(bs, n, 16),
-            eigenvalues=torch.rand(bs, 16),
+        h = _make_block_input(
+            bs=bs,
+            n=n,
+            dx=64,
+            de=16,
+            dy=32,
+            eigvec=torch.rand(bs, n, 16),
+            eigval=torch.rand(bs, 16),
         )
+        out = block(h)
 
-        newX, newE, new_y = block(X, E, y, node_mask, structure)
-
-        assert newX.shape == X.shape
-        assert newE.shape == E.shape
-        assert new_y.shape == y.shape
+        assert out.X_class is not None and out.E_class is not None
+        assert out.X_class.shape == (bs, n, 64)
+        assert out.E_class.shape == (bs, n, n, 16)
+        assert out.y.shape == (bs, 32)
 
     def test_gradient_flow_through_spectral(self):
         """Gradients flow through spectral projections to input and parameters."""
@@ -184,14 +209,22 @@ class TestNodeEdgeBlockSpectral:
         X = torch.rand(bs, n, 64, requires_grad=True)
         E = torch.rand(bs, n, n, 16)
         y = torch.rand(bs, 32)
-        node_mask = torch.ones(bs, n)
+        num_nodes = torch.full((bs,), n, dtype=torch.long)
 
         V = torch.rand(bs, n, 8, requires_grad=True)
         Lambda = torch.rand(bs, 8, requires_grad=True)
 
-        structure = GraphStructure(eigenvectors=V, eigenvalues=Lambda)
-        newX, newE, new_y = block(X, E, y, node_mask, structure)
-        loss = newX.sum() + newE.sum() + new_y.sum()
+        base = DenseGraphDistribution(
+            num_nodes_per_graph=num_nodes,
+            y=y,
+            X_class=X,
+            E_class=E,
+        )
+        h = DenseGraphTransformerData.from_base(base, eigvec=V, eigval=Lambda)
+
+        out = block(h)
+        assert out.X_class is not None and out.E_class is not None
+        loss = out.X_class.sum() + out.E_class.sum() + out.y.sum()
         loss.backward()
 
         # Check gradient flows to input
@@ -331,7 +364,7 @@ class TestGraphTransformerSpectral:
         # Forward pass with adjacency matrix
         x = torch.rand(2, 20, 20)
         x = (x + x.transpose(-1, -2)) / 2  # Symmetrize for eigendecomposition
-        result = model(binary_graphdata(x))
+        result = model(binary_graphdata(x), output_dense=True)
 
         assert isinstance(result, GraphData)
         assert result.E_class is not None
@@ -364,7 +397,7 @@ class TestGraphTransformerSpectral:
         # Forward pass should work
         x = torch.rand(2, 20, 20)
         x = (x + x.transpose(-1, -2)) / 2
-        result = model(binary_graphdata(x))
+        result = model(binary_graphdata(x), output_dense=True)
 
         assert isinstance(result, GraphData)
         assert result.E_class is not None
@@ -394,7 +427,7 @@ class TestGraphTransformerSpectral:
         x = torch.rand(2, 12, 12)
         x = (x + x.transpose(-1, -2)) / 2
 
-        result = model(binary_graphdata(x))
+        result = model(binary_graphdata(x), output_dense=True)
         assert result.E_class is not None
         # Use only edge-probability channel: both channels of 2-class encoding
         # sum to 1.0 per position, so E.sum() is constant with zero gradient.
@@ -464,7 +497,7 @@ class TestGraphTransformerSpectral:
         model.transformer.eigen_layer.forward = capture_forward  # type: ignore[assignment]
 
         with torch.no_grad():
-            model(gd)
+            model(gd, output_dense=True)
 
         assert "adj" in captured, "Eigen layer should have been called"
         received_adj = captured["adj"][0]
@@ -610,8 +643,8 @@ class TestNormalizeEigenvaluesFlag:
         adj = (adj + adj.transpose(-1, -2)).clamp(max=1.0)
         adj.diagonal(dim1=1, dim2=2).zero_()
         gd = binary_graphdata(adj)
-        out_d = model_default(gd)
-        out_e = model_explicit(gd)
+        out_d = model_default(gd, output_dense=True)
+        out_e = model_explicit(gd, output_dense=True)
         assert out_d.E_class is not None and out_e.E_class is not None
         torch.testing.assert_close(out_d.E_class, out_e.E_class)
 
@@ -653,7 +686,7 @@ class TestNormalizeEigenvaluesFlag:
         adj = (adj > 0.5).float()
         adj = (adj + adj.transpose(-1, -2)).clamp(max=1.0)
         adj.diagonal(dim1=1, dim2=2).zero_()
-        out = model(binary_graphdata(adj))
+        out = model(binary_graphdata(adj), output_dense=True)
         assert out.E_class is not None
         assert out.E_class.shape == (bs, n, n, 2)
 
