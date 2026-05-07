@@ -2,7 +2,7 @@
 
 Generates synthetic graphs as adjacency matrices, stores them as PyG
 ``Data`` objects (matching the parent ``MultiGraphDataModule``), and
-provides train/val/test DataLoaders that collate into dense ``GraphData``
+provides train/val/test DataLoaders that collate into sparse ``GraphState``
 batches.
 
 Graph generation and index splitting are handled by the
@@ -32,7 +32,7 @@ class SyntheticCategoricalDataModule(MultiGraphDataModule):
     Generates graphs as adjacency matrices using the shared
     ``_generate_adjacencies()`` from ``MultiGraphDataModule``, converts
     each to a PyG ``Data`` object, and splits into train/val/test sets.
-    DataLoaders collate into dense ``GraphData`` batches via the parent's
+    DataLoaders collate into sparse ``GraphState`` batches via the parent's
     :class:`~tmgg.data.data_modules.multigraph_data_module.GraphDataCollator`.
 
     The categorical representation uses ``dx=2`` (node present / absent)
