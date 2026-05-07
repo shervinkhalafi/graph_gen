@@ -3,111 +3,13 @@ python = "3.12"
 uv = "latest"
 
 [env]
-# Ensure uv uses the mise-managed Python
+# Ensure uv uses the mise-managed Python.
 UV_PYTHON_PREFERENCE = "managed"
 
-[tasks.modal-secrets]
-description = "Create/update Modal secrets from Doppler env vars"
-run = """
-echo "Creating Modal secrets from Doppler environment..."
+[tasks.setup]
+description = "Sync project dependencies via uv (matches uv.lock)."
+run = "uv sync"
 
-# Tigris/S3 credentials (map Doppler names to Modal expected names)
-uv run modal secret create tigris-credentials --force \
-    TMGG_TIGRIS_BUCKET="$TMGG_S3_BUCKET" \
-    TMGG_TIGRIS_ACCESS_KEY="$AWS_ACCESS_KEY_ID" \
-    TMGG_TIGRIS_SECRET_KEY="$AWS_SECRET_ACCESS_KEY"
-
-# W&B credentials
-uv run modal secret create wandb-credentials --force \
-    WANDB_API_KEY="$WANDB_API_KEY"
-
-echo "Modal secrets created successfully"
-"""
-
-[tasks.modal-deploy]
-description = "Deploy every TMGG Modal app (tmgg-spectral + tmgg-eval-all)"
-depends = ["modal-secrets"]
-run = """
-# Log outside project to avoid "modified during build" error
-LOGDIR="/tmp/tmgg-modal-logs"
-TS="$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$LOGDIR"
-rm -f src/tmgg/evaluation/orca/orca
-
-# Deploy each app sequentially. Modules are listed here; add new ones as
-# additional ``-m`` lines below. Both are deployed as part of the single
-# task so a normal "redeploy after a code change" picks up every app the
-# project owns without forgetting one.
-APPS=(
-    "tmgg.modal._functions"
-    "tmgg.modal._eval_all_functions"
-)
-
-for module in "${APPS[@]}"; do
-    LOGFILE="$LOGDIR/modal-deploy-${module##*.}-${TS}.log"
-    echo "[mise modal-deploy] deploying ${module} -> ${LOGFILE}"
-    MODAL_LOGLEVEL=DEBUG uv run modal deploy -m "${module}" 2>&1 | tee "$LOGFILE"
-done
-"""
-
-[tasks.modal-serve]
-description = "Run tmgg-spectral in development mode (hot-reload)"
-run = "uv run modal serve -m tmgg.modal._functions"
-
-[tasks.modal-serve-eval-all]
-description = "Run tmgg-eval-all in development mode (hot-reload)"
-run = "uv run modal serve -m tmgg.modal._eval_all_functions"
-
-# Analysis tasks
-[tasks.analyze]
-description = "Run full W&B analysis pipeline (download + importance analysis)"
-run = "uv run scripts/analyze_experiments.py"
-
-[tasks.analyze-cached]
-description = "Run analysis using cached data (skip download)"
-run = "uv run scripts/analyze_experiments.py --skip-download"
-
-[tasks.breakdown]
-description = "Generate all experiment breakdown reports"
-run = "uv run scripts/experiment_breakdown.py --mode full"
-
-[tasks.breakdown-summary]
-description = "Generate summary breakdown only"
-run = "uv run scripts/experiment_breakdown.py --mode summary"
-
-[tasks.semantic]
-description = "Run semantic grouping analysis with significance tests"
-run = "uv run scripts/semantic_analysis.py --output eigenstructure_results_full/semantic_analysis_report.md"
-
-[tasks.reports]
-description = "Generate all analysis reports (breakdown + semantic)"
-depends = ["breakdown", "semantic"]
-run = "echo 'All reports generated in eigenstructure_results_full/'"
-
-[tasks.aggregate-mmd]
-description = "Aggregate MMD evaluation results from Modal volume into Parquet"
-run = "uv run tmgg-modal aggregate --output results/mmd_results.parquet --cache-dir results/mmd_cache"
-
-[tasks.aggregate-mmd-dry]
-description = "Preview MMD evaluation files without downloading"
-run = "uv run tmgg-modal aggregate --dry-run"
-
-# GDPO-SBM sanity check on Modal (deployed app + client-side spawn)
-
-[tasks.validate-gdpo-sbm-deploy]
-description = "Deploy the tmgg-validate-gdpo-sbm Modal app (re-run after validate.py or checkpoint changes)"
-run = "uv run modal deploy analysis/digress-loss-check/validate-gdpo-sbm/modal_app.py"
-
-[tasks.validate-gdpo-sbm-run]
-description = "Spawn an A100 sanity-check call (paper-matching 40 samples); outputs samples.jsonl + metrics.json + report.md + PNG on the tmgg-outputs volume"
-run = """
-uv run --with modal --with click python \
-    analysis/digress-loss-check/validate-gdpo-sbm/client.py spawn \
-    --gpu a100 --num-samples 40 --batch-size 40
-"""
-
-# Vignac / GDPO SBM pretraining reproduction on Modal (A100-40GB, bf16-mixed)
-
-[tasks.train-sbm-vignac-repro]
-description = "Launch the Vignac/GDPO SBM pretraining reproduction on Modal A100 (~6-8 h bf16, ~550k steps). Parity knobs live in configs/experiment/discrete_sbm_vignac_repro.yaml."
-run = "./run-discrete-sbm-vignac-repro-modal-a100.zsh"
+[tasks.repro]
+description = "Launch the DiGress repro panel (Table 2). Requires Modal + WANDB_API_KEY. Pass dataset key as argument: sbm | sbm-pearl | sbm-pearl-spectral | sbm-pearl-gnnconv-norm | enzymes | enzymes-pearl | enzymes-pearl-spectral | enzymes-pearl-gnnconv-norm."
+run = "./scripts/run-digress-repro-modal.zsh"
