@@ -43,12 +43,13 @@ What is **out of scope** for this bundle:
 │   └── compute_mmd_baselines.py      # Train↔test MMD baselines for ratio anchoring
 ├── paper-artifacts/repro-ablations/  # Self-contained data bundle for the panel
 │   ├── README.md                     # What this bundle contains
-│   ├── data/runs_index.csv           # 28 runs (8 paper Table 2 + 20 pre-fix lineage)
+│   ├── data/runs_index.csv           # 8 runs (one per Table 2 cell)
 │   ├── data/per_run_history/*.parquet # Full W&B history per run, MMD evals, gradients
 │   ├── data/DATA-DICTIONARY.md       # Schema for runs_index + per-run parquets
-│   ├── configs/{pre-fix,post-fix}/   # Hydra YAMLs at submission and at the data freeze
+│   ├── configs/digress*.yaml         # Hydra YAMLs paired with the eight runs
 │   ├── context/                      # MMD-units protocol + paper anchors + train↔test baselines
 │   └── media/per_run/<run_id>/       # Sample-grid PNGs from W&B
+├── data/                             # Bundled datasets (SPECTRE-SBM, PyG ENZYMES) — see "Setup"
 ├── pyproject.toml + uv.lock          # uv-managed dependencies
 └── mise.toml                         # Optional Python + uv pinning (`mise run setup`, `mise run repro`)
 ```
@@ -83,6 +84,23 @@ Compiled-from-source dependencies:
   ```bash
   conda install -c conda-forge graph-tool
   ```
+
+### Bundled datasets
+
+Both panel datasets ship inside this archive — no network access
+needed to load them:
+
+- `data/spectre/sbm_200.pt` — the SPECTRE SBM fixture (~20 MB,
+  Martinkus et al., NeurIPS 2022).
+- `data/ENZYMES/{raw,processed}/` — the PyG ENZYMES TUDataset
+  (~7 MB total).
+
+The data configs (`src/tmgg/experiments/exp_configs/data/spectre_sbm.yaml`
+and `pyg_enzymes.yaml`) point at these paths by default. Run the
+launcher from the repository root so the relative paths resolve. To
+fall back to the upstream cache locations, set
+`data.fixture_path=null` (SBM) or `data.graph_config.root=null`
+(ENZYMES) on the CLI.
 
 ## Reproduction recipe
 
@@ -148,11 +166,11 @@ print(hist[mmd_cols].dropna(how="all").tail())
 - `mmd-units-and-protocol.md` — protocol detail (V-statistic biased estimator, σ pinning, sample count).
 - `mmd_baselines/{spectre_sbm.json,pyg_enzymes.json}` — the per-dataset baseline JSONs.
 
-`paper-artifacts/repro-ablations/configs/` holds the Hydra YAMLs in
-two folders: `pre-fix/` (configs at the time the pre-fix runs were
-trained) and `post-fix/` (configs paired with the eight Table 2
-runs). The diffs between the two folders document the diagonal-mask
-correctness fix.
+`paper-artifacts/repro-ablations/configs/` holds the eight Hydra YAMLs
+paired with the eight Table 2 runs. The bundled config files are
+exact copies of those used at training time; the live equivalents
+in `src/tmgg/experiments/exp_configs/experiment/` carry the same
+content.
 
 ## Caveats and known issues
 

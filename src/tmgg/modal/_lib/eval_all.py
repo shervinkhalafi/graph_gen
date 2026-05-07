@@ -167,7 +167,7 @@ def discover_checkpoints(
         raise FileNotFoundError(
             f"No checkpoints directory at {ckpt_dir}. Pass the run-id "
             "directory (one level below experiment-name), e.g. "
-            "/data/outputs/discrete_qm9_digress_repro/discrete_qm9_..."
+            "/data/outputs/digress_sbm/<run_id>"
         )
 
     entries: list[CheckpointEntry] = []
@@ -391,7 +391,7 @@ def eval_all_checkpoints_impl(
     ----------
     experiment_dir
         Path to the run-id directory on the shared volume,
-        e.g. ``/data/outputs/discrete_qm9_digress_repro/<run_id>``.
+        e.g. ``/data/outputs/digress_sbm/<run_id>``.
     num_samples, num_steps
         Forwarded to ``run_mmd_evaluation``. Defaults match the
         async-eval worker's per-step budget; bump for end-of-run

@@ -10,7 +10,7 @@ Usage::
 
 ``<experiment_dir>`` is the run-id directory **on the shared
 ``tmgg-outputs`` volume**, e.g.
-``/data/outputs/discrete_qm9_digress_repro/discrete_qm9_..._fresh_...``.
+``/data/outputs/digress_sbm/<run_id>``.
 
 Looks up the matching ``eval_all_checkpoints[_<tier>]`` function
 deployed in the ``tmgg-eval-all`` Modal app, calls it remotely, and

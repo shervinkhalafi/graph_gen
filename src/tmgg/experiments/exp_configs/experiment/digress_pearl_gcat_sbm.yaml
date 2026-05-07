@@ -1,6 +1,6 @@
 # @package _global_
 # DiGress SBM — PEARL extra features + BareGraphConv (normalized
-# adjacency) Q/K/V projections, post-fix exact.
+# adjacency) Q/K/V projections, post-fix match.
 # ==============================================================
 #
 # Stacks the gnnconv-normalized swap on top of

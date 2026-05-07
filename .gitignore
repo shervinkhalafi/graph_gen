@@ -21,7 +21,12 @@ analysis_output/
 scripts/debug_*.py
 wandb_export_dataframes.tar.xz
 wandb_export_full.tar.xz
-/data/
+# /data/ is gitignored by default to keep ad-hoc dumps out, but the
+# supplementary bundle ships SPECTRE-SBM and PyG ENZYMES inline so
+# reviewers can run the panel offline. Whitelist those two subtrees.
+/data/*
+!/data/spectre/
+!/data/ENZYMES/
 logs/
 .mcp.json
 
