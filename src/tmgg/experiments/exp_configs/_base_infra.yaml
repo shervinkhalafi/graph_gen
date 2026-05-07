@@ -77,7 +77,7 @@ matmul_precision: "high"
 # time. Stripping removes ~50 host-side ``bool(Tensor)`` syncs/step from the
 # hot path (defensive asserts in extras, mask-symmetry checks, masked-softmax
 # guards, etc.) that are otherwise CUDA-graph / ``torch.compile`` blockers.
-# See ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` for the full
+# See the spec for the full
 # inventory.
 #
 # Set ``modal_debug=true`` (or ``MODAL_DEBUG=1`` in the wrapper env) to keep

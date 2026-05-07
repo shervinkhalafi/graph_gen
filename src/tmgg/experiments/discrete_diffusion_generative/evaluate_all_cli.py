@@ -19,7 +19,7 @@ reference graphs, so ``--reference_set`` and ``--use_ema`` propagate
 through honestly: the CSV ``ema_active`` column reflects whether EMA
 weights were actually swapped in.
 
-Per spec resolutions (`docs/specs/2026-04-22-upstream-config-surface-c.md`):
+Per spec resolutions:
 
 * **Q10** -- ``--device`` defaults to ``auto`` (probes CUDA at run
   time).

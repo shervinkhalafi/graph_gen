@@ -30,7 +30,7 @@ def _assert_correctly_masked(variable: torch.Tensor, node_mask: torch.Tensor) ->
     ``if __debug__:`` so production runs (Python -O / PYTHONOPTIMIZE=1)
     elide the entire check at bytecode-compile time, removing the largest
     sync source in the model body. See
-    ``docs/reports/2026-04-28-sync-review/04-transformer_forward.md``.
+   .
     """
     if __debug__:
         max_val = (variable * (1 - node_mask.long())).abs().max().item()

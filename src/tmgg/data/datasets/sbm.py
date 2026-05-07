@@ -99,7 +99,7 @@ def generate_sbm_batch(
 
     This function powers the eigenspectrum-diversity knob used by the
     improvement-gap sweep; see
-    ``docs/plans/2026-04-18-improvement-gap-surrogate-and-spectrum-diversity.md``.
+   .
 
     Parameters
     ----------

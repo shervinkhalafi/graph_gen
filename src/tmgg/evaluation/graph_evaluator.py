@@ -96,7 +96,7 @@ class EvaluationResults:
     All ``*_mmd`` fields hold **squared MMD values** (V-statistic biased
     estimator), not square-root MMD distances — this is the
     GraphRNN/GRAN convention that DiGress and HiGen also use. See
-    ``docs/eval/mmd-units-and-protocol.md`` for unit conventions and
+    for unit conventions and
     cross-paper comparison rules.
 
     Attributes
@@ -187,7 +187,7 @@ def compute_orbit_mmd(
     Returns the V-statistic biased squared-MMD value (the "orbit MMD"
     column in the GraphRNN/GRAN/DiGress/HiGen literature is this same
     quantity, not its square root). See
-    ``docs/eval/mmd-units-and-protocol.md`` for the unit convention.
+    for the unit convention.
 
     Parameters
     ----------
@@ -333,7 +333,7 @@ def compute_sbm_accuracy(
     corruption signals (``vector::_M_fill_insert``, ``malloc()
     unaligned tcache chunk``). Process isolation avoids the hazard at
     the cost of interpreter-spawn overhead. See
-    ``docs/reports/2026-04-15-bug-modal-sigabrt.md``.
+   .
 
     Parameters
     ----------
@@ -677,7 +677,7 @@ class GraphEvaluator:
         adjacency from a continuous-edge ``GraphData``. Defaults to
         ``0.5``. Ignored for the categorical path, which derives edges
         from ``argmax(E_class, dim=-1) != 0``. Per
-        ``docs/specs/2026-04-15-unified-graph-features-spec.md``
+       
         §"Evaluator contract".
     disagreement_warn_threshold
         Mean-disagreement rate above which a single warning per
@@ -741,7 +741,7 @@ class GraphEvaluator:
         """Derive a binary adjacency tensor from a :class:`GraphData`.
 
         Follows the priority rule in
-        ``docs/specs/2026-04-15-unified-graph-features-spec.md``
+       
         §"Evaluator contract": ``E_class`` wins over ``E_feat`` when
         both are populated. ``E_class`` is argmax'd over the class
         channel, mapping any non-zero class to ``1``; ``E_feat`` is
@@ -779,9 +779,7 @@ class GraphEvaluator:
                     "no-edge class; adjacency cannot be inferred from "
                     "argmax (which is always 0). Use C_e>=2 for "
                     "evaluation, or override the evaluator's "
-                    "adjacency-recovery rule. See "
-                    "docs/specs/2026-04-27-x-class-synth-unification-"
-                    "spec.md §7.1."
+                    "adjacency-recovery rule."
                 )
             # C_e >= 2: class 0 is no-edge by upstream convention.
             adj = (data.E_class.argmax(dim=-1) != 0).to(dtype)
@@ -797,7 +795,7 @@ class GraphEvaluator:
             raise ValueError(
                 "GraphEvaluator._graphdata_to_binary_adj requires at least "
                 "one of data.E_class or data.E_feat to be non-None; got both "
-                "None. See docs/specs/2026-04-15-unified-graph-features-spec.md "
+                "None. See  "
                 '§"Evaluator contract".'
             )
 
@@ -847,9 +845,7 @@ class GraphEvaluator:
                 "GraphEvaluator: E_class with C_e=1 has no implicit "
                 "no-edge class; adjacency cannot be inferred from "
                 "argmax (which is always 0). Use C_e>=2 for "
-                "evaluation. See "
-                "docs/specs/2026-04-27-x-class-synth-unification-"
-                "spec.md §7.1."
+                "evaluation."
             )
         class_edges = data.E_class.argmax(dim=-1) != 0
         e_feat = data.E_feat
@@ -915,7 +911,7 @@ class GraphEvaluator:
                 logger.warning(
                     "GraphEvaluator: E_class and E_feat disagree on edge "
                     "presence at mean rate %.4f (> threshold %.4f). Using "
-                    "E_class per docs/specs/2026-04-15-unified-graph-features-spec.md "
+                    "E_class per  "
                     '§"Evaluator contract".',
                     mean_rate,
                     self.disagreement_warn_threshold,

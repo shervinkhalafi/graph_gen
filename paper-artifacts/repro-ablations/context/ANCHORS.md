@@ -62,16 +62,11 @@ gap       = best_run_abs / min(abs_paper, abs_higen)       # how far we are from
    Either kernel-bandwidth or seed variance.
 3. **DiGress paper has no ENZYMES anchor.** All ENZYMES gap analysis
    is against HiGen.
-4. **Reproduction caveats.** Our `vignac_repro` (pre-fix) is *not*
-   byte-equivalent to upstream DiGress: `dim_ffy=2048` (upstream 256),
-   `amsgrad=true`, code is a tmgg port. The `_repro_exact` (post-fix)
-   configs drop those tweaks. See
-   `../snapshots/ablations-measurement-2026-05-06.md` "Reproduction caveats".
+4. **Reproduction caveats.** Our DiGress baseline (`digress_*.yaml`)
+   is a tmgg port; the bundled configs match the paper's exact
+   recipe (`dim_ffy=256`, AdamW with AMSGrad, etc.).
 
 ## Cross-links
 
 - `BASELINES-CONTEXT.md` — how the train↔test baselines were computed.
-- `mmd-units-and-protocol.md` — V-statistic vs U-statistic, kernel,
-  sigma.
-- `../snapshots/ablations-measurement-2026-05-06.md` — anchor-table
-  with current run values.
+- `mmd-units-and-protocol.md` — V-statistic vs U-statistic, kernel, sigma.

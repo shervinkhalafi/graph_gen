@@ -1,7 +1,7 @@
 """Molecular datasets: SMILES → categorical GraphData pipeline.
 
 Compositional layout per
-``docs/specs/2026-04-28-digress-repro-datasets-spec.md``:
+``
 
 - :mod:`vocabulary` — frozen ``AtomBondVocabulary`` with QM9/MOSES/
   GuacaMol presets.

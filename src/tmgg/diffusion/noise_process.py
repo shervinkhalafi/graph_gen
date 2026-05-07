@@ -294,8 +294,7 @@ def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> Gr
 def _read_categorical_x(data: GraphData, x_classes: int) -> Tensor:
     """Read ``X_class`` or synthesise a structure-only X tensor of width ``x_classes``.
 
-    Per ``docs/specs/2026-04-15-unified-graph-features-spec.md §"Removed
-    fields"`` (architecture-internal concern): structure-only datasets
+    (architecture-internal concern): structure-only datasets
     emit ``X_class=None`` and architectures that need a per-node feature
     derive one from ``node_mask``. ``CategoricalNoiseProcess`` is part
     of the DiGress-family architecture, so it synthesises the
@@ -304,7 +303,7 @@ def _read_categorical_x(data: GraphData, x_classes: int) -> Tensor:
 
     Synthesis is delegated to
     :meth:`GraphData.synth_structure_only_x_class`; see
-    ``docs/specs/2026-04-27-x-class-synth-unification-spec.md §3`` for
+    for
     the regime table:
 
     * ``x_classes = 1`` is the canonical structure-only encoding
@@ -329,8 +328,7 @@ def _read_categorical_e(data: GraphData, e_classes: int) -> Tensor:
     ``node_mask`` and synthesis from the mask alone is undefined for
     any C_e. This raises with a clear message naming the X-vs-E
     asymmetry. ``e_classes`` is required (no default) so the contract
-    is explicit at every call site; see
-    ``docs/specs/2026-04-27-x-class-synth-unification-spec.md §5.2``.
+    is explicit at every call site.
     """
     if data.E_class is None:
         raise ValueError(
@@ -415,8 +413,7 @@ class NoiseProcess(ABC, nn.Module):
     """Abstract base for timestep-indexed graph corruption processes.
 
     Subclasses declare the set of ``GraphData`` fields they noise via the
-    class-level ``fields`` attribute; see
-    ``docs/specs/2026-04-15-unified-graph-features-spec.md §6``.
+    class-level ``fields`` attribute.
     """
 
     #: Declared set of GraphData fields the process reads and writes. Every
@@ -581,7 +578,7 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
     -----
     Follows the DDPM parametrisation of Ho et al., NeurIPS 2020
     (arXiv:2006.11239), applied independently per declared field. See
-    ``docs/specs/2026-04-15-unified-graph-features-spec.md §6``.
+   .
     """
 
     #: Default Gaussian-process fields: single-channel edge weights. Joint

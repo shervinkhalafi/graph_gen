@@ -52,7 +52,7 @@ protocol verbatim.
 |--------|-----------------|----------------------------------------|
 | **DiGress upstream code** (`src/analysis/dist_helper.py:139`) | `compute_mmd` returns `disc(s1,s1) + disc(s2,s2) - 2·disc(s1,s2)` — bit-exactly our formula. | Identity. We ported this. |
 | **DiGress paper** Table 1 (Vignac et al. 2023, `arXiv:2209.14734v3`) | Appendix F.1: "we do not report raw numbers but ratios computed as follows: `r = MMD(generated, test)² / MMD(training, test)²`". The numerator and denominator are each one call to `compute_mmd` — i.e. each is already MMD² in our units; the squared notation in the paper is just labelling the function output, not an additional square operation. | Divide our `gen-val/*_mmd` by `MMD²(train, test)` computed offline on the same dataset + kernel. The result is dimensionless. |
-| **HiGen paper** Table 1 (Karami 2023, `arXiv:2305.19337`) | Reports raw values for "DiGress" rows, e.g. SBM degree=0.0013, ENZYMES degree=0.004. These are `compute_mmd` outputs, not square-roots. | Identity (modulo kernel/sigma audit — see `PICKUP-MMD-RATIOS-2026-05-06.md` Task 3). |
+| **HiGen paper** Table 1 (Karami 2023, `arXiv:2305.19337`) | Reports raw values for "DiGress" rows, e.g. SBM degree=0.0013, ENZYMES degree=0.004. These are `compute_mmd` outputs, not square-roots. | Identity (modulo kernel/sigma audit). |
 | **HiGen code** (`github.com/Karami-m/HiGen_main`) | Reads metrics from GraphRNN/GRAN code path; same `disc + disc - 2·disc` shape. We have not run this code to byte-match, but the protocol is explicit in the README. | Identity, with the audit caveat. |
 
 DiGress's `4n28svrj`-style ratio reporting masks an absolute-magnitude
@@ -62,28 +62,31 @@ numbers; the paper-direct anchor is DiGress only via the ratio.
 
 ## How to compare, concretely
 
-1. **Anchor on HiGen Table 1 raw numbers.** No transform; check the value matches sigmas and bin counts in `mmd_metrics.py`. See `docs/experiments/sweep/smallest-config-2026-04-29/anchors.yaml` for the dataset-by-dataset list.
+1. **Anchor on HiGen Table 1 raw numbers.** No transform; check the value matches sigmas and bin counts in `mmd_metrics.py`. See the spec for the dataset-by-dataset list.
 2. **Anchor on DiGress Table 1 ratios.** Compute `MMD²(train, test)` once per dataset (cached in `data/eval/mmd_baselines/<dataset>.json` per `src/tmgg/evaluation/mmd_baselines.py`). Divide each run's W&B-logged `gen-val/*_mmd` by the cached baseline value for the matching metric. Report the ratio.
 3. **Don't sqrt.** Squaring and unsquaring shifts the absolute magnitude by a factor of (the value)^0.5 ≈ 0.04 for typical SBM clustering MMD², which is what makes "is this 0.0498 or 0.223?" so easy to get wrong. Stick to MMD² throughout.
 4. **Don't double-square.** When you read DiGress's appendix `r = MMD(...)² / MMD(...)²`, both numerator and denominator are already squared by the function. The notation does not require you to square the function output again.
 
 ## Anti-patterns we have hit before
 
-- Reporting our `gen-val/degree_mmd` (an MMD²) alongside DiGress paper r=1.6 (a ratio of MMD²) without dividing — comparing absolute squared distance to a dimensionless ratio. See `docs/experiments/sweep/smallest-config-2026-04-29/methodology.md` §2.3 for the recovery from this mistake.
+- Reporting our `gen-val/degree_mmd` (an MMD²) alongside DiGress paper r=1.6 (a ratio of MMD²) without dividing — comparing absolute squared distance to a dimensionless ratio. See the spec §2.3 for the recovery from this mistake.
 - Calling `compute_mmd`'s output "MMD" in docstrings — this fed the ambiguity. Fixed in this round; current docstrings say "MMD²" or "Biased MMD² value". If you find a stale "Returns the MMD" anywhere, fix it.
 - Caching `mmd` (the sqrt) and `mmd_squared` separately in baseline files (`src/tmgg/evaluation/mmd_baselines.py`). This was done to defuse the ambiguity, not because both quantities are useful — readers should default to `mmd_squared`. The `mmd` field is only there for tooling that has already committed to the (imprecise) literature-style "MMD" name.
 
 ## Where this matters operationally
 
-- **Cross-paper comparison:** anchor decisions in `anchors.yaml` and methodology §2.3 hinge on knowing both we and HiGen report MMD².
-- **Ratio computation:** the entire `compute_ratios` flow in `mmd_baselines.py` and the analysis side of `scripts/sbm_repro_report.py` operates on MMD² inputs. Feeding sqrt-MMD would silently change every reported ratio by sqrt() vs nothing.
-- **Reviewer-facing tables:** any cross-variant or cross-dataset comparison table — like `wandb_export/sbm-repro-report-2026-05-05/report.typ` — must label its values "MMD² (V-statistic, gaussian_tv kernel)" or equivalent. "MMD" alone invites the reader to the same trap we keep falling into.
+- **Cross-paper comparison:** the comparison against HiGen / DiGress
+  Table 1 anchors hinges on both sides reporting MMD².
+- **Ratio computation:** the `compute_ratios` flow in
+  `src/tmgg/evaluation/mmd_baselines.py` operates on MMD² inputs.
+  Feeding sqrt-MMD would silently change every reported ratio by
+  `sqrt()`.
+- **Comparison tables** must label values "MMD² (V-statistic,
+  gaussian_tv kernel)" or equivalent. "MMD" alone is ambiguous.
 
 ## See also
 
-- `src/tmgg/evaluation/mmd_metrics.py` — the canonical implementation.
-- `src/tmgg/evaluation/mmd_baselines.py` — schema + ratio helper; already explicit about MMD² vs MMD.
-- `docs/experiments/sweep/smallest-config-2026-04-29/methodology.md` §2.3 — narrative around the anchor unit-mismatch (HiGen vs DiGress).
-- `PICKUP-MMD-RATIOS-2026-05-06.md` — open work on baseline computation and the kernel/sigma audit (Tasks 1–3).
-- DiGress paper Appendix F.1 (`arXiv:2209.14734v3`) — verbatim quote on the ratio convention.
+- `src/tmgg/evaluation/mmd_metrics.py` — canonical implementation.
+- `src/tmgg/evaluation/mmd_baselines.py` — schema + ratio helper.
+- DiGress paper Appendix F.1 (`arXiv:2209.14734v3`) — ratio convention.
 - HiGen paper Table 1 (`arXiv:2305.19337`) — raw MMD² anchors for SBM and ENZYMES.

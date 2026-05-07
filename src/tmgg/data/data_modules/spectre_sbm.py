@@ -16,8 +16,8 @@ pad every batch to ``num_nodes_max_static`` (200 by default for the
 SPECTRE fixture). Unlocks ``torch.compile`` and ``cuda.graph`` capture
 downstream by removing the variable per-batch ``n_max``. Flipped from
 the historical ``False`` default in commit ``0d07fb63``; see
-``docs/performance-toggles.md`` and
-``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6.
+`` and
+`` §6.
 
 **Upstream-parity note:** the static pad is mathematically equivalent
 to upstream cvignac/DiGress's per-batch dynamic padding for both the
@@ -33,8 +33,7 @@ pad) or ``N=150`` (some batch's dynamic pad), features at real
 nodes are byte-equivalent — only padded compute differs (a wash
 under ``node_mask`` zeroing downstream).
 
-See :mod:`tmgg.data.datasets.spectre_sbm` for the load/split helpers
-and ``docs/reports/2026-04-15-upstream-digress-parity-audit.md`` for
+See :mod:`tmgg.data.datasets.spectre_sbm` for the load/split helpers for
 the numerical parity rationale.
 """
 
@@ -125,7 +124,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         # ``cuda.graph`` capture. Costs extra padded compute on
         # average-sized batches; only flip on once the Tier 3 capture
         # work is ready to use the shape stability. See
-        # ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6.
+        # §6.
         self.pad_to_static_n_max = pad_to_static_n_max
         self._cache_dir: Path | None = Path(cache_dir) if cache_dir else None
         self._fixture_path: Path | None = Path(fixture_path) if fixture_path else None

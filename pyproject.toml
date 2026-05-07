@@ -57,38 +57,12 @@ analysis = [
 ]
 
 [project.scripts]
-# Denoising experiment CLIs
-tmgg-digress = "tmgg.experiments.digress_denoising.runner:main"
-tmgg-mod-attention = "tmgg.experiments.mod_attention_denoising.runner:main"
-tmgg-gnn = "tmgg.experiments.gnn_denoising.runner:main"
-tmgg-gnn-transformer = "tmgg.experiments.gnn_transformer_denoising.runner:main"
-tmgg-spectral-arch = "tmgg.experiments.spectral_arch_denoising.runner:main"
-tmgg-baseline = "tmgg.experiments.lin_mlp_baseline_denoising.runner:main"
-# Generative experiment CLIs
-tmgg-gaussian-gen = "tmgg.experiments.gaussian_diffusion_generative.runner:main"
+# Discrete diffusion generative — the paper Table 2 codepath.
 tmgg-discrete-gen = "tmgg.experiments.discrete_diffusion_generative.runner:main"
 tmgg-discrete-eval = "tmgg.experiments.discrete_diffusion_generative.evaluate_cli:main"
 tmgg-discrete-eval-all = "tmgg.experiments.discrete_diffusion_generative.evaluate_all_cli:main"
-# Unified experiment runner (replaces tmgg-stage1..5)
-# Usage: tmgg-experiment +stage=stage1_poc
-tmgg-experiment = "tmgg.experiments.stages.runner:main"
-tmgg-grid-search = "tmgg.experiments.grid_search_runner:main"
-# Export tools (now separate workspace member: wandb-tools)
-# Eigenstructure study CLI
-tmgg-eigenstructure = "tmgg.experiments.eigenstructure_study.cli:main"
-# Eigenstructure study Hydra entry point
-tmgg-eigenstructure-exp = "tmgg.experiments.eigenstructure_study.runner:main"
-# Embedding dimension study CLI
-tmgg-embedding-study = "tmgg.experiments.embedding_study.cli:main"
-# Embedding dimension study Hydra entry point
-tmgg-embedding-study-exp = "tmgg.experiments.embedding_study.runner:main"
-# Modal cloud orchestration CLI
+# Modal cloud orchestration CLI.
 tmgg-modal = "tmgg.modal.cli:main"
-# Experiment scaffold (dev tool)
-tmgg-scaffold = "tmgg.experiments.scaffold:main"
-
-[tool.uv.workspace]
-members = ["wandb-tools"]
 
 [build-system]
 requires = ["hatchling"]

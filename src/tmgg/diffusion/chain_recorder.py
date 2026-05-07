@@ -6,7 +6,7 @@ side-effect, the :class:`ChainRecorder` captures the post-symmetrisation
 every Kth reverse step. After the loop completes the recorder
 :meth:`finalize` returns a dict suitable for ``torch.save`` whose schema
 is documented in
-``docs/specs/2026-04-22-upstream-config-surface-a.md``.
+``
 
 The recorder is deliberately separate from the existing
 :class:`tmgg.diffusion.collectors.StepMetricCollector` (per spec

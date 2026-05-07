@@ -329,7 +329,7 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
           SINGLE / DOUBLE / TRIPLE / AROMATIC) survives the
           dataset → collator boundary instead of collapsing to
           binary edge presence. See the diagnosis in
-          ``docs/reports/2026-04-29-dataset-shims-and-hacks/README.md``
+         
           item #3.3.
         - ``num_nodes``: real atom count, taken from ``node_mask.sum()``.
         - ``x``: integer atom-class indices, shape ``(n_real,)``.

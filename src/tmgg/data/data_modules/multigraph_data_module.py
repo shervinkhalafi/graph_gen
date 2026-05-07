@@ -90,7 +90,7 @@ class GraphDataCollator:
         current batch — legacy variable-shape behaviour. ``node_mask``
         zeros padded positions either way, so numerics on real
         positions are bit-identical between the two modes. See
-        ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
+        §6
         for the design rationale and the per-step compute tradeoff.
     num_atom_types_x
         Optional explicit width for the one-hot ``X_class`` densified

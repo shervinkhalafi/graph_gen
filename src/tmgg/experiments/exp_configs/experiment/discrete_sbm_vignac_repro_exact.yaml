@@ -37,7 +37,7 @@
 #
 # This is the configuration we expect to land closest to DiGress
 # Table 1's reported numbers. Anchor comparisons in
-# ``docs/eval/2026-05-06-mmd-ratio-analysis.md`` should treat this as
+# should treat this as
 # the "best-effort exact reproduction" baseline.
 
 defaults:

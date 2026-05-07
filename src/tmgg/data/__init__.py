@@ -1,7 +1,7 @@
 """Graph data modules and datasets.
 
 X_class / E_class synthesis convention: see
-``docs/specs/2026-04-27-x-class-synth-unification-spec.md``.
+``
 """
 
 from __future__ import annotations

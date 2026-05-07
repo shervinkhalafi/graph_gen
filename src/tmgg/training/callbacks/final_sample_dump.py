@@ -20,7 +20,7 @@ Storage location resolution:
 3. Otherwise the callback writes to
    ``trainer.default_root_dir / "final_samples.pt"``.
 
-Per spec resolutions (`docs/specs/2026-04-22-upstream-config-surface-b.md`):
+Per spec resolutions:
 
 * **Q6** -- the dump uses the **test** reference set (validation
   cadence during training stays on the val set, untouched).

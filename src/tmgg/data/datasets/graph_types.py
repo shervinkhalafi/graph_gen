@@ -31,7 +31,7 @@ class GraphData:
     """Batched graph features with a node validity mask and split feature fields.
 
     The dataclass owns only the unified-spec fields from
-    ``docs/specs/2026-04-15-unified-graph-features-spec.md §5``: two
+   : two
     required fields (``y``, ``node_mask``) and four optional split
     feature fields (``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat``).
     At construction time at least one of the edge fields MUST be
@@ -78,9 +78,9 @@ class GraphData:
             split edge field is populated, or a non-``None`` split
             field's leading dimensions disagree with ``node_mask``.
             Messages reference
-            ``docs/specs/2026-04-15-unified-graph-features-spec.md §5``.
+           .
         """
-        spec_ref = "docs/specs/2026-04-15-unified-graph-features-spec.md §5"
+        spec_ref = " §5"
 
         # (1) node_mask present, 1D or 2D.
         nm = self.node_mask
@@ -667,7 +667,7 @@ class GraphData:
             the current batch, preserving the legacy variable-shape
             behaviour. ``node_mask`` zeros padded positions either way,
             so numerics on real positions are bit-identical. See
-            ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
+            §6
             for the design rationale.
         num_atom_types_x
             Optional explicit width for the densified ``X_class`` one-hot
@@ -711,8 +711,7 @@ class GraphData:
             (the spec forbids datasets emitting a degenerate
             "node-present / node-absent" one-hot that merely re-encodes
             ``node_mask`` — see
-            ``docs/specs/2026-04-15-unified-graph-features-spec.md
-            §"Removed fields"``). ``node_mask`` reflects actual node
+           ). ``node_mask`` reflects actual node
             counts per graph; padded positions are marked ``False``.
         """
         import torch.nn.functional as F
@@ -780,7 +779,7 @@ class GraphData:
         #   bond's class is set. This preserves bond multiplicity through
         #   the dataset → collator boundary instead of collapsing it to
         #   "edge present / absent" — see the diagnosis in
-        #   ``docs/reports/2026-04-29-dataset-shims-and-hacks/README.md``
+        #  
         #   item #3.3.
         if edge_attr_in is None:
             E_class = torch.stack([1.0 - adj, adj], dim=-1)

@@ -221,7 +221,7 @@ class BaseGraphDataModule(pl.LightningDataModule, abc.ABC):
         decide whether to trim (graph evaluators) or to keep padded
         tensors as-is (molecular SMILES decode reads ``node_mask``).
 
-        Per spec ``docs/specs/2026-05-01-graphdata-eval-pipeline-minispec.md``
+        Per the spec
         the return type is ``list[GraphData]`` rather than
         ``list[nx.Graph]``: GraphData is the universal transport format
         for the whole evaluation pipeline. Callers that need NetworkX

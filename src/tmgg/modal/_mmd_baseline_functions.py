@@ -15,11 +15,11 @@ by ``src/tmgg/modal/_lib/image.py``, so this app does not need GPU.
 
 Deploy::
 
-    doppler run -- uv run modal deploy -m tmgg.modal._mmd_baseline_functions
+    uv run modal deploy -m tmgg.modal._mmd_baseline_functions
 
 Run one dataset (after deploy)::
 
-    doppler run -- uv run modal run \\
+    uv run modal run \\
         tmgg.modal._mmd_baseline_functions::compute_baseline \\
         --dataset spectre_sbm
 

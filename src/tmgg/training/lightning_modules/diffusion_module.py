@@ -141,15 +141,14 @@ def _read_field(data: GraphData, field: FieldName, x_classes: int) -> torch.Tens
     the model output it will be compared against. The synthesis itself
     is delegated to :func:`_read_categorical_x` (which in turn calls
     :meth:`GraphData.synth_structure_only_x_class`); see
-    ``docs/specs/2026-04-27-x-class-synth-unification-spec.md §3`` for
+    for
     the C_x regime table. ``x_classes`` is required (no default) per
     spec §5.2.
     """
     if field == "X_class":
         # Wave 9.3 (structure-only datasets): structure-only X_class is
         # synthesised from ``node_mask`` via the canonical helper; see
-        # ``docs/specs/2026-04-15-unified-graph-features-spec.md §"Removed
-        # fields"`` for the architecture-internal-concern rationale and
+        # for the architecture-internal-concern rationale and
         # the 2026-04-27 spec for the unification.
         return _read_categorical_x(data, x_classes=x_classes)
     if field == "E_class":
@@ -1975,7 +1974,7 @@ class DiffusionModule(BaseGraphModule):
             #
             # Unit note: the ``gen-val/{degree,clustering,orbit,spectral}_mmd``
             # keys hold V-statistic squared-MMD values (the literature's
-            # unsuffixed "MMD"); see ``docs/eval/mmd-units-and-protocol.md``.
+            # unsuffixed "MMD"); see the spec.
             for key, value in results.to_dict().items():
                 if value is not None:
                     self.log(f"gen-val/{key}", value, on_epoch=True)

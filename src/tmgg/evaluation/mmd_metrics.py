@@ -30,7 +30,7 @@ class MMDResults:
     All fields hold **squared MMD values** (V-statistic biased estimator),
     not square-root MMD distances. This matches the GraphRNN/GRAN
     convention that DiGress and HiGen also follow — see
-    ``docs/eval/mmd-units-and-protocol.md`` for why this matters when
+    for why this matters when
     comparing to published anchors.
 
     Attributes
@@ -414,7 +414,7 @@ def compute_mmd(
     and we follow that convention so values are directly comparable to
     published anchors.
 
-    See ``docs/eval/mmd-units-and-protocol.md`` for the unit convention
+    See the spec for the unit convention
     and how it interacts with DiGress's MMD-ratio reporting and HiGen's
     raw-MMD anchors.
 
@@ -493,7 +493,7 @@ def compute_mmd_metrics(
     """Compute MMD² metrics between reference and generated graph distributions.
 
     Each returned value is a biased V-statistic squared MMD — see
-    :func:`compute_mmd` and ``docs/eval/mmd-units-and-protocol.md``.
+    :func:`compute_mmd`.
 
     Parameters
     ----------

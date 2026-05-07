@@ -22,12 +22,11 @@ What is **out of scope** for this bundle:
   ablation panel and not driven by the launchers below.
 - **Appendix B.3** spectral-diversity FVE study — CPU-only analysis,
   not a generative result. Not included.
-- **Author note (paper §297–298):** the spectral-attention SBM
-  accuracy column for non-baseline variants is flagged as
-  provisional in the paper text. We carry the same caveat — the
-  numbers in Table 2 stand, but the SBM accuracy interpretation for
-  the spectral-attention variant should be treated with the
-  paper's stated uncertainty.
+- **Note (see paper §297–298):** the spectral-attention SBM accuracy
+  column for non-baseline variants is flagged as provisional in the
+  paper text. The same caveat applies here — the numbers in Table 2
+  stand, but the SBM accuracy interpretation for the spectral-attention
+  variant should be treated with the paper's stated uncertainty.
 
 ## Layout
 
@@ -41,22 +40,17 @@ What is **out of scope** for this bundle:
 │   └── modal/                        # Modal cloud-runner adapters
 ├── scripts/
 │   ├── run-digress-repro-modal.zsh   # Panel launcher — one-cell-per-invocation
-│   ├── compute_mmd_baselines.py      # Train↔test MMD baselines for ratio anchoring
-│   ├── plot_dataset_grid.py          # Generates the dataset-preview grids
-│   └── profiling/                    # torch.profiler + cProfile bundle for training
+│   └── compute_mmd_baselines.py      # Train↔test MMD baselines for ratio anchoring
 ├── paper-artifacts/repro-ablations/  # Self-contained data bundle for the panel
 │   ├── README.md                     # What this bundle contains
-│   ├── HOW-TO-UPDATE.md              # Refresh protocol (W&B → bundle)
 │   ├── data/runs_index.csv           # 28 runs (8 paper Table 2 + 20 pre-fix lineage)
-│   ├── data/per_run_history/*.parquet # Full W&B history per run
-│   ├── media/per_run/<run_id>/       # Sample-grid PNGs from W&B
-│   ├── snapshots/                    # Date-stamped runlog + measurement snapshots
+│   ├── data/per_run_history/*.parquet # Full W&B history per run, MMD evals, gradients
+│   ├── data/DATA-DICTIONARY.md       # Schema for runs_index + per-run parquets
+│   ├── configs/{pre-fix,post-fix}/   # Hydra YAMLs at submission and at the data freeze
 │   ├── context/                      # MMD-units protocol + paper anchors + train↔test baselines
-│   └── scripts/{refresh.py,quickstatus.py}  # Read-only bundle tooling
-├── run_details/<launch-date>/        # Per-run detail markdown
-├── runlog.md                         # Run index + cross-cutting findings
-├── wandb-tools/                      # Wandb export + analysis helpers
-└── pyproject.toml                    # uv-managed dependencies
+│   └── media/per_run/<run_id>/       # Sample-grid PNGs from W&B
+├── pyproject.toml + uv.lock          # uv-managed dependencies
+└── mise.toml                         # Optional Python + uv pinning (`mise run setup`, `mise run repro`)
 ```
 
 ## Setup
@@ -145,25 +139,6 @@ mmd_cols = [c for c in hist.columns if c.startswith("gen-val/") and c.endswith("
 print(hist[mmd_cols].dropna(how="all").tail())
 ```
 
-To regenerate the bundle from W&B (for in-flight runs that progressed
-since the supplementary cut), see
-`paper-artifacts/repro-ablations/HOW-TO-UPDATE.md`. The refresh script
-is read-only against W&B and writes to the bundle directories.
-
-For a quick markdown-table view of all runs (status, eval cycles,
-latest degree MMD², gradient health), use the read-only companion:
-
-```bash
-cd paper-artifacts/repro-ablations
-uv run scripts/quickstatus.py --postfix     # active panel only
-uv run scripts/quickstatus.py               # all 28 runs
-```
-
-The `runlog.md` index at the root has the curated cross-cutting
-narrative — what each panel cell did, which runs are paper-anchor and
-which are pre-fix lineage, plus the snapshot-by-snapshot session
-notes that document training stability.
-
 ## What's where in the paper-artifacts bundle
 
 `paper-artifacts/repro-ablations/context/` holds the analysis primitives:
@@ -173,10 +148,11 @@ notes that document training stability.
 - `mmd-units-and-protocol.md` — protocol detail (V-statistic biased estimator, σ pinning, sample count).
 - `mmd_baselines/{spectre_sbm.json,pyg_enzymes.json}` — the per-dataset baseline JSONs.
 
-`paper-artifacts/repro-ablations/snapshots/` holds dated copies of the
-runlog + ablations-measurement docs at points where the panel state
-materially changed; useful for cross-referencing the runlog narrative
-to the data state at that moment.
+`paper-artifacts/repro-ablations/configs/` holds the Hydra YAMLs in
+two folders: `pre-fix/` (configs at the time the pre-fix runs were
+trained) and `post-fix/` (configs paired with the eight Table 2
+runs). The diffs between the two folders document the diagonal-mask
+correctness fix.
 
 ## Caveats and known issues
 
@@ -187,11 +163,9 @@ to the data state at that moment.
   inspect outcomes without re-running. Rewriting for a local
   single-GPU loop is a manual step on top of the Lightning module
   (`src/tmgg/training/lightning_modules/`).
-- **`<TEAM-ENTITY>` placeholder.** All references to the original
-  W&B team entity have been replaced with `<TEAM-ENTITY>`. Reviewers
-  who choose to re-run will need to substitute their own entity in
-  `paper-artifacts/repro-ablations/data/runs_index.source.yaml` and
-  in any Hydra `wandb_entity` overrides.
-- **Spectral-attention SBM accuracy is provisional** (paper §297–298).
-  The numbers in Table 2 stand; the interpretation note in the
-  paper text applies here as well.
+- **`<TEAM-ENTITY>` placeholder.** Reviewers who choose to re-run
+  must set their own W&B entity via the Hydra `wandb_entity` override
+  (or by editing `src/tmgg/experiments/exp_configs/_base_infra.yaml`).
+- **Spectral-attention SBM accuracy is provisional** (see paper
+  §297–298). The numbers in Table 2 stand; the interpretation note
+  in the paper text applies here as well.
