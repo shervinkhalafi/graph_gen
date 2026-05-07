@@ -34,7 +34,11 @@ from tmgg.data.datasets.graph_data_fields import (
     GRAPHDATA_LOSS_KIND,
     FieldName,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphState,
+    GraphData,
+    GraphState,
+)
 from tmgg.diffusion.collectors import DiffusionLikelihoodCollector, StepMetricCollector
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
@@ -56,6 +60,7 @@ from tmgg.models.base import GraphModel
 from tmgg.training.lightning_modules.base_graph_module import (
     BaseGraphModule,
 )
+from tmgg.training.losses import masked_ce_loss, masked_mse_loss  # noqa: F401
 from tmgg.training.lightning_modules.train_loss_discrete import (
     TrainLossDiscrete,
     masked_edge_ce,
@@ -95,6 +100,23 @@ _DEFAULT_LAMBDA_PER_FIELD: dict[FieldName, float] = {
     "y_class": 0.0,
     "y_feat": 0.0,
 }
+
+
+def _no_edge_fill_for(state: GraphState) -> torch.Tensor | None:
+    """Return a ``(d_ec,)`` no-edge one-hot fill vector for ``state.edge_class``.
+
+    ``GraphState.to_dense(edge_class_fill=...)`` requires an explicit fill
+    vector when ``edge_class`` is populated; channel-0 carries the canonical
+    "no edge" class, so the fill is the channel-0 one-hot. Returns ``None``
+    when the state carries no edge_class (continuous-only configs); the
+    caller passes ``None`` to ``to_dense`` and the helper short-circuits.
+    """
+    if state.edge_class is None:
+        return None
+    d_ec = int(state.edge_class.shape[-1])
+    fill = torch.zeros(d_ec, dtype=state.edge_class.dtype, device=state.edge_class.device)
+    fill[0] = 1.0
+    return fill
 
 
 def _normalize_visualization_config(
@@ -810,7 +832,7 @@ class DiffusionModule(BaseGraphModule):
         return self.model(data, t=t)
 
     @override
-    def training_step(self, batch: GraphData, batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: GraphState, batch_idx: int) -> torch.Tensor:
         """Single diffusion training step.
 
         Samples a uniform random timestep per batch element, applies forward
@@ -820,7 +842,7 @@ class DiffusionModule(BaseGraphModule):
         Parameters
         ----------
         batch
-            Clean ``GraphData`` batch from the dataloader.
+            Clean ``GraphState`` batch from the dataloader.
         batch_idx
             Index of the current batch (unused).
 
@@ -829,12 +851,17 @@ class DiffusionModule(BaseGraphModule):
         torch.Tensor
             Scalar loss with gradient.
         """
-        # Read batch size / device from ``node_mask`` rather than the
-        # legacy ``batch.X`` view so the module no longer presumes a
-        # categorical node tensor is present. ``node_mask`` is required
-        # on every ``GraphData`` instance.
-        bs: int = int(batch.node_mask.shape[0])
-        device = batch.node_mask.device
+        # Sparse-default refactor (Phase 5.2): the dataloader emits
+        # ``GraphState``. The legacy diagnostic / loss helpers consume
+        # ``DenseGraphState``-style upper-case fields, so we densify
+        # the clean batch once at the top of the step and thread the
+        # dense view (``target_dense``) through every downstream call.
+        target_dense: DenseGraphState = batch.to_dense(
+            edge_class_fill=_no_edge_fill_for(batch),
+        )
+
+        bs: int = int(target_dense.node_mask.shape[0])
+        device = target_dense.node_mask.device
 
         # Sample random timestep per batch element: t in {0, ..., T}.
         # Upstream parity (apply_noise, diffusion_model_discrete.py:407-442):
@@ -842,31 +869,38 @@ class DiffusionModule(BaseGraphModule):
         # validation samples t in {1..T} (t=0 handled separately by reconstruction_logp).
         t_int = torch.randint(0, self.T + 1, (bs,), device=device)
 
-        # Apply forward noise at the sampled timesteps. ``forward_sample``
-        # now returns a ``NoisedBatch`` bundling the noised graph with the
-        # schedule scalars (parity #17 / #18 / D-4); only ``z_t`` is fed
-        # into the model here.
-        noised = self.noise_process.forward_sample(batch, t_int)
-        z_t = noised.z_t
+        # Apply forward noise at the sampled timesteps. The new sparse
+        # entry point ``noise_process.sample(batch, t)`` returns a
+        # ``GraphState``; the model accepts both carriers via the
+        # input-coercion helpers (Phase 6.1) and produces the requested
+        # output type when called with ``output_dense=True``.
+        z_t = self.noise_process.sample(batch, t_int)
 
         condition = self.noise_process.process_state_condition_vector(t_int)
 
-        # Model predicts clean data
-        pred = self.model(z_t, t=condition)
+        # Model predicts clean data; request a dense distribution so the
+        # downstream loss path can use ``masked_ce_loss(pred, target_dense)``
+        # without an extra carrier flip. Wave 3-B/C/D add ``output_dense=True``
+        # to every concrete model's ``forward``; until those land the
+        # call site here is the contract that drives the model refactor.
+        pred = self.model(z_t, t=condition, output_dense=True)
 
         # Per-component breakdown so we can log unweighted per-field losses
         # alongside the combined scalar that drives backprop. Same forward
         # pass; just keeps the intermediate terms instead of discarding them.
-        breakdown = self._compute_loss_breakdown(pred, batch)
+        # Threads ``target_dense`` (DenseGraphState) into the legacy helper
+        # so its upper-case field reads (E_class / X_class / mask()) work.
+        breakdown = self._compute_loss_breakdown(pred, target_dense)
         loss = self._combine_breakdown(breakdown)
 
         # ---- Per-timestep loss bin scatter (Stage 1 telemetry) ------------
         # Detached: the binning path is diagnostic only and must not
         # introduce gradient flow back through ``pred`` a second time.
         # ``no_grad`` keeps the autograd machinery from tracking the
-        # per-graph helper ops at all.
+        # per-graph helper ops at all. Threads the dense view so the
+        # legacy per-graph helpers' upper-case field reads stay valid.
         with torch.no_grad():
-            per_graph = self._per_graph_loss(pred, batch).detach()
+            per_graph = self._per_graph_loss(pred, target_dense).detach()
             bin_idx = self._t_bin_idx(t_int)
             self._train_loss_t_sum.scatter_add_(0, bin_idx, per_graph)
             self._train_loss_t_count.scatter_add_(
@@ -980,16 +1014,19 @@ class DiffusionModule(BaseGraphModule):
     # ------------------------------------------------------------------
 
     @override
-    def on_train_batch_start(self, batch: GraphData, batch_idx: int) -> None:
+    def on_train_batch_start(self, batch: GraphState, batch_idx: int) -> None:
         """Stash current batch_size + start the wall-clock timer."""
-        self._cur_bs = int(batch.node_mask.shape[0])
+        # Sparse-default refactor: ``GraphState`` does not expose
+        # ``node_mask`` (it lives on the dense carrier); the per-graph
+        # node-count vector is the carrier-agnostic proxy for batch size.
+        self._cur_bs = int(batch.num_nodes_per_graph.shape[0])
         self._train_batch_start_time = time.perf_counter()
 
     @override
     def on_train_batch_end(
         self,
         outputs: torch.Tensor | dict[str, Any],
-        batch: GraphData,
+        batch: GraphState,
         batch_idx: int,
     ) -> None:
         """Per-step wall clock + stride-controlled weight-norm logging."""
@@ -1567,7 +1604,7 @@ class DiffusionModule(BaseGraphModule):
 
     @torch.no_grad()
     @override
-    def validation_step(self, batch: GraphData, batch_idx: int) -> None:
+    def validation_step(self, batch: GraphState, batch_idx: int) -> None:
         """Compute validation loss and VLB metrics for a single batch.
 
         Reference graphs for generative evaluation are pulled from the
@@ -1576,20 +1613,28 @@ class DiffusionModule(BaseGraphModule):
         Parameters
         ----------
         batch
-            Clean ``GraphData`` batch.
+            Clean ``GraphState`` batch.
         batch_idx
             Index of the current batch (unused).
         """
-        bs: int = int(batch.node_mask.shape[0])
+        # Sparse-default refactor: densify once at the top so the legacy
+        # VLB / reconstruction / per-graph helpers (which read upper-case
+        # fields and ``node_mask``) thread through ``target_dense``. The
+        # noise step itself uses the new sparse ``sample`` entry point.
+        target_dense: DenseGraphState = batch.to_dense(
+            edge_class_fill=_no_edge_fill_for(batch),
+        )
+
+        bs: int = int(target_dense.node_mask.shape[0])
         self._cur_bs = bs
-        device = batch.node_mask.device
+        device = target_dense.node_mask.device
 
         # Validation loss at a random timestep
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
-        z_t = self.noise_process.forward_sample(batch, t_int).z_t
+        z_t = self.noise_process.sample(batch, t_int)
         condition = self.noise_process.process_state_condition_vector(t_int)
-        pred = self.model(z_t, t=condition)
-        breakdown = self._compute_loss_breakdown(pred, batch)
+        pred = self.model(z_t, t=condition, output_dense=True)
+        breakdown = self._compute_loss_breakdown(pred, target_dense)
         loss = self._combine_breakdown(breakdown)
         self.log(
             "val/loss",
@@ -1613,7 +1658,7 @@ class DiffusionModule(BaseGraphModule):
         # redundant under the ``@torch.no_grad`` decorator on this method
         # but kept explicit for clarity at the binning insertion point.
         with torch.no_grad():
-            per_graph_val = self._per_graph_loss(pred, batch).detach()
+            per_graph_val = self._per_graph_loss(pred, target_dense).detach()
             bin_idx = self._t_bin_idx(t_int)
             self._val_loss_t_sum.scatter_add_(0, bin_idx, per_graph_val)
             self._val_loss_t_count.scatter_add_(
@@ -1649,7 +1694,7 @@ class DiffusionModule(BaseGraphModule):
             #   change). Lower variance early in training; coincides with
             #   the plug-in form once ``p_θ`` is one-hot.
             true_posterior = cat_process._posterior_probabilities(  # pyright: ignore[reportPrivateUsage]
-                z_t, batch, t_int, s_int
+                z_t, target_dense, t_int, s_int
             )
             if self.use_marginalised_vlb_kl:
                 pred_posterior = cat_process._posterior_probabilities_marginalised(  # pyright: ignore[reportPrivateUsage]
@@ -1669,17 +1714,17 @@ class DiffusionModule(BaseGraphModule):
             # analytically removes the per-sample MC variance the
             # log-prob-of-sample formulation carried before.
             t_T = torch.full((bs,), self.T, device=device, dtype=torch.long)
-            forward_pmf_T = cat_process.forward_pmf(batch, t_T)
-            prior_pmf = cat_process.prior_pmf(batch.node_mask)
+            forward_pmf_T = cat_process.forward_pmf(target_dense, t_T)
+            prior_pmf = cat_process.prior_pmf(target_dense.node_mask)
             kl_prior = _categorical_kl_per_graph(forward_pmf_T, prior_pmf)
 
             # Reconstruction term selection follows ``use_upstream_reconstruction``
             # (D-7). Default True selects the upstream-style z_0 + raw
             # softmax form; False keeps the marginalised z_1 form.
             if self.use_upstream_reconstruction:
-                reconstruction = self._compute_reconstruction_upstream_style(batch)
+                reconstruction = self._compute_reconstruction_upstream_style(target_dense)
             else:
-                reconstruction = self._compute_reconstruction(batch)
+                reconstruction = self._compute_reconstruction(target_dense)
 
             if self._size_distribution is None:
                 raise RuntimeError(
@@ -1688,7 +1733,7 @@ class DiffusionModule(BaseGraphModule):
                     "a SizeDistribution in setup() — see SpectreSBMDataModule / "
                     "SyntheticCategoricalDataModule."
                 )
-            node_counts = batch.node_mask.sum(dim=-1).long()  # (bs,)
+            node_counts = target_dense.node_mask.sum(dim=-1).long()  # (bs,)
             log_pn = self._size_distribution.log_prob(node_counts).mean()
 
             # NLL = -log_pN + kl_prior + E_t[L_t] - reconstruction_logp
@@ -1721,7 +1766,7 @@ class DiffusionModule(BaseGraphModule):
             # ``nll`` here is the batch-mean; multiply by bs to recover
             # the batch sum so the eventual sum across batches equals the
             # set-level NLL total.
-            edge_count, potential_count = self._batch_edge_counts(batch)
+            edge_count, potential_count = self._batch_edge_counts(target_dense)
             self._vlb_nll_sum.append(nll.detach() * float(bs))
             self._vlb_edge_count.append(edge_count.detach())
             self._vlb_potential_count.append(potential_count.detach())
@@ -1732,17 +1777,19 @@ class DiffusionModule(BaseGraphModule):
             exact_process = self.noise_process
             x0_param = self.noise_process.model_output_to_posterior_parameter(pred)
             s_int = t_int - 1
-            z_s = exact_process.posterior_sample(z_t, batch, t_int, s_int)
-            log_q_true = exact_process.posterior_log_prob(z_s, z_t, batch, t_int, s_int)
+            z_s = exact_process.posterior_sample(z_t, target_dense, t_int, s_int)
+            log_q_true = exact_process.posterior_log_prob(
+                z_s, z_t, target_dense, t_int, s_int
+            )
             log_q_pred = exact_process.posterior_log_prob(
                 z_s, z_t, x0_param, t_int, s_int
             )
             kl_diffusion = self.T * (log_q_true - log_q_pred)
 
             t_T = torch.full((bs,), self.T, device=device, dtype=torch.long)
-            z_T = exact_process.forward_sample(batch, t_T).z_t
+            z_T = exact_process.forward_sample(target_dense, t_T).z_t
             kl_prior = exact_process.forward_log_prob(
-                z_T, batch, t_T
+                z_T, target_dense, t_T
             ) - exact_process.prior_log_prob(z_T)
 
             if self._size_distribution is None:
@@ -1752,7 +1799,7 @@ class DiffusionModule(BaseGraphModule):
                     "a SizeDistribution in setup() — see SpectreSBMDataModule / "
                     "SyntheticCategoricalDataModule."
                 )
-            node_counts = batch.node_mask.sum(dim=-1).long()
+            node_counts = target_dense.node_mask.sum(dim=-1).long()
             log_pn = self._size_distribution.log_prob(node_counts).mean()
 
             nll = -log_pn + kl_prior.mean() + kl_diffusion.mean()
@@ -1771,7 +1818,7 @@ class DiffusionModule(BaseGraphModule):
             self._val_kl_prior_t_sum.scatter_add_(0, bin_idx_vlb, kl_prior.detach())
             self._val_kl_prior_t_count.scatter_add_(0, bin_idx_vlb, ones_long)
 
-            edge_count, potential_count = self._batch_edge_counts(batch)
+            edge_count, potential_count = self._batch_edge_counts(target_dense)
             self._vlb_nll_sum.append(nll.detach() * float(bs))
             self._vlb_edge_count.append(edge_count.detach())
             self._vlb_potential_count.append(potential_count.detach())
@@ -1816,7 +1863,7 @@ class DiffusionModule(BaseGraphModule):
 
     @torch.no_grad()
     @override
-    def test_step(self, batch: GraphData, batch_idx: int) -> None:
+    def test_step(self, batch: GraphState, batch_idx: int) -> None:
         """Test step -- delegates to ``validation_step``."""
         self.validation_step(batch, batch_idx)
 

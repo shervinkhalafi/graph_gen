@@ -27,7 +27,7 @@ from typing import Any, override
 import pytorch_lightning as pl
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphState
 from tmgg.models.base import GraphModel  # pyright: ignore[reportAttributeAccessIssue]
 from tmgg.training.lightning_modules.optimizer_config import (
     OptimizerLRSchedulerConfig,
@@ -42,7 +42,7 @@ from tmgg.training.logging import (
 class BaseGraphModule(pl.LightningModule, ABC):
     """Shared infrastructure for all graph learning experiments.
 
-    Handles optimizer and scheduler construction, ``GraphData`` batch
+    Handles optimizer and scheduler construction, ``GraphState`` batch
     transfer, and parameter-count logging. Subclasses only need to
     supply ``training_step`` and ``forward``.
 
@@ -138,11 +138,11 @@ class BaseGraphModule(pl.LightningModule, ABC):
     @override
     def transfer_batch_to_device(
         self,
-        batch: GraphData,
+        batch: GraphState,
         device: torch.device,
         dataloader_idx: int,
-    ) -> GraphData:
-        """Move a ``GraphData`` batch to the target device."""
+    ) -> GraphState:
+        """Move a ``GraphState`` batch to the target device."""
         return batch.to(device)
 
     @override
