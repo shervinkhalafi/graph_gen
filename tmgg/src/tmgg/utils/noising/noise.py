@@ -7,8 +7,9 @@ interfaces:
 
 - ``add_noise(A, eps)`` operates on raw adjacency tensors (legacy, still
   supported).
-- ``apply_noise(data, noise_level)`` operates on ``GraphData`` and is the
-  canonical interface going forward.
+- ``apply_noise(data, noise_level)`` operates on a ``DenseGraphState`` (which
+  exposes ``to_edge_scalar`` / ``from_structure_only``) and is the canonical
+  interface going forward.
 """
 
 # pyright: reportConstantRedefinition=false
@@ -326,8 +327,8 @@ class NoiseDefinition(ABC):
     applied to graphs. Subclasses implement two interfaces:
 
     - ``add_noise(A, eps)`` operates on raw adjacency tensors.
-    - ``apply_noise(data, noise_level)`` operates on ``GraphData`` and is the
-      canonical interface for new code.
+    - ``apply_noise(data, noise_level)`` operates on a ``DenseGraphState`` and
+      is the canonical interface for new code.
 
     For single-step denoising, ``SingleStepDenoisingModule`` uses the noise
     definition directly. For multi-step diffusion,
@@ -371,25 +372,27 @@ class NoiseDefinition(ABC):
         pass
 
     def apply_noise(self, data: Any, noise_level: float | Tensor) -> Any:
-        """Apply noise to a ``GraphData`` instance.
+        """Apply noise to a ``DenseGraphState`` instance.
 
-        Extracts the dense edge state from *data*, applies noise via
-        ``add_noise``, and wraps the result back into ``GraphData``. This is
-        the canonical interface for new code; ``add_noise`` remains for
+        Extracts the dense edge state from *data* via ``to_edge_scalar``,
+        applies noise via ``add_noise``, and wraps the result back into a
+        new ``DenseGraphState`` via ``from_structure_only``. This is the
+        canonical interface for new code; ``add_noise`` remains for
         callers that work with raw tensors.
 
         Parameters
         ----------
-        data : GraphData
+        data : DenseGraphState
             Input graph data. Typed as ``Any`` to avoid a circular tach
             dependency (``tmgg.utils.noising`` cannot depend on ``tmgg.data``),
-            but must be a ``GraphData`` instance at runtime.
+            but must be a ``DenseGraphState`` instance at runtime (it must
+            expose ``to_edge_scalar`` and ``from_structure_only``).
         noise_level
             Noise intensity (same semantics as *eps* in ``add_noise``).
 
         Returns
         -------
-        GraphData
+        DenseGraphState
             Noised graph data.
         """
         edge_state = (

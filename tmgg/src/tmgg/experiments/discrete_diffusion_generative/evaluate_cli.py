@@ -298,12 +298,12 @@ def _collect_reference_graphs(
     reference_set: Literal["val", "test"],
     max_graphs: int,
 ) -> list[Any]:
-    """Pull up to ``max_graphs`` reference graphs as ``GraphData``.
+    """Pull up to ``max_graphs`` reference graphs as ``GraphState``.
 
     Delegates to :meth:`BaseGraphDataModule.get_reference_graphs`,
-    which (post the 2026-05-01 universal-transport refactor) returns
-    per-graph ``GraphData`` slices. Callers needing nx convert at the
-    leaf via :meth:`GraphData.to_networkx` (cheap, lossless).
+    which (post the 2026-05-07 sparse-default refactor) returns
+    per-graph ``GraphState`` slices. Callers needing nx convert at the
+    leaf via :meth:`GraphState.to_networkx` (cheap, lossless).
     """
     return datamodule.get_reference_graphs(reference_set, max_graphs)
 
@@ -588,10 +588,10 @@ def evaluate_checkpoint(
     if output_dir is not None:
         out_dir_path = Path(output_dir)
         print(f"Dumping per-checkpoint artifacts to {out_dir_path}")
-        # GraphData → nx at the leaf for viz + edge-list
+        # GraphState → nx at the leaf for viz + edge-list
         # serialisation. Per spec D4-A: x_class/e_class indices ride
         # along on the resulting graphs as node/edge attributes (via
-        # GraphData.to_networkx) and land in generated_graphs.json /
+        # GraphState.to_networkx) and land in generated_graphs.json /
         # reference_graphs.json so molecular post-hoc analysis can
         # recover atom + bond types without re-loading the codec.
         nx_generated = [g.to_networkx() for g in generated_graphs]
