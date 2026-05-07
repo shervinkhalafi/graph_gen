@@ -35,7 +35,14 @@ from tmgg.data.datasets.graph_data_fields import (
     GRAPHDATA_LOSS_KIND,
     FieldName,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+    GraphState,
+    state_to_dense_sample,
+)
 from tmgg.data.utils.edge_counts import (
     count_edge_classes_sparse,
     count_node_classes_sparse,
@@ -933,6 +940,58 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
             raise RuntimeError("GaussianNoiseProcess.fields is empty.")
         return total
 
+    # -- 4-type GraphData grid: state-content forward sampling ---------------
+
+    def sample_dense(
+        self, z_0: DenseGraphState, t: Tensor
+    ) -> DenseGraphDistribution:
+        """DDPM forward sample on a dense state, returned as a distribution.
+
+        Mirrors :meth:`forward_sample`'s math but stops short of the
+        :class:`NoisedBatch` bundle and re-types the output as
+        :class:`DenseGraphDistribution`. Gaussian forward output has
+        continuous mass at every position, so the distribution carrier is
+        the right shape for downstream loss helpers; callers that want a
+        state-shaped one (e.g., binarised topology) should follow with
+        ``.argmax()`` or ``.sample()`` per their pipeline.
+
+        Per declared field draws fresh ``eps ~ N(0, I)`` and writes
+        ``sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps``. Edge
+        outputs are symmetrised and diagonal-zeroed.
+        """
+        alpha_bar = self.noise_schedule.get_alpha_bar(t_int=t)
+        updates: dict[FieldName, Tensor] = {}
+        for field in self.fields:
+            x_val = _read_feature_field(z_0, field)
+            sqrt_ab = self._broadcast_alpha(alpha_bar, x_val)
+            noise = torch.randn_like(x_val)
+            noised = torch.sqrt(sqrt_ab) * x_val + torch.sqrt(1.0 - sqrt_ab) * noise
+            updates[field] = self._finalise_field(field, noised, z_0.node_mask)
+        # Re-use the dense-state plumbing to stitch updates back, then mask;
+        # finally re-type as a distribution-carrier (no math change, just the
+        # static type tag the caller sees).
+        z_t_state = _gaussian_graphdata(z_0, updates).mask()
+        return DenseGraphDistribution(
+            num_nodes_per_graph=z_t_state.num_nodes_per_graph,
+            y=z_t_state.y,
+            X_class=z_t_state.X_class,
+            X_feat=z_t_state.X_feat,
+            E_class=z_t_state.E_class,
+            E_feat=z_t_state.E_feat,
+        )
+
+    def sample(self, z_0: GraphState, t: Tensor) -> GraphDistribution:
+        """Sparse-path forward sample, returning a sparse distribution.
+
+        Routes via dense conversion: ``state_to_dense_sample → sample_dense
+        → to_sparse``. The sparse output covers the complete off-diagonal
+        edge_index per :class:`GraphDistribution`'s invariant, so every
+        position carries the (Gaussian-perturbed) continuous content.
+        """
+        dense_state = state_to_dense_sample(z_0)
+        dense_dist = self.sample_dense(dense_state, t)
+        return dense_dist.to_sparse()
+
 
 class CategoricalNoiseProcess(ExactDensityNoiseProcess):
     """Scheduled categorical diffusion over one-hot graph states.
@@ -1572,6 +1631,78 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
 
         probs = _categorical_graphdata(prob_x, prob_e, y=x.y, node_mask=x.node_mask)
         return _masked_graph_log_prob(x, probs)
+
+    # -- 4-type GraphData grid: state-content forward sampling and marginal --
+
+    def sample_dense(
+        self, z_0: DenseGraphState, t: Tensor
+    ) -> DenseGraphState:
+        """Categorical forward sample on a dense state.
+
+        Returns a freshly drawn one-hot per position (state content) at
+        timestep ``t``; this is the math :meth:`forward_sample` already
+        uses internally, lifted out of the :class:`NoisedBatch` bundle and
+        re-typed to the static :class:`DenseGraphState` cell.
+        """
+        alpha_bar = self._schedule_to_level(t)
+        z_t_state = self._apply_noise(z_0, alpha_bar)
+        # ``_apply_noise`` typed its argument as the legacy ``GraphData``
+        # but operates on a dense state and returns the same layout; the
+        # cast is safe by construction (we passed a ``DenseGraphState`` in,
+        # ``data.replace(...).mask()`` preserves the type).
+        assert isinstance(z_t_state, DenseGraphState)
+        return z_t_state
+
+    def sample(self, z_0: GraphState, t: Tensor) -> GraphState:
+        """Sparse-path forward sample, returning a sparse one-hot state.
+
+        Routes via dense conversion: ``state_to_dense_sample → sample_dense
+        → to_sparse``. The dense intermediate is one-hot per position; the
+        sparse output drops new "no-edge" positions (channel 0 argmax) per
+        :meth:`DenseGraphState.to_sparse`'s default predicate.
+        """
+        dense_state = state_to_dense_sample(z_0)
+        noised_dense = self.sample_dense(dense_state, t)
+        return noised_dense.to_sparse()
+
+    def q_marginal_dense(
+        self, z_0: DenseGraphState, t: Tensor
+    ) -> DenseGraphDistribution:
+        """Per-position categorical marginal ``q_t(z_t | z_0) = z_0 Q̄_t``.
+
+        Returns the distribution-content view of the forward marginal:
+        each position's row is the mixture
+        ``alpha_bar * z_0 + (1 - alpha_bar) * pi`` produced by
+        :func:`_mix_with_limit`. No sampling is performed; ``q_marginal``
+        is the loss target's distributional form, paired with
+        :meth:`sample_dense` for the sample-based forward.
+        """
+        x_limit, e_limit, _ = self._stationary_distribution()
+        alpha_bar = self._schedule_to_level(t)
+        x_class = _read_categorical_x(z_0, x_classes=self.x_classes)
+        e_class = _read_categorical_e(z_0, e_classes=self.e_classes)
+        prob_X = _mix_with_limit(x_class, alpha_bar, x_limit)
+        prob_E = _mix_with_limit(e_class, alpha_bar, e_limit)
+        return DenseGraphDistribution(
+            num_nodes_per_graph=z_0.num_nodes_per_graph,
+            y=z_0.y,
+            X_class=prob_X,
+            X_feat=z_0.X_feat,
+            E_class=prob_E,
+            E_feat=z_0.E_feat,
+        )
+
+    def q_marginal(self, z_0: GraphState, t: Tensor) -> GraphDistribution:
+        """Sparse-path forward marginal as a :class:`GraphDistribution`.
+
+        Routes via dense conversion so the per-position categorical mixture
+        materialises along the complete off-diagonal edge_index that
+        :class:`GraphDistribution` requires. Continuous fields pass
+        through unchanged.
+        """
+        dense_state = state_to_dense_sample(z_0)
+        dense_dist = self.q_marginal_dense(dense_state, t)
+        return dense_dist.to_sparse()
 
 
 class CompositeNoiseProcess(NoiseProcess):
