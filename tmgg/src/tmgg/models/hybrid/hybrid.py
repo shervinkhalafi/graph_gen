@@ -1,11 +1,16 @@
 """Hybrid models combining GNN embeddings with transformer denoising."""
 
-from typing import Any, override
+from typing import Any, ClassVar, override
 
 import torch
 import torch.nn as nn
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+)
 
 from ..attention import MultiLayerAttention
 from ..base import (
@@ -13,7 +18,8 @@ from ..base import (
     EdgeSource,
     EmbeddingProvider,
     GraphModel,
-    write_edge_scalar,
+    _coerce_input_to,
+    _coerce_output_to,
 )
 from ..gnn import GNN
 
@@ -27,6 +33,9 @@ class SequentialDenoisingModel(GraphModel):
 
     embedding_model: EmbeddingProvider
     denoising_model: nn.Module | None
+
+    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
         self,
@@ -74,17 +83,29 @@ class SequentialDenoisingModel(GraphModel):
         )
 
     @override
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> "GraphDistribution | DenseGraphDistribution":
         """Combine GNN embedding and transformer denoising.
 
-        The embedding provider is responsible for reading the dense edge
-        tensor (its own ``edge_source`` config drives that choice). The
-        hybrid body stacks the provider's embeddings, optionally denoises
-        them, and reconstructs an adjacency scalar; the scalar is written
-        to the configured split edge field via ``write_edge_scalar``.
+        Coerces the input to a :class:`DenseGraphState` and delegates
+        edge-tensor reading to the embedding provider (whose own
+        ``edge_source`` drives that choice). The hybrid body stacks the
+        provider's embeddings, optionally denoises them, and reconstructs
+        an adjacency scalar; the scalar is written to the configured
+        split edge field. The state-typed output is then converted to a
+        distribution and emitted in the requested layout via
+        :func:`_coerce_output_to`.
         """
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+
         # Generate embeddings via the EmbeddingProvider protocol
-        X, Y = self.embedding_model.embeddings(data)
+        X, Y = self.embedding_model.embeddings(d)
 
         # Concatenate embeddings
         Z = torch.cat([X, Y], dim=2)  # Shape: (batch_size, num_nodes, 2*feature_dim)
@@ -112,11 +133,19 @@ class SequentialDenoisingModel(GraphModel):
 
         # Reconstruct adjacency matrix
         A_recon = torch.bmm(X_pred, Y_pred.transpose(1, 2))
-        out = write_edge_scalar(data, edge_scalar=A_recon, target=self._output_target)
+        if self._output_target == "feat":
+            out_dense = DenseGraphState.from_structure_only(d.node_mask, A_recon)
+        else:  # "class"
+            out_dense = DenseGraphState.from_edge_scalar(
+                A_recon, node_mask=d.node_mask, target="E_class"
+            )
+        out_dense = out_dense.replace(y=d.y)
         if t is not None:
-            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
-            out = out.replace(y=new_y)
-        return out
+            new_y = torch.cat([out_dense.y, t.unsqueeze(-1)], dim=-1)
+            out_dense = out_dense.replace(y=new_y)
+        out_dist = out_dense.to_distribution()
+        target = DenseGraphDistribution if output_dense else GraphDistribution
+        return _coerce_output_to(out_dist, target=target)  # type: ignore[return-value]
 
     @override
     def get_config(self) -> dict[str, object]:
