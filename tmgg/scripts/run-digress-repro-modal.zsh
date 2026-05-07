@@ -29,10 +29,17 @@ shift
 
 case "$DATASET" in
   sbm)        EXP="discrete_sbm_vignac_repro" ;;
+  sbm-vignac-exact)     EXP="discrete_sbm_vignac_repro_exact" ;;
+  sbm-vignac-spectral)  EXP="discrete_sbm_vignac_spectral_repro" ;;
   sbm-pearl)  EXP="discrete_sbm_pearl_repro" ;;
   sbm-pearl-spectral)  EXP="discrete_sbm_pearl_spectral_repro" ;;
   sbm-pearl-gnnconv-norm)  EXP="discrete_sbm_pearl_gnnconv_norm_repro" ;;
   sbm-pearl-gnnconv-raw)   EXP="discrete_sbm_pearl_gnnconv_raw_repro" ;;
+  enzymes)                   EXP="discrete_enzymes_vignac_repro" ;;
+  enzymes-pearl)             EXP="discrete_enzymes_pearl_repro" ;;
+  enzymes-pearl-spectral)    EXP="discrete_enzymes_pearl_spectral_repro" ;;
+  enzymes-pearl-gnnconv-norm) EXP="discrete_enzymes_pearl_gnnconv_norm_repro" ;;
+  enzymes-pearl-gnnconv-raw)  EXP="discrete_enzymes_pearl_gnnconv_raw_repro" ;;
   planar)     EXP="discrete_planar_digress_repro" ;;
   qm9)        EXP="discrete_qm9_digress_repro" ;;
   moses)      EXP="discrete_moses_digress_repro" ;;
