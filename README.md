@@ -104,18 +104,18 @@ uv run modal deploy -m tmgg.modal._functions
 uv run modal deploy -m tmgg.modal._eval_all_functions
 
 # Or set DEPLOY_FIRST=1 to roll deploy + launch into one call:
-DEPLOY_FIRST=1 ./scripts/run-digress-repro-modal.zsh sbm-pearl-gnnconv-norm
+DEPLOY_FIRST=1 ./scripts/run-digress-repro-modal.zsh digress-pearl-gcat-sbm
 ```
 
-The 8 Table 2 cells map to these `<dataset-key>`s (run one at a time;
-each takes ≈18 hours of A100):
+The 8 Table 2 cells map to these `<cell-key>`s (run one at a time; each
+takes ≈18 hours of A100). Keys match the paper-artifacts config names.
 
 | Variant | SBM key | ENZYMES key |
 |---|---|---|
-| DiGress (baseline)               | `sbm`                       | `enzymes`                       |
-| + R-PEARL                        | `sbm-pearl`                 | `enzymes-pearl`                 |
-| + R-PEARL + spectral attention   | `sbm-pearl-spectral`        | `enzymes-pearl-spectral`        |
-| + R-PEARL + GCAT (D⁻¹ᐟ²AD⁻¹ᐟ²)   | `sbm-pearl-gnnconv-norm`    | `enzymes-pearl-gnnconv-norm`    |
+| DiGress (baseline)               | `digress-sbm`                  | `digress-enzymes`                  |
+| + R-PEARL                        | `digress-pearl-sbm`            | `digress-pearl-enzymes`            |
+| + R-PEARL + spectral attention   | `digress-pearl-spectral-sbm`   | `digress-pearl-spectral-enzymes`   |
+| + R-PEARL + GCAT (D⁻¹ᐟ²AD⁻¹ᐟ²)   | `digress-pearl-gcat-sbm`       | `digress-pearl-gcat-enzymes`       |
 
 The launcher uses `bf16-mixed` precision on A100 by default. Other
 precisions/GPU tiers via `PRECISION=…` and `GPU_TIER=…`. See

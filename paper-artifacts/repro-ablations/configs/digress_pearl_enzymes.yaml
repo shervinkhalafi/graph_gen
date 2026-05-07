@@ -2,21 +2,21 @@
 # DiGress ENZYMES — PEARL extra features, post-fix exact.
 # =======================================================
 #
-# Mirrors ``discrete_enzymes_pearl_repro`` but inherits the four
-# upstream-parity deltas from ``discrete_enzymes_vignac_repro_exact``:
+# Mirrors the pearl variant but inherits the four
+# upstream-parity deltas from ``digress_enzymes``:
 # ``dim_ffy=2048``, ``amsgrad=false``, ``seed=0``,
 # ``use_upstream_hidden_edge_diagonal=true``.
 #
 # Replaces ``ExtraFeatures(extra_features_type=all)`` with R-PEARL via
 # :class:`PEARLExtraFeatures`. ENZYMES counterpart to
-# ``discrete_sbm_pearl_repro_exact``.
+# ``digress_pearl_sbm``.
 
 defaults:
-  - discrete_enzymes_vignac_repro_exact
+  - digress_enzymes
   - _self_
 
-experiment_name: discrete_enzymes_pearl_repro_exact
-wandb_project: discrete-enzymes-pearl-repro-exact
+experiment_name: digress_pearl_enzymes
+wandb_project: digress-pearl-enzymes
 
 model:
   model:

@@ -2,17 +2,18 @@
 # DiGress repro panel launcher.
 #
 # Usage:
-#   ./scripts/run-digress-repro-modal.zsh <dataset-key> [hydra-overrides...]
+#   ./scripts/run-digress-repro-modal.zsh <cell-key> [hydra-overrides...]
 #
-# Dataset keys for the paper Table 2 panel:
-#   sbm                          | DiGress baseline on SPECTRE-SBM
-#   sbm-pearl                    | + R-PEARL features
-#   sbm-pearl-spectral           | + R-PEARL + spectral attention
-#   sbm-pearl-gnnconv-norm       | + R-PEARL + GCAT (D^-1/2 A D^-1/2)
-#   enzymes                      | DiGress baseline on PyG ENZYMES
-#   enzymes-pearl                | + R-PEARL
-#   enzymes-pearl-spectral       | + R-PEARL + spectral attention
-#   enzymes-pearl-gnnconv-norm   | + R-PEARL + GCAT
+# Cell keys for the paper Table 2 panel (matches the names in
+# paper-artifacts/repro-ablations/configs/):
+#   digress-sbm                       | DiGress baseline on SPECTRE-SBM
+#   digress-pearl-sbm                 | + R-PEARL features
+#   digress-pearl-spectral-sbm        | + R-PEARL + spectral attention
+#   digress-pearl-gcat-sbm            | + R-PEARL + GCAT (D^-1/2 A D^-1/2)
+#   digress-enzymes                   | DiGress baseline on PyG ENZYMES
+#   digress-pearl-enzymes             | + R-PEARL
+#   digress-pearl-spectral-enzymes    | + R-PEARL + spectral attention
+#   digress-pearl-gcat-enzymes        | + R-PEARL + GCAT
 #
 # Prereq: deploy the Modal app once before the first launch:
 #   uv run modal deploy -m tmgg.modal._functions
@@ -40,15 +41,15 @@ DATASET="${1:?usage: $0 <sbm|planar|qm9|moses|guacamol> [hydra-overrides...]}"
 shift
 
 case "$DATASET" in
-  sbm)                         EXP="discrete_sbm_vignac_repro_exact" ;;
-  sbm-pearl)                   EXP="discrete_sbm_pearl_repro_exact" ;;
-  sbm-pearl-spectral)          EXP="discrete_sbm_pearl_spectral_repro_exact" ;;
-  sbm-pearl-gnnconv-norm)      EXP="discrete_sbm_pearl_gnnconv_norm_repro_exact" ;;
-  enzymes)                     EXP="discrete_enzymes_vignac_repro_exact" ;;
-  enzymes-pearl)               EXP="discrete_enzymes_pearl_repro_exact" ;;
-  enzymes-pearl-spectral)      EXP="discrete_enzymes_pearl_spectral_repro_exact" ;;
-  enzymes-pearl-gnnconv-norm)  EXP="discrete_enzymes_pearl_gnnconv_norm_repro_exact" ;;
-  *) echo "unknown dataset: $DATASET" >&2; exit 1 ;;
+  digress-sbm)                  EXP="digress_sbm" ;;
+  digress-pearl-sbm)            EXP="digress_pearl_sbm" ;;
+  digress-pearl-spectral-sbm)   EXP="digress_pearl_spectral_sbm" ;;
+  digress-pearl-gcat-sbm)       EXP="digress_pearl_gcat_sbm" ;;
+  digress-enzymes)              EXP="digress_enzymes" ;;
+  digress-pearl-enzymes)        EXP="digress_pearl_enzymes" ;;
+  digress-pearl-spectral-enzymes) EXP="digress_pearl_spectral_enzymes" ;;
+  digress-pearl-gcat-enzymes)   EXP="digress_pearl_gcat_enzymes" ;;
+  *) echo "unknown cell: $DATASET" >&2; exit 1 ;;
 esac
 
 run_prefixed() {

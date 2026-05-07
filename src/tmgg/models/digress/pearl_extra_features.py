@@ -106,11 +106,11 @@ class PEARLExtraFeatures(nn.Module):
         # ``**_extra`` absorbs leftover kwargs that survive Hydra's
         # deep-merge of the PEARL overlay onto the upstream ``ExtraFeatures``
         # block (notably ``extra_features_type=all`` from the parent
-        # ``discrete_sbm_vignac_repro`` yaml). Hydra cannot delete keys
-        # during a defaults-list merge — only override them — so
-        # absorbing them here is the cleanest swap-in path. The
-        # ``ExtraFeatures``-specific fields are semantically irrelevant
-        # to PEARL (we're not running eigh anyway).
+        # ``digress_sbm`` yaml). Hydra cannot delete keys during a
+        # defaults-list merge — only override them — so absorbing them
+        # here is the cleanest swap-in path. The ``ExtraFeatures``-
+        # specific fields are semantically irrelevant to PEARL (we're
+        # not running eigh anyway).
         super().__init__()
         self.max_n_nodes = max_n_nodes
         self.pearl_output_dim = pearl_output_dim

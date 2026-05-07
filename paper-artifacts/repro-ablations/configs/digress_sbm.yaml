@@ -1,11 +1,10 @@
 # @package _global_
-# Vignac SBM exact-parity reproduction
-# =====================================
+# DiGress baseline on SPECTRE-SBM (paper Table 2, cell A)
+# =======================================================
 #
-# Byte-for-byte match against upstream cvignac/DiGress's *published* SBM
-# config. Use this when you want a paper-anchor comparison (DiGress
-# Table 1 r=1.6 / 1.5 / 1.7) without the GDPO-checkpoint compat
-# tweaks that ``discrete_sbm_vignac_repro`` carries.
+# Byte-for-byte match against upstream cvignac/DiGress's *published*
+# SBM config. Eval-cadence settings (validation every ~1100 steps,
+# sampling/MMD every ~4400 steps) match the paper's reporting cadence.
 #
 # Pinned upstream sources:
 # * ``cvignac/DiGress/configs/experiment/sbm.yaml``
@@ -13,43 +12,17 @@
 # * ``cvignac/DiGress/configs/general/general_default.yaml``
 # * ``cvignac/DiGress/configs/model/discrete.yaml``
 #
-# Differs from ``discrete_sbm_vignac_repro`` (GDPO-aligned) on:
-# * ``dim_ffy``: 2048 (matches Vignac's live ``GraphTransformer``).
-#   The upstream YAML says 256, but the upstream constructor does not
-#   pass ``hidden_dims.dim_ffy`` into ``XEyTransformerLayer``, so the
-#   runtime layer default 2048 is what actually trains.
-# * ``seed``: 0 (Vignac's ``train_default.yaml`` default).
-#   The GDPO-aligned variant uses 666.
-# * ``amsgrad``: false (PyTorch default).
-#   ``discrete_sbm_official`` sets ``amsgrad=true`` for legacy reasons;
-#   upstream ``train_default.yaml`` does not set ``amsgrad`` so torch's
-#   default applies.
-# * Eval cadence: validation loss every 100 epochs (~1100 steps),
-#   sampling/MMD every 4 val checks (~4400 steps). The GDPO-aligned
-#   variant uses sparser cadence (5000 / 75000) for evaluation cost.
-#   Cost note: 40 generated graphs × T=1000 sampling ≈ 13 min on
-#   A100; 125 sample-eval cycles over a 550k-step run is ≈ 27h of
-#   sampling on top of training. Plan accordingly.
-#
 # Invocation:
 #
-#   tmgg-discrete-gen +experiment=discrete_sbm_vignac_repro_exact
-#
-# This is the configuration we expect to land closest to DiGress
-# Table 1's reported numbers. Anchor comparisons in
-# should treat this as
-# the "best-effort exact reproduction" baseline.
+#   tmgg-discrete-gen +experiment=digress_sbm
 
 defaults:
-  # Same composition as ``discrete_sbm_vignac_repro``: pull SBM data
-  # via the @package data mechanism, override the discrete model on
-  # ``models/discrete@model``, then ``_self_`` last.
   - /data: spectre_sbm
   - override /models/discrete@model: discrete_sbm_official
   - _self_
 
-experiment_name: discrete_sbm_vignac_repro_exact
-wandb_project: discrete-sbm-vignac-repro-exact
+experiment_name: digress_sbm
+wandb_project: digress-sbm
 
 # Seed
 # ----
