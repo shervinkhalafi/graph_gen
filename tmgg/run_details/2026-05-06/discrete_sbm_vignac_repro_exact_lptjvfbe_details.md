@@ -1,7 +1,16 @@
 # `discrete_sbm_vignac_repro_exact` / `lptjvfbe`
 
 **Launched:** 2026-05-06 09:39:58 UTC
-**Status:** running (just spawned; first eval cycle ≈4400 steps away)
+**Cancelled:** 2026-05-06 (Modal call `fc-01KQYAH4XVTE4F505EEC0DCMNK` cancelled via `scripts.sweep.kill_call`).
+**Status:** cancelled — invalidated by `_GraphTransformer.forward` divergence from upstream DiGress.
+
+## Kill reason
+
+`src/tmgg/models/digress/transformer_model.py:834` calls `.mask_zero_diag()` on the post-`mlp_in_E` hidden activation, zeroing the hidden E diagonal at the entry to the transformer stack. Upstream DiGress (`digress-upstream-readonly/src/models/transformer_model.py:268`) calls `.mask(node_mask)` at this point — padding-only, hidden diagonal preserved until the final output mask. The MLP's bias term puts non-zero values on the hidden diagonal which upstream carries through every `XEyTransformerLayer` (consumed by `e_mul(E)`, `e_add(E)`, `Etoy(E)`, FiLM y→E); tmgg zeroes them, so every layer's E-derived computation diverges from upstream even with identical weights. State-dict comparison at `dim_ffy=2048` measured max diffs `X=0.0087496, E=0.0010284`; monkey-patching `mask_zero_diag` → upstream-style `mask` made outputs exactly equal.
+
+The `_repro_exact` config aims for byte-for-byte parity with Vignac's published SBM run, which the divergence prevents. Continuing the run would burn compute on a model that is not numerically equivalent to upstream DiGress. Re-launch after the one-line fix at `transformer_model.py:834` lands.
+
+## Pre-cancel snapshot
 
 ## Identity
 
@@ -22,18 +31,21 @@
 
 ## Diagnostics
 
-> Run just started; no eval cycle yet. First MMD snapshot expected at
-> step 4400 (≈14 minutes of training at the SBM panel's typical 0.18 s
-> step time). Re-snapshot diagnostics here once the first eval lands.
+> Live W&B summary, runtime 8101s. **No eval cycle has logged `gen-val/*_mmd` yet despite step 15249 ≫ 4400** — investigate whether `check_val_every_n_epoch=100` is gating eval (1524 epochs / 100 = 15 evals expected, but maybe eval triggers val/NLL only and sample-generation/MMD eval rides a different cadence). val/NLL has logged: epoch_NLL=5106.65, val/loss=0.808.
 
 | metric | value | comment |
 |--------|------:|---------|
-| MMDs | _pending_ | first eval at step 4400 |
-| MMD ratios | _pending_ | needs MMDs first |
-| Loss / gradient health | _pending_ | |
-| Step counts | epoch=0, global_step≪4400 | |
+| MMDs | _none logged yet_ | step 15249 — investigate gating |
+| MMD ratios | _pending_ | |
+| train_loss_epoch | 0.935 | |
+| val_NLL | 5106.65 | val cycles ARE running — just no MMD logged yet |
+| grad_norm_total | 0.0364 | healthy (lowest on SBM panel) |
+| effective_lr | 2.24e-07 | healthy |
+| epoch | 1524 | |
+| global_step | 15249 | |
+| step_time_s | 0.514 | _slower than expected_ — typical Linear-Q/K/V SBM step is ~0.18s |
 
-**Health:** ✓ healthy at startup; will revisit once eval lands.
+**Health:** ✓ healthy training; ⚠ MMD eval cadence not yet observed.
 
 ## Anchor comparison
 

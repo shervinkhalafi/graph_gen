@@ -205,7 +205,7 @@ Variant **terminally killed 2026-05-06 09:35–09:44 UTC** after one numerically
 
 ## Quick status table
 
-Snapshot 2026-05-06 11:56 UTC. `degree_mmd` is the headline metric
+Snapshot 2026-05-06 20:13 UTC. `degree_mmd` is the headline metric
 (raw MMD², gen-val); see per-run detail files for full MMD tuples plus
 loss / gradient / throughput. **Stable** flags whether gradient norm
 and effective_lr are in the expected range (healthy ≈ grad_norm < 5,
@@ -234,14 +234,14 @@ lr ~1e-7..1e-6).
 | `discrete_enzymes_pearl_gnnconv_norm_repro` (3) | `zyawhwrx` | 2026-05-06 07:07 | killed (mask bug) | 96k  | 0.181 (step 75k) | 0.472 | n/a — invalidated | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_zyawhwrx_details.md) |
 | `discrete_enzymes_pearl_gnnconv_raw_repro` | `dt0ux9zh` | 2026-05-05 15:42 | failed (killed) | 439k | 0.211 | 7600 | ✗ blew up | [link](run_details/2026-05-05/discrete_enzymes_pearl_gnnconv_raw_repro_dt0ux9zh_details.md) |
 | `discrete_enzymes_pearl_gnnconv_raw_repro` (reassign) | `b7lqqac8` | 2026-05-06 09:38 | failed | 1.8k | — | — | ✗ chain end | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_raw_repro_b7lqqac8_details.md) |
-| **`discrete_sbm_vignac_repro_exact`** (post-fix) | `2026-05-06-sbm-vignac-1` | 2026-05-06 13:46 | running | 929 | _no eval logged_ | 0.258 | ✓ | [link](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_2026-05-06-sbm-vignac-1_details.md) |
-| **`discrete_sbm_pearl_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-1` | 2026-05-06 13:46 | running | 989 | _no eval logged_ | 0.625 | ✓ | [link](run_details/2026-05-06/discrete_sbm_pearl_repro_exact_2026-05-06-sbm-pearl-1_details.md) |
-| **`discrete_sbm_pearl_spectral_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-spectral-1` | 2026-05-06 13:46 | running | 949 | _no eval logged_ | 1.348 | ✓ (elevated grad) | [link](run_details/2026-05-06/discrete_sbm_pearl_spectral_repro_exact_2026-05-06-sbm-pearl-spectral-1_details.md) |
-| **`discrete_sbm_pearl_gnnconv_norm_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-gnnconv-1` | 2026-05-06 13:46 | running | 1029 | _no eval logged_ | 1.103 | ✓ | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_norm_repro_exact_2026-05-06-sbm-pearl-gnnconv-1_details.md) |
-| **`discrete_enzymes_vignac_repro_exact`** (post-fix) | `2026-05-06-enzymes-vignac-1` | 2026-05-06 13:46 | running | 2449 | _no eval logged_ | 0.433 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_vignac_repro_exact_2026-05-06-enzymes-vignac-1_details.md) |
-| **`discrete_enzymes_pearl_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-1` | 2026-05-06 13:46 | running | 2349 | _no eval logged_ | 0.626 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_repro_exact_2026-05-06-enzymes-pearl-1_details.md) |
-| **`discrete_enzymes_pearl_spectral_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-spectral-1` | 2026-05-06 13:46 | running | 1999 | _no eval logged_ | 1.308 | ✓ (elevated grad) | [link](run_details/2026-05-06/discrete_enzymes_pearl_spectral_repro_exact_2026-05-06-enzymes-pearl-spectral-1_details.md) |
-| **`discrete_enzymes_pearl_gnnconv_norm_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-gnnconv-1` | 2026-05-06 13:46 | running | 3049 | _no eval logged_ | 0.709 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_exact_2026-05-06-enzymes-pearl-gnnconv-1_details.md) |
+| **`discrete_sbm_vignac_repro_exact`** (post-fix) | `2026-05-06-sbm-vignac-1` (`cgfv3f85`) | 2026-05-06 13:46 | running | 41.8k (1 cycle) | 0.187 | 0.132 | ✓ | [link](run_details/2026-05-06/discrete_sbm_vignac_repro_exact_2026-05-06-sbm-vignac-1_details.md) |
+| **`discrete_sbm_pearl_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-1` (`k4iiw5sg`) | 2026-05-06 13:46 | running | 44.0k (1 cycle) | 0.181 | 0.200 | ✓ | [link](run_details/2026-05-06/discrete_sbm_pearl_repro_exact_2026-05-06-sbm-pearl-1_details.md) |
+| **`discrete_sbm_pearl_spectral_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-spectral-1` (`qukgm6zu`) | 2026-05-06 13:46 | running | 41.2k (1 cycle) | 0.210 | 0.138 | ✓ | [link](run_details/2026-05-06/discrete_sbm_pearl_spectral_repro_exact_2026-05-06-sbm-pearl-spectral-1_details.md) |
+| **`discrete_sbm_pearl_gnnconv_norm_repro_exact`** (post-fix) | `2026-05-06-sbm-pearl-gnnconv-1` (`5qchu8c4`) | 2026-05-06 13:46 | running | 44.0k (1 cycle) | 0.188 | 0.312 | ✓ | [link](run_details/2026-05-06/discrete_sbm_pearl_gnnconv_norm_repro_exact_2026-05-06-sbm-pearl-gnnconv-1_details.md) |
+| **`discrete_enzymes_vignac_repro_exact`** (post-fix) | `2026-05-06-enzymes-vignac-1` (`8nhefhnl`) | 2026-05-06 13:46 | running | 178.7k (2 cycles) | 0.180 | 0.165 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_vignac_repro_exact_2026-05-06-enzymes-vignac-1_details.md) |
+| **`discrete_enzymes_pearl_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-1` (`7yi627fv`) | 2026-05-06 13:46 | running | 134.0k (1 cycle) | 0.183 | 0.217 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_repro_exact_2026-05-06-enzymes-pearl-1_details.md) |
+| **`discrete_enzymes_pearl_spectral_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-spectral-1` (`ths6e1da`) | 2026-05-06 13:46 | running | 113.6k (1 cycle) | 0.188 | 0.345 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_spectral_repro_exact_2026-05-06-enzymes-pearl-spectral-1_details.md) |
+| **`discrete_enzymes_pearl_gnnconv_norm_repro_exact`** (post-fix) | `2026-05-06-enzymes-pearl-gnnconv-1` (`xsmz6yql`) | 2026-05-06 13:46 | running | 159.2k (2 cycles) | 0.218 | 0.141 | ✓ | [link](run_details/2026-05-06/discrete_enzymes_pearl_gnnconv_norm_repro_exact_2026-05-06-enzymes-pearl-gnnconv-1_details.md) |
 
 ## Cross-cutting findings
 
@@ -250,6 +250,18 @@ lr ~1e-7..1e-6).
 > 1. **`modal container stop` reassigns inputs, doesn't cancel them.** Stopping `g1g6xpx1`'s container spawned a chain `uuifd9v3 → bepjqwqz → g6y8ubfg`; only cancelling at the *function-call* level (Modal web UI → app → function → call → cancel) breaks the chain. The enzymes side stopped after one reassign (`b7lqqac8`) because the call was cancelled cleanly via the UI; the SBM side took three reassigns before the call was cancelled.
 > 2. **Container stops can collateral-damage healthy runs that share a start-time bucket.** `ge461v1o`'s container was at the same 17:40 CEST timestamp as the divergent `dt0ux9zh`'s container; the user's stop signal hit both. Modal then auto-reassigned `ge461v1o`'s input to a fresh container — but with the project's default `force_fresh=True`, that reassign discarded the run's 18.3h of training and started from step 0 (run `bhqss75w`).
 > 3. **Resume from checkpoint via `force_fresh=false` + explicit `+run_id`.** To rescue `ge461v1o`'s training we relaunched with `force_fresh=false +run_id=<original-fresh-suffix-name>`, which routed Lightning's `_find_last_checkpoint` to the existing `last.ckpt` and resumed at step ~395k (run `vejeny0f`). The mechanism is documented in `src/tmgg/training/orchestration/run_experiment.py:310,462–472`. The `+` prefix is required because `run_id` is not in the base config.
+>
+> **Session note 2026-05-06 ~20:13 UTC: post-fix 6h25m snapshot.** All
+> 8 post-fix runs are healthy (no crashes, no preempts). Each has logged
+> 1 eval cycle (SBM, trainer step ~22k) or 2 cycles (`8nhefhnl`,
+> `xsmz6yql` on enzymes, trainer step 75k + 150k). Degree / clustering /
+> orbit / spectral MMDs all sit in the same basin as the
+> mask-bug-invalidated runs at comparable steps — fix did not move
+> headline metrics. Implication: the diagonal-mask divergence was a
+> correctness defect (state-dict non-equivalence to upstream), not the
+> source of the published-anchor gap. Anchor-gap analysis stands.
+> Best post-fix metrics so far: SBM orbit 0.0909 (`cgfv3f85`), ENZYMES
+> clustering 0.0967 (`7yi627fv`). See [`docs/eval/2026-05-06-ablations_measurment.md`](docs/eval/2026-05-06-ablations_measurment.md) post-fix tables for full numbers.
 >
 > **Ratio comparison vs published anchors** — see [`docs/eval/2026-05-06-mmd-ratio-analysis.md`](docs/eval/2026-05-06-mmd-ratio-analysis.md). Headlines:
 > - SBM clustering converges towards DiGress paper r=1.5 (HiGen reproduces this exactly; our healthy panel sits at 4.0); orbit similar, ~2× from paper.

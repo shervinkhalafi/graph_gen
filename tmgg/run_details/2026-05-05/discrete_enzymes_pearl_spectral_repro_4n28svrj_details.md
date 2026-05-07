@@ -1,7 +1,7 @@
 # `discrete_enzymes_pearl_spectral_repro` / `4n28svrj`
 
 **Launched:** 2026-05-05 15:37 UTC
-**Status:** running (heartbeat 2026-05-06 07:12 UTC; runtime 56444s ≈ 15.7h at last query)
+**Status:** running (heartbeat 2026-05-06 11:56 UTC; runtime 73129s ≈ 20.3h at last query). 6 eval cycles logged through step 450k.
 
 ## Identity
 
@@ -21,25 +21,35 @@
 
 ## Diagnostics
 
-> Live W&B summary, runtime 56444s.
+> Live W&B summary, runtime 73129s. **Latest eval at step 450k shows orbit MMD² regressed from 0.097 → 0.176** — orbit is volatile across cycles (see trajectory below). Use min-over-cycles, not last-cycle, for headline.
 
 | metric | value | comment |
 |--------|------:|---------|
-| degree MMD² | 0.1874 | |
-| clustering MMD² | 0.1082 | |
-| orbit MMD² | **0.0968** | best in enzymes panel; beats vignac (0.119) and pearl-only (0.198) |
-| spectral MMD² | 0.1965 | best on enzymes panel |
-| MMD ratios | _pending_ | |
-| train_loss_epoch | 0.985 | |
-| val_NLL | 455.69 | |
+| degree MMD² | 0.1881 | matches panel floor |
+| clustering MMD² | 0.1152 | |
+| orbit MMD² | 0.1757 (latest) / **0.0674 (min @ 75k)** | volatile cycle-to-cycle (range 0.067–0.186) |
+| spectral MMD² | 0.1872 | best on enzymes panel |
+| train_loss_epoch | 0.980 | |
+| val_NLL | 453.36 | |
 | mean_step_kl | 0.0101 | |
-| grad_norm_total | 0.173 | healthy |
-| effective_lr | 1.73e-07 | healthy |
-| epoch | 102 | |
-| global_step | 358299 | |
-| step_time_s | 0.139 | not as slow as the SBM-side spectral variant — likely smaller graph size lets eigh stay cheap |
+| grad_norm_total | 0.150 | healthy |
+| effective_lr | 1.70e-07 | healthy |
+| epoch | 132 | |
+| global_step | 462549 | |
+| step_time_s | 0.155 | not as slow as the SBM-side spectral variant — likely smaller graph size lets eigh stay cheap |
 
-**Health:** ✓ stable.
+**Health:** ✓ stable; orbit volatility is a measurement-noise concern, not a training-stability one.
+
+### Per-step MMD trajectory
+
+| step | degree | clustering | orbit | spectral |
+|-----:|-------:|-----------:|------:|---------:|
+| 75k  | 0.1818 | 0.1021 | 0.0674 | 0.1821 |
+| 150k | 0.1801 | 0.1159 | 0.0741 | 0.1835 |
+| 225k | 0.1794 | 0.1104 | 0.1858 | 0.1924 |
+| 300k | 0.1874 | 0.1082 | 0.0968 | 0.1965 |
+| 375k | 0.1846 | 0.1123 | 0.0850 | 0.1858 |
+| 450k | 0.1881 | 0.1152 | 0.1757 | 0.1872 |
 
 ## Anchor comparison
 

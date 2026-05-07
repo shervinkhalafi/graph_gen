@@ -1,7 +1,7 @@
 # `discrete_enzymes_pearl_repro` / `vejeny0f` (resumed from `ge461v1o` checkpoint)
 
 **Launched:** 2026-05-06 10:17 UTC
-**Status:** running (heartbeat 2026-05-06 10:23 UTC; runtime 0.10h ≈ 6 min, step 396899)
+**Status:** running (heartbeat 2026-05-06 11:56 UTC; runtime since resume 5937s ≈ 1.65h, step 430199 → +33k since resume). No fresh post-resume eval yet — next at step 450k.
 **Resumes:** [`ge461v1o`](../../2026-05-05/discrete_enzymes_pearl_repro_ge461v1o_details.md) — picked up from `last.ckpt` at step ~395k. Effectively continues the 18.3h of training that was almost lost when `bhqss75w` started fresh.
 
 ## Identity

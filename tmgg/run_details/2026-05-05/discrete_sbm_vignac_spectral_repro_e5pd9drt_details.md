@@ -1,7 +1,7 @@
 # `discrete_sbm_vignac_spectral_repro` / `e5pd9drt`
 
 **Launched:** 2026-05-05 21:22 UTC
-**Status:** running (heartbeat 2026-05-06 07:12 UTC; runtime 35731s ≈ 9.9h at last query)
+**Status:** running (heartbeat 2026-05-06 11:56 UTC; runtime 52407s ≈ 14.6h at last query). **First eval cycle landed at step 75k.**
 
 ## Identity
 
@@ -21,22 +21,31 @@
 
 ## Diagnostics
 
-> Live W&B summary, runtime 35731s, mid-training. **No eval cycle has run yet** — `gen-val/*_mmd` are all null at the snapshot moment.
+> Live W&B summary, runtime 52407s, mid-training. **First eval cycle landed at step 75000.**
 
 | metric | value | comment |
 |--------|------:|---------|
-| MMDs | — | first eval cycle hasn't fired yet |
-| MMD ratios | N/A | |
-| train_loss_epoch | 0.895 | |
-| val_NLL | 3416.16 | best val_NLL seen on SBM panel — note caveat below |
-| mean_step_kl | null | |
-| grad_norm_total | 0.261 | healthy |
-| effective_lr | 2.67e-07 | healthy |
-| epoch | 6287 | |
-| global_step | 62879 | |
-| step_time_s | **0.565** | **~3× slower than the Linear-Q/K/V variants (~0.18s)** |
+| degree MMD² | 0.2251 | _highest_ on SBM panel at step 75k (vignac=0.200, pearl=0.185) |
+| clustering MMD² | 0.1300 | matches SBM panel floor (~0.13) |
+| orbit MMD² | 0.0842 | _best_ on SBM panel at step 75k (vignac=0.108, pearl=0.107) |
+| spectral MMD² | 0.2125 | matches panel band ~0.21 |
+| MMD ratios | _pending — needs `data/eval/mmd_baselines/spectre_sbm.json`_ | |
+| train_loss_epoch | 0.780 | |
+| val_NLL | 5388.46 | |
+| mean_step_kl | 0.00850 | |
+| grad_norm_total | 0.107 | healthy |
+| effective_lr | 2.56e-07 | healthy |
+| epoch | 9074 | |
+| global_step | 90749 | |
+| step_time_s | **0.563** | **~3× slower than the Linear-Q/K/V variants (~0.18s)** |
 
-**Health:** ✓ stable, but ✗ throughput-disadvantaged.
+**Health:** ✓ stable; throughput-disadvantaged.
+
+### Per-step MMD trajectory
+
+| step | degree | clustering | orbit | spectral |
+|-----:|-------:|-----------:|------:|---------:|
+| 75k  | 0.2251 | 0.1300 | 0.0842 | 0.2125 |
 
 ## Visuals
 
