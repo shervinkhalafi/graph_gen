@@ -204,8 +204,8 @@ def _split_graphs(dm: Any, split: str) -> list[nx.Graph[Any]]:
       Used by ``GraphDataModule`` (enzymes, proteins) and by
       ``SpectreSBMDataModule`` / ``SpectrePlanarDataModule``.
     - Molecular convention: ``dm._{split}_dataset._graphs`` is a
-      ``list[GraphData]`` (the in-house dense container with a
-      ``to_networkx()`` method). Used by ``QM9DataModule``,
+      ``list[DenseGraphState]`` (the in-house dense state container
+      with a ``to_networkx_list()`` method). Used by ``QM9DataModule``,
       ``MOSESDataModule``, ``GuacaMolDataModule``.
 
     Crashes loud if neither convention applies.
@@ -224,10 +224,10 @@ def _split_graphs(dm: Any, split: str) -> list[nx.Graph[Any]]:
                 f"{type(dm).__name__}.{mol_attr}._graphs is None; "
                 "did setup() populate the split?"
             )
-        # Each element of ``_graphs`` is a ``GraphData`` that may carry a
-        # batch dimension (even of size 1). ``to_networkx_list()`` expands
-        # batched data and returns a single-element list for unbatched —
-        # safe in both cases. Flatten the result.
+        # Each element of ``_graphs`` is a ``DenseGraphState`` that may
+        # carry a batch dimension (even of size 1). ``to_networkx_list()``
+        # expands batched data and returns a single-element list for
+        # unbatched — safe in both cases. Flatten the result.
         return [h for g in graphs for h in g.to_networkx_list()]
 
     raise RuntimeError(

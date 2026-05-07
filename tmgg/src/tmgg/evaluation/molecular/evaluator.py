@@ -17,7 +17,7 @@ from tmgg.data.datasets.molecular.codec import SMILESCodec
 from tmgg.data.datasets.molecular.vocabulary import AtomBondVocabulary
 
 if TYPE_CHECKING:
-    from tmgg.data.datasets.graph_types import GraphData
+    from tmgg.data.datasets.graph_types import DenseGraphState
     from tmgg.evaluation.molecular.metric import MolecularMetric
 
 
@@ -54,10 +54,21 @@ class MolecularEvaluator:
 
     def evaluate(
         self,
-        refs: Sequence[GraphData],
-        generated: Sequence[GraphData],
+        refs: Sequence[DenseGraphState],
+        generated: Sequence[DenseGraphState],
     ) -> MolecularEvaluationResults:
-        """Decode both sets to SMILES; run each metric."""
+        """Decode both sets to SMILES; run each metric.
+
+        Both ``refs`` and ``generated`` are sequences of per-graph
+        :class:`tmgg.data.datasets.graph_types.DenseGraphState` carriers
+        with a leading batch dim of 1 — the universal-transport format
+        produced by
+        :meth:`tmgg.data.data_modules.base_data_module.BaseGraphDataModule.get_reference_graphs`
+        and by sampler-side per-graph chunking. The codec
+        (:meth:`tmgg.data.datasets.molecular.codec.SMILESCodec.decode`)
+        consumes that batched-of-one shape directly, so the evaluator
+        does not flatten or re-batch.
+        """
         ref_smiles = self._decode_all(refs)
         gen_smiles = self._decode_all(generated)
         results = MolecularEvaluationResults()
@@ -71,7 +82,7 @@ class MolecularEvaluator:
                 results.values[metric.name] = float(value)
         return results
 
-    def _decode_all(self, batch: Sequence[GraphData]) -> list[str]:
+    def _decode_all(self, batch: Sequence[DenseGraphState]) -> list[str]:
         out: list[str] = []
         for data in batch:
             decoded = self.codec.decode(data)
