@@ -26,6 +26,7 @@ import importlib.util
 import logging
 import multiprocessing
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -33,7 +34,6 @@ import networkx as nx
 import numpy as np
 import torch
 from scipy.stats import chi2
-from torch import Tensor
 
 from tmgg.evaluation.mmd_metrics import (
     compute_mmd,
@@ -45,7 +45,10 @@ from tmgg.evaluation.orca import (
 from tmgg.evaluation.orca import run_orca
 
 if TYPE_CHECKING:
-    from tmgg.data.datasets.graph_types import GraphData
+    from tmgg.data.datasets.graph_types import (
+        DenseGraphState,
+        GraphState,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -672,18 +675,6 @@ class GraphEvaluator:
         ``clustering_sigma=0.1`` with the others at 1.0 for
         ``gaussian_tv``; parity runs should use those values. Each
         defaults to ``None``, which falls back to ``sigma``.
-    binarise_threshold
-        Threshold applied to ``E_feat[..., 0]`` when deriving a binary
-        adjacency from a continuous-edge ``GraphData``. Defaults to
-        ``0.5``. Ignored for the categorical path, which derives edges
-        from ``argmax(E_class, dim=-1) != 0``. Per
-        ``docs/specs/2026-04-15-unified-graph-features-spec.md``
-        §"Evaluator contract".
-    disagreement_warn_threshold
-        Mean-disagreement rate above which a single warning per
-        evaluation pass is emitted when both ``E_class`` and ``E_feat``
-        are populated. Defaults to ``0.05``. See the spec section
-        referenced above.
     sbm_refinement_steps
         Number of multiflip MCMC sweeps used to refine the block-model
         fit inside :func:`compute_sbm_accuracy`. Default 100 matches
@@ -712,8 +703,6 @@ class GraphEvaluator:
         degree_sigma: float | None = None,
         clustering_sigma: float | None = None,
         spectral_sigma: float | None = None,
-        binarise_threshold: float = 0.5,
-        disagreement_warn_threshold: float = 0.05,
         sbm_refinement_steps: int = 100,
     ) -> None:
         self.eval_num_samples = eval_num_samples
@@ -727,207 +716,83 @@ class GraphEvaluator:
         self.degree_sigma: float | None = degree_sigma
         self.clustering_sigma: float | None = clustering_sigma
         self.spectral_sigma: float | None = spectral_sigma
-        self.binarise_threshold: float = binarise_threshold
-        self.disagreement_warn_threshold: float = disagreement_warn_threshold
         self.sbm_refinement_steps: int = sbm_refinement_steps
-        # Reset at the start of every ``evaluate()`` / ``to_networkx_graphs``
-        # call so each validation pass emits at most one warning.
-        self._disagreement_warned_this_pass: bool = False
 
     # ------------------------------------------------------------------
-    # GraphData → binary adjacency helpers
+    # GraphState / DenseGraphState → NetworkX
     # ------------------------------------------------------------------
-    def _graphdata_to_binary_adj(self, data: GraphData) -> Tensor:
-        """Derive a binary adjacency tensor from a :class:`GraphData`.
-
-        Follows the priority rule in
-        ``docs/specs/2026-04-15-unified-graph-features-spec.md``
-        §"Evaluator contract": ``E_class`` wins over ``E_feat`` when
-        both are populated. ``E_class`` is argmax'd over the class
-        channel, mapping any non-zero class to ``1``; ``E_feat`` is
-        thresholded at :attr:`binarise_threshold`. Padded positions
-        (per ``data.node_mask``) are always zeroed so the result is
-        invariant to padding artefacts.
-
-        Parameters
-        ----------
-        data
-            Batched or single-graph ``GraphData``. At least one of
-            ``E_class`` / ``E_feat`` must be non-``None``.
-
-        Returns
-        -------
-        torch.Tensor
-            Binary adjacency with the same shape as the source edge
-            field sans the channel axis (``(bs, n, n)`` or ``(n, n)``).
-            Dtype is :class:`torch.float32`.
-
-        Raises
-        ------
-        ValueError
-            When both ``E_class`` and ``E_feat`` are ``None``. Wave 9
-            tightens the constructor invariant so this branch becomes
-            unreachable; until then the message points callers at the
-            spec.
-        """
-        dtype = torch.float32
-        if data.E_class is not None:
-            c_e = data.E_class.shape[-1]
-            if c_e == 1:
-                raise ValueError(
-                    "GraphEvaluator: E_class with C_e=1 has no implicit "
-                    "no-edge class; adjacency cannot be inferred from "
-                    "argmax (which is always 0). Use C_e>=2 for "
-                    "evaluation, or override the evaluator's "
-                    "adjacency-recovery rule. See "
-                    "docs/specs/2026-04-27-x-class-synth-unification-"
-                    "spec.md §7.1."
-                )
-            # C_e >= 2: class 0 is no-edge by upstream convention.
-            adj = (data.E_class.argmax(dim=-1) != 0).to(dtype)
-        elif data.E_feat is not None:
-            e_feat = data.E_feat
-            if e_feat.dim() == data.node_mask.dim() + 1:
-                # Shape ``(..., n, n)`` without a trailing channel axis.
-                scalar = e_feat
-            else:
-                scalar = e_feat[..., 0]
-            adj = (scalar > self.binarise_threshold).to(dtype)
-        else:
-            raise ValueError(
-                "GraphEvaluator._graphdata_to_binary_adj requires at least "
-                "one of data.E_class or data.E_feat to be non-None; got both "
-                "None. See docs/specs/2026-04-15-unified-graph-features-spec.md "
-                '§"Evaluator contract".'
-            )
-
-        node_mask = data.node_mask.to(dtype)
-        if node_mask.dim() == 1:
-            mask_2d = node_mask.unsqueeze(-1) * node_mask.unsqueeze(-2)
-        else:
-            mask_2d = node_mask.unsqueeze(-1) * node_mask.unsqueeze(-2)
-        return adj * mask_2d
-
-    def _check_field_disagreement(self, data: GraphData) -> float | None:
-        """Return the mean per-entry disagreement between ``E_class`` and ``E_feat``.
-
-        When either field is ``None`` there is nothing to compare and
-        the method returns ``None``. Otherwise it computes, restricted
-        to the real (non-padded) entries defined by ``data.node_mask``,
-
-        .. math::
-
-            \\text{disagreement} = \\operatorname{mean}\\bigl[
-                (\\operatorname*{argmax}_{c} E_{\\text{class}} \\neq 0)
-                \\neq (E_{\\text{feat},0} > \\tau)
-            \\bigr]
-
-        where :math:`\\tau` is :attr:`binarise_threshold`. The return
-        value is the scalar average over all real edge positions
-        across the batch (not a per-graph mean) and lives in
-        ``[0, 1]``.
-
-        Parameters
-        ----------
-        data
-            ``GraphData`` to inspect.
-
-        Returns
-        -------
-        float or None
-            ``None`` when at least one of the two fields is absent;
-            otherwise a Python float in ``[0, 1]``.
-        """
-        if data.E_class is None or data.E_feat is None:
-            return None
-
-        c_e = data.E_class.shape[-1]
-        if c_e == 1:
-            raise ValueError(
-                "GraphEvaluator: E_class with C_e=1 has no implicit "
-                "no-edge class; adjacency cannot be inferred from "
-                "argmax (which is always 0). Use C_e>=2 for "
-                "evaluation. See "
-                "docs/specs/2026-04-27-x-class-synth-unification-"
-                "spec.md §7.1."
-            )
-        class_edges = data.E_class.argmax(dim=-1) != 0
-        e_feat = data.E_feat
-        if e_feat.dim() == data.node_mask.dim() + 1:
-            feat_scalar = e_feat
-        else:
-            feat_scalar = e_feat[..., 0]
-        feat_edges = feat_scalar > self.binarise_threshold
-
-        node_mask = data.node_mask.bool()
-        mask = node_mask.unsqueeze(-1) & node_mask.unsqueeze(-2)
-
-        denom = mask.sum().clamp(min=1).float()
-        disagreement = ((class_edges != feat_edges) & mask).sum().float() / denom
-        return float(disagreement.item())
-
-    def to_networkx_graphs(
-        self, graph_data_list: list[GraphData]
+    @staticmethod
+    def _to_networkx_list(
+        samples: GraphState | DenseGraphState | Sequence[Any],
     ) -> list[nx.Graph[Any]]:
-        """Convert a list of :class:`GraphData` to NetworkX graphs.
+        """Decode a sparse / dense graph carrier (or a sequence of them)
+        into a flat list of NetworkX graphs.
 
-        Resets the per-pass disagreement warning flag, then loops over
-        the supplied ``GraphData`` instances and feeds each through
-        :meth:`_graphdata_to_binary_adj`. While iterating the method
-        also accumulates the mean field-disagreement via
-        :meth:`_check_field_disagreement` and emits exactly one
-        ``logging.warning`` when the batch-averaged disagreement
-        exceeds :attr:`disagreement_warn_threshold`. The warning fires
-        only if both ``E_class`` and ``E_feat`` are populated on at
-        least one sample in ``graph_data_list``.
+        Both :class:`tmgg.data.datasets.graph_types.GraphState` and
+        :class:`tmgg.data.datasets.graph_types.DenseGraphState` expose a
+        ``to_networkx_list()`` method; the sparse path (PyG-flat) is
+        cheap and avoids a dense detour, the dense path uses the same
+        argmax-class adjacency rule that the type's
+        :meth:`DenseGraphState.dense_adjacency` enforces. Sequences
+        (lists of single-graph batches, the format produced by
+        :meth:`tmgg.data.data_modules.base_data_module.BaseGraphDataModule.get_reference_graphs`)
+        are flattened by concatenating each element's
+        ``to_networkx_list()``. Plain :class:`networkx.Graph` inputs
+        pass through unchanged so the legacy nx-only test paths and
+        out-of-tree consumers keep working.
 
         Parameters
         ----------
-        graph_data_list
-            Generated graphs in the unified split-field format.
+        samples
+            One of:
+
+            - a single batched ``GraphState`` / ``DenseGraphState``
+              (batch dim ≥ 1);
+            - a sequence of per-graph ``GraphState`` / ``DenseGraphState``
+              carriers (each typically has a leading batch dim of 1);
+            - a sequence of pre-decoded ``networkx.Graph``.
 
         Returns
         -------
         list[networkx.Graph]
-            One simple graph per input ``GraphData``.
+            One simple, undirected graph per input row.
         """
-        self._disagreement_warned_this_pass = False
+        # Single batched carrier (sparse or dense): defer to its own
+        # to_networkx_list() — both implementations honour the
+        # canonical class-0 = no-edge convention via dense_adjacency.
+        # The isinstance against Sequence-likes (list / tuple) keeps the
+        # branch order unambiguous: a list of carriers also has
+        # ``to_networkx_list`` on its elements but not on itself.
+        to_networkx_list_fn = getattr(samples, "to_networkx_list", None)
+        if to_networkx_list_fn is not None and not isinstance(samples, list | tuple):
+            return to_networkx_list_fn()
 
-        nx_graphs: list[nx.Graph[Any]] = []
-        disagreements: list[float] = []
-        for data in graph_data_list:
-            adj = self._graphdata_to_binary_adj(data)
-            if adj.ndim == 3:
-                adj = adj[0]
-            a_np = adj.detach().cpu().numpy()
-            nx_graphs.append(nx.from_numpy_array(a_np))
-
-            rate = self._check_field_disagreement(data)
-            if rate is not None:
-                disagreements.append(rate)
-
-        if disagreements:
-            mean_rate = float(np.mean(disagreements))
-            if (
-                mean_rate > self.disagreement_warn_threshold
-                and not self._disagreement_warned_this_pass
-            ):
-                logger.warning(
-                    "GraphEvaluator: E_class and E_feat disagree on edge "
-                    "presence at mean rate %.4f (> threshold %.4f). Using "
-                    "E_class per docs/specs/2026-04-15-unified-graph-features-spec.md "
-                    '§"Evaluator contract".',
-                    mean_rate,
-                    self.disagreement_warn_threshold,
+        # Sequence form. Three shapes coexist post-Wave 4:
+        # - per-graph ``DenseGraphState`` from
+        #   ``BaseGraphDataModule.get_reference_graphs`` (batch dim 1);
+        # - per-graph ``GraphState`` from sampler chunking;
+        # - legacy ``networkx.Graph`` from pre-Wave-4 tests / CLI paths.
+        out: list[nx.Graph[Any]] = []
+        for item in samples:  # pyright: ignore[reportGeneralTypeIssues]
+            item_fn = getattr(item, "to_networkx_list", None)
+            if item_fn is not None:
+                out.extend(item_fn())
+            elif hasattr(item, "number_of_nodes"):
+                # Already an nx.Graph — pass through.
+                out.append(item)
+            else:
+                raise TypeError(
+                    "GraphEvaluator._to_networkx_list received an item with "
+                    "neither ``to_networkx_list`` nor ``number_of_nodes``: "
+                    f"{type(item).__name__}. Expected GraphState, "
+                    "DenseGraphState, or networkx.Graph."
                 )
-                self._disagreement_warned_this_pass = True
-
-        return nx_graphs
+        return out
 
     def evaluate(
         self,
-        refs: list[GraphData] | list[nx.Graph[Any]],
-        generated: list[GraphData] | list[nx.Graph[Any]],
+        refs: GraphState | DenseGraphState | Sequence[Any],
+        generated: GraphState | DenseGraphState | Sequence[Any],
     ) -> EvaluationResults | None:
         """Compute all evaluation metrics.
 
@@ -942,15 +807,19 @@ class GraphEvaluator:
         Parameters
         ----------
         refs
-            Reference graphs as per-graph ``GraphData`` (universal
-            transport per spec
-            ``2026-05-01-graphdata-eval-pipeline-minispec.md``). Internally
-            converted to ``nx.Graph`` via
-            :meth:`to_networkx_graphs` for the MMD / structural metric
-            path; the categorical-class indices ride along on the
+            Reference graphs as either a batched
+            :class:`tmgg.data.datasets.graph_types.GraphState` /
+            :class:`tmgg.data.datasets.graph_types.DenseGraphState`,
+            a sequence of per-graph carriers (batch dim 1; the format
+            emitted by
+            :meth:`tmgg.data.data_modules.base_data_module.BaseGraphDataModule.get_reference_graphs`),
+            or a sequence of pre-decoded :class:`networkx.Graph`. The
+            evaluator decodes all carriers via
+            :meth:`_to_networkx_list` for the MMD / structural metric
+            pipeline; categorical-class indices ride along on the
             resulting graphs as ``x_class`` / ``e_class`` attributes
-            (see :meth:`GraphData.to_networkx`) for downstream consumers
-            that want them.
+            (see :meth:`GraphState.to_networkx`) for downstream
+            consumers that want them.
         generated
             Generated graphs in the same format.
 
@@ -959,33 +828,17 @@ class GraphEvaluator:
         EvaluationResults or None
             All metrics, or None if insufficient graphs after truncation.
         """
-        self._disagreement_warned_this_pass = False
+        nx_refs_full = self._to_networkx_list(refs)
+        nx_generated_full = self._to_networkx_list(generated)
 
-        refs = refs[: self.eval_num_samples]
-        generated = generated[: self.eval_num_samples]
+        nx_refs = nx_refs_full[: self.eval_num_samples]
+        nx_generated = nx_generated_full[: self.eval_num_samples]
 
-        if len(refs) < 2:
+        if len(nx_refs) < 2:
             return None
 
-        if len(generated) < 2:
+        if len(nx_generated) < 2:
             return None
-
-        # GraphData → nx for the MMD / structural metric pipeline.
-        # Loose duck-typing on the input: if a caller passed nx.Graph
-        # directly (legacy out-of-tree paths) the entries already have a
-        # ``number_of_nodes`` attribute and we keep them. Otherwise
-        # convert via ``to_networkx_graphs`` (existing helper that also
-        # logs the X/E disagreement warning).
-        nx_refs: list[nx.Graph[Any]] = (
-            refs  # pyright: ignore[reportAssignmentType]
-            if refs and hasattr(refs[0], "number_of_nodes")
-            else self.to_networkx_graphs(refs)  # pyright: ignore[reportArgumentType]
-        )
-        nx_generated: list[nx.Graph[Any]] = (
-            generated  # pyright: ignore[reportAssignmentType]
-            if generated and hasattr(generated[0], "number_of_nodes")
-            else self.to_networkx_graphs(generated)  # pyright: ignore[reportArgumentType]
-        )
 
         # --- Core MMD metrics (always available) ---
         mmd_results = compute_mmd_metrics(
