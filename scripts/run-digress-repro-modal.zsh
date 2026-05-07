@@ -2,18 +2,32 @@
 # DiGress repro panel launcher.
 #
 # Usage:
-#   ./scripts/run-digress-repro-modal.zsh <sbm|planar|qm9|moses|guacamol> [hydra-overrides...]
+#   ./scripts/run-digress-repro-modal.zsh <dataset-key> [hydra-overrides...]
+#
+# Dataset keys for the paper Table 2 panel:
+#   sbm                          | DiGress baseline on SPECTRE-SBM
+#   sbm-pearl                    | + R-PEARL features
+#   sbm-pearl-spectral           | + R-PEARL + spectral attention
+#   sbm-pearl-gnnconv-norm       | + R-PEARL + GCAT (D^-1/2 A D^-1/2)
+#   enzymes                      | DiGress baseline on PyG ENZYMES
+#   enzymes-pearl                | + R-PEARL
+#   enzymes-pearl-spectral       | + R-PEARL + spectral attention
+#   enzymes-pearl-gnnconv-norm   | + R-PEARL + GCAT
+#
+# Prereq: deploy the Modal app once before the first launch:
+#   uv run modal deploy -m tmgg.modal._functions
 #
 # Env knobs (with defaults):
-#   USE_DOPPLER=1, DEPLOY_FIRST=1, DETACH=1, DRY_RUN=0,
-#   GPU_TIER=fast, PRECISION=bf16-mixed, MODAL_DEBUG=0
+#   USE_DOPPLER=0  — set to 1 to wrap the launcher with `doppler run --`
+#   DEPLOY_FIRST=0 — set to 1 to (re)deploy Modal apps before launch
+#   DETACH=1, DRY_RUN=0, GPU_TIER=fast, PRECISION=bf16-mixed, MODAL_DEBUG=0
 #
-# See docs/specs/2026-04-28-digress-repro-datasets-spec.md for context.
+# Requires WANDB_API_KEY in the environment for run logging.
 
 set -euo pipefail
 
-: "${USE_DOPPLER:=1}"
-: "${DEPLOY_FIRST:=1}"
+: "${USE_DOPPLER:=0}"
+: "${DEPLOY_FIRST:=0}"
 : "${DETACH:=1}"
 : "${DRY_RUN:=0}"
 : "${GPU_TIER:=fast}"
@@ -56,8 +70,10 @@ run_prefixed() {
 }
 
 if [[ "${DEPLOY_FIRST}" == "1" ]]; then
-  print -r -- "Deploying Modal app and refreshing secrets..."
-  run_prefixed mise run modal-deploy
+  print -r -- "Deploying Modal apps..."
+  for module in tmgg.modal._functions tmgg.modal._eval_all_functions; do
+    run_prefixed uv run modal deploy -m "${module}"
+  done
 fi
 
 if [[ "${MODAL_DEBUG}" == "1" ]]; then
