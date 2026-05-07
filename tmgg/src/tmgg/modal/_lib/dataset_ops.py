@@ -368,9 +368,9 @@ def _validate_shard(shard_path: Path) -> dict[str, Any]:
     try:
         entry["size_bytes"] = shard_path.stat().st_size
         # ``weights_only=False`` is required because shards are pickled
-        # GraphData dataclasses. They are first-party files written by
-        # this codebase; the global "no third-party pickle" rule does
-        # not apply.
+        # ``DenseGraphState`` dataclasses. They are first-party files
+        # written by this codebase; the global "no third-party pickle"
+        # rule does not apply.
         shard = torch.load(shard_path, weights_only=False)
         if not isinstance(shard, list):
             entry["status"] = "schema_error"
@@ -381,9 +381,11 @@ def _validate_shard(shard_path: Path) -> dict[str, Any]:
             entry["status"] = "schema_error"
             entry["detail"] = "shard contains zero graphs"
             return entry
-        # Spot-check the first graph: must have node_mask + at least one
-        # of X_class / E_class. These are the dense-batch fields the
-        # collator and DiffusionModule both consume.
+        # Spot-check the first graph: must expose ``node_mask`` (cached
+        # property on ``DenseGraphState``) + at least one of X_class /
+        # E_class. These are the dense-batch fields the collator and
+        # DiffusionModule both consume after the sparse-default refactor's
+        # ``state.to_dense()`` step inside dense-internal models.
         sample = shard[0]
         for attr in ("node_mask",):
             if not hasattr(sample, attr):

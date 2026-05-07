@@ -24,7 +24,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from torch_geometric.data import Data
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphState
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
 from .base_data_module import BaseGraphDataModule
@@ -56,25 +56,29 @@ def _adjacencies_to_pyg(adjs: np.ndarray) -> list[Data]:
 
 @dataclass(frozen=True)
 class GraphDataCollator:
-    """Hot-path collator producing dense ``GraphData`` batches.
+    """Hot-path collator producing sparse ``GraphState`` batches.
 
     Wired into every ``train_dataloader`` / ``val_dataloader`` /
     ``test_dataloader`` across all datamodules. Fires once per batch on
-    the worker side, returns the dense representation the model + noise
-    process + loss all consume:
+    the worker side, returns the sparse representation the noise
+    process + loss now consume by default:
 
-    - ``GraphData.E_class`` — one-hot edge tensor ``(bs, n, n, 2)``
-      ``[no-edge, edge]``.
-    - ``GraphData.node_mask`` — ``(bs, n)`` bool, ``True`` on real
-      nodes and ``False`` on padded positions.
-    - ``GraphData.X_class`` — ``None`` for structure-only inputs (the
-      current SBM path); populated by datamodules that carry node
-      categorical labels.
+    - ``GraphState.edge_index`` — sparse COO edge list (active edges
+      only).
+    - ``GraphState.edge_class`` — per-edge one-hot ``(E, C_e)``.
+    - ``GraphState.x_class`` — per-node one-hot ``(N, C_x)`` when the
+      input ``Data`` carries categorical atom labels; ``None`` for
+      structure-only datasets (SBM / Planar).
+    - ``GraphState.batch`` — PyG batch vector mapping each node back
+      to its source graph.
 
-    The dense view exists because the GraphTransformer attends over
-    every ``(i, j)`` edge token; an ``(n, n)`` representation maps
-    one-to-one onto the model's attention grid. Upstream DiGress uses
-    the same dense representation for the same reason.
+    Dense-internal models (the GraphTransformer in particular) request
+    ``GraphState.to_dense(...)`` themselves; the static-pad ceiling
+    that used to live on this collator has moved into
+    ``DenseGraphState.from_pyg_batch`` / ``GraphState.to_dense`` call
+    sites in those models. Keeping the sparse representation as the
+    canonical wire format avoids paying the dense materialisation cost
+    on every batch even for callers that never look at the dense view.
 
     Pickles cleanly across multi-worker DataLoader subprocesses
     (module-level ``frozen=True`` dataclass with primitive fields).
@@ -82,60 +86,56 @@ class GraphDataCollator:
     Parameters
     ----------
     n_max_static
-        Optional static node-count ceiling. When set, the collator
-        pads ``(bs, n, n)`` adjacency and downstream tensors to this
-        ceiling so every batch emerges at the same shape (precondition
-        for ``torch.compile`` / ``cuda.graph`` capture downstream).
-        When ``None`` (default) ``n_max`` is the largest graph in the
-        current batch — legacy variable-shape behaviour. ``node_mask``
-        zeros padded positions either way, so numerics on real
-        positions are bit-identical between the two modes. See
-        ``docs/reports/2026-04-28-sync-review/99-synthesis.md`` §6
-        for the design rationale and the per-step compute tradeoff.
+        Retained for source compatibility with downstream model code
+        that still constructs the collator with this kwarg. Inert at
+        the collator boundary — ``GraphState`` carries no padding
+        ceiling. Static-pad is now requested at ``to_dense(n_max=...)``
+        time by the dense consumer. Will be removed once Phase 6
+        migrates the model wiring.
     num_atom_types_x
-        Optional explicit width for the one-hot ``X_class`` densified
-        from each ``Data.x`` (integer atom-class indices). Forwarded
-        verbatim to :meth:`GraphData.from_pyg_batch`. Required for
-        molecular-path correctness — without it, batches that miss a
-        rare atom class end up with a narrower ``X_class`` than batches
-        that include it. ``None`` (default) preserves the structural
-        SPECTRE-SBM / SPECTRE-Planar behaviour and lets
+        Optional explicit width for the per-node ``x_class`` one-hot
+        when the input ``Data.x`` carries integer atom-class indices.
+        Forwarded verbatim to :meth:`GraphState.from_pyg_batch`.
+        Required for molecular-path correctness — without it, batches
+        that miss a rare atom class end up with a narrower ``x_class``
+        than batches that include it. ``None`` (default) preserves the
+        structural SPECTRE-SBM / SPECTRE-Planar behaviour and lets
         :meth:`from_pyg_batch` infer the width from data when ``x`` is
         present.
     num_bond_types_e
-        Optional explicit width for the one-hot ``E_class`` densified
-        from each ``Data.edge_attr`` (integer bond-class indices).
-        Forwarded verbatim to :meth:`GraphData.from_pyg_batch`.
-        Required for molecular-path correctness — without it, batches
-        that miss a rare bond class (e.g. AROMATIC) end up with a
-        narrower ``E_class`` than batches that include it. ``None``
-        (default) preserves the legacy 2-class ``[no-edge, edge]``
-        encoding used by SPECTRE-SBM / SPECTRE-Planar when
-        ``edge_attr`` is absent.
+        Optional explicit width for the per-edge ``edge_class`` one-hot
+        when the input carries integer bond-class indices on
+        ``edge_attr``. Forwarded verbatim to
+        :meth:`GraphState.from_pyg_batch`. Required for molecular-path
+        correctness — without it, batches that miss a rare bond class
+        (e.g. AROMATIC) end up with a narrower ``edge_class`` than
+        batches that include it. ``None`` (default) preserves the
+        legacy 2-class ``[no-edge, edge]`` encoding used by
+        SPECTRE-SBM / SPECTRE-Planar when ``edge_attr`` is absent.
 
     See Also
     --------
     RawPyGCollator
-        Sparse counterpart used once at training start by the noise
-        process's empirical-marginals estimator. Different consumer,
-        different representation, intentionally not unified — see that
-        class's docstring for the parity-port reasoning.
+        Pre-sparse-default counterpart that returned the raw PyG
+        ``Batch``. Used by the noise process's empirical-marginals
+        estimator. Different consumer, different representation,
+        intentionally not unified — see that class's docstring for the
+        parity-port reasoning.
     """
 
     n_max_static: int | None = None
     num_atom_types_x: int | None = None
     num_bond_types_e: int | None = None
 
-    def __call__(self, data_list: list[Data]) -> GraphData:
+    def __call__(self, data_list: list[Data]) -> GraphState:
         from typing import cast
 
         from torch_geometric.data import Batch
         from torch_geometric.data.data import BaseData
 
         batch = Batch.from_data_list(cast(list[BaseData], data_list))
-        return GraphData.from_pyg_batch(
+        return GraphState.from_pyg_batch(
             batch,
-            n_max_static=self.n_max_static,
             num_atom_types_x=self.num_atom_types_x,
             num_bond_types_e=self.num_bond_types_e,
         )
@@ -222,7 +222,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
 
     The default ``setup()`` generates adjacency matrices, converts them to
     PyG ``Data`` objects (COO edge_index), and serves them via DataLoaders
-    that collate into dense ``GraphData`` batches. Subclasses that need a
+    that collate into sparse ``GraphState`` batches. Subclasses that need a
     different representation (e.g. categorical one-hot) override ``setup()``
     and the dataloaders.
 
@@ -351,7 +351,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         self._test_data = _adjacencies_to_pyg(test)
 
     @override
-    def train_dataloader(self) -> DataLoader[GraphData]:
+    def train_dataloader(self) -> DataLoader[GraphState]:
         """Create training dataloader."""
         if self._train_data is None:
             raise RuntimeError("DataModule not setup. Call setup() first.")
@@ -362,7 +362,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         )
 
     @override
-    def val_dataloader(self) -> DataLoader[GraphData]:
+    def val_dataloader(self) -> DataLoader[GraphState]:
         """Create validation dataloader."""
         if self._val_data is None:
             raise RuntimeError("DataModule not setup. Call setup() first.")
@@ -373,7 +373,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
         )
 
     @override
-    def test_dataloader(self) -> DataLoader[GraphData]:
+    def test_dataloader(self) -> DataLoader[GraphState]:
         """Create test dataloader."""
         if self._test_data is None:
             raise RuntimeError("DataModule not setup. Call setup() first.")
@@ -385,7 +385,7 @@ class MultiGraphDataModule(BaseGraphDataModule):
 
     @override
     def train_dataloader_raw_pyg(self) -> DataLoader[Any]:
-        """Return the training loader without the dense GraphData collator.
+        """Return the training loader without the GraphState collator.
 
         Used by the upstream-parity sparse π estimator. Shuffle is off so
         the iteration is deterministic across the (single) preprocessing

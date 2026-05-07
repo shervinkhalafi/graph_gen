@@ -7,7 +7,7 @@ fixed in both graph count (200) and per-graph node count (variable in
 [44, 187]); splits match upstream DiGress exactly.
 
 Downstream wiring is identical to the synthetic path: every dataloader
-yields dense :class:`~tmgg.data.datasets.graph_types.GraphData` batches
+yields sparse :class:`~tmgg.data.datasets.graph_types.GraphState` batches
 via :class:`~tmgg.data.data_modules.multigraph_data_module.GraphDataCollator`,
 so ``DiffusionModule`` picks this datamodule up unchanged.
 
@@ -52,7 +52,7 @@ from tmgg.data.data_modules.multigraph_data_module import (
     RawPyGCollator,
     _ListDataset,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphState
 from tmgg.data.datasets.spectre_sbm import (
     SpectreSBMDataset,
     load_spectre_sbm_fixture,
@@ -84,7 +84,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
     # The fixture contains variable-size graphs; ``num_nodes`` is set to
     # the maximum observed node count for size-distribution-aware code
     # paths that need a padding ceiling. Individual graphs retain their
-    # real node counts via the :class:`GraphData.node_mask`.
+    # real node counts via the per-graph PyG ``num_nodes`` attribute.
     num_nodes: int
 
     def __init__(
@@ -188,13 +188,18 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         self.num_nodes = int(max(train_val_node_counts))
 
     def _dense_collator(self) -> GraphDataCollator:
-        """Build the dense GraphData collator with the configured pad mode."""
+        """Build the GraphState collator with the configured pad mode.
+
+        ``n_max_static`` is retained as an inert collator field while
+        downstream Phase-6 work migrates static-pad to ``to_dense()``
+        call sites; it has no effect on the sparse output here.
+        """
         return GraphDataCollator(
             n_max_static=self.num_nodes_max_static if self.pad_to_static_n_max else None
         )
 
     @override
-    def train_dataloader(self) -> DataLoader[GraphData]:
+    def train_dataloader(self) -> DataLoader[GraphState]:
         if self._train_data is None:
             raise RuntimeError("SpectreSBMDataModule not setup. Call setup() first.")
         return self._make_dataloader(
@@ -204,7 +209,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         )
 
     @override
-    def val_dataloader(self) -> DataLoader[GraphData]:
+    def val_dataloader(self) -> DataLoader[GraphState]:
         if self._val_data is None:
             raise RuntimeError("SpectreSBMDataModule not setup. Call setup() first.")
         return self._make_dataloader(
@@ -214,7 +219,7 @@ class SpectreSBMDataModule(BaseGraphDataModule):
         )
 
     @override
-    def test_dataloader(self) -> DataLoader[GraphData]:
+    def test_dataloader(self) -> DataLoader[GraphState]:
         if self._test_data is None:
             raise RuntimeError("SpectreSBMDataModule not setup. Call setup() first.")
         return self._make_dataloader(

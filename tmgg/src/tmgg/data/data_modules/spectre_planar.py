@@ -19,7 +19,7 @@ from tmgg.data.data_modules.multigraph_data_module import (
     RawPyGCollator,
     _ListDataset,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphState
 from tmgg.data.datasets.spectre_planar import (
     SpectrePlanarDataset,
     load_spectre_planar_fixture,
@@ -115,7 +115,7 @@ class SpectrePlanarDataModule(BaseGraphDataModule):
         )
 
     @override
-    def train_dataloader(self) -> DataLoader[GraphData]:
+    def train_dataloader(self) -> DataLoader[GraphState]:
         if self._train_data is None:
             raise RuntimeError("SpectrePlanarDataModule not setup. Call setup() first.")
         return self._make_dataloader(
@@ -125,7 +125,7 @@ class SpectrePlanarDataModule(BaseGraphDataModule):
         )
 
     @override
-    def val_dataloader(self) -> DataLoader[GraphData]:
+    def val_dataloader(self) -> DataLoader[GraphState]:
         if self._val_data is None:
             raise RuntimeError("SpectrePlanarDataModule not setup. Call setup() first.")
         return self._make_dataloader(
@@ -135,7 +135,7 @@ class SpectrePlanarDataModule(BaseGraphDataModule):
         )
 
     @override
-    def test_dataloader(self) -> DataLoader[GraphData]:
+    def test_dataloader(self) -> DataLoader[GraphState]:
         if self._test_data is None:
             raise RuntimeError("SpectrePlanarDataModule not setup. Call setup() first.")
         return self._make_dataloader(

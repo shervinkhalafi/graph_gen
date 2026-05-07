@@ -4,13 +4,12 @@ The two counters here are direct ports of upstream DiGress's
 ``AbstractDatasetInfos.edge_counts`` and ``AbstractDatasetInfos.node_types``
 (``digress-upstream-readonly/src/datasets/abstract_dataset.py:34-72``).
 The point of porting them rather than computing the same statistics on
-our densified ``GraphData`` representation is grep-friendly parity:
-auditors comparing the two codebases see the same algorithm in both.
+our ``GraphState`` collator output is grep-friendly parity: auditors
+comparing the two codebases see the same algorithm in both.
 
-The hot training loop is unchanged and still consumes dense
-``GraphData``. These helpers are only used during datamodule setup, on
-the *raw* PyG batches that sit one layer below the densification
-collator.
+The hot training loop now consumes sparse ``GraphState`` directly.
+These helpers are only used during datamodule setup, on the *raw* PyG
+batches that sit one layer below the ``GraphDataCollator``.
 """
 
 from __future__ import annotations
@@ -37,8 +36,8 @@ def count_edge_classes_sparse(
     counts come from summing ``edge_attr`` (one-hot) over the edge
     dimension and discarding the no-edge slot at index 0.
 
-    Self-loops are stripped before counting, mirroring our densification
-    path which removes them in :func:`GraphData.from_pyg_batch` (parity
+    Self-loops are stripped before counting, mirroring our collator
+    path which removes them in :meth:`GraphState.from_pyg_batch` (parity
     fix #2 / D-1).
 
     Parameters
