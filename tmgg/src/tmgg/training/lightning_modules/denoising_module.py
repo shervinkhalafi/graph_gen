@@ -37,7 +37,11 @@ import torch
 from loguru import logger as loguru
 
 from tmgg.data.datasets.graph_data_fields import FieldName
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphState,
+    GraphData,
+    GraphState,
+)
 from tmgg.diffusion.noise_process import GaussianNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.evaluation.graph_evaluator import (
@@ -66,6 +70,24 @@ _DENOISING_DEFAULT_LAMBDA_PER_FIELD: dict[str, float] = {
 #: The single-step denoising path is pinned to Gaussian scalar-edge diffusion;
 #: any other field set would require a different forward/criterion bridge.
 _DENOISING_SUPPORTED_FIELDS: frozenset[FieldName] = frozenset({"E_feat"})
+
+
+def _no_edge_fill_for_denoising(state: GraphState) -> torch.Tensor | None:
+    """Return a ``(d_ec,)`` no-edge one-hot fill vector for ``state.edge_class``.
+
+    Mirrors :func:`tmgg.training.lightning_modules.diffusion_module._no_edge_fill_for`;
+    duplicated locally so the denoising module can densify a sparse
+    ``GraphState`` batch at its entry points without coupling to the
+    diffusion module's private helpers. Returns ``None`` when the
+    state carries no edge_class (continuous-only configs); the caller
+    passes ``None`` to ``GraphState.to_dense`` and the helper short-circuits.
+    """
+    if state.edge_class is None:
+        return None
+    d_ec = int(state.edge_class.shape[-1])
+    fill = torch.zeros(d_ec, dtype=state.edge_class.dtype, device=state.edge_class.device)
+    fill[0] = 1.0
+    return fill
 
 
 class SingleStepDenoisingModule(DiffusionModule):
@@ -286,7 +308,7 @@ class SingleStepDenoisingModule(DiffusionModule):
     # ------------------------------------------------------------------
 
     @override
-    def training_step(self, batch: GraphData, batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: GraphState, batch_idx: int) -> torch.Tensor:
         """Execute a single-step denoising training iteration.
 
         Samples a random noise level, corrupts the clean graph, and
@@ -301,7 +323,7 @@ class SingleStepDenoisingModule(DiffusionModule):
         Parameters
         ----------
         batch
-            ``GraphData`` batch from the dataloader.
+            ``GraphState`` batch from the dataloader.
         batch_idx
             Index of the current batch (unused).
 
@@ -310,8 +332,14 @@ class SingleStepDenoisingModule(DiffusionModule):
         torch.Tensor
             Scalar loss with gradient.
         """
-        adj = batch.binarised_adjacency()
-        clean_state = GraphData.from_structure_only(batch.node_mask, adj)
+        # Sparse-default refactor (Phase 5.3): the dataloader emits
+        # ``GraphState``; the legacy denoising bridge expects the dense
+        # adjacency view (``binarised_adjacency`` / ``node_mask`` /
+        # ``from_structure_only``), so densify once at the top and thread
+        # the dense view through the existing scalar-edge flow.
+        batch_dense = batch.to_dense(edge_class_fill=_no_edge_fill_for_denoising(batch))
+        adj = batch_dense.binarised_adjacency()
+        clean_state = GraphData.from_structure_only(batch_dense.node_mask, adj)
 
         # Sample noise level randomly from training noise levels
         eps: float = float(self._noise_rng.choice(self.noise_levels))
@@ -386,7 +414,7 @@ class SingleStepDenoisingModule(DiffusionModule):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def _val_or_test(self, mode: str, batch: GraphData) -> dict[str, torch.Tensor]:
+    def _val_or_test(self, mode: str, batch: GraphState) -> dict[str, torch.Tensor]:
         """Evaluate across all noise levels, logging per-level and averaged metrics.
 
         Parameters
@@ -394,15 +422,18 @@ class SingleStepDenoisingModule(DiffusionModule):
         mode
             ``"val"`` or ``"test"``.
         batch
-            Clean ``GraphData`` batch.
+            Clean ``GraphState`` batch.
 
         Returns
         -------
         dict[str, torch.Tensor]
             Noise-level-averaged loss and metrics.
         """
-        adj = batch.binarised_adjacency()
-        clean_state = GraphData.from_structure_only(batch.node_mask, adj)
+        # Sparse-default refactor (Phase 5.3): densify once at the top so
+        # the legacy adjacency-based denoising bridge keeps working.
+        batch_dense = batch.to_dense(edge_class_fill=_no_edge_fill_for_denoising(batch))
+        adj = batch_dense.binarised_adjacency()
+        clean_state = GraphData.from_structure_only(batch_dense.node_mask, adj)
         target = adj
 
         mode_loss_sum = torch.tensor(0.0, device=adj.device)
@@ -469,14 +500,14 @@ class SingleStepDenoisingModule(DiffusionModule):
     @torch.no_grad()
     @override
     def validation_step(
-        self, batch: GraphData, batch_idx: int
+        self, batch: GraphState, batch_idx: int
     ) -> dict[str, torch.Tensor]:
         """Validation step -- delegates to :meth:`_val_or_test`."""
         return self._val_or_test(mode="val", batch=batch)
 
     @torch.no_grad()
     @override
-    def test_step(self, batch: GraphData, batch_idx: int) -> dict[str, torch.Tensor]:
+    def test_step(self, batch: GraphState, batch_idx: int) -> dict[str, torch.Tensor]:
         """Test step -- delegates to :meth:`_val_or_test`."""
         return self._val_or_test(mode="test", batch=batch)
 
