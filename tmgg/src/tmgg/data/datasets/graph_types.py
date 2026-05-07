@@ -466,6 +466,128 @@ class GraphState(_StateGraph):
             edge_feat=None,
         )
 
+    def to_networkx_list(self) -> list[nx.Graph[Any]]:
+        """Expand the batched GraphState into a per-graph nx Graph list.
+
+        PyG-flat layout is decoded directly; the dense detour is avoided.
+        Each graph is a simple, undirected ``nx.Graph`` with ``x_class``
+        per-node and ``e_class`` per-edge attributes when those fields
+        are populated.
+        """
+        import networkx as nx
+
+        bs = int(self.num_nodes_per_graph.shape[0])
+        result: list[nx.Graph[Any]] = []
+        device = self.batch.device
+
+        cum = torch.zeros(bs + 1, dtype=torch.long, device=device)
+        cum[1:] = torch.cumsum(self.num_nodes_per_graph, dim=0)
+
+        for b in range(bs):
+            n_b = int(self.num_nodes_per_graph[b].item())
+            edge_mask = self.batch[self.edge_index[0]] == b
+            ei = self.edge_index[:, edge_mask] - cum[b]
+            g = nx.Graph()
+            g.add_nodes_from(range(n_b))
+
+            # Per-node x_class index (argmax over x_class[b]).
+            if self.x_class is not None:
+                node_mask = self.batch == b
+                xc_b = self.x_class[node_mask].argmax(dim=-1).detach().cpu().tolist()
+                for node, idx in enumerate(xc_b):
+                    g.nodes[node]["x_class"] = int(idx)
+
+            # Per-edge e_class: argmax over edge_class for this graph's edges.
+            if self.edge_class is not None:
+                ec_b = self.edge_class[edge_mask].argmax(dim=-1).detach().cpu().tolist()
+            else:
+                ec_b = None
+
+            # Take upper-triangle to avoid duplicate edges from PyG bidirectionality.
+            ei_t = ei.t().tolist()
+            for k, (u, v) in enumerate(ei_t):
+                if u < v:
+                    if ec_b is not None:
+                        g.add_edge(u, v, e_class=int(ec_b[k]))
+                    else:
+                        g.add_edge(u, v)
+            result.append(g)
+        return result
+
+    def to_networkx(self, batch_index: int = 0) -> nx.Graph[Any]:
+        """Single-graph ``nx.Graph`` from the batch's row ``batch_index``."""
+        return self.to_networkx_list()[batch_index]
+
+    @classmethod
+    def collate(cls, graphs: list[GraphState]) -> GraphState:
+        """Collate a list of single-graph GraphState into a batch.
+
+        Each input GraphState should represent ONE graph (B=1). Output is
+        a multi-graph batch with concatenated node/edge tensors and
+        ``batch`` / ``num_nodes_per_graph`` updated.
+        """
+        if not graphs:
+            raise ValueError("GraphState.collate(): empty list.")
+        device = graphs[0].batch.device
+
+        num_nodes = torch.tensor(
+            [int(g.num_nodes_per_graph.sum().item()) for g in graphs],
+            dtype=torch.long,
+            device=device,
+        )
+
+        # Offsets per graph for re-indexing edge_index.
+        cum = torch.zeros(len(graphs) + 1, dtype=torch.long, device=device)
+        cum[1:] = torch.cumsum(num_nodes, dim=0)
+
+        # Concatenate batch (each input has batch=0; we offset by graph index).
+        batch = torch.cat(
+            [
+                torch.full(
+                    (int(num_nodes[i].item()),),
+                    i,
+                    dtype=torch.long,
+                    device=device,
+                )
+                for i in range(len(graphs))
+            ]
+        )
+
+        edge_index = torch.cat(
+            [g.edge_index + cum[i] for i, g in enumerate(graphs)],
+            dim=1,
+        )
+
+        # Concatenate features (None if all None; raise if mixed).
+        def _cat_or_none(name: str, dim: int) -> Tensor | None:
+            firsts = [getattr(g, name) for g in graphs]
+            if all(f is None for f in firsts):
+                return None
+            if any(f is None for f in firsts):
+                raise ValueError(
+                    f"GraphState.collate: {name} populated inconsistently across graphs."
+                )
+            return torch.cat(firsts, dim=dim)
+
+        x_class = _cat_or_none("x_class", 0)
+        x_feat = _cat_or_none("x_feat", 0)
+        edge_class = _cat_or_none("edge_class", 0)
+        edge_feat = _cat_or_none("edge_feat", 0)
+
+        # y: stack per-graph y rows (each input has y of shape (1, dy)).
+        y = torch.cat([g.y for g in graphs], dim=0)
+
+        return cls(
+            num_nodes_per_graph=num_nodes,
+            y=y,
+            batch=batch,
+            x_class=x_class,
+            x_feat=x_feat,
+            edge_index=edge_index,
+            edge_class=edge_class,
+            edge_feat=edge_feat,
+        )
+
 
 @dataclass(frozen=True)
 class GraphDistribution(_DistributionGraph):
