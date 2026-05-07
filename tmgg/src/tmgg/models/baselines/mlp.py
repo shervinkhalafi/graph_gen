@@ -5,14 +5,25 @@ it through hidden layers, and reshapes back. Tests whether the training
 pipeline can train any neural network at all.
 """
 
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 import torch.nn as nn
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+)
 
-from ..base import EdgeSource, GraphModel, read_edge_scalar, write_edge_scalar
+from ..base import (
+    EdgeSource,
+    GraphModel,
+    _coerce_input_to,
+    _coerce_output_to,
+    read_edge_scalar,
+)
 
 
 class MLPBaseline(GraphModel):
@@ -46,6 +57,9 @@ class MLPBaseline(GraphModel):
     >>> logits = model(A)  # Returns raw logits
     >>> probs = model.predict(logits)  # Apply sigmoid for [0, 1]
     """
+
+    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
         self,
@@ -88,14 +102,26 @@ class MLPBaseline(GraphModel):
         layers.append(nn.Linear(hidden_dim, self.flatten_dim))
         self.mlp = nn.Sequential(*layers)
 
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
-        """Apply MLP to flattened adjacency matrix.
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> "GraphDistribution | DenseGraphDistribution":
+        """Apply MLP to the flattened adjacency.
 
-        Reads the dense scalar adjacency through ``read_edge_scalar`` and
-        writes the prediction via ``write_edge_scalar``; ``t`` is appended
-        to ``data.y`` when supplied, matching the spec's two-line pattern.
+        Coerces the input to a :class:`DenseGraphState`, reads the dense
+        scalar adjacency through :func:`read_edge_scalar`, runs the MLP on
+        the flattened representation, and writes the prediction to the
+        configured split edge field. The ``t`` tensor is appended to the
+        global ``y`` when supplied. The state-typed output is then
+        converted to a distribution and emitted in the requested layout
+        via :func:`_coerce_output_to`.
         """
-        A = read_edge_scalar(data, self.edge_source)
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+        A = read_edge_scalar(d, self.edge_source)
         B, N, _ = A.shape
 
         if self.max_nodes > N:
@@ -111,11 +137,19 @@ class MLPBaseline(GraphModel):
         if self.max_nodes > N:
             out_adj = out_adj[:, :N, :N]
 
-        out = write_edge_scalar(data, edge_scalar=out_adj, target=self._output_target)
+        if self._output_target == "feat":
+            out_dense = DenseGraphState.from_structure_only(d.node_mask, out_adj)
+        else:  # "class"
+            out_dense = DenseGraphState.from_edge_scalar(
+                out_adj, node_mask=d.node_mask, target="E_class"
+            )
+        out_dense = out_dense.replace(y=d.y)
         if t is not None:
-            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
-            out = out.replace(y=new_y)
-        return out
+            new_y = torch.cat([out_dense.y, t.unsqueeze(-1)], dim=-1)
+            out_dense = out_dense.replace(y=new_y)
+        out_dist = out_dense.to_distribution()
+        target = DenseGraphDistribution if output_dense else GraphDistribution
+        return _coerce_output_to(out_dist, target=target)  # type: ignore[return-value]
 
     def get_config(self) -> dict[str, Any]:
         """Return model configuration."""
