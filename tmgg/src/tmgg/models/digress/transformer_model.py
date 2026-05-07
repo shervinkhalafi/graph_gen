@@ -13,7 +13,16 @@ from torch.nn.modules.dropout import Dropout
 from torch.nn.modules.linear import Linear
 from torch.nn.modules.normalization import LayerNorm
 
-from tmgg.data.datasets.graph_types import GraphData, GraphStructure
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+    _DistributionGraph,
+    _StateGraph,
+)
+from tmgg.models.base import _coerce_input_to, _coerce_output_to
+from tmgg.models.digress.data_types import DenseGraphTransformerData
 
 from ..base import GraphModel
 from ..layers import BareGraphConvolutionLayer, SpectralProjectionLayer
@@ -39,14 +48,32 @@ def _assert_correctly_masked(variable: torch.Tensor, node_mask: torch.Tensor) ->
 
 
 class XEyTransformerLayer(nn.Module):
-    """Transformer that updates node, edge and global features
-    d_x: node features
-    d_e: edge features
-    dz : global features
-    n_head: the number of heads in the multi_head_attention
-    dim_feedforward: the dimension of the feedforward network model after self-attention
-    dropout: dropout probablility. 0 to disable
-    layer_norm_eps: eps value in layer normalizations.
+    """Transformer that updates node, edge and global features.
+
+    Per Phase 6 of the sparse-default refactor, the layer signature
+    collapses from five tensor arguments plus a ``GraphStructure``
+    container to a single :class:`DenseGraphTransformerData` parameter.
+    The frozen spectral context (``eigvec`` / ``eigval``) and the
+    binary adjacency travel with the hidden state, so each layer is a
+    pure ``DenseGraphTransformerData -> DenseGraphTransformerData``
+    map.
+
+    Parameters
+    ----------
+    dx
+        Node feature dimension.
+    de
+        Edge feature dimension.
+    dy
+        Global feature dimension.
+    n_head
+        Number of attention heads.
+    dim_ffX, dim_ffE, dim_ffy
+        Feed-forward hidden widths for X / E / y branches.
+    dropout
+        Dropout probability across all sub-layers.
+    layer_norm_eps
+        Epsilon used by every :class:`LayerNorm`.
     """
 
     self_attn: nn.Module
@@ -144,37 +171,39 @@ class XEyTransformerLayer(nn.Module):
         self.dropout_y3 = Dropout(dropout)
 
     def forward(
-        self,
-        X: Tensor,
-        E: Tensor,
-        y: Tensor,
-        node_mask: Tensor,
-        structure: GraphStructure,
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        """Pass the input through the encoder layer.
+        self, h: DenseGraphTransformerData
+    ) -> DenseGraphTransformerData:
+        """Pass the hidden graph state through one encoder layer.
 
         Parameters
         ----------
-        X
-            Node features (bs, n, d).
-        E
-            Edge features (bs, n, n, d).
-        y
-            Global features (bs, dy).
-        node_mask
-            Mask for the src keys per batch (bs, n).
-        structure
-            Pre-computed structural context (adjacency, eigenvectors,
-            eigenvalues) from the input graph.
+        h
+            Distribution-content hidden state with frozen spectral
+            attention context. Reads ``h.X_class`` (node hidden),
+            ``h.E_class`` (edge hidden), ``h.y`` (global hidden),
+            ``h.node_mask``, ``h.eigvec``, ``h.eigval``.
 
         Returns
         -------
-        tuple[Tensor, Tensor, Tensor]
-            Updated (X, E, y) with the same shapes.
+        DenseGraphTransformerData
+            Same instance shape with updated ``X_class`` / ``E_class``
+            / ``y``; ``eigvec`` / ``eigval`` propagate unchanged via
+            ``replace``.
         """
-        newX, newE, new_y = self.self_attn(
-            X, E, y, node_mask=node_mask, structure=structure
-        )
+        if h.X_class is None or h.E_class is None:
+            raise ValueError(
+                "XEyTransformerLayer requires DenseGraphTransformerData with "
+                "populated hidden X_class and E_class; got X_class="
+                f"{'None' if h.X_class is None else 'Tensor'}, E_class="
+                f"{'None' if h.E_class is None else 'Tensor'}."
+            )
+        X = h.X_class
+        E = h.E_class
+        y = h.y
+
+        attn_out = self.self_attn(h)
+        newX, newE, new_y = attn_out.X_class, attn_out.E_class, attn_out.y
+        assert newX is not None and newE is not None
 
         newX_d = self.dropoutX1(newX)
         X = self.normX1(X + newX_d)
@@ -197,7 +226,7 @@ class XEyTransformerLayer(nn.Module):
         ff_output_y = self.dropout_y3(ff_output_y)
         y = self.norm_y2(y + ff_output_y)
 
-        return X, E, y
+        return h.replace(X_class=X, E_class=E, y=y)
 
 
 class NodeEdgeBlock(nn.Module):
@@ -397,55 +426,59 @@ class NodeEdgeBlock(nn.Module):
         )
 
     def forward(
-        self,
-        X: Tensor,
-        E: Tensor,
-        y: Tensor,
-        node_mask: Tensor,
-        structure: GraphStructure,
-    ) -> tuple[Tensor, Tensor, Tensor]:
+        self, h: DenseGraphTransformerData
+    ) -> DenseGraphTransformerData:
         """Compute attention update for node and edge features.
 
         Parameters
         ----------
-        X
-            Node features (bs, n, d).
-        E
-            Edge features (bs, n, n, d).
-        y
-            Global features (bs, dz).
-        node_mask
-            Boolean mask (bs, n).
-        structure
-            Pre-computed structural context (adjacency, eigenvectors,
-            eigenvalues) from the input graph.
+        h
+            Distribution-content hidden state with frozen spectral
+            attention context. Reads ``h.X_class`` / ``h.E_class`` /
+            ``h.y`` / ``h.node_mask`` and the optional ``h.eigvec`` /
+            ``h.eigval`` for spectral projections, plus
+            ``h.dense_adjacency()`` for GNN projections (computed
+            once at the top of the block when needed).
 
         Returns
         -------
-        tuple[Tensor, Tensor, Tensor]
-            Updated (newX, newE, new_y) with the same shapes.
+        DenseGraphTransformerData
+            Same hidden-state instance with updated ``X_class`` /
+            ``E_class`` / ``y``; ``eigvec`` / ``eigval`` propagate
+            unchanged via ``replace``.
         """
+        if h.X_class is None or h.E_class is None:
+            raise ValueError(
+                "NodeEdgeBlock requires DenseGraphTransformerData with "
+                "populated hidden X_class and E_class; got X_class="
+                f"{'None' if h.X_class is None else 'Tensor'}, E_class="
+                f"{'None' if h.E_class is None else 'Tensor'}."
+            )
+        X = h.X_class
+        E = h.E_class
+        y = h.y
+        node_mask = h.node_mask
+        V = h.eigvec
+        Lambda = h.eigval
+
         bs, n, _ = X.shape
-        x_mask = node_mask.unsqueeze(-1)  # bs, n, 1
+        x_mask = node_mask.unsqueeze(-1).to(X.dtype)  # bs, n, 1
         e_mask1 = x_mask.unsqueeze(2)  # bs, n, 1, 1
         e_mask2 = x_mask.unsqueeze(1)  # bs, 1, n, 1
 
-        A = structure.adjacency
-        V = structure.eigenvectors
-        Lambda = structure.eigenvalues
-
-        if A is None and (self._use_gnn_q or self._use_gnn_k or self._use_gnn_v):
-            raise ValueError(
-                "GraphStructure.adjacency must be populated when using GNN "
-                "projections. E[..., 0] is the no-edge channel, not the adjacency."
-            )
+        # Compute the binary adjacency once when GNN projections need it.
+        # The frozen spectral context (V / Lambda) was pre-computed at the
+        # transformer entry point and lives on ``h``; the binary adjacency
+        # is only needed for GNN projections, so we compute it lazily.
+        uses_gnn = self._use_gnn_q or self._use_gnn_k or self._use_gnn_v
+        A: Tensor | None = h.dense_adjacency() if uses_gnn else None
 
         uses_spectral = (
             self._use_spectral_q or self._use_spectral_k or self._use_spectral_v
         )
         if uses_spectral and (V is None or Lambda is None):
             raise ValueError(
-                "GraphStructure.eigenvectors and .eigenvalues must be populated "
+                "DenseGraphTransformerData.eigvec and .eigval must be populated "
                 "when using spectral projections."
             )
 
@@ -454,6 +487,7 @@ class NodeEdgeBlock(nn.Module):
         # - Spectral projections use eigenvectors
         # - Linear projections use node features directly
         if self._use_gnn_q:
+            assert A is not None
             Q = self.q(A, X) * x_mask
         elif self._use_spectral_q:
             assert V is not None and Lambda is not None
@@ -462,6 +496,7 @@ class NodeEdgeBlock(nn.Module):
             Q = self.q(X) * x_mask  # (bs, n, dx)
 
         if self._use_gnn_k:
+            assert A is not None
             K = self.k(A, X) * x_mask
         elif self._use_spectral_k:
             assert V is not None and Lambda is not None
@@ -507,6 +542,7 @@ class NodeEdgeBlock(nn.Module):
 
         # Compute values (using 'val' to avoid shadowing eigenvector parameter V)
         if self._use_gnn_v:
+            assert A is not None
             val = self.v(A, X) * x_mask
         elif self._use_spectral_v:
             assert V is not None and Lambda is not None
@@ -540,17 +576,18 @@ class NodeEdgeBlock(nn.Module):
         new_y = y + x_y + e_y
         new_y = self.y_out(new_y)  # bs, dy
 
-        return newX, newE, new_y
+        return h.replace(X_class=newX, E_class=newE, y=new_y)
 
 
 class _GraphTransformer(nn.Module):
     """Core Graph Transformer for node/edge feature processing.
 
-    Always expects pre-encoded features: node features ``X`` of shape
-    ``(bs, n, dx)``, edge features ``E`` of shape ``(bs, n, n, de)``,
-    global features ``y`` of shape ``(bs, dy)``, and a ``node_mask`` of
-    shape ``(bs, n)``.  Callers are responsible for encoding raw inputs
-    (e.g. adjacency matrices) into these feature tensors before calling.
+    Always expects pre-encoded features: a dense :class:`DenseGraphState`
+    or :class:`DenseGraphDistribution` carrying ``X_class`` of shape
+    ``(bs, n, dx)``, ``E_class`` of shape ``(bs, n, n, de)``, ``y`` of
+    shape ``(bs, dy)`` and a derived ``node_mask`` of shape ``(bs, n)``.
+    Callers (the outer :class:`GraphTransformer`) are responsible for
+    encoding raw inputs into these feature tensors before calling.
 
     Parameters
     ----------
@@ -764,31 +801,73 @@ class _GraphTransformer(nn.Module):
             nn.Linear(hidden_mlp_dims["y"], output_dims["y"]),
         )
 
-    def forward(self, data: GraphData) -> GraphData:
-        """Process categorical graph features through the transformer stack.
+    @staticmethod
+    def _symmetrise(E_hidden: Tensor) -> Tensor:
+        """Average a hidden edge tensor with its transpose along node axes."""
+        return (E_hidden + E_hidden.transpose(1, 2)) / 2
+
+    @staticmethod
+    def _zero_pad_features(
+        X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Zero ``X`` / ``E`` at padded positions; ``y`` is left unchanged.
+
+        Mirrors :meth:`DenseGraphState.mask` for the categorical fields:
+        node padding (rows where ``node_mask[b, i] == 0``) zeros ``X`` at
+        those rows and ``E`` at the corresponding row / column pairs.
+        ``y`` is per-graph and has no spatial mask.
+        """
+        x_mask = node_mask.unsqueeze(-1).to(X.dtype)
+        e_mask1 = x_mask.unsqueeze(2)
+        e_mask2 = x_mask.unsqueeze(1)
+        return X * x_mask, E * e_mask1 * e_mask2, y
+
+    @staticmethod
+    def _zero_pad_and_diag(
+        X: Tensor, E: Tensor, y: Tensor, node_mask: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Zero ``X`` / ``E`` at padded positions *and* the edge diagonal.
+
+        Mirrors :meth:`DenseGraphState.mask_zero_diag` for the categorical
+        fields. Used when ``use_upstream_hidden_edge_diagonal`` is False
+        (the TMGG default), which excludes self-loops from the hidden edge
+        state before the transformer stack.
+        """
+        X, E, y = _GraphTransformer._zero_pad_features(X, E, y, node_mask)
+        n_max = E.shape[1]
+        diag = torch.eye(n_max, device=E.device, dtype=torch.bool)
+        diag = diag.view(1, n_max, n_max, 1)
+        E = E.masked_fill(diag, 0.0)
+        return X, E, y
+
+    def forward(self, dense_in: DenseGraphState | DenseGraphDistribution) -> DenseGraphDistribution:
+        """Process dense graph features through the transformer stack.
 
         Parameters
         ----------
-        data
-            Batched graph features with categorical edge encoding
-            (channel 0 is "no-edge", channel 1+ are edge classes).
-            Reads ``X_class`` and ``E_class`` directly.
+        dense_in
+            Dense graph batch carrying populated ``X_class`` and
+            ``E_class``. Either content kind is accepted; the body
+            interprets every ``(i, j)`` slot as hidden state regardless.
 
         Returns
         -------
-        GraphData
-            Transformed features written to ``X_class`` / ``E_class``.
+        DenseGraphDistribution
+            Transformed features written to ``X_class`` / ``E_class`` /
+            ``y``. The output is distribution content because every
+            position carries a learned value.
         """
-        if data.X_class is None or data.E_class is None:
+        if dense_in.X_class is None or dense_in.E_class is None:
             raise ValueError(
                 "_GraphTransformer.forward requires X_class and E_class to "
                 "be populated; got X_class="
-                f"{'None' if data.X_class is None else 'Tensor'}, E_class="
-                f"{'None' if data.E_class is None else 'Tensor'}."
+                f"{'None' if dense_in.X_class is None else 'Tensor'}, E_class="
+                f"{'None' if dense_in.E_class is None else 'Tensor'}."
             )
-        X_cat = data.X_class
-        E_cat = data.E_class
-        y_cat, node_mask = data.y, data.node_mask
+        X_cat = dense_in.X_class
+        E_cat = dense_in.E_class
+        y_cat = dense_in.y
+        node_mask = dense_in.node_mask
         bs, n = X_cat.shape[0], X_cat.shape[1]
 
         diag_mask = torch.eye(n, device=E_cat.device)
@@ -804,7 +883,7 @@ class _GraphTransformer(nn.Module):
         needs_adjacency = self._use_gnn_projections or (
             self._use_spectral_projections and self.eigen_layer is not None
         )
-        binary_adj = data.binarised_adjacency() if needs_adjacency else None
+        binary_adj = dense_in.dense_adjacency() if needs_adjacency else None
 
         eigenvectors: torch.Tensor | None = None
         eigenvalues: torch.Tensor | None = None
@@ -823,37 +902,39 @@ class _GraphTransformer(nn.Module):
                 eigenvectors = V_raw
                 eigenvalues = Lambda_raw
 
-        structure = GraphStructure(
-            adjacency=binary_adj if self._use_gnn_projections else None,
-            eigenvectors=eigenvectors,
-            eigenvalues=eigenvalues,
-        )
-
         # --- Categorical → hidden: E no longer has channel semantics after MLPs ---
-        E_hidden = self.mlp_in_E(E_cat)
-        E_hidden = (E_hidden + E_hidden.transpose(1, 2)) / 2
-        hidden = GraphData(
-            y=self.mlp_in_y(y_cat),
-            node_mask=node_mask,
-            X_class=self.mlp_in_X(X_cat),
-            E_class=E_hidden,
+        X_hid_raw = self.mlp_in_X(X_cat)
+        y_hid_raw = self.mlp_in_y(y_cat)
+        E_hid_raw = self._symmetrise(self.mlp_in_E(E_cat))
+
+        if self.use_upstream_hidden_edge_diagonal:
+            X_hid, E_hid, y_hid = self._zero_pad_features(
+                X_hid_raw, E_hid_raw, y_hid_raw, node_mask
+            )
+        else:
+            X_hid, E_hid, y_hid = self._zero_pad_and_diag(
+                X_hid_raw, E_hid_raw, y_hid_raw, node_mask
+            )
+
+        hidden_dist = DenseGraphDistribution(
+            num_nodes_per_graph=dense_in.num_nodes_per_graph,
+            y=y_hid,
+            X_class=X_hid,
+            E_class=E_hid,
+            X_feat=None,
+            E_feat=None,
         )
-        hidden = (
-            hidden.mask()
-            if self.use_upstream_hidden_edge_diagonal
-            else hidden.mask_zero_diag()
+        h = DenseGraphTransformerData.from_base(
+            hidden_dist, eigvec=eigenvectors, eigval=eigenvalues
         )
-        assert hidden.X_class is not None and hidden.E_class is not None
-        X_hid: torch.Tensor = hidden.X_class
-        E_hid: torch.Tensor = hidden.E_class
-        y_hid: torch.Tensor = hidden.y
 
         for layer in self.tf_layers:
-            X_hid, E_hid, y_hid = layer(X_hid, E_hid, y_hid, node_mask, structure)
+            h = layer(h)
 
-        X_out: torch.Tensor = self.mlp_out_X(X_hid)
-        E_out: torch.Tensor = self.mlp_out_E(E_hid)
-        y_out: torch.Tensor = self.mlp_out_y(y_hid)
+        assert h.X_class is not None and h.E_class is not None
+        X_out: torch.Tensor = self.mlp_out_X(h.X_class)
+        E_out: torch.Tensor = self.mlp_out_E(h.E_class)
+        y_out: torch.Tensor = self.mlp_out_y(h.y)
 
         X_final = X_out + X_to_out
         E_final = (E_out + E_to_out) * diag_mask
@@ -861,26 +942,38 @@ class _GraphTransformer(nn.Module):
 
         E_symmetric = 1 / 2 * (E_final + torch.transpose(E_final, 1, 2))
 
-        out = GraphData(
-            y=y_final,
-            node_mask=node_mask,
-            X_class=X_final,
-            E_class=E_symmetric,
+        # Padding-only mask on the output. The diagonal of E has already
+        # been zeroed above via ``* diag_mask``, mirroring upstream DiGress
+        # transformer_model.py:279 (`E = (E + E_to_out) * diag_mask`).
+        # Do not zero again here.
+        X_final, E_symmetric, y_final = self._zero_pad_features(
+            X_final, E_symmetric, y_final, node_mask
         )
-        # Upstream parity: padding-only mask on the output. The diagonal
-        # of E has already been zeroed above via ``* diag_mask``,
-        # mirroring upstream DiGress transformer_model.py:279
-        # (`E = (E + E_to_out) * diag_mask`). Do not zero again here.
-        return out.mask()
+
+        return DenseGraphDistribution(
+            num_nodes_per_graph=dense_in.num_nodes_per_graph,
+            y=y_final,
+            X_class=X_final,
+            X_feat=None,
+            E_class=E_symmetric,
+            E_feat=None,
+        )
 
 
 class GraphTransformer(GraphModel):
-    """Unified graph transformer accepting ``GraphData`` for both categorical
-    diffusion and adjacency-based denoising.
+    """Unified graph transformer accepting :class:`GraphData` for both
+    categorical diffusion and adjacency-based denoising.
 
     Wraps ``_GraphTransformer`` and optionally applies extra feature
     augmentation (e.g. eigenvector extraction, cycle counts) and/or
     timestep injection before the inner transformer.
+
+    Per Phase 6 of the sparse-default refactor, ``forward`` accepts any
+    of the four concrete :class:`GraphData` types and returns a
+    :class:`GraphDistribution` (or :class:`DenseGraphDistribution` when
+    ``output_dense=True``). Sparse inputs are coerced to dense at the
+    entry boundary, the body operates dense-internal, and the output
+    is coerced back to sparse by default.
 
     Parameters
     ----------
@@ -986,68 +1079,96 @@ class GraphTransformer(GraphModel):
         )
 
     @override
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> GraphData:
         """Forward pass through the graph transformer.
 
-        When ``extra_features`` is set, calls it to produce additional
+        Coerces ``data`` to a dense carrier at the entry boundary,
+        synthesises a degenerate ``X_class`` from ``node_mask`` when the
+        input is structure-only (``X_class is None``), runs the dense
+        body, and coerces the distribution-content output back to the
+        requested carrier.
+
+        When ``extra_features`` is set, the provider produces additional
         feature tensors that are concatenated with X_class, E_class, y
         before the inner transformer. When ``use_timestep`` is True and
-        ``t`` is provided, appends it to y.
-
-        When ``data.X_class`` is ``None`` (structure-only graph — see
-        the spec's "architecture-internal concern" clause) the
-        transformer synthesises a degenerate two-channel X from
-        ``node_mask`` so the downstream MLPs still have a per-node
-        input. The synthesis is private to this architecture; the
-        pipeline never sees the degenerate tensor.
+        ``t`` is provided, ``t`` is appended to ``y``.
 
         Parameters
         ----------
         data
-            Batched graph features. ``X_class`` may be ``None`` (the
-            architecture synthesises one from ``node_mask``); ``E_class``
-            must be populated.
+            Batched graph features. Any of the four concrete
+            :class:`GraphData` types is accepted. ``X_class`` may be
+            ``None`` (the architecture synthesises one from the
+            ``node_mask`` derived from ``num_nodes_per_graph``);
+            ``E_class`` must be populated.
         t
             Normalised diffusion timestep, shape ``(bs,)``. Appended to
             ``y`` when ``use_timestep=True``.
+        output_dense
+            If False (default), return a :class:`GraphDistribution`.
+            If True, return a :class:`DenseGraphDistribution` (skips
+            the dense → sparse boundary conversion).
 
         Returns
         -------
         GraphData
-            Predicted features with output dimensions.
+            Predicted features with output dimensions, of type
+            :class:`GraphDistribution` or :class:`DenseGraphDistribution`
+            depending on ``output_dense``.
         """
+        # Coerce to dense at entry. The transformer body wants dense,
+        # and either content kind is acceptable (the first MLP lifts to
+        # distribution semantics regardless).
+        if isinstance(data, _StateGraph):
+            dense_in = _coerce_input_to(data, target=DenseGraphState)
+        elif isinstance(data, _DistributionGraph):
+            dense_in = _coerce_input_to(data, target=DenseGraphDistribution)
+        else:
+            raise TypeError(
+                "GraphTransformer.forward expected a GraphState / "
+                "GraphDistribution / DenseGraphState / DenseGraphDistribution; "
+                f"got {type(data).__name__}."
+            )
+
         # GraphTransformer is categorical-by-default but also serves as a
         # DiGress-style single-step denoiser over continuous edge states;
         # in the latter case the caller feeds E_feat only. We accept
         # either E_class (preferred) or E_feat as the edge input; the
         # downstream MLPs learn an input-width embedding regardless.
-        if data.E_class is not None:
-            E = data.E_class
-        elif data.E_feat is not None:
-            E = data.E_feat
+        assert isinstance(dense_in, (DenseGraphState, DenseGraphDistribution))
+        if dense_in.E_class is not None:
+            E = dense_in.E_class
+        elif dense_in.E_feat is not None:
+            E = dense_in.E_feat
         else:
             raise ValueError(
                 "GraphTransformer.forward requires either E_class or E_feat "
                 "to be populated; got both None."
             )
-        y, node_mask = data.y, data.node_mask
+        y = dense_in.y
+        node_mask = dense_in.node_mask
 
-        if data.X_class is not None:
-            X = data.X_class
+        if dense_in.X_class is not None:
+            X = dense_in.X_class
         else:
-            # Structure-only graph: derive an X_class via the canonical
-            # helper. ``self.input_dims["X"]`` is the input-side C_x —
-            # the configured class width before extras are concatenated
-            # at line 953. The post-extras width X_in lives in the
-            # local ``adjusted_input_dims`` (set in __init__) and isn't
-            # what the synth needs. ``self.output_dims_x_class`` is the
-            # OUTPUT-side C_x; for symmetric categorical-diffusion
-            # configs input C_x == output C_x and either works, but for
-            # asymmetric denoising configs they differ
-            # (e.g. digress_base.yaml: input_dims.X=2, output_dims_x_class=0)
-            # — the synth must use the INPUT C_x to match what the first
-            # projection expects.
-            X = GraphData.synth_structure_only_x_class(
+            # Structure-only graph: derive a degenerate X_class via the
+            # canonical helper. ``self.input_dims["X"]`` is the input-side
+            # C_x — the configured class width before extras are
+            # concatenated. The post-extras width X_in lives in
+            # ``adjusted_input_dims`` (set in __init__) and isn't what the
+            # synth needs. ``self.output_dims_x_class`` is the OUTPUT-side
+            # C_x; for symmetric categorical-diffusion configs input C_x
+            # == output C_x and either works, but for asymmetric denoising
+            # configs they differ (e.g. digress_base.yaml: input_dims.X=2,
+            # output_dims_x_class=0) — the synth must use the INPUT C_x to
+            # match what the first projection expects.
+            X = DenseGraphState.synth_structure_only_x_class(
                 node_mask, self.input_dims["X"]
             ).to(device=E.device, dtype=E.dtype)
 
@@ -1073,13 +1194,33 @@ class GraphTransformer(GraphModel):
         if self._use_timestep and t is not None:
             y = torch.cat([y, t.unsqueeze(-1)], dim=-1)
 
-        augmented = GraphData(
-            y=y,
-            node_mask=node_mask,
-            X_class=X,
-            E_class=E,
-        )
-        return self.transformer(augmented)
+        # Build the augmented dense carrier the inner transformer expects.
+        # Content kind matches the input: a state-content input stays a
+        # state-content carrier into the inner transformer (which treats
+        # both kinds identically — see `_GraphTransformer.forward`).
+        augmented: DenseGraphState | DenseGraphDistribution
+        if isinstance(dense_in, DenseGraphState):
+            augmented = DenseGraphState(
+                num_nodes_per_graph=dense_in.num_nodes_per_graph,
+                y=y,
+                X_class=X,
+                E_class=E,
+                X_feat=None,
+                E_feat=None,
+            )
+        else:
+            augmented = DenseGraphDistribution(
+                num_nodes_per_graph=dense_in.num_nodes_per_graph,
+                y=y,
+                X_class=X,
+                E_class=E,
+                X_feat=None,
+                E_feat=None,
+            )
+
+        out_dense: DenseGraphDistribution = self.transformer(augmented)
+        target = DenseGraphDistribution if output_dense else GraphDistribution
+        return _coerce_output_to(out_dense, target=target)
 
     @override
     def get_config(self) -> dict[str, Any]:
