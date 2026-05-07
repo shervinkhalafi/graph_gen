@@ -24,16 +24,18 @@ architecture reads from. Defined here so every architecture family can
 import a single canonical literal type."""
 
 
-def read_edge_scalar(data: GraphData, source: EdgeSource) -> Tensor:
+def read_edge_scalar(data: DenseGraphState, source: EdgeSource) -> Tensor:
     """Return a dense scalar adjacency from the requested split edge field.
 
-    Thin wrapper over :meth:`GraphData.to_edge_scalar` that translates the
-    architecture-family ``EdgeSource`` literal into the split-field name.
+    Thin wrapper over :meth:`DenseGraphState.to_edge_scalar` that translates
+    the architecture-family ``EdgeSource`` literal into the split-field name.
 
     Parameters
     ----------
     data
-        Input graph data.
+        Input dense state graph data. Callers must coerce upstream input
+        via :func:`_coerce_input_to(..., target=DenseGraphState)` before
+        invoking this helper.
     source
         Which split edge field to prefer (``"class"`` reads ``E_class``;
         ``"feat"`` reads ``E_feat``).
@@ -47,15 +49,15 @@ def read_edge_scalar(data: GraphData, source: EdgeSource) -> Tensor:
 
 
 def write_edge_scalar(
-    data: GraphData,
+    data: DenseGraphState,
     *,
     edge_scalar: Tensor,
     target: EdgeSource,
-) -> GraphData:
+) -> DenseGraphState:
     """Return a copy of ``data`` with a scalar prediction written to ``target``.
 
     Wave 7 output-side helper. The single scalar adjacency is packed into
-    the requested split edge field of a fresh :class:`GraphData` that
+    the requested split edge field of a fresh :class:`DenseGraphState` that
     shares ``data.node_mask`` and carries ``data.y`` through unchanged.
     Unrelated split fields are left ``None``; downstream code reads
     ``edge_source``-selected tensors via :func:`read_edge_scalar`.
@@ -63,7 +65,9 @@ def write_edge_scalar(
     Parameters
     ----------
     data
-        Input graph; ``node_mask`` and ``y`` propagate unchanged.
+        Input dense state graph; ``node_mask`` and ``y`` propagate
+        unchanged. Callers must coerce upstream input via
+        :func:`_coerce_input_to(..., target=DenseGraphState)`.
     edge_scalar
         Dense scalar adjacency, ``(bs, n, n)`` or ``(n, n)``.
     target
@@ -73,14 +77,14 @@ def write_edge_scalar(
 
     Returns
     -------
-    GraphData
+    DenseGraphState
         New instance carrying the prediction in the selected split-edge
         field.
     """
     if target == "feat":
-        decoded = GraphData.from_structure_only(data.node_mask, edge_scalar)
+        decoded = DenseGraphState.from_structure_only(data.node_mask, edge_scalar)
     else:  # target == "class"
-        decoded = GraphData.from_edge_scalar(
+        decoded = DenseGraphState.from_edge_scalar(
             edge_scalar, node_mask=data.node_mask, target="E_class"
         )
     return decoded.replace(y=data.y)

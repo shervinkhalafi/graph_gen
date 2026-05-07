@@ -1,15 +1,27 @@
 """Graph Neural Network models for graph denoising."""
 
-from typing import Any, override
+from typing import Any, ClassVar, override
 
 import torch
 import torch.nn as nn
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+)
 from tmgg.models.layers.eigen_embedding import TruncatedEigenEmbedding
 from tmgg.models.layers.gcn import GraphConvolutionLayer
 
-from ..base import EdgeSource, GraphModel, read_edge_scalar, write_edge_scalar
+from ..base import (
+    EdgeSource,
+    GraphModel,
+    _coerce_input_to,
+    _coerce_output_to,
+    read_edge_scalar,
+    write_edge_scalar,
+)
 
 
 class GNN(GraphModel):
@@ -20,6 +32,9 @@ class GNN(GraphModel):
     with ``(A + A.T) / 2``; set ``symmetrized_output=False`` to keep
     the raw asymmetric product.
     """
+
+    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
         self,
@@ -106,40 +121,56 @@ class GNN(GraphModel):
         return self.out_x(z), self.out_y(z)
 
     @override
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> "GraphDistribution | DenseGraphDistribution":
         """Compute denoised graph from input graph data.
 
         Parameters
         ----------
         data
-            Graph features. The dense scalar adjacency is read from the
-            split field selected by ``self.edge_source`` (``"feat"`` →
-            ``E_feat``, ``"class"`` → ``E_class``) via
-            :meth:`GraphData.to_edge_scalar`.
+            Graph features in any of the four concrete carriers.
+            Coerced internally to :class:`DenseGraphState`; the dense
+            scalar adjacency is then read from the split field selected
+            by ``self.edge_source`` (``"feat"`` → ``E_feat``, ``"class"``
+            → ``E_class``).
         t
-            Diffusion timestep tensor, or None. Concatenated to ``data.y``
+            Diffusion timestep tensor, or None. Concatenated to ``y``
             via the standard two-line pattern; the GNN body itself does
             not currently consume ``y``.
+        output_dense
+            If True, return a :class:`DenseGraphDistribution`. Default
+            False returns the sparse :class:`GraphDistribution` carrier.
 
         Returns
         -------
-        GraphData
-            Denoised graph with the prediction in the configured edge
-            field (default ``E_feat``) plus the legacy ``E`` for the
-            transition.
+        GraphDistribution | DenseGraphDistribution
+            Denoised graph distribution with the prediction in the
+            configured edge field (default ``E_feat``).
         """
-        A = read_edge_scalar(data, self.edge_source)
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+        A = read_edge_scalar(d, self.edge_source)
         emb_x, emb_y = self._embed(A)
         result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
         if self.symmetrized_output:
             result_adj = (result_adj + result_adj.transpose(1, 2)) / 2
-        out = write_edge_scalar(
-            data, edge_scalar=result_adj, target=self._output_target
+        out_dense_state = write_edge_scalar(
+            d, edge_scalar=result_adj, target=self._output_target
         )
         if t is not None:
-            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
-            out = out.replace(y=new_y)
-        return out
+            new_y = torch.cat([out_dense_state.y, t.unsqueeze(-1)], dim=-1)
+            out_dense_state = out_dense_state.replace(y=new_y)
+        # Convert dense state-content output to dense distribution-content.
+        out_dist = out_dense_state.to_distribution()
+        target = DenseGraphDistribution if output_dense else GraphDistribution
+        coerced = _coerce_output_to(out_dist, target=target)
+        assert isinstance(coerced, (GraphDistribution, DenseGraphDistribution))
+        return coerced
 
     def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute node embeddings without adjacency reconstruction.
@@ -149,9 +180,10 @@ class GNN(GraphModel):
         Parameters
         ----------
         data
-            Graph features. The dense scalar adjacency is read via the
-            ``edge_source`` selector (matching the selector used by
-            ``forward``).
+            Graph features in any of the four concrete carriers; coerced
+            internally to :class:`DenseGraphState`. The dense scalar
+            adjacency is read via the ``edge_source`` selector (matching
+            the selector used by ``forward``).
 
         Returns
         -------
@@ -159,7 +191,9 @@ class GNN(GraphModel):
             Tuple of (X, Y) embeddings, each of shape
             ``(batch, n, feature_dim_out)``.
         """
-        A = read_edge_scalar(data, self.edge_source)
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+        A = read_edge_scalar(d, self.edge_source)
         return self._embed(A)
 
     @override
