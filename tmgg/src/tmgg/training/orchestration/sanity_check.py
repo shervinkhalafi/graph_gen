@@ -31,12 +31,14 @@ from tmgg.utils.noising.noise import NoiseDefinition
 def _batch_to_tensor(batch: Any) -> torch.Tensor:
     """Extract a tensor from a dataloader batch.
 
-    If *batch* is a ``GraphData`` instance, returns its adjacency
-    representation.  If it is already a ``Tensor``, returns it unchanged.
-    Raises ``TypeError`` for anything else so callers fail fast.
+    If *batch* is a ``GraphData`` instance (sparse ``GraphState`` or
+    dense ``DenseGraphState``), returns its dense adjacency representation
+    via :meth:`GraphData.dense_adjacency`. If it is already a ``Tensor``,
+    returns it unchanged. Raises ``TypeError`` for anything else so callers
+    fail fast.
     """
     if isinstance(batch, GraphData):
-        return batch.binarised_adjacency()
+        return batch.dense_adjacency()
     if isinstance(batch, torch.Tensor):
         return batch
     raise TypeError(
@@ -400,8 +402,9 @@ def _run_experiment_sanity_check(
     # 2. Check data loader
     print("2. Checking data loader...")
     # Get a sample to determine expected shape.  The batch may be a
-    # GraphData dataclass (production dataloaders) or a raw Tensor
-    # (legacy test loaders).  Convert once for all downstream checks.
+    # GraphData subclass (production dataloaders emit GraphState /
+    # DenseGraphState) or a raw Tensor (legacy test loaders).  Convert
+    # once for all downstream checks.
     raw_sample = next(iter(data_loader))
     sample_batch = _batch_to_tensor(raw_sample)
     expected_shape = sample_batch.shape[1:]

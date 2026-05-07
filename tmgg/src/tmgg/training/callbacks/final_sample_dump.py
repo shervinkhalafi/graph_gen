@@ -54,7 +54,7 @@ from tmgg.training.callbacks.ema import EMACallback
 if TYPE_CHECKING:
     import pytorch_lightning as pl
 
-    from tmgg.data.datasets.graph_types import GraphData
+    from tmgg.data.datasets.graph_types import GraphState
 
 #: Mirror of :data:`tmgg.modal._lib.volumes.OUTPUTS_MOUNT`. Inlined to
 #: avoid a tach-forbidden ``tmgg.training -> tmgg.modal`` import; pinned
@@ -201,7 +201,7 @@ class FinalSampleDumpCallback(Callback):
             if log_metrics is not None:
                 log_metrics(metrics, step=step)
 
-    def _sample_graphs(self, pl_module: pl.LightningModule) -> list[GraphData]:
+    def _sample_graphs(self, pl_module: pl.LightningModule) -> list[GraphState]:
         """Drive the sampler for ``num_samples`` graphs in batches."""
         sampler = _require_attr(pl_module, "sampler")
         noise_process = _require_attr(pl_module, "noise_process")
@@ -219,7 +219,7 @@ class FinalSampleDumpCallback(Callback):
                 "to bootstrap a node-count for sampling."
             )
 
-        graphs: list[GraphData] = []
+        graphs: list[GraphState] = []
         remaining = self.num_samples
         while remaining > 0:
             batch_size = min(remaining, self.sample_batch_size)
@@ -291,8 +291,8 @@ class FinalSampleDumpCallback(Callback):
             # use getattr to keep pyright happy without a suppression.
             datamodule = getattr(trainer, "datamodule", None)
             if datamodule is not None:
-                # Both `refs` and `samples` are list[GraphData] post the
-                # 2026-05-01 universal-transport refactor; evaluator.evaluate
+                # Both `refs` and `samples` are list[GraphState] post the
+                # 2026-05-07 sparse-default refactor; evaluator.evaluate
                 # internally converts to nx via to_networkx_graphs as needed.
                 refs = datamodule.get_reference_graphs(
                     "test", evaluator.eval_num_samples
