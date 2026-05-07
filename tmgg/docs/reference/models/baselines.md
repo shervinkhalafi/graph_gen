@@ -1,3 +1,0 @@
-# Baselines
-
-::: tmgg.models.baselines

@@ -1,3 +1,0 @@
-# GNN
-
-::: tmgg.models.gnn

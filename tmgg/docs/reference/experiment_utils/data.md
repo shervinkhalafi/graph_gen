@@ -1,3 +1,0 @@
-# Data
-
-::: tmgg.data

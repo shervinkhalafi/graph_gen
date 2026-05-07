@@ -1,3 +1,0 @@
-# DiGress
-
-::: tmgg.models.digress

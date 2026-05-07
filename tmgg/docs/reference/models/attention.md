@@ -1,3 +1,0 @@
-# Attention
-
-::: tmgg.models.attention

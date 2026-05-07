@@ -1,3 +1,0 @@
-# Layers
-
-::: tmgg.models.layers
