@@ -13,16 +13,22 @@ and reconstruct the denoised adjacency matrix.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+)
 from tmgg.models.base import (
     EdgeSource,
     GraphModel,
+    _coerce_input_to,
+    _coerce_output_to,
     read_edge_scalar,
-    write_edge_scalar,
 )
 from tmgg.models.layers.pearl_embedding import PEARLEmbedding
 from tmgg.models.layers.topk_eigen import TopKEigenLayer
@@ -70,6 +76,9 @@ class SpectralDenoiser(GraphModel, ABC):
     PEARL reference: E. Hejin et al., "PEARL: A Scalable and Effective Random
     Positional Encoding." ICLR 2025. https://github.com/ehejin/Pearl-PE
     """
+
+    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
         self,
@@ -120,28 +129,44 @@ class SpectralDenoiser(GraphModel, ABC):
                 f"'pearl_basis', got {embedding_source!r}"
             )
 
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> "GraphDistribution | DenseGraphDistribution":
         """Denoise graph via spectral transformation.
 
-        Reads the dense scalar adjacency through :func:`read_edge_scalar`
-        (which respects ``self.edge_source``) and writes the prediction to
-        the configured split edge field via :func:`write_edge_scalar`.
-        Optionally appends the timestep to ``data.y`` so downstream
-        subclasses can opt into ``t`` conditioning.
+        Coerces the input to a :class:`DenseGraphState` (lossless lifts are
+        applied automatically; lossy distribution → state collapse must be
+        caller-explicit), reads the dense scalar adjacency through
+        :func:`read_edge_scalar` (which respects ``self.edge_source``), and
+        writes the prediction to the configured split edge field. Optionally
+        appends the timestep to ``y`` so downstream subclasses can opt into
+        ``t`` conditioning. The state-typed output is then converted to a
+        distribution and emitted in the requested layout via
+        :func:`_coerce_output_to`.
 
         Parameters
         ----------
         data
-            Graph features.
+            Graph features in any of the four GraphData variants.
         t
             Diffusion timestep tensor, or None for unconditional denoising.
+        output_dense
+            If True, return a :class:`DenseGraphDistribution`; otherwise
+            return the sparse :class:`GraphDistribution` (default).
 
         Returns
         -------
-        GraphData
-            Denoised graph with the prediction in the configured edge field.
+        GraphDistribution | DenseGraphDistribution
+            Denoised graph distribution in the requested layout, with the
+            prediction in the configured edge field.
         """
-        A = read_edge_scalar(data, self.edge_source)
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+        A = read_edge_scalar(d, self.edge_source)
 
         if self.embedding_source == "eigenvector":
             assert isinstance(self.embedding_layer, TopKEigenLayer)
@@ -162,13 +187,19 @@ class SpectralDenoiser(GraphModel, ABC):
                 Lambda = torch.zeros(V.shape[0], self.k, device=V.device, dtype=V.dtype)
 
         result_adj = self._spectral_forward(V, Lambda, A)
-        out = write_edge_scalar(
-            data, edge_scalar=result_adj, target=self._output_target
-        )
+        if self._output_target == "feat":
+            out_dense = DenseGraphState.from_structure_only(d.node_mask, result_adj)
+        else:  # "class"
+            out_dense = DenseGraphState.from_edge_scalar(
+                result_adj, node_mask=d.node_mask, target="E_class"
+            )
+        out_dense = out_dense.replace(y=d.y)
         if t is not None:
-            new_y = torch.cat([out.y, t.unsqueeze(-1)], dim=-1)
-            out = out.replace(y=new_y)
-        return out
+            new_y = torch.cat([out_dense.y, t.unsqueeze(-1)], dim=-1)
+            out_dense = out_dense.replace(y=new_y)
+        out_dist = out_dense.to_distribution()
+        target = DenseGraphDistribution if output_dense else GraphDistribution
+        return _coerce_output_to(out_dist, target=target)  # type: ignore[return-value]
 
     @abstractmethod
     def _spectral_forward(
@@ -232,16 +263,17 @@ class SpectralDenoiser(GraphModel, ABC):
         Parameters
         ----------
         data
-            Graph features. The dense scalar adjacency is read via the
-            ``edge_source`` selector (matching the selector used by
-            ``forward``).
+            Graph features in any of the four GraphData variants. The
+            dense scalar adjacency is read via the ``edge_source`` selector
+            (matching the selector used by ``forward``).
 
         Returns
         -------
         torch.Tensor
             Node features of shape ``(batch, n, feature_dim)``.
         """
-        A = read_edge_scalar(data, self.edge_source)
+        d = _coerce_input_to(data, target=DenseGraphState)
+        A = read_edge_scalar(d, self.edge_source)
 
         if self.embedding_source == "eigenvector":
             assert isinstance(self.embedding_layer, TopKEigenLayer)
