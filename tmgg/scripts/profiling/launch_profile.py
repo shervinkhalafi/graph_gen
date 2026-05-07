@@ -19,7 +19,7 @@ checkpoint for eval. Override with ``--overrides`` and
 Invocation::
 
     doppler run -- uv run modal deploy -m tmgg.modal._profile_functions
-    doppler run -- uv run python -m scripts.profile.launch_profile
+    doppler run -- uv run python -m scripts.profiling.launch_profile
 
 Use ``--no-eval`` or ``--no-train`` to spawn just one half.
 """

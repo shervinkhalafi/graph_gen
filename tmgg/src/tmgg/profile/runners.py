@@ -6,7 +6,7 @@ full-stack coverage without re-execution. Layers, cheapest first:
 1. ``trace.json`` — chrome-format ``torch.profiler`` trace
    (CUDA-kernel detail, per-op shapes, per-op memory). Streams to disk
    during the run; never aggregated in-container. Aggregate locally
-   with ``scripts/profile/aggregate_chrome_trace.py``.
+   with ``scripts/profiling/aggregate_chrome_trace.py``.
 2. ``cprofile.pstats`` + ``cprofile.txt`` — Python call-graph timing
    (cProfile dump + human-readable top-50). Catches Lightning hook
    overhead, dataloader fetch, callback dispatch, and anything spending
@@ -17,7 +17,7 @@ full-stack coverage without re-execution. Layers, cheapest first:
 
 For Python line-level + GPU attribution (scalene), wrap the launcher
 script externally:
-``scalene --outfile scalene.html -m scripts.profile.launch_profile``
+``scalene --outfile scalene.html -m scripts.profiling.launch_profile``
 — this only profiles the launcher process, so it captures Modal client
 overhead, not in-container work. cProfile + chrome trace are the
 in-container coverage.
@@ -348,7 +348,7 @@ def run_eval_profile(
     _dump_dynamo_counters(output_dir)
 
     # Chrome trace is the canonical kernel artefact. Aggregation runs on
-    # the host via ``scripts/profile/aggregate_chrome_trace.py``; the
+    # the host via ``scripts/profiling/aggregate_chrome_trace.py``; the
     # cprofile.{pstats,txt} bundle covers Python-side overhead.
     trace_path = output_dir / "trace.json"
     prof.export_chrome_trace(str(trace_path))

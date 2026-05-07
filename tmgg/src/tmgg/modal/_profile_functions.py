@@ -3,7 +3,7 @@
 Two ``@app.function``s, both on ``GPU_CONFIGS["fast"]`` (A100). Run
 both in parallel via ``.spawn()`` from the launcher script::
 
-    uv run python -m scripts.profile.launch_profile
+    uv run python -m scripts.profiling.launch_profile
 
 Each function dumps ``trace.json`` + ``summary.txt`` to::
 

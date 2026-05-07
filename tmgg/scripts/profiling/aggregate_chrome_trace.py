@@ -13,7 +13,7 @@ in-container at the end of a profiled run and can blow past Modal's
 exports cheaply, so we export it from Modal and aggregate on the host.
 
 Usage:
-    uv run scripts/profile/aggregate_chrome_trace.py <trace.json> [--row-limit 30]
+    uv run scripts/profiling/aggregate_chrome_trace.py <trace.json> [--row-limit 30]
 """
 
 # /// script
