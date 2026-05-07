@@ -47,10 +47,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
 ray = ["ray[default]>=2.10.0"]  # Optional: local distributed execution with Ray
 notebook = ["jupyter>=1.1.1", "torchshow>=0.5.2"]
-docs = ["pymdown-extensions", "pygments", "mkdocstrings-python"]
 analysis = [
     # graph-tool: install via conda-forge (not pip-installable)
     #   conda install -c conda-forge graph-tool
@@ -112,49 +110,13 @@ include = ["src/tmgg/**/*.py", "src/tmgg/**/*.yaml", "src/tmgg/**/*.yml"]
 [dependency-groups]
 dev = [
     "basedpyright>=1.31.1",
-    "cookiecutter>=2.6.0",
-    "hypothesis>=6.0.0",
     "pdbpp>=0.11.6",
     "pre-commit>=4.0.0",
-    "pytest>=8.4.1",
-    "pytest-cov>=6.2.1",
-    # Typing stubs for RDKit. Without these basedpyright reports
-    # ``"Chem" is unknown import symbol`` for every ``from rdkit import
-    # Chem`` site under ``src/tmgg/data/datasets/molecular`` and
-    # ``src/tmgg/evaluation/molecular``. These were transitively
-    # available via ``molecule-benchmarks`` during a prior consolidation
-    # spike, masking the missing dev-dep declaration; declaring it here
-    # makes the resolution explicit. The stubs themselves still have
-    # internal bugs (wrong signatures for ``HasSubstructMatch``,
-    # ``BulkTanimotoSimilarity``, ``MolToSmiles``); those need a
-    # separate pin or upstream fix.
     "rdkit-stubs>=0.8",
     "ruff>=0.8.0",
     "tach>=0.32.2",
     "tomlkit>=0.13.0",
 ]
-
-[tool.coverage.run]
-# Only trace our source code, not dependencies
-source = ["src/tmgg"]
-omit = [
-    "**/tests/*",
-    "**/__pycache__/*",
-]
-# NOTE: Use `uv run coverage run -m pytest` instead of `pytest --cov`
-# due to conflict between pytest-cov's subprocess hooks and PyTorch.
-# See: https://github.com/nedbat/coveragepy/issues/1573
-
-[tool.coverage.report]
-# Don't complain about missing coverage on these patterns
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "raise NotImplementedError",
-    "@abstractmethod",
-]
-# Skip files with 100% coverage in terminal report
-skip_covered = true
 
 [tool.ruff]
 src = ["src"]
@@ -181,17 +143,11 @@ known-first-party = ["tmgg"]
 [tool.basedpyright]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
-include = ["src/tmgg", "tests", "scripts/sweep"]
+include = ["src/tmgg"]
 exclude = [
     "**/__pycache__",
     "**/typings",
-    "tests/archived",
     "src/tmgg/experiments/_scaffold",
-    # tests/modal/ runs inside the Modal image and intentionally imports
-    # packages that are not installed on the host (e.g. ``moses`` /
-    # ``guacamol``); skip pyright resolution here to avoid host-side
-    # false positives. The Modal-side CI runs these directly.
-    "tests/modal",
     # paper-artifacts/ scripts are uv-self-contained PEP-723 inline-deps
     # scripts (pandas, wandb, pyyaml, requests are not in the project's
     # main pyproject deps), so pyright cannot resolve their imports
@@ -199,19 +155,10 @@ exclude = [
     "paper-artifacts/**",
 ]
 # Point pyright at the uv-managed venv so ad-hoc scripts outside `include`
-# (e.g. analysis/**) can still resolve project deps when the pre-commit hook
-# or the live harness scans them on edit.
+# can still resolve project deps when the pre-commit hook or the live
+# harness scans them on edit.
 venvPath = "."
 venv = ".venv"
-# `scripts/sweep/` is exposed as an implicit namespace package (PEP 420) so
-# `from scripts.sweep.X import ...` resolves as an absolute import. Adding
-# the project root to extraPaths gives pyright the same view that pytest
-# (via rootdir-based sys.path) and `python -m scripts.sweep.X` see at
-# runtime. NB: there is intentionally no `scripts/__init__.py` — making
-# `scripts/` a regular package would cause pyright to flag every
-# `from scripts.sweep.X import ...` under reportImplicitRelativeImport
-# (because both `scripts/` and `tests/` would then be sibling packages
-# at the project root and pyright cannot disambiguate the resolution).
 extraPaths = [".", "paper-artifacts/repro-ablations/scripts"]
 reportMissingImports = true
 reportMissingTypeStubs = false  # Don't complain about missing stubs for torch etc.
