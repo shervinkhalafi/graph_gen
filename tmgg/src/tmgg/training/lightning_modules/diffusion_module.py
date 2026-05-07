@@ -35,10 +35,8 @@ from tmgg.data.datasets.graph_data_fields import (
     FieldName,
 )
 from tmgg.data.datasets.graph_types import (
-    DenseGraphDistribution,
     DenseGraphState,
     GraphData,
-    GraphDistribution,
     GraphState,
 )
 from tmgg.diffusion.collectors import DiffusionLikelihoodCollector, StepMetricCollector

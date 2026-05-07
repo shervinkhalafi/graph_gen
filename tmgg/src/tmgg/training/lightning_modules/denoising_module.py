@@ -38,7 +38,6 @@ from loguru import logger as loguru
 
 from tmgg.data.datasets.graph_data_fields import FieldName
 from tmgg.data.datasets.graph_types import (
-    DenseGraphState,
     GraphData,
     GraphState,
 )
