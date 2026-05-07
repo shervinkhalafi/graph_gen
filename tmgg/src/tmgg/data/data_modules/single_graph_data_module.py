@@ -12,7 +12,7 @@ import numpy.typing as npt
 from torch.utils.data import DataLoader
 from torch_geometric.data import Data
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphState
 
 from .base_data_module import BaseGraphDataModule
 from .graph_generation import generate_single_graph
@@ -220,7 +220,7 @@ class SingleGraphDataModule(BaseGraphDataModule):
                 self._test_data = [test_data] * self.num_test_samples
 
     @override
-    def train_dataloader(self) -> DataLoader[GraphData]:
+    def train_dataloader(self) -> DataLoader[GraphState]:
         """Return training dataloader."""
         if self._train_data is None:
             raise RuntimeError("Call setup() before accessing dataloaders")
@@ -231,7 +231,7 @@ class SingleGraphDataModule(BaseGraphDataModule):
         )
 
     @override
-    def val_dataloader(self) -> DataLoader[GraphData]:
+    def val_dataloader(self) -> DataLoader[GraphState]:
         """Return validation dataloader."""
         if self._val_data is None:
             raise RuntimeError("Call setup() before accessing dataloaders")
@@ -242,7 +242,7 @@ class SingleGraphDataModule(BaseGraphDataModule):
         )
 
     @override
-    def test_dataloader(self) -> DataLoader[GraphData]:
+    def test_dataloader(self) -> DataLoader[GraphState]:
         """Return test dataloader."""
         if self._test_data is None:
             raise RuntimeError("Call setup() before accessing dataloaders")
