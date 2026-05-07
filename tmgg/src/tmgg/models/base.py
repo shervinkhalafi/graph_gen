@@ -7,7 +7,16 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphDistribution,
+    GraphState,
+    _DistributionGraph,
+    _StateGraph,
+    state_to_dense_sample,
+)
 
 EdgeSource = Literal["class", "feat"]
 """Discriminator selecting which split edge field a denoising-style
@@ -212,3 +221,147 @@ class GraphModel(BaseModel, ABC):
             Predicted graph features.
         """
         ...
+
+
+# --- Coercion helpers for the 4-type GraphData grid ----------------------
+#
+# The 4 concrete types form a 2x2 matrix on (carrier x content):
+# carrier in {sparse, dense}, content in {state, distribution}. Carrier
+# conversion (to_dense / to_sparse) is structural and lossless on
+# distributions (and lossless on states up to the no-edge-fill convention).
+# Content lift (state -> distribution) is lossless. Content collapse
+# (distribution -> state, via argmax / sample) is information-lossy and
+# must be requested explicitly at the call site, not silently injected by
+# a coercion helper.
+
+
+def _coerce_input_to(data: GraphData, *, target: type) -> GraphData:
+    """Coerce ``data`` to one of the 4 concrete GraphData types.
+
+    Total over the 16-cell ``(input_type, target)`` matrix EXCEPT the four
+    distribution -> state cells, which are rejected with :class:`TypeError`
+    so that callers cannot silently lose information; collapse must be
+    chosen explicitly via ``.argmax()`` or ``.sample()``.
+
+    Parameters
+    ----------
+    data
+        Source graph data, an instance of one of :class:`GraphState`,
+        :class:`GraphDistribution`, :class:`DenseGraphState`, or
+        :class:`DenseGraphDistribution`.
+    target
+        One of the four concrete classes above.
+
+    Returns
+    -------
+    GraphData
+        Instance of ``target``.
+
+    Raises
+    ------
+    TypeError
+        If ``target`` is a state-content type and ``data`` is a
+        distribution-content type, or if ``target`` is not one of the
+        four concrete classes.
+    """
+    if isinstance(data, target):
+        return data
+    # Reject lossy collapse: distribution -> state must be caller-explicit.
+    if issubclass(target, _StateGraph) and isinstance(data, _DistributionGraph):
+        raise TypeError(
+            f"{type(data).__name__} -> {target.__name__} requires explicit "
+            ".argmax() or .sample() at the call site (lossy collapse)."
+        )
+    # Below: target is one of the four concrete types and ``data`` is one
+    # of the same four (with the collapse cells already rejected).
+    if target is DenseGraphState:
+        if isinstance(data, GraphState):
+            return state_to_dense_sample(data)
+        # All other paths to a state target either match ``isinstance``
+        # above or were rejected as a distribution -> state collapse.
+        raise AssertionError(
+            f"unreachable: target=DenseGraphState, data={type(data).__name__}"
+        )
+    if target is DenseGraphDistribution:
+        if isinstance(data, GraphDistribution):
+            return data.to_dense()
+        if isinstance(data, GraphState):
+            return data.to_distribution().to_dense()
+        if isinstance(data, DenseGraphState):
+            return data.to_distribution()
+        raise AssertionError(
+            f"unreachable: target=DenseGraphDistribution, data={type(data).__name__}"
+        )
+    if target is GraphState:
+        if isinstance(data, DenseGraphState):
+            return data.to_sparse()
+        raise AssertionError(
+            f"unreachable: target=GraphState, data={type(data).__name__}"
+        )
+    if target is GraphDistribution:
+        if isinstance(data, DenseGraphDistribution):
+            return data.to_sparse()
+        if isinstance(data, GraphState):
+            return data.to_distribution()
+        if isinstance(data, DenseGraphState):
+            return data.to_distribution().to_sparse()
+        raise AssertionError(
+            f"unreachable: target=GraphDistribution, data={type(data).__name__}"
+        )
+    raise TypeError(f"_coerce_input_to: unknown target {target}.")
+
+
+def _coerce_output_to(out: GraphData, *, target: type) -> GraphData:
+    """Coerce a model output to the requested return type.
+
+    Diffusion outputs are always distribution-content, so the only flip
+    required at the boundary is dense <-> sparse on the same content axis.
+    For symmetry (a few callers return state-content predictions) we also
+    cover the dense <-> sparse flip on the state axis.
+
+    Parameters
+    ----------
+    out
+        Model output, an instance of one of the four concrete types.
+    target
+        Requested return type.
+
+    Returns
+    -------
+    GraphData
+        Instance of ``target``.
+
+    Raises
+    ------
+    TypeError
+        If the requested ``(out_type, target)`` flip is not one of the
+        supported same-content carrier conversions.
+    """
+    if isinstance(out, target):
+        return out
+    if isinstance(out, DenseGraphDistribution) and target is GraphDistribution:
+        return out.to_sparse()
+    if isinstance(out, GraphDistribution) and target is DenseGraphDistribution:
+        return out.to_dense()
+    if isinstance(out, DenseGraphState) and target is GraphState:
+        return out.to_sparse()
+    if isinstance(out, GraphState) and target is DenseGraphState:
+        return state_to_dense_sample(out)
+    raise TypeError(
+        f"_coerce_output_to: unsupported {type(out).__name__} -> {target.__name__}"
+    )
+
+
+__all__ = [
+    "BaseModel",
+    "EdgeSource",
+    "EmbeddingProvider",
+    "GraphModel",
+    "ParameterCountTree",
+    "_coerce_input_to",
+    "_coerce_output_to",
+    "append_timestep_to_y",
+    "get_parameter_count_int",
+    "read_edge_scalar",
+    "write_edge_scalar",
+]
