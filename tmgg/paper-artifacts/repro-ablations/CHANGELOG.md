@@ -29,3 +29,8 @@ Append-only log of bundle refreshes. Most recent at the top.
 - runs_indexed: 28
 - summary: switch long format to parquet, gitignored
 
+## 2026-05-07 — refresh @ 2026-05-07T07:20:05Z
+
+- runs_indexed: 28
+- summary: training-progress check 2026-05-07
+
