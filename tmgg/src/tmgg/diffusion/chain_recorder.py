@@ -64,7 +64,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 
 
 class ChainRecorder:
@@ -146,13 +146,18 @@ class ChainRecorder:
         self._node_mask: Tensor | None = None
         self._has_x: bool | None = None
 
-    def maybe_record(self, step_index: int, z_t: GraphData) -> None:
+    def maybe_record(self, step_index: int, z_t: DenseGraphState) -> None:
         """Capture ``z_t`` if ``step_index`` lands on a snapshot slot.
 
         The first call (regardless of step) and every Kth call
         thereafter snapshot the first ``num_chains_to_save`` graphs of
         the batch. The recorder accumulates Tensors on whatever device
         ``z_t`` lives on; transfer to CPU happens at :meth:`finalize`.
+
+        ``z_t`` is the post-symmetrisation reverse-step sample (a dense
+        state). The recorder stores ``E_class[:c]`` and ``X_class[:c]``
+        verbatim, so it requires the dense ``(B, n_max, ...)`` carrier;
+        sparse ``GraphState`` would need to be densified first.
 
         Raises
         ------
