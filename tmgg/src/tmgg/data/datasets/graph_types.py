@@ -1,4 +1,6 @@
-"""Typed containers for categorical graph data and structural context.
+# pyright: reportAttributeAccessIssue=false
+# F.one_hot exists at runtime; pyright cannot resolve it from the functional stub.
+"""Typed containers for categorical graph data.
 
 ``GraphData`` is the abstract base of a 2x2 type grid: sparse vs dense
 carrier, state vs distribution content. The four concrete leaves
@@ -7,10 +9,10 @@ carrier, state vs distribution content. The four concrete leaves
 fields (``X_class`` / ``X_feat`` / ``E_class`` / ``E_feat``); at least one
 of the edge fields MUST be populated.
 
-``GraphStructure`` bundles pre-computed topological features (adjacency,
-eigenvectors, eigenvalues) derived from a ``DenseGraphState`` instance before
-any learned transformations. These remain constant across transformer
-layer iterations.
+The DiGress transformer's spectral attention context (eigenvectors,
+eigenvalues) lives on a transformer-internal subclass
+``tmgg.models.digress.data_types.DenseGraphTransformerData`` that extends
+``DenseGraphDistribution``.
 """
 
 from __future__ import annotations
@@ -1777,29 +1779,3 @@ def state_to_dense_logits(state: GraphState) -> DenseGraphState:
         d_ec, dtype=state.edge_class.dtype, device=state.edge_class.device
     )
     return state.to_dense(edge_class_fill=fill)
-
-
-@dataclass(frozen=True)
-class GraphStructure:
-    """Pre-computed structural features of a graph's topology.
-
-    Derived from the categorical edge features of a ``DenseGraphState`` instance
-    before any learned transformations. These tensors remain constant
-    across transformer layer iterations — they describe the input graph's
-    structure, not the evolving hidden state.
-
-    Parameters
-    ----------
-    adjacency
-        Binary adjacency matrix, shape ``(bs, n, n)``. Populated when
-        GNN projections need it; ``None`` otherwise.
-    eigenvectors
-        Top-k eigenvectors of the adjacency, shape ``(bs, n, k)``.
-        Populated for spectral projections; ``None`` otherwise.
-    eigenvalues
-        Corresponding eigenvalues, shape ``(bs, k)``.
-    """
-
-    adjacency: Tensor | None = None
-    eigenvectors: Tensor | None = None
-    eigenvalues: Tensor | None = None
