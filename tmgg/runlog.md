@@ -14,6 +14,13 @@ file is the index plus cross-cutting analysis.
 The runlog is the index — figure files, summary parquets, and detail
 markdown each get linked from a per-run row, never embedded.
 
+For periodic bulk refresh of run state (W&B → bundle data + snapshot),
+use `paper-artifacts/repro-ablations/scripts/refresh.py`; see
+[HOW-TO-UPDATE.md](paper-artifacts/repro-ablations/HOW-TO-UPDATE.md)
+for the protocol. Refresh the bundle *before* re-snapshotting the
+quick-status table here, so the numbers in this file match the
+per-run parquets in the bundle.
+
 ## Field reference (per-run detail file)
 
 | Field | Meaning |

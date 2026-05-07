@@ -4,6 +4,16 @@ The bundle is "live": as new runs launch, old runs finish, and eval
 cycles accumulate, the data needs to be refreshed. This document is
 the operational protocol.
 
+The bundle and the repo-root [`runlog.md`](../../runlog.md) form a
+matched pair: the bundle is the canonical *data* (per-run parquets,
+runs_index.csv, dated snapshots), `runlog.md` is the human-readable
+*index* with cross-cutting prose. The refresh script also snapshots
+`runlog.md` (and `docs/eval/<date>-ablations_measurment.md`) into
+`snapshots/`, but the *live* `runlog.md` is hand-edited. Workflow:
+refresh the bundle first (this script) → then update the live
+`runlog.md` quick-status table from the freshly-pulled parquets →
+commit both together.
+
 ## When to refresh
 
 - A new run launches under one of the panel variants.
@@ -99,13 +109,48 @@ print('runs without metrics:', missing or 'none')
 ls media/per_run/ | wc -l
 ```
 
-### 4. Inspect the diff and commit
+### 4. Regenerate the runlog quick-status table rows (optional)
+
+Once `runs_index.csv` and the per-run parquets are fresh, regenerate
+the markdown rows for the runlog's quick-status table from a single
+command, then copy-paste the changed rows into `runlog.md`:
 
 ```bash
-git status paper-artifacts/repro-ablations/
-git add -p paper-artifacts/repro-ablations/
+cd paper-artifacts/repro-ablations
+uv run scripts/quickstatus.py --postfix          # active panel only
+uv run scripts/quickstatus.py --postfix --dataset enzymes
+uv run scripts/quickstatus.py                    # all 28 runs
+```
+
+The script reads `data/runs_index.csv` + `data/per_run_history/<run_id>.parquet`
+(no W&B calls, fast) and emits markdown matching the runlog's schema:
+
+```
+| Config | Run ID | Launched (UTC) | Status | Step (cycles) | degree MMD² | grad_norm | Stable? | Detail |
+```
+
+Numbers: latest non-NaN gen-val degree MMD² (annotated with the eval
+step if not at the latest training step), latest grad_norm_total,
+eval-cycle count from distinct degree-MMD steps. Stability mirrors the
+runlog's heuristic (`grad_norm < 5.0` → ✓, otherwise ⚠/✗); health
+overrides from `runs_index.source.yaml` (`invalidated_mask_bug`,
+`blew_up`) take precedence.
+
+After pasting rows into `runlog.md`, also bump the snapshot timestamp
+on the "Quick status table" header and add a session note in
+"Cross-cutting findings" if anything material moved.
+
+### 5. Inspect the diff and commit
+
+```bash
+git status paper-artifacts/repro-ablations/ runlog.md
+git add -p paper-artifacts/repro-ablations/ runlog.md
 git commit -m "data(paper-artifacts): refresh repro-ablations YYYY-MM-DD"
 ```
+
+Bundle and runlog should be committed together when the runlog rows
+were sourced from this refresh; commit the bundle alone if you only
+ran refresh.py and didn't touch the runlog.
 
 ## What gets snapshotted vs mutated
 
