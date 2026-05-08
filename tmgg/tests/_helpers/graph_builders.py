@@ -21,23 +21,37 @@ from torch import Tensor
 from tmgg.data.datasets.graph_types import (
     DenseGraphDistribution,
     DenseGraphState,
+    GraphData,
 )
 
 
-def legacy_edge_scalar(data: DenseGraphState | DenseGraphDistribution) -> Tensor:
+def legacy_edge_scalar(data: GraphData) -> Tensor:
     """Return a dense scalar adjacency regardless of which edge field is populated.
 
-    Replaces the removed ``GraphData.to_edge_state``. ``DenseGraphState`` and
-    ``DenseGraphDistribution`` carry the edge fields with identical shapes
-    (the difference is purely the content interpretation). For
-    ``DenseGraphState`` we delegate to :meth:`DenseGraphState.to_edge_scalar`;
-    for ``DenseGraphDistribution`` (which lacks that method per the type
-    hierarchy) we replicate its body directly.
+    Replaces the removed ``GraphData.to_edge_state``. Accepts the universal
+    :class:`GraphData` base for caller ergonomics — model forwards declared
+    as returning ``GraphDistribution | DenseGraphDistribution`` widen
+    cleanly to the base, and a runtime ``isinstance`` check keeps the body
+    typed. ``DenseGraphState`` and ``DenseGraphDistribution`` carry the
+    edge fields with identical shapes (the difference is purely the content
+    interpretation). For ``DenseGraphState`` we delegate to
+    :meth:`DenseGraphState.to_edge_scalar`; for ``DenseGraphDistribution``
+    (which lacks that method per the type hierarchy) we replicate its body
+    directly. Sparse carriers fail loudly: convert to dense at the call
+    site.
     """
     if isinstance(data, DenseGraphState):
         if data.E_feat is not None:
             return data.to_edge_scalar(source="feat")
         return data.to_edge_scalar(source="class")
+
+    if not isinstance(data, DenseGraphDistribution):
+        raise TypeError(
+            "legacy_edge_scalar() requires a dense carrier "
+            "(DenseGraphState or DenseGraphDistribution); "
+            f"got {type(data).__name__}. Convert at the call site via "
+            "model(..., output_dense=True) or .to_dense()."
+        )
 
     # DenseGraphDistribution path: inline the edge-scalar reduction.
     if data.E_feat is not None:
