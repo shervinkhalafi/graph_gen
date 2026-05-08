@@ -43,7 +43,7 @@ from tmgg.diffusion.sampler import (
     Sampler,
 )
 from tmgg.diffusion.schedule import NoiseSchedule
-from tmgg.models.base import GraphModel
+from tmgg.models.base import GraphModel  # pyright: ignore[reportAttributeAccessIssue]
 from tmgg.utils.noising.noise import GaussianNoise
 
 # ---------------------------------------------------------------------------
@@ -974,6 +974,10 @@ class TestAssertSymmetricEToggle:
             s: Tensor,
         ) -> GraphData:
             out = original_hook(z_t, x0_param, t, s)
+            # The categorical noise process returns a dense state from
+            # ``posterior_sample_from_model_output``; narrow for typed
+            # access to ``E_class``.
+            assert isinstance(out, DenseGraphState)
             assert out.E_class is not None
             corrupted = out.E_class.clone()
             # Flip a single off-diagonal entry to break symmetry.
