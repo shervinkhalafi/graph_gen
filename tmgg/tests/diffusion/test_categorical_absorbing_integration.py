@@ -31,7 +31,7 @@ import pytest
 import torch
 from torch import nn
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
 
@@ -48,7 +48,7 @@ def cosine_schedule_50() -> NoiseSchedule:
 
 
 @pytest.fixture()
-def categorical_batch() -> GraphData:
+def categorical_batch() -> DenseGraphState:
     """A small one-hot categorical batch (bs=2, n=5, dx=3, de=2)."""
     torch.manual_seed(0)
     bs, n, dx, de = 2, 5, 3, 2
@@ -67,8 +67,10 @@ def categorical_batch() -> GraphData:
     E[:, diag, diag, 0] = 1.0
 
     y = torch.zeros(bs, 0)
-    node_mask = torch.ones(bs, n, dtype=torch.bool)
-    return GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+    num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph, y=y, X_class=X, E_class=E
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +79,7 @@ def categorical_batch() -> GraphData:
 
 
 def test_absorbing_forward_sample_at_t_T_collapses_to_absorbing_class(
-    cosine_schedule_50: NoiseSchedule, categorical_batch: GraphData
+    cosine_schedule_50: NoiseSchedule, categorical_batch: DenseGraphState
 ) -> None:
     """At ``t = T`` every valid X / E one-hot lands on the absorbing class."""
     proc = CategoricalNoiseProcess(
@@ -113,7 +115,7 @@ def test_absorbing_forward_sample_at_t_T_collapses_to_absorbing_class(
 
 
 def test_absorbing_forward_sample_at_t_zero_preserves_clean_argmax(
-    cosine_schedule_50: NoiseSchedule, categorical_batch: GraphData
+    cosine_schedule_50: NoiseSchedule, categorical_batch: DenseGraphState
 ) -> None:
     """At ``t = 0`` the sampled state's argmax matches the clean signal.
 
@@ -151,7 +153,7 @@ def test_absorbing_forward_sample_at_t_zero_preserves_clean_argmax(
 
 
 def test_absorbing_posterior_is_row_stochastic_at_t_half(
-    cosine_schedule_50: NoiseSchedule, categorical_batch: GraphData
+    cosine_schedule_50: NoiseSchedule, categorical_batch: DenseGraphState
 ) -> None:
     """``_posterior_probabilities`` at ``t = T/2`` produces row-stochastic PMFs."""
     proc = CategoricalNoiseProcess(
@@ -179,7 +181,7 @@ def test_absorbing_posterior_is_row_stochastic_at_t_half(
 
 
 def test_absorbing_gradient_flows_through_one_training_step(
-    cosine_schedule_50: NoiseSchedule, categorical_batch: GraphData
+    cosine_schedule_50: NoiseSchedule, categorical_batch: DenseGraphState
 ) -> None:
     """Gradients flow end-to-end through a tiny MLP head + categorical loss.
 
