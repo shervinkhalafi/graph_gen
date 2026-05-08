@@ -17,7 +17,7 @@ inside ``_posterior_probabilities``.
 
 Each parametrized test below pins the post-fix contract from §5: every
 consumer call site MUST honor the noise process's authoritative
-``self.x_classes`` so the returned ``GraphData`` tensors have ``X_class``
+``self.x_classes`` so the returned ``DenseGraphState`` tensors have ``X_class``
 of width exactly ``C_x``. The negative-path tests pin §3's regime table:
 ``C_x >= 3`` is real categorical (synthesis is undefined and MUST raise),
 and ``E`` is never synthesised regardless of ``C_e``.
@@ -27,7 +27,7 @@ Assumed starting state
 - ``CategoricalNoiseProcess`` constructed with ``limit_distribution="uniform"``
   to avoid needing an empirical-marginal initialisation (no datamodule
   fixtures are available at this layer).
-- Structure-only batches built via ``GraphData.from_pyg_batch`` so
+- Structure-only batches built via ``DenseGraphState.from_pyg_batch`` so
   ``X_class is None`` and ``E_class`` is populated K=2 from adjacency
   (per the 2026-04-15 unified-graph-features spec).
 - Every test uses a fixed seed for determinism.
@@ -53,7 +53,7 @@ import torch
 from torch import Tensor
 from torch_geometric.data import Batch, Data
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     _read_categorical_e,
@@ -72,11 +72,11 @@ def schedule() -> NoiseSchedule:
 
 
 @pytest.fixture()
-def structure_only_batch() -> GraphData:
-    """A small structure-only batch built via ``GraphData.from_pyg_batch``.
+def structure_only_batch() -> DenseGraphState:
+    """A small structure-only batch built via ``DenseGraphState.from_pyg_batch``.
 
     Contains two graphs of differing sizes (triangle, square). The
-    resulting ``GraphData`` has ``X_class = None`` and ``E_class``
+    resulting ``DenseGraphState`` has ``X_class = None`` and ``E_class``
     populated K=2 from the adjacency, matching the convention codified
     in the 2026-04-15 unified-graph-features spec. ``node_mask`` reflects
     actual node counts (3 and 4) padded to ``n_max = 4``.
@@ -95,7 +95,7 @@ def structure_only_batch() -> GraphData:
         num_nodes=4,
     )
     pyg_batch = Batch.from_data_list([triangle, square])
-    data = GraphData.from_pyg_batch(pyg_batch)
+    data = DenseGraphState.from_pyg_batch(pyg_batch)
     # Sanity: confirm assumed starting state.
     assert data.X_class is None, "from_pyg_batch must emit X_class=None"
     assert data.E_class is not None
@@ -120,7 +120,7 @@ def _make_process(
     )
 
 
-def _t_pair(batch: GraphData) -> tuple[Tensor, Tensor]:
+def _t_pair(batch: DenseGraphState) -> tuple[Tensor, Tensor]:
     """Return ``(t, s)`` integer timesteps with ``s = t - 1``.
 
     ``t = 25`` is mid-schedule for ``T = 50``, deep enough that posterior
@@ -141,7 +141,7 @@ def _t_pair(batch: GraphData) -> tuple[Tensor, Tensor]:
 def test_forward_sample_preserves_c_x_shape(
     c_x: int,
     schedule: NoiseSchedule,
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """``forward_sample`` returns ``z_t`` with ``X_class.shape[-1] == c_x``.
 
@@ -163,7 +163,7 @@ def test_forward_sample_preserves_c_x_shape(
 def test_posterior_probabilities_preserves_c_x_shape(
     c_x: int,
     schedule: NoiseSchedule,
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """``_posterior_probabilities`` honors ``c_x`` against a structure-only batch.
 
@@ -187,7 +187,7 @@ def test_posterior_probabilities_preserves_c_x_shape(
 def test_posterior_probabilities_marginalised_preserves_c_x_shape(
     c_x: int,
     schedule: NoiseSchedule,
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """Marginalised posterior preserves ``c_x`` shape on a structure-only batch.
 
@@ -210,7 +210,7 @@ def test_posterior_probabilities_marginalised_preserves_c_x_shape(
 def test_forward_pmf_preserves_c_x_shape(
     c_x: int,
     schedule: NoiseSchedule,
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """``forward_pmf`` honors ``c_x`` on a structure-only batch.
 
@@ -231,7 +231,7 @@ def test_forward_pmf_preserves_c_x_shape(
 def test_prior_pmf_preserves_c_x_shape(
     c_x: int,
     schedule: NoiseSchedule,
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """``prior_pmf`` honors ``c_x`` when tiled to a node mask.
 
@@ -252,7 +252,7 @@ def test_prior_pmf_preserves_c_x_shape(
 def test_posterior_sample_direct_preserves_c_x_shape(
     c_x: int,
     schedule: NoiseSchedule,
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """``posterior_sample`` (direct path) yields ``c_x``-wide samples.
 
@@ -278,7 +278,7 @@ def test_posterior_sample_direct_preserves_c_x_shape(
 def test_posterior_sample_marginalised_preserves_c_x_shape(
     c_x: int,
     schedule: NoiseSchedule,
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """``posterior_sample_marginalised`` yields ``c_x``-wide samples.
 
@@ -304,7 +304,7 @@ def test_posterior_sample_marginalised_preserves_c_x_shape(
 
 
 def test_e_synthesis_raises_with_clear_message(
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """``_read_categorical_e`` raises with the asymmetry-explanation message.
 
@@ -315,16 +315,16 @@ def test_e_synthesis_raises_with_clear_message(
     helper MUST raise ``ValueError`` with a message naming the
     asymmetry ("E synthesis" / "adjacency") regardless of ``C_e``.
 
-    Construction note: we manually build a ``GraphData`` with
+    Construction note: we manually build a ``DenseGraphState`` with
     ``E_class = None`` and a populated ``E_feat`` so the ``__post_init__``
     "at least one E_*" invariant is satisfied. This isolates the
     helper's contract from the dataclass invariant.
     """
     bs, n = structure_only_batch.node_mask.shape
     e_feat = torch.zeros(bs, n, n, 1)
-    data_no_eclass = GraphData(
+    data_no_eclass = DenseGraphState(
+        num_nodes_per_graph=structure_only_batch.num_nodes_per_graph,
         y=torch.zeros(bs, 0),
-        node_mask=structure_only_batch.node_mask,
         E_feat=e_feat,
     )
     with pytest.raises(ValueError, match="(?i)E synthesis|adjacency"):
@@ -332,27 +332,23 @@ def test_e_synthesis_raises_with_clear_message(
 
 
 def test_x_synthesis_raises_for_c_x_geq_3(
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
-    """``GraphData.synth_structure_only_x_class`` raises for ``c_x >= 3``.
+    """``DenseGraphState.synth_structure_only_x_class`` raises for ``c_x >= 3``.
 
     Test rationale: spec §3 regime table: ``C_x >= 3`` is real categorical
     content (atom types, etc.). There is no canonical "structure-only
     C_x=3" interpretation; synthesis MUST raise. The classmethod is
     introduced in spec §5.1 (Phase 1 of the implementation plan).
-
-    Currently expected to fail with ``AttributeError`` because the
-    classmethod does not exist yet. After Phase 1 lands, expected to
-    raise ``ValueError`` with a message naming the regime boundary.
     """
     with pytest.raises(ValueError):
-        GraphData.synth_structure_only_x_class(  # pyright: ignore[reportAttributeAccessIssue]
+        DenseGraphState.synth_structure_only_x_class(
             structure_only_batch.node_mask, c_x=3
         )
 
 
 def test_e_classes_required_no_default(
-    structure_only_batch: GraphData,
+    structure_only_batch: DenseGraphState,
 ) -> None:
     """``_read_categorical_e`` must require ``e_classes`` explicitly.
 
