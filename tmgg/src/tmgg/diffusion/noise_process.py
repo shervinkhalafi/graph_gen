@@ -1301,7 +1301,15 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         Non-declared continuous fields (``X_feat`` / ``E_feat``) survive
         the call unchanged so composition with a Gaussian process on
         disjoint fields (Wave 2.4) does not drop their payload.
+
+        Accepts sparse (``GraphState``) or dense (``DenseGraphState``)
+        inputs; densifies at entry so the internal logic stays in the
+        dense ``(B, n_max, ...)`` layout DiGress was written against.
+        ``data.replace(X_class=..., E_class=...)`` and ``data.node_mask``
+        below are both dense-only operations.
         """
+        if isinstance(data, GraphState):
+            data = state_to_dense_sample(data)
         x_limit, e_limit, _ = self._stationary_distribution()
         x_class = _read_categorical_x(data, x_classes=self.x_classes)
         e_class = _read_categorical_e(data, e_classes=self.e_classes)
@@ -1348,6 +1356,13 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
             Posterior probability distributions with the same dense graph
             extents as ``z_t``.
         """
+        # The Bayes-rule body below operates in dense layout (the (B, n, K)
+        # / (B, n, n, K) tensors and ``z_t.node_mask`` are dense-only).
+        # Sparse callers densify at entry; dense inputs pass through.
+        if isinstance(z_t, GraphState):
+            z_t = state_to_dense_sample(z_t)
+        if isinstance(x0_param, GraphState):
+            x0_param = state_to_dense_sample(x0_param)
         x_limit, e_limit, _ = self._stationary_distribution()
 
         beta_t = self.noise_schedule(t_int=t)  # (bs,)
@@ -1439,6 +1454,13 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         Returns posterior probability tensors over ``z_s`` with the same
         graph extents as ``z_t``.
         """
+        # The contraction below operates in dense layout (the (B, n, K)
+        # / (B, n, n, K) tensors and ``z_t.node_mask`` are dense-only).
+        # Sparse callers densify at entry; dense inputs pass through.
+        if isinstance(z_t, GraphState):
+            z_t = state_to_dense_sample(z_t)
+        if isinstance(x0_probs, GraphState):
+            x0_probs = state_to_dense_sample(x0_probs)
         x_limit, e_limit, _ = self._stationary_distribution()
 
         beta_t = self.noise_schedule(t_int=t)
