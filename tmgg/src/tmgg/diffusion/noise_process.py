@@ -326,7 +326,7 @@ def _read_categorical_x(data: GraphData, x_classes: int) -> Tensor:
     """
     if data.X_class is not None:
         return data.X_class
-    return GraphData.synth_structure_only_x_class(data.node_mask, x_classes)
+    return DenseGraphState.synth_structure_only_x_class(data.node_mask, x_classes)
 
 
 def _read_categorical_e(data: GraphData, e_classes: int) -> Tensor:
