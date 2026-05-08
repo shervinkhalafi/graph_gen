@@ -25,7 +25,7 @@ from tests._helpers.graph_builders import binary_graphdata
 from tmgg.data.data_modules.multigraph_data_module import (
     MultiGraphDataModule,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphState
 from tmgg.diffusion.noise_process import ContinuousNoiseProcess
 from tmgg.diffusion.sampler import ContinuousSampler
 from tmgg.diffusion.schedule import NoiseSchedule
@@ -275,7 +275,7 @@ class TestDiffusionModuleTrainingStep:
     """
 
     @pytest.fixture
-    def module_and_batch(self) -> tuple[DiffusionModule, GraphData]:
+    def module_and_batch(self) -> tuple[DiffusionModule, GraphState]:
         module = _make_diffusion_module()
         # Sparse-default refactor: DiffusionModule.training_step consumes a
         # sparse GraphState (the dataloader emits sparse). The
@@ -285,7 +285,7 @@ class TestDiffusionModuleTrainingStep:
         return module, batch
 
     def test_training_step_finite_loss(
-        self, module_and_batch: tuple[DiffusionModule, GraphData]
+        self, module_and_batch: tuple[DiffusionModule, GraphState]
     ) -> None:
         """Training step should produce a finite scalar loss."""
         module, batch = module_and_batch
@@ -295,7 +295,7 @@ class TestDiffusionModuleTrainingStep:
         assert loss.item() > 0
 
     def test_gradients_flow(
-        self, module_and_batch: tuple[DiffusionModule, GraphData]
+        self, module_and_batch: tuple[DiffusionModule, GraphState]
     ) -> None:
         """Gradients should propagate to model parameters after backward pass."""
         module, batch = module_and_batch
@@ -315,14 +315,14 @@ class TestDiffusionModuleValidation:
     """
 
     @pytest.fixture
-    def module_and_batch(self) -> tuple[DiffusionModule, GraphData]:
+    def module_and_batch(self) -> tuple[DiffusionModule, GraphState]:
         module = _make_diffusion_module(eval_num_samples=4)
         # Sparse-default refactor: see TestDiffusionModuleTrainingStep above.
         batch = binary_graphdata(_make_block_adjacency()).to_sparse()
         return module, batch
 
     def test_validation_step_runs_without_accumulation(
-        self, module_and_batch: tuple[DiffusionModule, GraphData]
+        self, module_and_batch: tuple[DiffusionModule, GraphState]
     ) -> None:
         """Validation step should compute loss without buffering graphs."""
         module, batch = module_and_batch
