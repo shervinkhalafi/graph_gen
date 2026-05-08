@@ -11,7 +11,11 @@ from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
 from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+)
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.gnn import GNN
 from tmgg.models.hybrid import SequentialDenoisingModel, create_sequential_model
@@ -125,7 +129,8 @@ class MockEmbeddingModel(nn.Module):
     """Mock embedding model for testing.
 
     Has embeddings() method compatible with SequentialDenoisingModel.
-    Accepts GraphData (as expected by the hybrid model's forward).
+    Accepts a DenseGraphState (the hybrid model's forward coerces its
+    GraphData input to that concrete type before calling embeddings()).
     """
 
     feature_dim: int
@@ -137,7 +142,9 @@ class MockEmbeddingModel(nn.Module):
         # Use learnable parameters to ensure gradient flow
         self.weight = nn.Parameter(torch.randn(feature_dim, feature_dim))
 
-    def embeddings(self, data: GraphData) -> tuple[torch.Tensor, torch.Tensor]:
+    def embeddings(
+        self, data: DenseGraphState
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute embeddings from graph data."""
         A = legacy_edge_scalar(data)
         batch_size, num_nodes, _ = A.shape
@@ -151,8 +158,11 @@ class MockEmbeddingModel(nn.Module):
         Y = base @ self.weight.T
         return X, Y
 
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+    def forward(
+        self, data: GraphData, t: torch.Tensor | None = None
+    ) -> DenseGraphState:
         """Compute adjacency from graph data."""
+        assert isinstance(data, DenseGraphState)
         X, Y = self.embeddings(data)
         A_recon = torch.bmm(X, Y.transpose(1, 2))
         return edge_scalar_graphdata(A_recon, node_mask=data.node_mask)
@@ -195,17 +205,17 @@ class TestSequentialDenoisingModelProperties:
     def test_output_is_valid_adjacency_matrix(
         self, A: torch.Tensor, feature_dim: int
     ) -> None:
-        """Test that output is always valid GraphData with correct shape."""
+        """Test that output is a valid DenseGraphDistribution with correct shape."""
         embedding_model = MockEmbeddingModel(feature_dim)
         denoising_model = MockDenoisingModel(2 * feature_dim)
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
         # Check shape preservation
-        assert isinstance(result, GraphData)
-        assert legacy_edge_scalar(result).shape == A.shape
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == A.shape
 
         # Check no NaN/Inf in edge features
         out_e = result.E_feat if result.E_feat is not None else result.E_class
@@ -228,9 +238,9 @@ class TestSequentialDenoisingModelProperties:
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
 
-        result = model(edge_scalar_graphdata(A))
-        assert isinstance(result, GraphData)
-        assert legacy_edge_scalar(result).shape == A.shape
+        result = model(edge_scalar_graphdata(A), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == A.shape
 
     @given(A=batch_adjacency_matrices(min_nodes=3, max_nodes=8))
     @settings(max_examples=15, deadline=2000)
@@ -242,16 +252,18 @@ class TestSequentialDenoisingModelProperties:
 
         # Model without denoising
         model_no_denoise = SequentialDenoisingModel(embedding_model, None)
-        result_no_denoise = model_no_denoise(data)
+        result_no_denoise = model_no_denoise(data, output_dense=True)
 
         # Model with denoising
         denoising_model = MockDenoisingModel(2 * feature_dim)
         model_with_denoise = SequentialDenoisingModel(embedding_model, denoising_model)
-        result_with_denoise = model_with_denoise(data)
+        result_with_denoise = model_with_denoise(data, output_dense=True)
 
         # Both should produce valid outputs with correct shape
-        assert legacy_edge_scalar(result_no_denoise).shape == A.shape
-        assert legacy_edge_scalar(result_with_denoise).shape == A.shape
+        assert isinstance(result_no_denoise, DenseGraphDistribution)
+        assert isinstance(result_with_denoise, DenseGraphDistribution)
+        assert legacy_edge_scalar(result_no_denoise.argmax()).shape == A.shape
+        assert legacy_edge_scalar(result_with_denoise.argmax()).shape == A.shape
 
     @given(config=hybrid_config())
     @settings(max_examples=10, deadline=2000)
@@ -272,10 +284,10 @@ class TestSequentialDenoisingModelProperties:
         model = create_sequential_model(gnn_config, transformer_config)
 
         try:
-            result = model(edge_scalar_graphdata(A))
+            result = model(edge_scalar_graphdata(A), output_dense=True)
 
-            assert isinstance(result, GraphData)
-            assert legacy_edge_scalar(result).shape == A.shape
+            assert isinstance(result, DenseGraphDistribution)
+            assert legacy_edge_scalar(result.argmax()).shape == A.shape
             out_e = result.E_feat if result.E_feat is not None else result.E_class
             assert out_e is not None
             assert not torch.isnan(out_e).any()
@@ -355,7 +367,8 @@ class TestHybridModelErrorHandling:
         class BadEmbeddingModel(nn.Module):
             def forward(
                 self, data: GraphData, t: torch.Tensor | None = None
-            ) -> GraphData:
+            ) -> DenseGraphState:
+                assert isinstance(data, DenseGraphState)
                 A = legacy_edge_scalar(data)
                 return edge_scalar_graphdata(
                     torch.randn_like(A), node_mask=data.node_mask
@@ -389,16 +402,17 @@ class TestHybridModelErrorHandling:
         # Create embedding model with specific output dimension
         embedding_model = MockEmbeddingModel(feature_dim=5)
 
-        # Create denoising model expecting different dimension
-        denoising_model = MockDenoisingModel(d_model=8)  # Should be 10 (2*5)
+        # Create denoising model with the canonical 2 * feature_dim
+        # width; the mock is shape-preserving so it works regardless of
+        # its declared ``d_model`` field.
+        denoising_model = MockDenoisingModel(d_model=8)  # Mock is shape-preserving
 
         model = SequentialDenoisingModel(embedding_model, denoising_model)
         A = torch.eye(5).unsqueeze(0)
 
-        # Model should still work, though denoising might not be optimal
-        result = model(edge_scalar_graphdata(A))
-        assert isinstance(result, GraphData)
-        assert legacy_edge_scalar(result).shape == A.shape
+        result = model(edge_scalar_graphdata(A), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == A.shape
 
 
 class TestCompositionProperties:
@@ -427,8 +441,13 @@ class TestCompositionProperties:
         for i in range(1, batch_size):
             A_batch[i] = torch.eye(num_nodes) * 0.1
 
-        result = model(edge_scalar_graphdata(A_batch))
-        raw_adj = legacy_edge_scalar(result)
+        result = model(edge_scalar_graphdata(A_batch), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        # Read raw E_feat directly rather than collapsing via argmax —
+        # the test wants to detect *graded* differences between graphs,
+        # which a {0,1} collapse erases.
+        assert result.E_feat is not None
+        raw_adj = result.E_feat.squeeze(-1)
 
         # Check that first reconstruction is different from others
         first_recon = raw_adj[0]
