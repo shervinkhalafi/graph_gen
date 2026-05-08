@@ -34,14 +34,26 @@ def test_setup_loads_fixture() -> None:
 
 
 def test_dataloader_shapes() -> None:
-    """Sanity-check that the collator produces dense GraphData."""
+    """Sanity-check that the collator produces a sparse ``GraphState``.
+
+    Post the sparse-default refactor the planar collator emits a
+    PyG-flat ``GraphState`` with a 4-graph batch and per-graph node
+    counts of 64 (the planar fixture is fixed-size). Densifying to
+    ``DenseGraphState`` recovers the legacy ``(bs, n_max, n_max, d_ec)``
+    ``E_class`` shape — useful for the shape-pin invariant.
+    """
+    from tmgg.data.datasets.graph_types import GraphState, state_to_dense_sample
+
     pytest.importorskip("torch_geometric")
     dm = SpectrePlanarDataModule(batch_size=4)
     dm.setup("fit")
     batch = next(iter(dm.train_dataloader()))
-    assert batch.E_class is not None
-    assert batch.E_class.shape[0] == 4  # batch dim
-    assert batch.E_class.shape[1] == 64  # n_max
+    assert isinstance(batch, GraphState)
+    assert batch.num_nodes_per_graph.shape == (4,)
+    dense = state_to_dense_sample(batch)
+    assert dense.E_class is not None
+    assert dense.E_class.shape[0] == 4  # batch dim
+    assert dense.E_class.shape[1] == 64  # n_max
 
 
 def test_metadata_swallow_does_not_pollute_hparams() -> None:
