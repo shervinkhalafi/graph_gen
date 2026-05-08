@@ -282,9 +282,14 @@ class TestForward:
 
         calls: list[tuple[GraphData, torch.Tensor | None]] = []
 
-        def spy(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        def spy(
+            data: GraphData,
+            t: torch.Tensor | None = None,
+            *,
+            output_dense: bool = False,
+        ) -> GraphData:
             calls.append((data, t))
-            return original_forward(data, t=t)
+            return original_forward(data, t=t, output_dense=output_dense)
 
         module.model.forward = spy  # type: ignore[assignment]
         module.forward(batch, t=t)
@@ -323,9 +328,11 @@ class TestTrainingStep:
         def spy_forward(
             data: GraphData,
             t: torch.Tensor | None = None,
+            *,
+            output_dense: bool = False,
         ) -> GraphData:
             observed_condition.append(None if t is None else t.detach().clone())
-            return original_forward(data, t=t)
+            return original_forward(data, t=t, output_dense=output_dense)
 
         module.noise_process.process_state_condition_vector = condition_vector  # type: ignore[method-assign]
         module.model.forward = spy_forward  # type: ignore[assignment]
@@ -1041,7 +1048,13 @@ class TestCategoricalKLPerGraph:
 
         original_forward = module.model.forward
 
-        def soft_forward(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        def soft_forward(
+            data: GraphData,
+            t: torch.Tensor | None = None,
+            *,
+            output_dense: bool = False,
+        ) -> GraphData:
+            del output_dense
             result = original_forward(data, t=t)
             assert result.X_class is not None
             assert result.E_class is not None
