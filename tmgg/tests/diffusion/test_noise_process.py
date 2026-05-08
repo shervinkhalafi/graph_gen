@@ -23,7 +23,7 @@ from torch import Tensor
 
 from tests._helpers.graph_builders import binary_graphdata, legacy_edge_scalar
 from tmgg.data.datasets.graph_data_fields import FIELD_NAMES
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState, GraphData
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
@@ -63,14 +63,14 @@ def simple_adjacency_batch() -> Tensor:
 
 
 @pytest.fixture()
-def graph_data_from_adj(simple_adjacency_batch: Tensor) -> GraphData:
-    """GraphData created from the simple adjacency batch."""
+def graph_data_from_adj(simple_adjacency_batch: Tensor) -> DenseGraphState:
+    """DenseGraphState created from the simple adjacency batch."""
     return binary_graphdata(simple_adjacency_batch)
 
 
 @pytest.fixture()
-def categorical_graph_data() -> GraphData:
-    """A small batch of one-hot categorical GraphData(bs=2, n=5, dx=3, de=2)."""
+def categorical_graph_data() -> DenseGraphState:
+    """A small batch of one-hot categorical DenseGraphState(bs=2, n=5, dx=3, de=2)."""
     torch.manual_seed(42)
     bs, n, dx, de = 2, 5, 3, 2
     # Random one-hot X
@@ -90,8 +90,10 @@ def categorical_graph_data() -> GraphData:
     E[:, diag, diag, 0] = 1.0
 
     y = torch.zeros(bs, 0)
-    node_mask = torch.ones(bs, n, dtype=torch.bool)
-    return GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+    num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph, y=y, X_class=X, E_class=E
+    )
 
 
 # cosine_schedule fixture (T=50) provided by conftest.py
@@ -226,7 +228,7 @@ class TestContinuousNoiseProcess:
 
     def test_sample_at_level_preserves_graph_shape(
         self,
-        graph_data_from_adj: GraphData,
+        graph_data_from_adj: DenseGraphState,
         cosine_schedule: NoiseSchedule,
     ) -> None:
         """Direct-level noising should preserve the GraphData batch structure."""
@@ -259,7 +261,7 @@ class TestContinuousNoiseProcess:
     def test_forward_sample_returns_graph_data_with_same_shape(
         self,
         generator_cls: type,
-        graph_data_from_adj: GraphData,
+        graph_data_from_adj: DenseGraphState,
         cosine_schedule: NoiseSchedule,
     ) -> None:
         """forward_sample() preserves the graph extents of the input batch.
@@ -287,7 +289,7 @@ class TestContinuousNoiseProcess:
 
     def test_forward_sample_at_t_zero_is_near_identity(
         self,
-        graph_data_from_adj: GraphData,
+        graph_data_from_adj: DenseGraphState,
         cosine_schedule: NoiseSchedule,
     ) -> None:
         """At t=0 DDPM Gaussian forward noise leaves the input nearly unchanged.
@@ -314,7 +316,7 @@ class TestContinuousNoiseProcess:
 
     def test_posterior_sample_returns_graph_data_with_same_shape(
         self,
-        graph_data_from_adj: GraphData,
+        graph_data_from_adj: DenseGraphState,
         cosine_schedule: NoiseSchedule,
     ) -> None:
         """posterior_sample() returns a sampled GraphData state at timestep s."""
@@ -334,7 +336,7 @@ class TestContinuousNoiseProcess:
 
     def test_posterior_parameters_use_schedule_alpha_bar(
         self,
-        graph_data_from_adj: GraphData,
+        graph_data_from_adj: DenseGraphState,
     ) -> None:
         """Posterior alpha values should come from the schedule, not a hardcoded
         linear mapping.
@@ -378,7 +380,7 @@ class TestContinuousNoiseProcess:
 
     def test_apply_edge_symmetry(
         self,
-        graph_data_from_adj: GraphData,
+        graph_data_from_adj: DenseGraphState,
         cosine_schedule: NoiseSchedule,
     ) -> None:
         """Edge features remain symmetric after forward sampling."""
@@ -556,7 +558,7 @@ class TestCategoricalNoiseProcess:
     def test_absorbing_forward_pmf_collapses_at_t_equals_T(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """At t = T the per-position PMF puts all mass on the absorbing class."""
         proc = CategoricalNoiseProcess(
@@ -589,7 +591,7 @@ class TestCategoricalNoiseProcess:
     def test_absorbing_forward_pmf_preserves_signal_at_t_equals_zero(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """At t = 0 the forward PMF concentrates on the clean one-hot state."""
         proc = CategoricalNoiseProcess(
@@ -625,7 +627,7 @@ class TestCategoricalNoiseProcess:
     def test_absorbing_forward_pmf_intermediate_matches_closed_form(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """Mid-trajectory PMF equals the closed-form alpha_bar*x + (1-alpha_bar)*u."""
         proc = CategoricalNoiseProcess(
@@ -661,7 +663,7 @@ class TestCategoricalNoiseProcess:
     def test_absorbing_posterior_returns_valid_pmf(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """Posterior at non-trivial t produces a row-stochastic PMF."""
         proc = CategoricalNoiseProcess(
@@ -708,7 +710,7 @@ class TestCategoricalNoiseProcess:
     def test_stationary_distribution_raises_before_forward_sample(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """Empirical-marginal mode raises until loader setup populates PMFs."""
         proc = CategoricalNoiseProcess(
@@ -724,7 +726,7 @@ class TestCategoricalNoiseProcess:
     def test_forward_sample_mirrors_legacy_into_split_fields(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """forward_sample() populates both legacy and split fields (Wave 2.2 parity).
 
@@ -750,7 +752,7 @@ class TestCategoricalNoiseProcess:
     def test_forward_sample_reads_from_split_fields(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """forward_sample() reads X_class / E_class directly.
 
@@ -785,7 +787,7 @@ class TestCategoricalNoiseProcess:
     def test_forward_sample_returns_valid_one_hot(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """forward_sample() returns one-hot encoded GraphData."""
         proc = CategoricalNoiseProcess(
@@ -818,7 +820,7 @@ class TestCategoricalNoiseProcess:
     def test_forward_sample_preserves_shape(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """forward_sample() preserves the shape of all GraphData fields."""
         proc = CategoricalNoiseProcess(
@@ -840,7 +842,7 @@ class TestCategoricalNoiseProcess:
     def test_prior_log_prob_returns_per_sample_shape(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """prior_log_prob() returns one finite value per batch element."""
         proc = CategoricalNoiseProcess(
@@ -872,10 +874,10 @@ class TestCategoricalNoiseProcess:
         X[:, :, 0] = 1.0  # all nodes class 0
         E = torch.zeros(bs, n, n, 2)
         E[:, :, :, 0] = 1.0  # all edges class 0
-        node_mask = torch.ones(bs, n, dtype=torch.bool)
-        clean = GraphData(
+        num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long)
+        clean = DenseGraphState(
+            num_nodes_per_graph=num_nodes_per_graph,
             y=torch.zeros(bs, 0),
-            node_mask=node_mask,
             X_class=X,
             E_class=E,
         )
@@ -893,7 +895,7 @@ class TestCategoricalNoiseProcess:
     def test_posterior_sample_returns_one_hot_graph_data(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """posterior_sample() returns a sampled one-hot GraphData state."""
         proc = CategoricalNoiseProcess(
@@ -928,7 +930,7 @@ class TestCategoricalNoiseProcess:
     def test_posterior_sample_marginalised_returns_one_hot_graph_data(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """``posterior_sample_marginalised`` produces valid one-hot
         ``GraphData`` of the same shape as input. Locks in the
@@ -966,7 +968,7 @@ class TestCategoricalNoiseProcess:
     def test_marginalised_posterior_matches_direct_when_x0_one_hot(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """At convergence the model emits a one-hot prediction. The
         marginalised posterior must then equal the direct posterior:
@@ -1001,7 +1003,7 @@ class TestCategoricalNoiseProcess:
     def test_apply_edge_symmetry(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """Edge features remain symmetric after categorical forward sampling."""
         proc = CategoricalNoiseProcess(
@@ -1038,7 +1040,7 @@ class TestNoisedBatchContract:
     def test_categorical_forward_sample_returns_noised_batch_with_b1_scalars(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """Categorical forward_sample returns NoisedBatch with (B, 1) scalars."""
         proc = CategoricalNoiseProcess(
@@ -1068,7 +1070,7 @@ class TestNoisedBatchContract:
     def test_gaussian_forward_sample_returns_noised_batch_with_b1_scalars(
         self,
         cosine_schedule: NoiseSchedule,
-        graph_data_from_adj: GraphData,
+        graph_data_from_adj: DenseGraphState,
     ) -> None:
         """Gaussian forward_sample returns NoisedBatch with (B, 1) scalars."""
         proc = GaussianNoiseProcess(
@@ -1090,7 +1092,7 @@ class TestNoisedBatchContract:
     def test_alpha_s_bar_uses_t_minus_one(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
     ) -> None:
         """alpha_s_bar is alpha_bar(t - 1), matching upstream apply_noise."""
         proc = CategoricalNoiseProcess(
@@ -1110,7 +1112,7 @@ class TestNoisedBatchContract:
     def test_build_noised_batch_t_zero_returns_upstream_alpha_bar_T(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """At ``t = 0``, ``alpha_s_bar`` equals ``alpha_bar[T]``.
@@ -1161,7 +1163,7 @@ class TestNoisedBatchContract:
     def test_build_noised_batch_t_zero_emits_warning(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A ``t = 0`` element triggers the upstream-parity RuntimeWarning."""
@@ -1187,7 +1189,7 @@ class TestNoisedBatchContract:
     def test_build_noised_batch_t_zero_fail_strictly_raises(
         self,
         cosine_schedule: NoiseSchedule,
-        categorical_graph_data: GraphData,
+        categorical_graph_data: DenseGraphState,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``FAIL_STRICTLY=1`` converts the warning into a hard error.
