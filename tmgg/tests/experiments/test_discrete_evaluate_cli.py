@@ -109,7 +109,10 @@ class _DummyModule:
     def eval(self) -> _DummyModule:
         return self
 
-    def generate_graphs(self, num_samples: int) -> list[nx.Graph[Any]]:
+    def generate_graphs(
+        self, num_samples: int, chunk_size: int | None = None
+    ) -> list[nx.Graph[Any]]:
+        del chunk_size  # accepted for API parity with DiffusionModule.generate_graphs
         return [nx.path_graph(4) for _ in range(num_samples)]
 
 
