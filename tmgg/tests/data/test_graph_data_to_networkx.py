@@ -1,4 +1,4 @@
-"""Tests for ``GraphData.to_networkx`` and ``to_networkx_list``.
+"""Tests for ``DenseGraphState.to_networkx`` and ``to_networkx_list``.
 
 Pinned behaviours:
 
@@ -8,52 +8,62 @@ Pinned behaviours:
 * ``X_class`` argmax indices ride along as ``x_class`` node attrs.
 * ``E_class`` argmax indices ride along as ``e_class`` edge attrs,
   but only for edges that survived the binary threshold.
-* Batched ``GraphData`` requires an explicit ``batch_index``.
-* Unbatched ``GraphData`` rejects a ``batch_index``.
+* Batched ``DenseGraphState`` (``node_mask.dim() == 2``) requires an
+  explicit ``batch_index``.
 * ``to_networkx_list`` expands the whole batch.
 
 These were carved out of the GraphData-as-universal-transport
 refactor (spec 2026-05-01); the categorical-index attributes are the
 hook molecular post-hoc analysis uses to reconstruct atom/bond types
 without re-loading the codec.
+
+Note on "unbatched": post the sparse-default refactor every
+``DenseGraphState`` carries a 1-D ``num_nodes_per_graph`` and therefore
+a 2-D ``node_mask`` (batched). The truly-unbatched branch that the
+``to_networkx`` rejects-batch-index check guards is unreachable through
+the public ctor; tests below exercise the equivalent semantic with a
+batched-of-1 instance and an explicit ``batch_index=0``.
 """
 
 from __future__ import annotations
 
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 
 
-def _two_node_one_edge_unbatched() -> GraphData:
-    """Hand-crafted 2-node graph with one edge, both nodes valid."""
-    return GraphData(
-        node_mask=torch.tensor([1, 1], dtype=torch.float32),
+def _two_node_one_edge_batched_one() -> DenseGraphState:
+    """Batched-of-1 hand-crafted 2-node graph with one edge."""
+    return DenseGraphState(
+        num_nodes_per_graph=torch.tensor([2], dtype=torch.long),
         # X_class: node 0 -> class 1, node 1 -> class 2.
         X_class=torch.tensor(
             [
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
+                [
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
             ],
             dtype=torch.float32,
         ),
         # E_class: 2-channel "no-edge / edge".
-        # 0-1 edge present (channel 1), 0-0 / 1-1 / 1-0 self-or-symmetric.
         E_class=torch.tensor(
             [
-                [[1.0, 0.0], [0.0, 1.0]],
-                [[0.0, 1.0], [1.0, 0.0]],
+                [
+                    [[1.0, 0.0], [0.0, 1.0]],
+                    [[0.0, 1.0], [1.0, 0.0]],
+                ]
             ],
             dtype=torch.float32,
         ),
-        y=torch.zeros(0),
+        y=torch.zeros(1, 0),
     )
 
 
-def _padded_batched() -> GraphData:
-    """Batched GraphData with one valid graph (n=2) padded to n=3."""
-    return GraphData(
-        node_mask=torch.tensor([[1, 1, 0]], dtype=torch.float32),
+def _padded_batched() -> DenseGraphState:
+    """Batched DenseGraphState with one valid graph (n=2) padded to n=3."""
+    return DenseGraphState(
+        num_nodes_per_graph=torch.tensor([2], dtype=torch.long),
         X_class=torch.tensor(
             [
                 [
@@ -78,9 +88,9 @@ def _padded_batched() -> GraphData:
     )
 
 
-def test_unbatched_to_networkx_topology_and_attrs() -> None:
-    gd = _two_node_one_edge_unbatched()
-    g = gd.to_networkx()
+def test_batched_one_to_networkx_topology_and_attrs() -> None:
+    gd = _two_node_one_edge_batched_one()
+    g = gd.to_networkx(batch_index=0)
     assert g.number_of_nodes() == 2
     assert g.number_of_edges() == 1
     # Node attrs: x_class indices land on each node.
@@ -108,18 +118,7 @@ def test_batched_requires_batch_index() -> None:
     except ValueError as e:
         raised = True
         assert "batch_index" in str(e)
-    assert raised, "batched GraphData with no batch_index should raise"
-
-
-def test_unbatched_rejects_batch_index() -> None:
-    gd = _two_node_one_edge_unbatched()
-    raised = False
-    try:
-        gd.to_networkx(batch_index=0)
-    except ValueError as e:
-        raised = True
-        assert "not allowed" in str(e)
-    assert raised, "unbatched GraphData with a batch_index should raise"
+    assert raised, "batched DenseGraphState with no batch_index should raise"
 
 
 def test_to_networkx_list_expands_full_batch() -> None:
@@ -129,8 +128,8 @@ def test_to_networkx_list_expands_full_batch() -> None:
     assert graphs[0].number_of_nodes() == 2
 
 
-def test_to_networkx_list_unbatched_returns_singleton() -> None:
-    gd = _two_node_one_edge_unbatched()
+def test_to_networkx_list_batched_one_returns_singleton() -> None:
+    gd = _two_node_one_edge_batched_one()
     graphs = gd.to_networkx_list()
     assert len(graphs) == 1
     assert graphs[0].number_of_nodes() == 2
@@ -138,19 +137,24 @@ def test_to_networkx_list_unbatched_returns_singleton() -> None:
 
 def test_no_x_class_means_no_node_attrs() -> None:
     """When X_class is None the per-node x_class attr must be absent."""
-    gd = GraphData(
-        node_mask=torch.tensor([1, 1], dtype=torch.float32),
-        X_feat=torch.zeros(2, 1),  # populate the X side via X_feat instead
+    gd = DenseGraphState(
+        num_nodes_per_graph=torch.tensor([2], dtype=torch.long),
+        # X_feat populated to exercise the X-side without X_class. Shape
+        # (1, 2, 1) keeps it batched-of-1, matching the new invariant
+        # that every populated tensor has the leading bs dim.
+        X_feat=torch.zeros(1, 2, 1),
         E_class=torch.tensor(
             [
-                [[1.0, 0.0], [0.0, 1.0]],
-                [[0.0, 1.0], [1.0, 0.0]],
+                [
+                    [[1.0, 0.0], [0.0, 1.0]],
+                    [[0.0, 1.0], [1.0, 0.0]],
+                ]
             ],
             dtype=torch.float32,
         ),
-        y=torch.zeros(0),
+        y=torch.zeros(1, 0),
     )
-    g = gd.to_networkx()
+    g = gd.to_networkx(batch_index=0)
     assert "x_class" not in g.nodes[0]
     assert "x_class" not in g.nodes[1]
     # E_class still drives edge attrs.

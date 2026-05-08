@@ -1,25 +1,31 @@
-"""Tests for GraphData ↔ PyG conversion methods.
+"""Tests for ``DenseGraphState.from_pyg_batch`` / ``to_pyg`` round-trips.
 
 Rationale
 ---------
-``GraphData.from_pyg_batch`` and ``GraphData.to_pyg`` bridge two
-representations:
+``DenseGraphState.from_pyg_batch`` and ``DenseGraphState.to_pyg`` bridge
+two representations:
 
 - **PyG sparse COO**: ``Data(edge_index, num_nodes)`` and batched
   ``Batch``, which torch_geometric datamodules produce natively.
-- **TMGG dense one-hot**: ``GraphData(X, E, y, node_mask)`` used
-  throughout the training pipeline.
+- **TMGG dense one-hot**: a padded ``(bs, n_max, ...)`` ``DenseGraphState``
+  used by the dense-internal models (DiGress transformer, MLP baseline).
 
 Invariants under test:
 
 1. A single graph's node count and edge structure survive a round-trip
    (``from_pyg_batch`` then ``to_pyg``).
 2. A batch of two variable-size graphs is padded to ``n_max`` and the
-   ``node_mask`` correctly identifies real vs. padded nodes.
-3. The full pipeline adjacency → GraphData → Data → Batch → GraphData →
-   adjacency reproduces the original adjacency.
+   derived ``node_mask`` correctly identifies real vs. padded nodes.
+3. The full pipeline adjacency → DenseGraphState → Data → Batch →
+   DenseGraphState → adjacency reproduces the original adjacency.
 4. Padding rows/columns outside the node mask are zero in both X and E.
 5. ``to_pyg`` raises ``ValueError`` for batch size > 1.
+
+Note on shapes: under the sparse-default refactor every
+``DenseGraphState`` carries a 1-D ``num_nodes_per_graph`` (and therefore
+a 2-D ``node_mask``). The truly-unbatched 1-D ``node_mask`` shape is
+unreachable through the public ctor; ``to_pyg`` accepts a batched-of-1
+``DenseGraphState`` directly.
 """
 
 import pytest
@@ -27,7 +33,7 @@ import torch
 from torch_geometric.data import Batch, Data
 
 from tests._helpers.graph_builders import binary_graphdata
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 
 # ---------------------------------------------------------------------------
 # Graph fixtures
@@ -60,7 +66,7 @@ class TestFromPygBatch:
         """A single-graph batch produces shapes (1, n, 2), (1, n, n, 2), etc."""
         triangle = _make_triangle_graph()
         batch = Batch.from_data_list([triangle])
-        gd = GraphData.from_pyg_batch(batch)
+        gd = DenseGraphState.from_pyg_batch(batch)
 
         # Wave 9.3: structure-only datasets emit X_class=None.
         assert gd.X_class is None
@@ -74,7 +80,7 @@ class TestFromPygBatch:
         """Edge features channel 1 matches the triangle's adjacency."""
         triangle = _make_triangle_graph()
         batch = Batch.from_data_list([triangle])
-        gd = GraphData.from_pyg_batch(batch)
+        gd = DenseGraphState.from_pyg_batch(batch)
 
         assert gd.E_class is not None
         adj_recovered = gd.E_class[0, :, :, 1]
@@ -88,7 +94,7 @@ class TestFromPygBatch:
         triangle = _make_triangle_graph()
         square = _make_square_graph()
         batch = Batch.from_data_list([triangle, square])
-        gd = GraphData.from_pyg_batch(batch)
+        gd = DenseGraphState.from_pyg_batch(batch)
 
         assert gd.X_class is None
         assert gd.E_class is not None
@@ -107,7 +113,7 @@ class TestFromPygBatch:
         triangle = _make_triangle_graph()
         square = _make_square_graph()
         batch = Batch.from_data_list([triangle, square])
-        gd = GraphData.from_pyg_batch(batch)
+        gd = DenseGraphState.from_pyg_batch(batch)
 
         # Padded node (index 3) in first graph: X[0, 3] should be [1, 0]
         # (no-node one-hot) but the real invariant is the mask is False.
@@ -122,10 +128,10 @@ class TestFromPygBatch:
         ), "Padded column should have no edges."
 
     def test_adjacency_round_trip(self) -> None:
-        """from_pyg_batch → to_binary_adjacency recovers original adjacency."""
+        """from_pyg_batch → dense_adjacency recovers the original adjacency."""
         triangle = _make_triangle_graph()
         batch = Batch.from_data_list([triangle])
-        gd = GraphData.from_pyg_batch(batch)
+        gd = DenseGraphState.from_pyg_batch(batch)
 
         adj = gd.dense_adjacency()
         expected = torch.tensor([[[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]])
@@ -140,61 +146,46 @@ class TestFromPygBatch:
 
 
 class TestToPyg:
-    def test_single_unbatched_graph(self) -> None:
-        """to_pyg on an unbatched GraphData returns correct num_nodes."""
+    def test_batch_size_1_round_trip(self) -> None:
+        """to_pyg on a batched-of-1 DenseGraphState returns correct num_nodes."""
         triangle = _make_triangle_graph()
         batch = Batch.from_data_list([triangle])
-        gd = GraphData.from_pyg_batch(batch)
+        gd = DenseGraphState.from_pyg_batch(batch)
 
-        # Squeeze to unbatched: node_mask shape (3,)
-        assert gd.E_class is not None
-        gd_single = GraphData(
-            E_class=gd.E_class.squeeze(0),
-            y=gd.y.squeeze(0),
-            node_mask=gd.node_mask.squeeze(0),
-        )
-        data = gd_single.to_pyg()
-
+        # ``DenseGraphState`` always carries a leading bs dim of 1 here.
+        data = gd.to_pyg()
         assert data.num_nodes == 3
         # Triangle has 6 directed edges (3 undirected × 2)
         assert data.edge_index is not None
         assert data.edge_index.shape == (2, 6)
-
-    def test_batch_size_1_accepted(self) -> None:
-        """to_pyg accepts batch-size-1 GraphData(squeezes batch dim)."""
-        triangle = _make_triangle_graph()
-        batch = Batch.from_data_list([triangle])
-        gd = GraphData.from_pyg_batch(batch)
-
-        # node_mask is (1, 3) here; to_pyg should handle it
-        data = gd.to_pyg()
-        assert data.num_nodes == 3
 
     def test_batch_size_gt1_raises(self) -> None:
         """to_pyg raises ValueError when batch size > 1."""
         triangle = _make_triangle_graph()
         square = _make_square_graph()
         batch = Batch.from_data_list([triangle, square])
-        gd = GraphData.from_pyg_batch(batch)
+        gd = DenseGraphState.from_pyg_batch(batch)
 
         with pytest.raises(ValueError, match="batch size"):
             gd.to_pyg()
 
     def test_full_round_trip(self) -> None:
-        """adjacency → GraphData → Data → Batch → GraphData → adjacency."""
-        adj_original = torch.tensor([[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
+        """adjacency → DenseGraphState → Data → Batch → DenseGraphState → adjacency."""
+        adj_original = torch.tensor(
+            [[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]
+        )
 
-        # adjacency → GraphData(unbatched)
+        # adjacency → DenseGraphState (batched-of-1)
         gd_from_adj = binary_graphdata(adj_original)
 
-        # GraphData → PyG Data
+        # DenseGraphState → PyG Data
         data = gd_from_adj.to_pyg()
 
-        # PyG Data → Batch → GraphData
+        # PyG Data → Batch → DenseGraphState
         batch = Batch.from_data_list([data])
-        gd_recovered = GraphData.from_pyg_batch(batch)
+        gd_recovered = DenseGraphState.from_pyg_batch(batch)
 
-        # GraphData → adjacency (batched, shape (1, 3, 3))
+        # DenseGraphState → adjacency (batched, shape (1, 3, 3))
         adj_recovered = gd_recovered.dense_adjacency().squeeze(0)
 
         assert torch.allclose(adj_recovered, adj_original), (
