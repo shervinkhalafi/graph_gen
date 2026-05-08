@@ -9,7 +9,7 @@ from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
 from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphDistribution
 from tmgg.models.attention import MultiLayerAttention
 from tmgg.models.layers import MultiHeadSelfAttention
 
@@ -209,10 +209,10 @@ class TestMultiLayerAttentionProperties:
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         A = A + torch.randn_like(A) * 0.1
 
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
-        assert isinstance(result, GraphData)
-        assert legacy_edge_scalar(result).shape == A.shape
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == A.shape
 
         # Check raw edge features for NaN/Inf
         out_e = result.E_feat if result.E_feat is not None else result.E_class
@@ -238,9 +238,9 @@ class TestMultiLayerAttentionProperties:
         A = A + torch.randn_like(A) * 0.3
 
         model = MultiLayerAttention(d_model, num_heads, num_layers)
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
-        assert isinstance(result, GraphData)
+        assert isinstance(result, DenseGraphDistribution)
         out_e = result.E_feat if result.E_feat is not None else result.E_class
         assert out_e is not None
         assert not torch.isnan(out_e).any()
