@@ -27,6 +27,8 @@ from tmgg.data.datasets.graph_types import (
     DenseGraphDistribution,
     DenseGraphState,
     GraphData,
+    GraphState,
+    state_to_dense_sample,
 )
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.sampler import CategoricalSampler
@@ -212,23 +214,29 @@ class TestForward:
         """
         _attach_trainer_and_setup(lightning_module, datamodule)
 
-        batch: GraphData = next(iter(datamodule.train_dataloader()))
-        assert batch.X_class is None  # Wave 9.3 structure-only data
-        assert batch.E_class is not None
+        batch: GraphState = next(iter(datamodule.train_dataloader()))
+        # Sparse batch carries x_class / edge_class (lowercase); densify
+        # to assert on the dense field-name view used downstream.
+        batch_dense = state_to_dense_sample(batch)
+        assert batch_dense.X_class is None  # Wave 9.3 structure-only data
+        assert batch_dense.E_class is not None
 
         lightning_module.eval()
-        bs, n = batch.node_mask.shape
+        bs, n = batch_dense.node_mask.shape
         t_int = torch.randint(1, _T + 1, (bs,))
         z_t = lightning_module.noise_process.forward_sample(batch, t_int).z_t
         t_norm = t_int.float() / _T
-        pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        # Request dense output so we can read the dense X_class / E_class
+        # fields the assertions below rely on (the sparse default carrier
+        # exposes lowercase x_class / edge_class with a different layout).
+        pred = lightning_module.model(z_t, t=t_norm, output_dense=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
         # The GraphTransformer synthesises the degenerate X_class internally;
         # output X_class width equals the configured C_x (output_dims_x_class).
         assert pred.X_class is not None  # pyright: ignore[reportUnknownMemberType]
         assert pred.X_class.shape == (bs, n, c_x)  # pyright: ignore[reportUnknownMemberType]
         assert pred.E_class is not None  # pyright: ignore[reportUnknownMemberType]
-        assert pred.E_class.shape == batch.E_class.shape  # pyright: ignore[reportUnknownMemberType]
+        assert pred.E_class.shape == batch_dense.E_class.shape  # pyright: ignore[reportUnknownMemberType]
 
 
 class TestTraining:
@@ -246,17 +254,26 @@ class TestTraining:
         """
         _attach_trainer_and_setup(lightning_module, datamodule)
 
-        batch: GraphData = next(iter(datamodule.train_dataloader()))
-        assert batch.X_class is None
+        batch: GraphState = next(iter(datamodule.train_dataloader()))
+        # Sparse batches carry x_class (lowercase); densify before the
+        # invariant check, then thread the dense view into ``_compute_loss``
+        # because the loss helpers (``mask()``, ``_read_field``) require
+        # the dense carrier directly.
+        batch_dense = state_to_dense_sample(batch)
+        assert batch_dense.X_class is None
 
         lightning_module.train()
-        bs = batch.node_mask.shape[0]
+        bs = int(batch.num_nodes_per_graph.shape[0])
         t_int = torch.randint(1, _T + 1, (bs,))
         z_t = lightning_module.noise_process.forward_sample(batch, t_int).z_t
         t_norm = t_int.float() / _T
-        pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        # ``_compute_loss`` reads ``pred.E_class`` directly (a dense
+        # field-name read in ``_read_field``), so request the dense
+        # output carrier from the model — matching how
+        # ``training_step`` / ``validation_step`` already call the model.
+        pred = lightning_module.model(z_t, t=t_norm, output_dense=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
-        loss = lightning_module._compute_loss(pred, batch)  # pyright: ignore[reportUnknownVariableType]
+        loss = lightning_module._compute_loss(pred, batch_dense)  # pyright: ignore[reportUnknownVariableType]
 
         assert isinstance(loss, Tensor)
         assert loss.ndim == 0, f"Expected scalar loss, got shape {loss.shape}"  # pyright: ignore[reportUnknownMemberType]
@@ -372,15 +389,20 @@ class TestDiGressAlignment:
         """
         _attach_trainer_and_setup(lightning_module, datamodule)
         batch = next(iter(datamodule.train_dataloader()))
+        # Densify once: the loss helpers require dense (E_class /
+        # node_mask access patterns) and ``synth_structure_only_x_class``
+        # is a ``DenseGraphState`` classmethod taking a dense node_mask.
+        batch_dense = state_to_dense_sample(batch)
 
-        # Get model prediction
-        t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
+        # Get model prediction; request dense output so we can read the
+        # dense X_class / E_class field-name view directly below.
+        t_int = torch.randint(1, _T + 1, (int(batch.num_nodes_per_graph.shape[0]),))
         z_t = lightning_module.noise_process.forward_sample(batch, t_int).z_t
         t_norm = t_int.float() / _T
-        pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        pred = lightning_module.model(z_t, t=t_norm, output_dense=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
         # Loss via DiffusionModule
-        loss_module = lightning_module._compute_loss(pred, batch)  # pyright: ignore[reportUnknownVariableType]
+        loss_module = lightning_module._compute_loss(pred, batch_dense)  # pyright: ignore[reportUnknownVariableType]
 
         # Loss via direct TrainLossDiscrete call — pass raw logits; the
         # wrapper now applies the fused log_softmax inside F.cross_entropy.
@@ -392,14 +414,20 @@ class TestDiGressAlignment:
         pred_X = pred.X_class.clone()  # pyright: ignore[reportUnknownMemberType]
         pred_E = pred.E_class.clone()  # pyright: ignore[reportUnknownMemberType]
         # Wave 9.3 + 2026-04-27 spec §5.1: structure-only batches carry
-        # X_class=None; the canonical helper materialises the synthesis
-        # so this test agrees with whatever C_x the noise process is
-        # configured with (no inline duplication of synth logic).
-        if batch.X_class is None:
-            true_X = GraphData.synth_structure_only_x_class(batch.node_mask, c_x)
+        # X_class=None; the canonical helper (a ``DenseGraphState``
+        # classmethod) materialises the synthesis from the dense
+        # node_mask so this test agrees with whatever C_x the noise
+        # process is configured with (no inline duplication of synth logic).
+        if batch_dense.X_class is None:
+            true_X = DenseGraphState.synth_structure_only_x_class(
+                batch_dense.node_mask, c_x
+            )
         else:
-            true_X = batch.X_class
-        loss_direct = tld(pred_X, pred_E, true_X, batch.E_class, batch.node_mask)
+            true_X = batch_dense.X_class
+        assert batch_dense.E_class is not None
+        loss_direct = tld(
+            pred_X, pred_E, true_X, batch_dense.E_class, batch_dense.node_mask
+        )
 
         assert torch.allclose(loss_module, loss_direct, atol=1e-6)  # pyright: ignore[reportUnknownMemberType]
 
@@ -426,7 +454,6 @@ class TestDiGressAlignment:
         # Wave 9.3 + 2026-05-07 sparse-default refactor: structure-only
         # batches carry x_class=None on the sparse carrier; we densify
         # locally for the loss module which still consumes dense state.
-        from tmgg.data.datasets.graph_types import state_to_dense_sample
 
         dense_batch = state_to_dense_sample(batch)
         new_counts = (dense_batch.num_nodes_per_graph - 2).clamp(min=0).long()
@@ -441,11 +468,12 @@ class TestDiGressAlignment:
             else None,
         )
 
-        # Get predictions
-        t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
+        # Get predictions; request dense output so the corrupt-padding
+        # block below can read pred.X_class / pred.E_class directly.
+        t_int = torch.randint(1, _T + 1, (int(batch.num_nodes_per_graph.shape[0]),))
         z_t = lightning_module.noise_process.forward_sample(batch_padded, t_int).z_t
         t_norm = t_int.float() / _T
-        pred = lightning_module.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        pred = lightning_module.model(z_t, t=t_norm, output_dense=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
         loss1 = lightning_module._compute_loss(pred, batch_padded)  # pyright: ignore[reportUnknownVariableType]
 
@@ -533,13 +561,19 @@ class TestDiGressAlignment:
         mod_high.setup("fit")
 
         batch = next(iter(datamodule.train_dataloader()))
-        t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
+        # Sparse batch -> dense view for ``_compute_loss`` which still
+        # consumes dense state (``mask()`` and ``E_class`` field-name
+        # access live on the dense carrier only).
+        batch_dense = state_to_dense_sample(batch)
+        t_int = torch.randint(1, _T + 1, (int(batch.num_nodes_per_graph.shape[0]),))
         z_t = noise_process.forward_sample(batch, t_int).z_t
         t_norm = t_int.float() / _T
-        pred = mod_low.model(z_t, t=t_norm)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        # ``_compute_loss`` reads ``pred.E_class`` directly; request
+        # the dense output carrier so the field-name read matches.
+        pred = mod_low.model(z_t, t=t_norm, output_dense=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
-        loss_low = mod_low._compute_loss(pred, batch)  # pyright: ignore[reportUnknownVariableType]
-        loss_high = mod_high._compute_loss(pred, batch)  # pyright: ignore[reportUnknownVariableType]
+        loss_low = mod_low._compute_loss(pred, batch_dense)  # pyright: ignore[reportUnknownVariableType]
+        loss_high = mod_high._compute_loss(pred, batch_dense)  # pyright: ignore[reportUnknownVariableType]
 
         # With same predictions, higher lambda_E should produce a different loss
         assert not torch.allclose(loss_low, loss_high, atol=1e-6), (  # pyright: ignore[reportUnknownMemberType]
@@ -568,7 +602,7 @@ class TestDiGressAlignment:
 
         assert isinstance(recon, torch.Tensor)
         assert recon.shape == (
-            batch.node_mask.shape[0],
+            int(batch.num_nodes_per_graph.shape[0]),
         ), f"Expected (bs,), got {recon.shape}"
         assert torch.isfinite(recon).all(), f"Non-finite reconstruction values: {recon}"
 
