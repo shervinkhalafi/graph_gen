@@ -110,17 +110,6 @@ def test_batched_to_networkx_drops_padding_rows() -> None:
     assert g.nodes[1]["x_class"] == 0
 
 
-def test_batched_requires_batch_index() -> None:
-    gd = _padded_batched()
-    raised = False
-    try:
-        gd.to_networkx()
-    except ValueError as e:
-        raised = True
-        assert "batch_index" in str(e)
-    assert raised, "batched DenseGraphState with no batch_index should raise"
-
-
 def test_to_networkx_list_expands_full_batch() -> None:
     gd = _padded_batched()
     graphs = gd.to_networkx_list()

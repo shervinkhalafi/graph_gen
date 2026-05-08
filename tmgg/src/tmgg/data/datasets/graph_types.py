@@ -1277,75 +1277,50 @@ class DenseGraphState(_StateGraph):
         mask2d = self.node_mask.unsqueeze(-1) * self.node_mask.unsqueeze(-2)
         return edge_scalar * mask2d.to(edge_scalar.dtype)
 
-    def to_networkx(self, batch_index: int | None = None) -> nx.Graph[Any]:
+    def to_networkx(self, batch_index: int = 0) -> nx.Graph[Any]:
         """Convert one graph slice to a NetworkX ``Graph``.
 
-        Honours ``node_mask`` (padding rows/cols are dropped) and
+        ``DenseGraphState`` is always batched under the post-refactor
+        invariants (``num_nodes_per_graph`` is required to be 1-D, so
+        the cached ``node_mask`` is always 2-D ``(B, n_max)``). The
+        default ``batch_index=0`` matches the single-graph carrier
+        convention; pass an explicit index to extract any other row.
+
+        Honours ``node_mask`` (padding rows/cols dropped) and
         :meth:`dense_adjacency` (channel 0 = "no edge"). When
         ``X_class`` is populated, the per-node argmax index lands as
         the ``x_class`` node attribute. When ``E_class`` is populated,
         the per-edge argmax index lands as the ``e_class`` edge
-        attribute (only for edges that survived the binary
-        threshold). The class indices let downstream consumers
-        recover atom / bond types for molecular runs without
-        re-loading the codec.
-
-        Parameters
-        ----------
-        batch_index
-            For 2-D (batched) ``DenseGraphState`` pass the row to extract.
-            For 1-D (single) ``DenseGraphState`` pass ``None`` (the
-            default) — the call is a no-op slice.
-
-        Returns
-        -------
-        networkx.Graph
-            One simple, undirected graph at most ``n_valid`` nodes.
+        attribute. The class indices let downstream consumers recover
+        atom / bond types for molecular runs without re-loading the
+        codec.
 
         Raises
         ------
         IndexError
-            ``batch_index`` is out of range for the batched leading
-            dimension.
-        ValueError
-            ``batch_index`` was supplied for a non-batched
-            ``DenseGraphState`` (or omitted for a batched one).
+            ``batch_index`` is out of range for the batched leading dimension.
         """
         import networkx as nx
 
-        is_batched = self.node_mask.dim() == 2
-        if is_batched and batch_index is None:
-            raise ValueError(
-                "batch_index is required for batched DenseGraphState; pass an "
-                "int or call to_networkx_list() to expand the whole batch."
-            )
-        if not is_batched and batch_index is not None:
-            raise ValueError(
-                "batch_index is not allowed for unbatched DenseGraphState "
-                "(node_mask is 1-D)."
-            )
-
-        adj = self.dense_adjacency()
-        if is_batched:
-            adj = adj[batch_index]
-            node_mask_row = self.node_mask[batch_index]
-        else:
-            node_mask_row = self.node_mask
+        node_mask_row = self.node_mask[batch_index]
+        adj_row = self.dense_adjacency()[batch_index]
 
         n_valid = int(node_mask_row.sum().item())
-        adj_valid = adj[:n_valid, :n_valid].detach().cpu().numpy()
+        adj_valid = adj_row[:n_valid, :n_valid].detach().cpu().numpy()
         graph = nx.from_numpy_array(adj_valid)
 
         if self.X_class is not None:
-            x_class_view = self.X_class[batch_index] if is_batched else self.X_class
-            x_class_idx = x_class_view[:n_valid].argmax(dim=-1).detach().cpu().tolist()
+            x_class_idx = (
+                self.X_class[batch_index][:n_valid]
+                .argmax(dim=-1).detach().cpu().tolist()
+            )
             for node, idx in enumerate(x_class_idx):
                 graph.nodes[node]["x_class"] = int(idx)
 
         if self.E_class is not None:
-            e_class_view = self.E_class[batch_index] if is_batched else self.E_class
             e_class_idx = (
-                e_class_view[:n_valid, :n_valid].argmax(dim=-1).detach().cpu().tolist()
+                self.E_class[batch_index][:n_valid, :n_valid]
+                .argmax(dim=-1).detach().cpu().tolist()
             )
             for u, v in graph.edges():
                 graph.edges[u, v]["e_class"] = int(e_class_idx[u][v])
@@ -1353,17 +1328,13 @@ class DenseGraphState(_StateGraph):
         return graph
 
     def to_networkx_list(self) -> list[nx.Graph[Any]]:
-        """Expand a batched ``DenseGraphState`` into a per-graph nx list.
+        """Expand the batched ``DenseGraphState`` into a per-graph nx list.
 
-        Equivalent to ``[self.to_networkx(i) for i in range(bs)]`` for
-        batched data; on unbatched data returns a single-element
-        list. Subsumes the legacy
-        :meth:`GraphEvaluator.to_networkx_graphs` for the
-        single-batched-instance case.
+        Equivalent to ``[self.to_networkx(i) for i in range(bs)]``.
+        Subsumes the legacy :meth:`GraphEvaluator.to_networkx_graphs`
+        for the single-batched-instance case.
         """
-        if self.node_mask.dim() == 1:
-            return [self.to_networkx()]
-        bs = self.node_mask.shape[0]
+        bs = int(self.num_nodes_per_graph.shape[0])
         return [self.to_networkx(i) for i in range(bs)]
 
     @classmethod
