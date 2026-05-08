@@ -23,7 +23,7 @@ import pytest
 import torch
 from torch.nn import functional as F
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
 
@@ -50,7 +50,7 @@ def proc(schedule: NoiseSchedule) -> CategoricalNoiseProcess:
 
 
 @pytest.fixture()
-def clean_data() -> GraphData:
+def clean_data() -> DenseGraphState:
     """One-hot clean graph data with all nodes valid."""
     torch.manual_seed(0)
 
@@ -67,8 +67,10 @@ def clean_data() -> GraphData:
     E[:, diag, diag, 0] = 1.0
 
     y = torch.zeros(BS, 0)
-    node_mask = torch.ones(BS, N, dtype=torch.bool)
-    return GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+    num_nodes_per_graph = torch.full((BS,), N, dtype=torch.long)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph, y=y, X_class=X, E_class=E
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +82,7 @@ class TestPosteriorLogProb:
     """Tests for categorical posterior exact log-probabilities."""
 
     def test_output_shape(
-        self, proc: CategoricalNoiseProcess, clean_data: GraphData
+        self, proc: CategoricalNoiseProcess, clean_data: DenseGraphState
     ) -> None:
         """posterior_log_prob returns one value per batch element."""
         t_int = torch.tensor([5, 3, 7])
@@ -91,7 +93,7 @@ class TestPosteriorLogProb:
         assert result.shape == (BS,)
 
     def test_output_finite(
-        self, proc: CategoricalNoiseProcess, clean_data: GraphData
+        self, proc: CategoricalNoiseProcess, clean_data: DenseGraphState
     ) -> None:
         """posterior_log_prob produces finite values."""
         t_int = torch.tensor([5, 3, 7])
@@ -102,7 +104,7 @@ class TestPosteriorLogProb:
         assert torch.isfinite(result).all()
 
     def test_perfect_prediction_near_zero(
-        self, proc: CategoricalNoiseProcess, clean_data: GraphData
+        self, proc: CategoricalNoiseProcess, clean_data: DenseGraphState
     ) -> None:
         """The posterior KL identity collapses to zero for identical parameters."""
         t_int = torch.tensor([5, 3, 7])
@@ -123,7 +125,7 @@ class TestExactDensityTerms:
     """Tests for forward and prior exact log-probability helpers."""
 
     def test_output_shape(
-        self, proc: CategoricalNoiseProcess, clean_data: GraphData
+        self, proc: CategoricalNoiseProcess, clean_data: DenseGraphState
     ) -> None:
         """forward_log_prob and prior_log_prob return one value per sample."""
         t_int = torch.tensor([T, T - 1, T - 2])
@@ -134,7 +136,7 @@ class TestExactDensityTerms:
         assert prior.shape == (BS,)
 
     def test_output_finite(
-        self, proc: CategoricalNoiseProcess, clean_data: GraphData
+        self, proc: CategoricalNoiseProcess, clean_data: DenseGraphState
     ) -> None:
         """forward_log_prob and prior_log_prob stay finite on sampled states."""
         t_int = torch.tensor([T, T - 1, T - 2])
