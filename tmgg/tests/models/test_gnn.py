@@ -4,7 +4,10 @@ import pytest
 import torch
 
 from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+)
 from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
 from tmgg.models.layers import GraphConvolutionLayer
 from tmgg.models.layers.eigen_embedding import _EigenEmbedding as EigenEmbedding
@@ -30,7 +33,7 @@ class TestGNNModels:
     """Test GNN model classes."""
 
     def test_gnn_forward(self):
-        """Test standard GNN forward pass returns GraphData."""
+        """Test standard GNN forward pass returns DenseGraphDistribution under output_dense=True."""
         batch_size = 2
         num_nodes = 5
         num_layers = 2
@@ -47,10 +50,14 @@ class TestGNNModels:
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         data = edge_scalar_graphdata(A)
-        result = model(data)
+        result = model(data, output_dense=True)
 
-        assert isinstance(result, GraphData)
-        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (
+            batch_size,
+            num_nodes,
+            num_nodes,
+        )
 
     def test_gnn_forward_avoids_binary_projection(self, monkeypatch):
         """Continuous GNN paths should not call binary adjacency extraction."""
@@ -58,13 +65,15 @@ class TestGNNModels:
         def _raise(*_args, **_kwargs):
             raise AssertionError("binary topology should not be used here")
 
-        monkeypatch.setattr(GraphData, "dense_adjacency", _raise)
+        monkeypatch.setattr(DenseGraphState, "dense_adjacency", _raise)
+        monkeypatch.setattr(DenseGraphDistribution, "dense_adjacency", _raise)
 
         model = GNN(num_layers=2, feature_dim_out=8)
         data = edge_scalar_graphdata(torch.randn(1, 5, 5))
 
-        result = model(data)
-        assert legacy_edge_scalar(result).shape == (1, 5, 5)
+        result = model(data, output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (1, 5, 5)
 
     def test_gnn_embeddings(self):
         """Test GNN embeddings() method for hybrid model use."""
@@ -82,7 +91,7 @@ class TestGNNModels:
         assert Y.shape == (batch_size, num_nodes, feature_dim_out)
 
     def test_gnn_symmetric_forward(self):
-        """Test symmetric GNN forward pass returns GraphData."""
+        """Test symmetric GNN forward pass returns DenseGraphDistribution under output_dense=True."""
         batch_size = 2
         num_nodes = 5
         num_layers = 2
@@ -92,13 +101,17 @@ class TestGNNModels:
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         data = edge_scalar_graphdata(A)
-        result = model(data)
+        result = model(data, output_dense=True)
 
-        assert isinstance(result, GraphData)
-        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (
+            batch_size,
+            num_nodes,
+            num_nodes,
+        )
 
     def test_nodevar_gnn_forward(self):
-        """Test NodeVarGNN forward pass returns GraphData."""
+        """Test NodeVarGNN forward pass returns DenseGraphDistribution under output_dense=True."""
         batch_size = 2
         num_nodes = 5
         num_layers = 1
@@ -108,10 +121,14 @@ class TestGNNModels:
 
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
         data = edge_scalar_graphdata(A)
-        result = model(data)
+        result = model(data, output_dense=True)
 
-        assert isinstance(result, GraphData)
-        assert legacy_edge_scalar(result).shape == (batch_size, num_nodes, num_nodes)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (
+            batch_size,
+            num_nodes,
+            num_nodes,
+        )
 
     def test_gnn_get_config(self):
         """Test GNN configuration retrieval."""
