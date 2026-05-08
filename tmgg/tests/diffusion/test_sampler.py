@@ -26,7 +26,12 @@ import torch
 from torch import Tensor
 
 from tests._helpers.graph_builders import binary_graphdata
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphState,
+)
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
@@ -52,6 +57,10 @@ class UniformCategoricalModel(GraphModel):
     Used to test that the categorical sampler produces valid outputs
     regardless of model quality; uniform predictions still lead to valid
     probability distributions through the posterior computation.
+
+    Per the Wave 4-A model contract, ``forward`` accepts an
+    ``output_dense`` keyword and returns a :class:`DenseGraphDistribution`
+    when ``output_dense=True`` (the path the sampler always takes).
     """
 
     def __init__(self, dx: int, de: int) -> None:
@@ -62,15 +71,32 @@ class UniformCategoricalModel(GraphModel):
     def get_config(self) -> dict[str, Any]:
         return {"dx": self.dx, "de": self.de}
 
-    def forward(self, data: GraphData, t: Tensor | None = None) -> GraphData:
+    def forward(  # type: ignore[override]
+        self,
+        data: GraphData,
+        t: Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> DenseGraphDistribution:
+        _ = t
+        if not output_dense:
+            raise AssertionError(
+                "UniformCategoricalModel only supports output_dense=True; "
+                "the sampler always sets it."
+            )
+        # The sampler densifies sparse inputs to a DenseGraphState before
+        # the model call, so we can rely on the legacy dense-shape access.
+        assert isinstance(data, DenseGraphState), (
+            f"expected DenseGraphState, got {type(data).__name__}"
+        )
         assert data.X_class is not None
         assert data.E_class is not None
         bs, n, _ = data.X_class.shape
         X = torch.ones(bs, n, self.dx, device=data.X_class.device) / self.dx
         E = torch.ones(bs, n, n, self.de, device=data.E_class.device) / self.de
-        return GraphData(
+        return DenseGraphDistribution(
+            num_nodes_per_graph=data.num_nodes_per_graph,
             y=data.y,
-            node_mask=data.node_mask,
             X_class=X,
             E_class=E,
         )
@@ -82,6 +108,11 @@ class IdentityContinuousModel(GraphModel):
     Used to test that the continuous sampler pipeline works end-to-end.
     With an identity model, the sampler still exercises schedule lookups,
     posterior computation, and final thresholding.
+
+    Per the Wave 4-A model contract, ``forward`` accepts an
+    ``output_dense`` keyword and returns a :class:`DenseGraphDistribution`
+    constructed from the input dense state (lossless lift; data is
+    already in dense form).
     """
 
     def __init__(self) -> None:
@@ -90,8 +121,32 @@ class IdentityContinuousModel(GraphModel):
     def get_config(self) -> dict[str, Any]:
         return {}
 
-    def forward(self, data: GraphData, t: Tensor | None = None) -> GraphData:
-        return data
+    def forward(  # type: ignore[override]
+        self,
+        data: GraphData,
+        t: Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> DenseGraphDistribution:
+        _ = t
+        if not output_dense:
+            raise AssertionError(
+                "IdentityContinuousModel only supports output_dense=True; "
+                "the sampler always sets it."
+            )
+        assert isinstance(data, DenseGraphState), (
+            f"expected DenseGraphState, got {type(data).__name__}"
+        )
+        # Lift the dense state to a dense distribution — same data, only
+        # the static type tag changes.
+        return DenseGraphDistribution(
+            num_nodes_per_graph=data.num_nodes_per_graph,
+            y=data.y,
+            X_class=data.X_class,
+            X_feat=data.X_feat,
+            E_class=data.E_class,
+            E_feat=data.E_feat,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -149,42 +204,73 @@ def identity_model() -> IdentityContinuousModel:
 # ---------------------------------------------------------------------------
 
 
+def _make_sparse_state_for_tests(bs: int = BS, n: int = N_NODES) -> GraphState:
+    """Build a small batched :class:`GraphState` for DiffusionState tests.
+
+    Per the Wave 4-A contract, :class:`DiffusionState` consumes the
+    sparse-default carrier. The graphs here carry a structure-only
+    ``x_class`` width 1 and an empty ``edge_index`` so the sparse
+    invariants hold trivially.
+    """
+    num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long)
+    batch = torch.arange(bs).repeat_interleave(n)
+    x_class = torch.ones(bs * n, 1, dtype=torch.float32)
+    edge_index = torch.empty(2, 0, dtype=torch.long)
+    edge_class = torch.empty(0, 2, dtype=torch.float32)
+    y = torch.zeros(bs, 0, dtype=torch.float32)
+    return GraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
+        y=y,
+        batch=batch,
+        x_class=x_class,
+        x_feat=None,
+        edge_index=edge_index,
+        edge_class=edge_class,
+        edge_feat=None,
+    )
+
+
 class TestDiffusionState:
     """DiffusionState should validate timestep metadata and batched graph shape."""
 
     def test_constructs_for_valid_batched_graph(self) -> None:
-        graph = binary_graphdata(torch.zeros(2, N_NODES, N_NODES))
+        graph = _make_sparse_state_for_tests()
         state = DiffusionState(graph=graph, t=3, max_t=T_STEPS)
         assert state.t == 3
         assert state.max_t == T_STEPS
         assert state.graph is graph
 
     def test_rejects_negative_timestep(self) -> None:
-        graph = binary_graphdata(torch.zeros(2, N_NODES, N_NODES))
+        graph = _make_sparse_state_for_tests()
         with pytest.raises(ValueError, match="0 <= t <= max_t"):
             DiffusionState(graph=graph, t=-1, max_t=T_STEPS)
 
     def test_rejects_timestep_above_max(self) -> None:
-        graph = binary_graphdata(torch.zeros(2, N_NODES, N_NODES))
+        graph = _make_sparse_state_for_tests()
         with pytest.raises(ValueError, match="0 <= t <= max_t"):
             DiffusionState(graph=graph, t=T_STEPS + 1, max_t=T_STEPS)
 
-    def test_rejects_unbatched_graph(self) -> None:
-        graph = binary_graphdata(torch.zeros(N_NODES, N_NODES))
-        with pytest.raises(ValueError, match="node_mask must have shape"):
-            DiffusionState(graph=graph, t=1, max_t=T_STEPS)
+    def test_rejects_dense_graph(self) -> None:
+        # Per the Wave 4-A contract, DiffusionState requires a sparse
+        # GraphState. A DenseGraphState (state-content but wrong
+        # carrier) must be rejected with a clear type error.
+        dense = binary_graphdata(torch.zeros(BS, N_NODES, N_NODES))
+        with pytest.raises(TypeError, match="must be a GraphState"):
+            DiffusionState(graph=dense, t=1, max_t=T_STEPS)  # type: ignore[arg-type]
 
-    def test_rejects_mismatched_mask_shape(self) -> None:
-        # The GraphData constructor itself now rejects mismatched leading
-        # dims; the DiffusionState contract still implicitly benefits
-        # from that validation. We verify the failure surface at the
-        # dataclass level.
+    def test_rejects_mismatched_dense_state_shapes(self) -> None:
+        # Migrated from the legacy node_mask-mismatch check: under the
+        # new dense type, ``DenseGraphState.__post_init__`` enforces
+        # that every populated split tensor's leading dims agree with
+        # ``num_nodes_per_graph`` and an internally consistent ``n_max``.
+        # Mismatched X_class / E_class widths surface as a "leading
+        # dims" error.
         with pytest.raises(ValueError, match="leading dims"):
-            GraphData(
-                X_class=torch.zeros(BS, N_NODES, DX),
-                E_class=torch.zeros(BS, N_NODES, N_NODES, DE),
+            DenseGraphState(
+                num_nodes_per_graph=torch.full((BS,), N_NODES, dtype=torch.long),
                 y=torch.zeros(BS, 0),
-                node_mask=torch.ones(BS, N_NODES + 1, dtype=torch.bool),
+                X_class=torch.zeros(BS, N_NODES + 1, DX),
+                E_class=torch.zeros(BS, N_NODES, N_NODES, DE),
             )
 
 
@@ -260,9 +346,14 @@ class TestCategoricalSamplerSample:
 
         original_forward = uniform_model.forward
 
-        def spy_forward(data: GraphData, t: Tensor | None = None) -> GraphData:
+        def spy_forward(
+            data: GraphData,
+            t: Tensor | None = None,
+            *,
+            output_dense: bool = False,
+        ) -> DenseGraphDistribution:
             observed_condition.append(None if t is None else t.detach().clone())
-            return original_forward(data, t=t)
+            return original_forward(data, t=t, output_dense=output_dense)
 
         categorical_noise_process.process_state_condition_vector = condition_vector  # type: ignore[method-assign]
         uniform_model.forward = spy_forward  # type: ignore[assignment]
@@ -284,13 +375,17 @@ class TestCategoricalSamplerSample:
             assert actual is not None
             torch.testing.assert_close(actual, want)
 
-    def test_returns_list_of_graph_data(
+    def test_returns_list_of_graph_state(
         self,
         categorical_noise_process: CategoricalNoiseProcess,
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """sample() returns a list of GraphData with the correct length."""
+        """sample() returns a list of sparse GraphState with the correct length.
+
+        Wave 4-A: the sampler emits per-graph :class:`GraphState`
+        instances (sparse-default carrier), one per requested graph.
+        """
         sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
@@ -302,7 +397,7 @@ class TestCategoricalSamplerSample:
         assert isinstance(results, list)
         assert len(results) == BS
         for g in results:
-            assert isinstance(g, GraphData)
+            assert isinstance(g, GraphState)
 
     def test_output_shape_correctness(
         self,
@@ -310,7 +405,13 @@ class TestCategoricalSamplerSample:
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """Generated graphs have the expected X and E dimensions."""
+        """Generated graphs have the expected per-graph node counts.
+
+        Each per-graph slice is a single-graph batch (B=1) with
+        ``num_nodes_per_graph = [n]``. The sparse ``x_class`` carries
+        ``(n, dx)`` content; the dense adjacency materialises as
+        ``(1, n, n)`` via :meth:`GraphState.dense_adjacency`.
+        """
         sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
@@ -320,13 +421,12 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            # finalize_sample returns one-hot per-graph tensors; per-node
-            # shape is (n, dx) and per-edge shape is (n, n, de).
-            assert g.X_class is not None and g.E_class is not None
-            assert g.X_class.dim() == 2
-            assert g.X_class.shape == (N_NODES, DX)
-            assert g.E_class.dim() == 3
-            assert g.E_class.shape == (N_NODES, N_NODES, DE)
+            assert int(g.num_nodes_per_graph.sum().item()) == N_NODES
+            assert g.x_class is not None
+            assert g.x_class.shape == (N_NODES, DX)
+            adj = g.dense_adjacency()
+            # Single-graph batch: shape (1, N, N).
+            assert adj.shape == (1, N_NODES, N_NODES)
 
     def test_edge_symmetry(
         self,
@@ -334,7 +434,14 @@ class TestCategoricalSamplerSample:
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """Generated edge features are symmetric (E[i,j] == E[j,i])."""
+        """Generated dense adjacency is symmetric.
+
+        With sparse outputs the symmetry invariant lives on the
+        ``edge_index`` directly (each undirected edge appears twice),
+        which :meth:`GraphState.__post_init__` already enforces under
+        ``__debug__``. The dense adjacency view is the user-facing
+        check this test pins.
+        """
         sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
@@ -344,10 +451,10 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            assert g.E_class is not None
+            adj = g.dense_adjacency()
             assert torch.equal(
-                g.E_class, g.E_class.transpose(0, 1)
-            ), "Edge one-hots must be symmetric"
+                adj, adj.transpose(-1, -2)
+            ), "Dense adjacency view of GraphState must be symmetric"
 
     def test_valid_class_indices(
         self,
@@ -355,7 +462,14 @@ class TestCategoricalSamplerSample:
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """Node and edge class indices are within valid ranges."""
+        """Per-position one-hot rows sum to 1 on every valid position.
+
+        On the sparse carrier ``x_class`` rows are one per real node and
+        ``edge_class`` rows are one per directed active edge.
+        :meth:`GraphState.__post_init__` already drops self-loops and
+        enforces the edge-index / class-row count agreement, so we just
+        verify the one-hot row-sum invariant on the active sparse rows.
+        """
         sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
@@ -365,18 +479,12 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            # finalize_sample returns one-hot tensors. Each row of X_class
-            # and each (i, j) position of E_class must sum to 1 at valid
-            # positions (not counting the diagonal for edges).
-            assert g.X_class is not None and g.E_class is not None
-            x_sums = g.X_class.sum(dim=-1)
-            assert torch.allclose(
-                x_sums[g.node_mask], torch.ones_like(x_sums[g.node_mask])
-            )
-            valid_mask = g.node_mask.unsqueeze(0) * g.node_mask.unsqueeze(1)
-            e_sums = g.E_class.sum(dim=-1)
-            ones_like = torch.ones_like(e_sums[valid_mask.bool()])
-            assert torch.allclose(e_sums[valid_mask.bool()], ones_like)
+            assert g.x_class is not None
+            x_sums = g.x_class.sum(dim=-1)
+            assert torch.allclose(x_sums, torch.ones_like(x_sums))
+            if g.edge_class is not None and g.edge_class.shape[0] > 0:
+                e_sums = g.edge_class.sum(dim=-1)
+                assert torch.allclose(e_sums, torch.ones_like(e_sums))
 
     def test_variable_node_counts(
         self,
@@ -395,8 +503,8 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         assert len(results) == 2
-        assert results[0].node_mask.shape[0] == 3
-        assert results[1].node_mask.shape[0] == 5
+        assert int(results[0].num_nodes_per_graph.sum().item()) == 3
+        assert int(results[1].num_nodes_per_graph.sum().item()) == 5
 
     def test_sample_no_gradients_tracked(
         self,
@@ -421,10 +529,10 @@ class TestCategoricalSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            assert g.X_class is not None
-            assert g.E_class is not None
-            assert not g.X_class.requires_grad
-            assert not g.E_class.requires_grad
+            assert g.x_class is not None
+            assert not g.x_class.requires_grad
+            if g.edge_class is not None:
+                assert not g.edge_class.requires_grad
 
     def test_warm_start_still_works_with_explicit_noise_process(
         self,
@@ -437,10 +545,16 @@ class TestCategoricalSamplerSample:
         Test rationale: Step 2 removes sampler-owned process state. Passing the
         process explicitly must not break partial reverse chains that resume
         from an existing latent graph.
+
+        Per the Wave 4-A contract, ``DiffusionState`` consumes a sparse
+        :class:`GraphState`; the noise-process prior is dense, so we
+        sparsify it at the boundary.
         """
         sampler = CategoricalSampler()
         node_mask = torch.ones(BS, N_NODES, dtype=torch.bool)
-        start_graph = categorical_noise_process.sample_prior(node_mask)
+        dense_prior = categorical_noise_process.sample_prior(node_mask)
+        assert isinstance(dense_prior, DenseGraphState)
+        start_graph = dense_prior.to_sparse()
         start_from = DiffusionState(
             graph=start_graph,
             t=unified_schedule.timesteps - 1,
@@ -499,13 +613,13 @@ class TestCategoricalSamplerMarginal:
         proc.initialize_from_data([pyg_batch])
         return proc
 
-    def test_returns_valid_graph_data(
+    def test_returns_valid_graph_state(
         self,
         marginal_noise_process: CategoricalNoiseProcess,
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """Marginal-transition sampling produces valid GraphData output."""
+        """Marginal-transition sampling produces valid sparse GraphState output."""
         sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
@@ -516,9 +630,9 @@ class TestCategoricalSamplerMarginal:
         )
         assert len(results) == BS
         for g in results:
-            assert isinstance(g, GraphData)
-            assert g.X_class is not None
-            assert g.X_class.shape[0] == N_NODES
+            assert isinstance(g, GraphState)
+            assert g.x_class is not None
+            assert g.x_class.shape[0] == N_NODES
 
     def test_valid_class_distributions(
         self,
@@ -526,7 +640,7 @@ class TestCategoricalSamplerMarginal:
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """X_class rows are valid one-hot PMFs with empirical marginals."""
+        """x_class rows are valid one-hot PMFs with empirical marginals."""
         sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
@@ -536,11 +650,9 @@ class TestCategoricalSamplerMarginal:
             device=torch.device("cpu"),
         )
         for g in results:
-            assert g.X_class is not None
-            x_sums = g.X_class.sum(dim=-1)
-            assert torch.allclose(
-                x_sums[g.node_mask], torch.ones_like(x_sums[g.node_mask])
-            )
+            assert g.x_class is not None
+            x_sums = g.x_class.sum(dim=-1)
+            assert torch.allclose(x_sums, torch.ones_like(x_sums))
 
     def test_edge_symmetry(
         self,
@@ -548,7 +660,7 @@ class TestCategoricalSamplerMarginal:
         unified_schedule: NoiseSchedule,
         uniform_model: UniformCategoricalModel,
     ) -> None:
-        """Symmetry invariant holds with empirical marginals."""
+        """Symmetry invariant holds for the dense adjacency view."""
         sampler = CategoricalSampler()
         results = sampler.sample(
             model=uniform_model,
@@ -558,8 +670,8 @@ class TestCategoricalSamplerMarginal:
             device=torch.device("cpu"),
         )
         for g in results:
-            assert g.E_class is not None
-            assert torch.equal(g.E_class, g.E_class.transpose(0, 1))
+            adj = g.dense_adjacency()
+            assert torch.equal(adj, adj.transpose(-1, -2))
 
 
 # ---------------------------------------------------------------------------
@@ -591,9 +703,14 @@ class TestContinuousSamplerSample:
 
         original_forward = identity_model.forward
 
-        def spy_forward(data: GraphData, t: Tensor | None = None) -> GraphData:
+        def spy_forward(
+            data: GraphData,
+            t: Tensor | None = None,
+            *,
+            output_dense: bool = False,
+        ) -> DenseGraphDistribution:
             observed_condition.append(None if t is None else t.detach().clone())
-            return original_forward(data, t=t)
+            return original_forward(data, t=t, output_dense=output_dense)
 
         continuous_noise_process.process_state_condition_vector = condition_vector  # type: ignore[method-assign]
         identity_model.forward = spy_forward  # type: ignore[assignment]
@@ -615,13 +732,13 @@ class TestContinuousSamplerSample:
             assert actual is not None
             torch.testing.assert_close(actual, want)
 
-    def test_returns_list_of_graph_data(
+    def test_returns_list_of_graph_state(
         self,
         continuous_noise_process: ContinuousNoiseProcess,
         unified_schedule: NoiseSchedule,
         identity_model: IdentityContinuousModel,
     ) -> None:
-        """sample() returns a list of GraphData with the correct length."""
+        """sample() returns a list of sparse GraphState with the correct length."""
         sampler = ContinuousSampler()
         results = sampler.sample(
             model=identity_model,
@@ -633,7 +750,7 @@ class TestContinuousSamplerSample:
         assert isinstance(results, list)
         assert len(results) == BS
         for g in results:
-            assert isinstance(g, GraphData)
+            assert isinstance(g, GraphState)
 
     def test_output_shape_correctness(
         self,
@@ -641,7 +758,11 @@ class TestContinuousSamplerSample:
         unified_schedule: NoiseSchedule,
         identity_model: IdentityContinuousModel,
     ) -> None:
-        """Generated graphs have expected adjacency-based shapes."""
+        """Generated graphs have expected per-graph node counts.
+
+        The dense adjacency view is square ``(1, n, n)`` per graph;
+        ``num_nodes_per_graph`` carries the per-graph node count.
+        """
         sampler = ContinuousSampler()
         results = sampler.sample(
             model=identity_model,
@@ -651,16 +772,10 @@ class TestContinuousSamplerSample:
             device=torch.device("cpu"),
         )
         for g in results:
-            # After thresholding, the output is stored as one-hot de=2
-            # but trimmed per graph. Check that E is square.
-            n = (
-                g.node_mask.shape[0]
-                if g.node_mask.dim() == 1
-                else g.node_mask.shape[-1]
-            )
-            e_class = g.E_class
-            assert e_class is not None
-            assert e_class.shape[-2] == e_class.shape[-1] or e_class.shape[0] == n
+            n = int(g.num_nodes_per_graph.sum().item())
+            assert n == N_NODES
+            adj = g.dense_adjacency()
+            assert adj.shape[-2] == adj.shape[-1] == n
 
     def test_binary_adjacency(
         self,
@@ -764,10 +879,17 @@ class TestContinuousSamplerSample:
         unified_schedule: NoiseSchedule,
         identity_model: IdentityContinuousModel,
     ) -> None:
-        """Warm-start sampling should still work after ownership moves."""
+        """Warm-start sampling should still work after ownership moves.
+
+        Per the Wave 4-A contract, ``DiffusionState`` consumes a sparse
+        :class:`GraphState`; the noise-process prior is dense, so we
+        sparsify it at the boundary.
+        """
         sampler = ContinuousSampler()
         node_mask = torch.ones(BS, N_NODES, dtype=torch.bool)
-        start_graph = continuous_noise_process.sample_prior(node_mask)
+        dense_prior = continuous_noise_process.sample_prior(node_mask)
+        assert isinstance(dense_prior, DenseGraphState)
+        start_graph = dense_prior.to_sparse()
         start_from = DiffusionState(
             graph=start_graph,
             t=unified_schedule.timesteps - 1,
