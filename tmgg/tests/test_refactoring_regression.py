@@ -183,7 +183,7 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
         assert isinstance(
             result, GraphData
@@ -200,7 +200,7 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
         assert isinstance(
             result, GraphData
@@ -217,7 +217,7 @@ class TestModelOutputFormat:
         num_nodes = 5
         A = torch.eye(num_nodes).unsqueeze(0).repeat(batch_size, 1, 1)
 
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
         assert isinstance(
             result, GraphData
