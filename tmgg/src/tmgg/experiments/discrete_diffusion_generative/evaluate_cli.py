@@ -594,8 +594,13 @@ def evaluate_checkpoint(
         # GraphState.to_networkx) and land in generated_graphs.json /
         # reference_graphs.json so molecular post-hoc analysis can
         # recover atom + bond types without re-loading the codec.
-        nx_generated = [g.to_networkx() for g in generated_graphs]
-        nx_reference = [g.to_networkx() for g in ref_graphs]
+        # Both ``generated_graphs`` (sparse ``GraphState`` from
+        # ``module.generate_graphs``) and ``ref_graphs`` (per-graph
+        # ``DenseGraphState`` from ``get_reference_graphs``) carry a
+        # leading batch dim of 1, so ``batch_index=0`` selects the single
+        # graph in either carrier.
+        nx_generated = [g.to_networkx(batch_index=0) for g in generated_graphs]
+        nx_reference = [g.to_networkx(batch_index=0) for g in ref_graphs]
         artifact_paths = dump_eval_artifacts(
             out_dir_path,
             checkpoint_name=checkpoint_path.name,

@@ -692,8 +692,12 @@ class SingleStepDenoisingModule(DiffusionModule):
         # module is nx-native (legacy code path); convert at the call
         # site rather than threading GraphData through the rest of
         # this method's adjacency-tensor construction.
+        # ``get_reference_graphs`` returns per-graph ``DenseGraphState``
+        # carriers with a leading batch dim of 1 (the single-instance
+        # convention noted on its docstring), so the batched
+        # ``to_networkx`` requires ``batch_index=0``.
         ref_graphs: list[nx.Graph[Any]] = [
-            gd.to_networkx()
+            gd.to_networkx(batch_index=0)
             for gd in dm.get_reference_graphs("val", num_reference_graphs)
         ]
         if len(ref_graphs) < 2:

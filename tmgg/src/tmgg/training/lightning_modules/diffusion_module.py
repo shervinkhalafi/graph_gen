@@ -2092,9 +2092,14 @@ class DiffusionModule(BaseGraphModule):
                 # build_validation_visualizations is nx-native (spring
                 # layout, networkx draw helpers). Convert at the leaf
                 # via GraphData.to_networkx() — cheap and lossless.
+                # Both ``refs`` (per-graph batched ``DenseGraphState`` from
+                # ``get_reference_graphs``) and ``generated_graphs``
+                # (per-graph sparse ``GraphState`` from ``sampler.sample``)
+                # carry a leading batch dim of 1, so ``batch_index=0``
+                # selects the single graph in either carrier.
                 figures = build_validation_visualizations(
-                    refs=[g.to_networkx() for g in refs],
-                    generated=[g.to_networkx() for g in generated_graphs],
+                    refs=[g.to_networkx(batch_index=0) for g in refs],
+                    generated=[g.to_networkx(batch_index=0) for g in generated_graphs],
                     num_samples=int(self.visualization["num_samples"]),
                 )
                 log_figures(
