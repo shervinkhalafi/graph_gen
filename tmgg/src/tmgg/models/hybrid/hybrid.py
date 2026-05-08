@@ -34,7 +34,7 @@ class SequentialDenoisingModel(GraphModel):
     embedding_model: EmbeddingProvider
     denoising_model: nn.Module | None
 
-    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_in: ClassVar[type] = DenseGraphDistribution
     _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
@@ -101,8 +101,8 @@ class SequentialDenoisingModel(GraphModel):
         distribution and emitted in the requested layout via
         :func:`_coerce_output_to`.
         """
-        d = _coerce_input_to(data, target=DenseGraphState)
-        assert isinstance(d, DenseGraphState)
+        d = _coerce_input_to(data, target=DenseGraphDistribution)
+        assert isinstance(d, DenseGraphDistribution)
 
         # Generate embeddings via the EmbeddingProvider protocol
         X, Y = self.embedding_model.embeddings(d)
