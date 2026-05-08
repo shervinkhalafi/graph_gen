@@ -191,10 +191,15 @@ def test_optimizer_health_metrics_survive_short_epochs() -> None:
     ds = torch.utils.data.TensorDataset(torch.randn(33, 4), torch.randn(33, 1))
     dl = torch.utils.data.DataLoader(ds, batch_size=3)
     cap = _Capture()
+    # CPU-only: this test pins LightningModule cadence/flush math, not GPU
+    # numerics. Earlier suite tests can leave torch.use_deterministic_algorithms
+    # on, which makes CuBLAS matmul raise without CUBLAS_WORKSPACE_CONFIG; CPU
+    # avoids that hazard entirely. The test runs in well under 5s either way.
     trainer = pl.Trainer(
         max_steps=33,
         log_every_n_steps=2,
         logger=cap,
+        accelerator="cpu",
         enable_checkpointing=False,
         enable_progress_bar=False,
         enable_model_summary=False,
