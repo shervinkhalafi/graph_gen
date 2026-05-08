@@ -48,8 +48,13 @@ def sample_adjacency() -> torch.Tensor:
 
 @pytest.fixture
 def sample_batch(sample_adjacency: torch.Tensor) -> GraphData:
-    """GraphData batch wrapping the sample adjacency matrices."""
-    return binary_graphdata(sample_adjacency)
+    """Sparse ``GraphState`` batch wrapping the sample adjacency matrices.
+
+    Production datamodules emit sparse batches per the 2026-05-07
+    sparse-default refactor; ``SingleStepDenoisingModule.training_step``
+    consumes the same carrier shape.
+    """
+    return binary_graphdata(sample_adjacency).to_sparse()
 
 
 @pytest.fixture

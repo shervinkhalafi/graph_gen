@@ -1,11 +1,17 @@
-"""Tests for ``GraphData`` conversion helpers and collation.
+"""Tests for ``DenseGraphState`` conversion helpers and collation.
 
 Test rationale
 --------------
 Binary-topology helpers are the boundary between dense graph tensors and
 discrete graph exports. Edge-state helpers are the boundary for continuous
 models and must preserve values exactly. These tests protect both contracts
-and the padding semantics in ``GraphData.collate()``.
+and the padding semantics in ``DenseGraphState.collate()``.
+
+Per the 2026-05-07 sparse-default refactor, ``GraphData`` is the abstract
+base of the type hierarchy; the concrete dense type is ``DenseGraphState``.
+Tests retain the dense fixtures (``X_class`` / ``E_class`` / ``node_mask``)
+because the helpers in ``tests._helpers.graph_builders`` produce
+``DenseGraphState`` instances directly.
 """
 
 import pytest
@@ -16,7 +22,7 @@ from tests._helpers.graph_builders import (
     legacy_edge_scalar,
 )
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 
 BS = 3
 N = 6
@@ -75,17 +81,25 @@ class TestBinaryAdjacencyHelpers:
         assert g.node_mask.all()
 
     def test_single_graph(self) -> None:
-        """Unbatched (n, n) input should return unbatched outputs."""
+        """Unbatched (n, n) input still produces a single-graph DenseGraphState.
+
+        ``DenseGraphState`` is always batched ``(bs, ...)`` per the
+        2026-05-07 sparse-default refactor; the test_helpers builder
+        wraps an unbatched ``(n, n)`` adjacency into a ``bs == 1``
+        instance. The downstream assertions check the (1, n, ...)
+        shapes that result.
+        """
         A = torch.eye(4)
         A[0, 1] = A[1, 0] = 1.0
         g = binary_graphdata(A)
         assert g.X_class is not None
         assert g.E_class is not None
-        assert g.X_class.dim() == 2
-        assert g.X_class.shape == (4, 2)
-        assert g.E_class.dim() == 3
-        assert g.E_class.shape == (4, 4, 2)
-        assert g.node_mask.dim() == 1
+        assert g.X_class.dim() == 3
+        assert g.X_class.shape == (1, 4, 2)
+        assert g.E_class.dim() == 4
+        assert g.E_class.shape == (1, 4, 4, 2)
+        assert g.node_mask.dim() == 2
+        assert g.node_mask.shape == (1, 4)
 
 
 class TestToBinaryAdjacency:
@@ -116,11 +130,11 @@ class TestToBinaryAdjacency:
         E[:, :, :, 1] = 1.0  # all edges "present"
         node_mask = torch.ones(2, 4, dtype=torch.bool)
         node_mask[:, 3] = False  # mask last node
-        g = GraphData(
+        g = DenseGraphState(
             X_class=torch.zeros(2, 4, 2),
             E_class=E,
             y=torch.zeros(2, 0),
-            node_mask=node_mask,
+            num_nodes_per_graph=node_mask.long().sum(dim=-1),
         )
         A = g.dense_adjacency()
         # Last row/col should be zero
@@ -177,7 +191,7 @@ class TestEdgeStateHelpers:
         node_mask = torch.tensor(
             [[True, True, False, False], [True, True, True, False]]
         )
-        g = GraphData.from_structure_only(node_mask, edge_state)
+        g = DenseGraphState.from_structure_only(node_mask, edge_state)
         assert torch.equal(g.node_mask, node_mask)
         # to_edge_scalar(source='feat') returns the stored edge state
         # masked by the outer product of node_mask.
@@ -187,22 +201,28 @@ class TestEdgeStateHelpers:
 
 
 class TestCollate:
-    """Verify GraphData.collate() for variable-size graphs."""
+    """Verify DenseGraphState.collate() for variable-size graphs.
 
-    def _make_graph(self, n: int, dy: int = 0) -> GraphData:
-        """Create a simple GraphData with n nodes."""
-        return GraphData(
-            X_class=torch.ones(n, 2),
-            E_class=torch.ones(n, n, 2),
-            y=torch.zeros(dy),
-            node_mask=torch.ones(n, dtype=torch.bool),
+    Per-graph instances are constructed directly with batch dimension 1
+    (the dense type does not store unbatched single graphs the way the
+    legacy ``GraphData`` did). The collator stacks per-graph rows to a
+    common ``n_max`` derived from the largest member.
+    """
+
+    def _make_graph(self, n: int, dy: int = 0) -> DenseGraphState:
+        """Create a single-graph DenseGraphState with n real nodes."""
+        return DenseGraphState(
+            X_class=torch.ones(1, n, 2),
+            E_class=torch.ones(1, n, n, 2),
+            y=torch.zeros(1, dy),
+            num_nodes_per_graph=torch.tensor([n], dtype=torch.long),
         )
 
     def test_basic_padding(self) -> None:
         """Graphs of different sizes should be padded to the max."""
         g1 = self._make_graph(3)
         g2 = self._make_graph(5)
-        batch = GraphData.collate([g1, g2])
+        batch = DenseGraphState.collate([g1, g2])
         assert batch.X_class is not None
         assert batch.E_class is not None
         assert batch.X_class.shape == (2, 5, 2)
@@ -213,7 +233,7 @@ class TestCollate:
         """Mask should be True for real nodes, False for padding."""
         g1 = self._make_graph(3)
         g2 = self._make_graph(5)
-        batch = GraphData.collate([g1, g2])
+        batch = DenseGraphState.collate([g1, g2])
         assert batch.node_mask[0, :3].all()
         assert not batch.node_mask[0, 3:].any()
         assert batch.node_mask[1, :5].all()
@@ -222,7 +242,7 @@ class TestCollate:
         """Padded node positions should be set to class 0 (no-node)."""
         g1 = self._make_graph(2)
         g2 = self._make_graph(4)
-        batch = GraphData.collate([g1, g2])
+        batch = DenseGraphState.collate([g1, g2])
         assert batch.X_class is not None
         # For graph 0, positions 2 and 3 should have class 0 = 1
         assert batch.X_class[0, 2, 0] == 1.0
@@ -232,7 +252,7 @@ class TestCollate:
         """Padded edge positions should be set to class 0 (no-edge)."""
         g1 = self._make_graph(2)
         g2 = self._make_graph(4)
-        batch = GraphData.collate([g1, g2])
+        batch = DenseGraphState.collate([g1, g2])
         assert batch.E_class is not None
         # For graph 0, row 2 (padded) should have E[0, 2, :, 0] = 1
         assert (batch.E_class[0, 2, :, 0] == 1.0).all()
@@ -246,15 +266,15 @@ class TestCollate:
         E1[1, 0, 1] = 1.0
         E1[0, 0, 0] = 1.0
         E1[1, 1, 0] = 1.0
-        g1 = GraphData(
-            X_class=X1,
-            E_class=E1,
-            y=torch.zeros(0),
-            node_mask=torch.ones(2, dtype=torch.bool),
+        g1 = DenseGraphState(
+            X_class=X1.unsqueeze(0),
+            E_class=E1.unsqueeze(0),
+            y=torch.zeros(1, 0),
+            num_nodes_per_graph=torch.tensor([2], dtype=torch.long),
         )
         g2 = self._make_graph(3)
 
-        batch = GraphData.collate([g1, g2])
+        batch = DenseGraphState.collate([g1, g2])
         assert batch.X_class is not None
         assert batch.E_class is not None
         # Graph 0's real data should be intact
@@ -265,18 +285,18 @@ class TestCollate:
         """Global features y should be copied correctly."""
         y1 = torch.tensor([1.0, 2.0])
         y2 = torch.tensor([3.0, 4.0])
-        g1 = GraphData(
-            X_class=torch.ones(2, 2),
-            E_class=torch.ones(2, 2, 2),
-            y=y1,
-            node_mask=torch.ones(2, dtype=torch.bool),
+        g1 = DenseGraphState(
+            X_class=torch.ones(1, 2, 2),
+            E_class=torch.ones(1, 2, 2, 2),
+            y=y1.unsqueeze(0),
+            num_nodes_per_graph=torch.tensor([2], dtype=torch.long),
         )
-        g2 = GraphData(
-            X_class=torch.ones(3, 2),
-            E_class=torch.ones(3, 3, 2),
-            y=y2,
-            node_mask=torch.ones(3, dtype=torch.bool),
+        g2 = DenseGraphState(
+            X_class=torch.ones(1, 3, 2),
+            E_class=torch.ones(1, 3, 3, 2),
+            y=y2.unsqueeze(0),
+            num_nodes_per_graph=torch.tensor([3], dtype=torch.long),
         )
-        batch = GraphData.collate([g1, g2])
+        batch = DenseGraphState.collate([g1, g2])
         assert torch.allclose(batch.y[0], y1)
         assert torch.allclose(batch.y[1], y2)

@@ -176,9 +176,12 @@ class TestOrbitMMD:
             assert check is True
             assert capture_output is True
             assert text is True
-            assert cmd[:4] == ["g++", "-O2", "-std=c++11", "-o"]
-            assert Path(cmd[4]) != stale_binary
-            Path(cmd[4]).write_text("rebuilt")
+            assert cmd[0] == "g++"
+            assert "-O2" in cmd
+            assert "-std=c++11" in cmd
+            o_idx = cmd.index("-o")
+            assert Path(cmd[o_idx + 1]) != stale_binary
+            Path(cmd[o_idx + 1]).write_text("rebuilt")
             commands.append(cmd)
 
         monkeypatch.setattr(orca_mod, "_ORCA_DIR", orca_dir)

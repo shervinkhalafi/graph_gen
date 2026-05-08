@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 from tmgg.models.base import GraphModel
 from tmgg.models.gnn import GNN
 from tmgg.training.lightning_modules.base_graph_module import (
@@ -172,16 +172,18 @@ class TestTransferBatchToDevice:
         """GraphData batches should be transferred via GraphData.to().
 
         We verify that all constituent tensors land on the target device.
+        Per the 2026-05-07 sparse-default refactor, ``DenseGraphState.from_structure_only``
+        is the dense factory; ``GraphData`` is now an abstract base.
         """
         module = _make_module()
-        batch = GraphData.from_structure_only(
+        batch = DenseGraphState.from_structure_only(
             torch.ones(2, 5, dtype=torch.bool), torch.randn(2, 5, 5)
         )
         device = torch.device("cpu")
 
         result = module.transfer_batch_to_device(batch, device, dataloader_idx=0)
 
-        assert isinstance(result, GraphData)
+        assert isinstance(result, DenseGraphState)
         assert result.E_feat is not None
         assert result.E_feat.device == device
         assert result.y.device == device
@@ -229,14 +231,16 @@ class TestOnBeforeOptimizerStep:
     """Tests for the gradient/param-norm diagnostics hook."""
 
     def test_logs_expected_diagnostic_keys(self) -> None:
-        """The hook should emit ``train/diagnostics/grad_norm_l2``,
-        ``grad_norm_preclip_max``, and ``param_norm_l2`` when at least
-        one parameter has a non-None gradient.
+        """The hook should emit the three opt-health diagnostic keys
+        (``grad_norm_l2``, ``grad_norm_preclip_max``, ``param_norm_l2``)
+        when at least one parameter has a non-None gradient.
 
         The numerical correctness of the norms is implicitly covered by
         the tensor ops themselves; this test locks in the **interface**:
         the three keys must appear and the values must be finite so
-        future refactors cannot silently drop a diagnostic.
+        future refactors cannot silently drop a diagnostic. The current
+        production prefix is ``diagnostics-train/opt-health/`` (W&B
+        section nesting).
         """
         module = _make_module()
         # Populate gradients on every parameter so the hook sees them.
@@ -249,9 +253,9 @@ class TestOnBeforeOptimizerStep:
         assert mock_log_dict.call_count == 1
         logged = mock_log_dict.call_args.args[0]
         assert set(logged.keys()) == {
-            "train/diagnostics/grad_norm_l2",
-            "train/diagnostics/grad_norm_preclip_max",
-            "train/diagnostics/param_norm_l2",
+            "diagnostics-train/opt-health/grad_norm_l2",
+            "diagnostics-train/opt-health/grad_norm_preclip_max",
+            "diagnostics-train/opt-health/param_norm_l2",
         }
         for key, value in logged.items():
             # Lightning accepts tensors or floats; we produce tensors.

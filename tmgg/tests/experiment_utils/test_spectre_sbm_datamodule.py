@@ -223,12 +223,14 @@ class TestSpectreSBMDataModule:
         dm = self._make_dm(tmp_path)
         dm.setup("fit")
         batch = next(iter(dm.val_dataloader()))
-        # Wave 9.3: structure-only datasets emit X_class=None; batch size and
-        # per-graph node extent come from node_mask.
-        assert batch.X_class is None
-        assert batch.E_class is not None
-        assert batch.node_mask.shape[0] == 4  # batch size
-        assert batch.E_class.shape[-1] == 2  # edge categorical (present/absent)
+        # Wave 9.3 + 2026-05-07 sparse-default refactor: structure-only
+        # datasets emit ``GraphState`` (sparse) batches, with ``x_class``
+        # absent and ``edge_class`` populated. Batch size comes from the
+        # length of ``num_nodes_per_graph``.
+        assert batch.x_class is None
+        assert batch.edge_class is not None
+        assert batch.num_nodes_per_graph.shape[0] == 4  # batch size
+        assert batch.edge_class.shape[-1] == 2  # edge categorical (present/absent)
 
     def test_get_reference_graphs_returns_networkx(self, tmp_path: Path) -> None:
         dm = self._make_dm(tmp_path)

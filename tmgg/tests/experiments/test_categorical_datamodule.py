@@ -5,7 +5,9 @@ computation, round-trip fidelity, and size distribution interface all
 behave correctly.
 
 Internal storage is ``list[Data]`` (PyG sparse COO format). DataLoaders
-collate into dense ``GraphData`` batches at the batch boundary.
+now collate into sparse ``GraphState`` batches per the 2026-05-07
+sparse-default refactor; per-graph reference extraction returns
+``DenseGraphState`` (universal evaluation transport).
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from torch_geometric.data import Data
 from tmgg.data.data_modules.synthetic_categorical import (
     SyntheticCategoricalDataModule,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState, GraphState
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
 # -- Shared fixtures -------------------------------------------------------
@@ -130,27 +132,28 @@ class TestSetup:
 
 
 class TestDataloaders:
-    """Verify that DataLoaders yield properly collated GraphData batches."""
+    """Verify that DataLoaders yield properly collated sparse ``GraphState`` batches."""
 
     def test_train_batch_shape(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """A training batch should be a structure-only GraphData with correct shapes.
+        """A training batch should be a structure-only ``GraphState`` with correct shapes.
 
-        Wave 9.3: ``X_class`` is ``None``; ``E_class`` has shape
-        ``(bs, n, n, 2)`` and ``node_mask`` has shape ``(bs, n)``.
+        Sparse-default refactor: ``x_class`` is ``None`` (structure-only);
+        ``edge_class`` has shape ``(sum_E, 2)`` and ``num_nodes_per_graph``
+        carries the per-graph node count.
         """
-        batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.X_class is None
-        assert batch.E_class is not None
-        bs, n = batch.node_mask.shape
+        batch: GraphState = next(iter(small_dm.train_dataloader()))
+        assert batch.x_class is None
+        assert batch.edge_class is not None
+        bs = int(batch.num_nodes_per_graph.shape[0])
 
-        assert isinstance(batch, GraphData)
-        assert n == small_dm.num_nodes
-        assert batch.E_class.shape == (bs, n, n, 2)
+        assert isinstance(batch, GraphState)
+        # Every graph in this fixture has the same fixed size.
+        assert int(batch.num_nodes_per_graph[0].item()) == small_dm.num_nodes
+        assert batch.edge_class.shape[-1] == 2
         assert batch.y.shape == (bs, 0)
-        assert batch.node_mask.dtype == torch.bool
 
     def test_val_batch_no_error(
         self,
@@ -158,7 +161,7 @@ class TestDataloaders:
     ) -> None:
         """Validation dataloader should produce at least one batch."""
         batch = next(iter(small_dm.val_dataloader()))
-        assert isinstance(batch, GraphData)
+        assert isinstance(batch, GraphState)
 
     def test_test_batch_no_error(
         self,
@@ -166,17 +169,17 @@ class TestDataloaders:
     ) -> None:
         """Test dataloader should produce at least one batch."""
         batch = next(iter(small_dm.test_dataloader()))
-        assert isinstance(batch, GraphData)
+        assert isinstance(batch, GraphState)
 
     def test_collated_feature_dims(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Collated output should have de=2 edge classes (X_class=None per Wave 9.3)."""
-        batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.X_class is None
-        assert batch.E_class is not None
-        assert batch.E_class.shape[-1] == 2  # de
+        """Collated output should have de=2 edge classes (x_class=None for structure-only)."""
+        batch: GraphState = next(iter(small_dm.train_dataloader()))
+        assert batch.x_class is None
+        assert batch.edge_class is not None
+        assert batch.edge_class.shape[-1] == 2  # de
 
 
 # -- TestCategoricalBatches -------------------------------------------------
@@ -190,70 +193,60 @@ class TestCategoricalBatches:
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
         """Edge features should expose the binary categorical basis."""
-        batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.E_class is not None
-        assert batch.E_class.shape[-1] == 2
+        batch: GraphState = next(iter(small_dm.train_dataloader()))
+        assert batch.edge_class is not None
+        assert batch.edge_class.shape[-1] == 2
 
     def test_node_features_are_absent_for_structure_only_datasets(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Wave 9.3: synthetic structure-only batches carry X_class=None.
+        """Structure-only synthetic datasets carry ``x_class=None``.
 
         The spec forbids datasets emitting a degenerate node-present /
-        node-absent one-hot since it just re-encodes ``node_mask``; any
+        node-absent one-hot since it just re-encodes node presence; any
         architecture needing a per-node feature synthesises it
         internally.
         """
-        batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.X_class is None
+        batch: GraphState = next(iter(small_dm.train_dataloader()))
+        assert batch.x_class is None
 
     def test_edge_features_are_one_hot_on_real_edges(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Real off-diagonal edge categorical features should sum to one.
+        """Per-edge categorical features should sum to one along the class axis.
 
-        Diagonal positions are deliberately emitted as all-zero rows (see
-        ``GraphData.from_pyg_batch`` — mirrors upstream DiGress's
-        ``utils.encode_no_edge`` contract), so the one-hot sum invariant
-        only holds off the diagonal.
+        ``GraphState.edge_class`` carries one row per directed edge in
+        ``edge_index``; every such row must be a one-hot. Sparse layouts
+        do not store diagonal / inactive-pair entries, so the diagonal-
+        is-zero invariant is enforced by construction (no self-loops in
+        ``edge_index``).
         """
-        batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.E_class is not None
-        n = batch.node_mask.size(-1)
-        off_diag = ~torch.eye(n, dtype=torch.bool, device=batch.node_mask.device)
-        edge_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
-        edge_mask = edge_mask & off_diag.unsqueeze(0)
-        edge_sums = batch.E_class[edge_mask].sum(dim=-1)
+        batch: GraphState = next(iter(small_dm.train_dataloader()))
+        assert batch.edge_class is not None
+        edge_sums = batch.edge_class.sum(dim=-1)
         assert torch.allclose(edge_sums, torch.ones_like(edge_sums))
 
-        # Diagonal positions must be all-zero (upstream encode_no_edge
-        # equivalent). If this ever changes, the CE helpers would silently
-        # start including self-loops as valid targets — see BUG_REPORT.md.
-        diag_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
-        diag_mask = diag_mask & (~off_diag).unsqueeze(0)
-        diag_rows = batch.E_class[diag_mask]
-        assert (diag_rows == 0.0).all(), (
-            "E_class diagonal rows must be all-zero on valid nodes "
-            "(upstream parity). See GraphData.from_pyg_batch."
-        )
+        # Self-loop guard: ``GraphState.__post_init__`` rejects self-loops
+        # outright (see ``_check_sparse_invariants``). Asserting on
+        # ``edge_index`` here is belt-and-braces.
+        assert (batch.edge_index[0] != batch.edge_index[1]).all()
 
-    def test_node_presence_tracked_by_node_mask(
+    def test_node_presence_tracked_by_num_nodes_per_graph(
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Wave 9.3: ``node_mask`` is the single source of truth for node presence.
+        """``num_nodes_per_graph`` is the single source of truth for node presence.
 
-        The previous contract was that ``X_class[..., 1]`` marks every real
-        node with the present-node class. Since structure-only datasets
-        now emit ``X_class=None`` we instead verify ``node_mask`` carries
-        the same information — every synthesised graph has at least one
-        real node.
+        Sparse-default refactor: ``x_class`` is ``None`` for
+        structure-only datasets and the per-graph node count lives on
+        ``num_nodes_per_graph``. Every synthesised graph has at least
+        one real node.
         """
-        batch: GraphData = next(iter(small_dm.train_dataloader()))
-        assert batch.X_class is None
-        assert batch.node_mask.any(dim=-1).all()
+        batch: GraphState = next(iter(small_dm.train_dataloader()))
+        assert batch.x_class is None
+        assert (batch.num_nodes_per_graph > 0).all()
 
 
 # -- TestReferenceGraphs ----------------------------------------------------
@@ -266,10 +259,16 @@ class TestReferenceGraphs:
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Reference extraction returns per-graph GraphData (universal transport)."""
+        """Reference extraction returns per-graph ``DenseGraphState`` carriers.
+
+        Per ``docs/specs/2026-05-01-graphdata-eval-pipeline-minispec.md``
+        the universal evaluation transport format is dense per-graph
+        ``DenseGraphState``; the base datamodule densifies the sparse
+        loader output before slicing into single-graph batches.
+        """
         graphs = small_dm.get_reference_graphs("val", max_graphs=3)
         assert len(graphs) == 3
-        assert all(isinstance(gd, GraphData) for gd in graphs)
+        assert all(isinstance(gd, DenseGraphState) for gd in graphs)
         assert all(int(gd.node_mask.sum().item()) == 20 for gd in graphs)
 
 
@@ -288,8 +287,13 @@ class TestRoundTrip:
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Convert a single stored Data to dense GraphData and verify the
-        adjacency round-trip through ``to_binary_adjacency()``.
+        """Convert a single stored Data to dense and verify the adjacency
+        round-trip through ``dense_adjacency()``.
+
+        Uses ``DenseGraphState.from_pyg_batch`` for the dense fast path
+        (the sparse-default ``GraphData`` abstract base no longer carries
+        a ``from_pyg_batch`` factory; the dense and sparse concrete types
+        each have their own).
         """
         from typing import cast
 
@@ -299,11 +303,10 @@ class TestRoundTrip:
         assert small_dm._train_data is not None
         d = small_dm._train_data[0]
 
-        # Convert single Data to dense GraphData via batch of size 1
+        # Convert single Data to dense via batch of size 1
         batch = Batch.from_data_list(cast(list[BaseData], [d]))
-        g = GraphData.from_pyg_batch(batch)
+        g = DenseGraphState.from_pyg_batch(batch)
 
-        # Reconstruct adjacency via GraphData.to_binary_adjacency
         recovered_adj = g.dense_adjacency()
 
         # Build original adjacency from the one-hot E
@@ -316,8 +319,16 @@ class TestRoundTrip:
         self,
         small_dm: SyntheticCategoricalDataModule,
     ) -> None:
-        """Collated batch edge argmax should recover E[..., 1] at real positions."""
-        batch: GraphData = next(iter(small_dm.train_dataloader()))
+        """Densified train batch should roundtrip ``E_class[...,1]`` through
+        ``dense_adjacency()`` at every real (b, i, j) position.
+
+        The dataloader emits sparse ``GraphState`` batches now; we
+        densify locally for the dense-adjacency assertion.
+        """
+        sparse: GraphState = next(iter(small_dm.train_dataloader()))
+        from tmgg.data.datasets.graph_types import state_to_dense_sample
+
+        batch = state_to_dense_sample(sparse)
         recovered = batch.dense_adjacency()
 
         assert batch.E_class is not None

@@ -23,7 +23,11 @@ from torch import Tensor
 from tmgg.data.data_modules.synthetic_categorical import (
     SyntheticCategoricalDataModule,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+)
 from tmgg.diffusion.noise_process import CategoricalNoiseProcess
 from tmgg.diffusion.sampler import CategoricalSampler
 from tmgg.diffusion.schedule import NoiseSchedule
@@ -418,16 +422,24 @@ class TestDiGressAlignment:
         _attach_trainer_and_setup(lightning_module, datamodule)
         batch = next(iter(datamodule.train_dataloader()))
 
-        # Create a batch with some padding: zero out last 2 nodes' masks.
-        # Wave 9.3: structure-only batches carry X_class=None; propagate that
-        # through to exercise the synthesis path inside the loss module.
-        batch_padded = GraphData(
-            y=batch.y,
-            node_mask=batch.node_mask.clone(),
-            X_class=batch.X_class.clone() if batch.X_class is not None else None,
-            E_class=batch.E_class.clone() if batch.E_class is not None else None,
+        # Create a batch with some padding by shrinking num_nodes_per_graph.
+        # Wave 9.3 + 2026-05-07 sparse-default refactor: structure-only
+        # batches carry x_class=None on the sparse carrier; we densify
+        # locally for the loss module which still consumes dense state.
+        from tmgg.data.datasets.graph_types import state_to_dense_sample
+
+        dense_batch = state_to_dense_sample(batch)
+        new_counts = (dense_batch.num_nodes_per_graph - 2).clamp(min=0).long()
+        batch_padded = DenseGraphState(
+            num_nodes_per_graph=new_counts,
+            y=dense_batch.y,
+            X_class=dense_batch.X_class.clone()
+            if dense_batch.X_class is not None
+            else None,
+            E_class=dense_batch.E_class.clone()
+            if dense_batch.E_class is not None
+            else None,
         )
-        batch_padded.node_mask[:, -2:] = 0  # Mark last 2 nodes as padding
 
         # Get predictions
         t_int = torch.randint(1, _T + 1, (batch.node_mask.shape[0],))
@@ -437,12 +449,13 @@ class TestDiGressAlignment:
 
         loss1 = lightning_module._compute_loss(pred, batch_padded)  # pyright: ignore[reportUnknownVariableType]
 
-        # Corrupt padding positions in prediction — should NOT affect loss
-        pred_corrupted = GraphData(
-            # pyright: ignore[reportUnknownMemberType]
-            # pyright: ignore[reportUnknownMemberType]
+        # Corrupt padding positions in prediction — should NOT affect loss.
+        # ``pred`` is a dense distribution carrier (model output); we
+        # reconstruct it with the same num_nodes_per_graph as the padded
+        # target so loss masking remains consistent.
+        pred_corrupted = DenseGraphDistribution(
+            num_nodes_per_graph=batch_padded.num_nodes_per_graph,
             y=pred.y,  # pyright: ignore[reportUnknownMemberType]
-            node_mask=pred.node_mask,  # pyright: ignore[reportUnknownMemberType]
             X_class=pred.X_class.clone(),  # pyright: ignore[reportUnknownMemberType]
             E_class=pred.E_class.clone(),  # pyright: ignore[reportUnknownMemberType]
         )
