@@ -164,8 +164,10 @@ class TestTrainingPipeline:
             noise_levels=minimal_config.noise_levels,
         )
 
-        # Mock self.log to avoid MisconfigurationException
-        batch = binary_graphdata(sample_adjacency_matrices)
+        # Mock self.log to avoid MisconfigurationException.
+        # Sparse-default refactor: training_step expects a sparse GraphState
+        # batch; binary_graphdata returns dense, so flip at the boundary.
+        batch = binary_graphdata(sample_adjacency_matrices).to_sparse()
         with patch.object(module, "log", return_value=None):
             loss = module.training_step(batch, batch_idx=0)
 

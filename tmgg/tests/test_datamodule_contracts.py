@@ -32,8 +32,13 @@ from tmgg.data.datasets.graph_types import GraphData
 
 
 def _graphdata_to_numpy(batch: GraphData, index: int = 0) -> np.ndarray:
-    """Extract one graph from a dense GraphData batch."""
-    num_nodes = int(batch.node_mask[index].sum().item())
+    """Extract one graph from a (sparse-default) GraphData batch.
+
+    Post the sparse-default refactor the datamodule emits ``GraphState``
+    (sparse), which has no ``node_mask`` attribute. ``num_nodes_per_graph``
+    is the universal source of truth on every concrete carrier.
+    """
+    num_nodes = int(batch.num_nodes_per_graph[index].item())
     adj = batch.dense_adjacency()[index, :num_nodes, :num_nodes]
     return adj.cpu().numpy()
 
@@ -48,10 +53,12 @@ def _first_reference_graph(dm: SingleGraphDataModule, stage: str) -> np.ndarray:
 
     Post the 2026-05-01 universal-transport refactor get_reference_graphs
     yields list[GraphData]; convert at the leaf via to_networkx() to keep
-    downstream nx.to_numpy_array assertions intact.
+    downstream nx.to_numpy_array assertions intact. Each entry is itself
+    a batched dense carrier with B==1, so we explicitly pass
+    ``batch_index=0``.
     """
     gd = dm.get_reference_graphs(stage, max_graphs=1)[0]
-    return np.asarray(nx.to_numpy_array(gd.to_networkx()), dtype=np.float32)
+    return np.asarray(nx.to_numpy_array(gd.to_networkx(0)), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -408,15 +415,21 @@ class TestSyntheticCategoricalDataModuleContract:
 
         batch = next(iter(dm.train_dataloader()))
 
-        # Wave 9.3: structure-only SBM data emits X_class=None. E_class
-        # holds the two-channel [no-edge, edge] one-hot; node_mask marks
-        # real vs padded positions.
-        assert batch.X_class is None
-        assert batch.E_class is not None
-        assert batch.E_class.shape == (4, 16, 16, 2)  # (bs, n, n, de)
-        assert batch.y.shape == (4, 0)  # (bs, 0) — no global features
-        assert batch.node_mask.shape == (4, 16)  # (bs, n)
-        assert batch.node_mask.dtype == torch.bool
+        # Sparse-default refactor: dataloader emits GraphState. Convert to
+        # dense for the structural assertions; the no-edge fill keeps the
+        # categorical [no-edge, edge] one-hot semantics that this test
+        # codifies.
+        no_edge_fill = torch.tensor([1.0, 0.0])
+        dense = batch.to_dense(edge_class_fill=no_edge_fill)
+        # Structure-only SBM data emits X_class=None. E_class holds the
+        # two-channel [no-edge, edge] one-hot; node_mask marks real vs
+        # padded positions.
+        assert dense.X_class is None
+        assert dense.E_class is not None
+        assert dense.E_class.shape == (4, 16, 16, 2)  # (bs, n, n, de)
+        assert dense.y.shape == (4, 0)  # (bs, 0) — no global features
+        assert dense.node_mask.shape == (4, 16)  # (bs, n)
+        assert dense.node_mask.dtype == torch.bool
 
     def test_train_batch_contract(self) -> None:
         """Train batches expose valid one-hot categorical node and edge features.
@@ -436,20 +449,24 @@ class TestSyntheticCategoricalDataModuleContract:
         dm.setup()
 
         batch = next(iter(dm.train_dataloader()))
-        # Wave 9.3: structure-only datasets emit X_class=None. node_mask
-        # alone carries which positions are real.
-        assert batch.X_class is None
-        assert batch.E_class is not None
+        # Sparse-default refactor: dataloader emits GraphState; convert to
+        # dense for the categorical structural assertions. Structure-only
+        # datasets emit X_class=None; node_mask carries which positions
+        # are real.
+        no_edge_fill = torch.tensor([1.0, 0.0])
+        dense = batch.to_dense(edge_class_fill=no_edge_fill)
+        assert dense.X_class is None
+        assert dense.E_class is not None
         # Off-diagonal positions must be valid one-hot; the diagonal is
         # emitted as all-zero (upstream encode_no_edge parity — see
         # ``GraphData.from_pyg_batch``).
-        n = batch.node_mask.size(-1)
-        off_diag = ~torch.eye(n, dtype=torch.bool, device=batch.node_mask.device)
-        edge_mask = batch.node_mask.unsqueeze(1) & batch.node_mask.unsqueeze(2)
+        n = dense.node_mask.size(-1)
+        off_diag = ~torch.eye(n, dtype=torch.bool, device=dense.node_mask.device)
+        edge_mask = dense.node_mask.unsqueeze(1) & dense.node_mask.unsqueeze(2)
         edge_mask = edge_mask & off_diag.unsqueeze(0)
-        edge_sums = batch.E_class[edge_mask].sum(dim=-1)
+        edge_sums = dense.E_class[edge_mask].sum(dim=-1)
 
-        assert batch.E_class.shape[-1] == 2
+        assert dense.E_class.shape[-1] == 2
         assert torch.allclose(edge_sums, torch.ones_like(edge_sums))
 
     def test_reference_graphs_contract(self) -> None:
@@ -464,8 +481,11 @@ class TestSyntheticCategoricalDataModuleContract:
         graphs = dm.get_reference_graphs("val", max_graphs=3)
         assert len(graphs) == 3
         # Per 2026-05-01 universal-transport refactor get_reference_graphs
-        # returns GraphData; node count is read off node_mask directly.
-        assert all(int(gd.node_mask.sum().item()) == 16 for gd in graphs)
+        # returns GraphData; per-graph node count lives on
+        # num_nodes_per_graph (universal across the type grid).
+        assert all(
+            int(gd.num_nodes_per_graph.sum().item()) == 16 for gd in graphs
+        )
 
     def test_er_lifecycle(self) -> None:
         """Non-SBM graph types should also produce valid categorical data."""
@@ -481,10 +501,13 @@ class TestSyntheticCategoricalDataModuleContract:
         dm.setup()
 
         batch = next(iter(dm.train_dataloader()))
-        # Wave 9.3: structure-only datasets emit X_class=None.
-        assert batch.X_class is None
-        assert batch.E_class is not None
-        assert batch.E_class.shape[1:] == (12, 12, 2)
+        # Sparse-default refactor: dataloader emits GraphState; convert
+        # to dense for the categorical edge-shape assertion.
+        no_edge_fill = torch.tensor([1.0, 0.0])
+        dense = batch.to_dense(edge_class_fill=no_edge_fill)
+        assert dense.X_class is None
+        assert dense.E_class is not None
+        assert dense.E_class.shape[1:] == (12, 12, 2)
 
 
 # ---------------------------------------------------------------------------

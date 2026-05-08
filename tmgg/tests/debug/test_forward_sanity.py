@@ -43,7 +43,7 @@ class TestSpectralModelsForwardSanity:
     def test_linear_pe_produces_nonzero_logits(self, identity_data):
         """Verify LinearPE doesn't output uniform edge probabilities."""
         model = LinearPE(k=8, max_nodes=32)
-        result = model(identity_data)
+        result = model(identity_data, output_dense=True)
 
         # Edge-channel logits should not be exactly zero
         edge_logits = legacy_edge_scalar(result)
@@ -55,7 +55,7 @@ class TestSpectralModelsForwardSanity:
     def test_filter_bank_produces_nonzero_logits(self, identity_data):
         """Verify GraphFilterBank doesn't output uniform edge probabilities."""
         model = GraphFilterBank(k=8, polynomial_degree=5)
-        result = model(identity_data)
+        result = model(identity_data, output_dense=True)
 
         edge_logits = legacy_edge_scalar(result)
         assert (
@@ -65,7 +65,7 @@ class TestSpectralModelsForwardSanity:
     def test_self_attention_produces_nonzero_logits(self, identity_data):
         """Verify SelfAttentionDenoiser doesn't output uniform edge probabilities."""
         model = SelfAttentionDenoiser(k=8, d_k=64)
-        result = model(identity_data)
+        result = model(identity_data, output_dense=True)
 
         edge_logits = legacy_edge_scalar(result)
         assert (
@@ -84,7 +84,7 @@ class TestSpectralModelsForwardSanity:
         """Verify loss gradients reach model parameters."""
         model = model_class(**kwargs)
 
-        result = model(identity_data)
+        result = model(identity_data, output_dense=True)
         # Use only edge-probability channel: both channels of 2-class encoding
         # sum to 1.0 per position, so E.sum() is constant with zero gradient.
         loss = legacy_edge_scalar(result).sum()
@@ -123,7 +123,7 @@ class TestBaselineModelsForwardSanity:
         With random input, output should be non-trivial.
         """
         model = LinearBaseline(max_nodes=32)
-        result = model(random_data)
+        result = model(random_data, output_dense=True)
 
         edge_logits = legacy_edge_scalar(result)
         assert (
@@ -133,7 +133,7 @@ class TestBaselineModelsForwardSanity:
     def test_mlp_baseline_produces_nonzero_logits(self, random_data):
         """Verify MLPBaseline doesn't output uniform edge probabilities."""
         model = MLPBaseline(max_nodes=32, hidden_dim=256)
-        result = model(random_data)
+        result = model(random_data, output_dense=True)
 
         edge_logits = legacy_edge_scalar(result)
         assert (
@@ -151,7 +151,7 @@ class TestBaselineModelsForwardSanity:
         """Verify baseline model gradients flow properly."""
         model = model_class(**kwargs)
 
-        result = model(random_data)
+        result = model(random_data, output_dense=True)
         # Use only edge-probability channel to avoid constant-sum gradient trap.
         loss = legacy_edge_scalar(result).sum()
         loss.backward()

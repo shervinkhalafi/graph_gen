@@ -27,20 +27,24 @@ import torch
 from tmgg.data.data_modules.single_graph_data_module import (
     SingleGraphDataModule,
 )
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphData, GraphState
 
 
 def _graphdata_to_numpy(batch: GraphData, index: int = 0) -> np.ndarray:
-    """Extract one graph from a dense batch.
+    """Extract one graph from a sparse-default batch.
 
     Rationale
     ---------
     The cleaned datamodule contract exposes split access through
     dataloaders and ``get_reference_graphs()``. Tests reconstruct dense
     adjacency matrices from those boundaries instead of relying on the
-    deleted graph accessors.
+    deleted graph accessors. Post sparse-default refactor the datamodule
+    yields ``GraphState``; ``dense_adjacency()`` is defined on every
+    concrete carrier and reads ``num_nodes_per_graph`` for per-graph
+    sizing without going through ``node_mask`` (which sparse types do
+    not carry).
     """
-    num_nodes = int(batch.node_mask[index].sum().item())
+    num_nodes = int(batch.num_nodes_per_graph[index].item())
     adj = batch.dense_adjacency()[index, :num_nodes, :num_nodes]
     return adj.cpu().numpy()
 
@@ -55,10 +59,12 @@ def _first_reference_graph(dm: SingleGraphDataModule, stage: str) -> np.ndarray:
 
     Per the 2026-05-01 universal-transport refactor get_reference_graphs
     returns list[GraphData]; convert at the leaf via to_networkx() to
-    keep the downstream nx.to_numpy_array assertion intact.
+    keep the downstream nx.to_numpy_array assertion intact. Each list
+    entry is itself a batched dense carrier with B==1, so we explicitly
+    select ``batch_index=0`` for the conversion.
     """
     gd = dm.get_reference_graphs(stage, max_graphs=1)[0]
-    return np.asarray(nx.to_numpy_array(gd.to_networkx()), dtype=np.float32)
+    return np.asarray(nx.to_numpy_array(gd.to_networkx(0)), dtype=np.float32)
 
 
 class TestSyntheticGraphs:

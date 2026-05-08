@@ -180,7 +180,10 @@ class TestIssues4And5NodeVarGNNRedesign:
         model = NodeVarGNN(num_layers=1, num_terms=2, feature_dim=5)
         A = torch.eye(10).unsqueeze(0)
 
-        result = model(edge_scalar_graphdata(A))
+        # Sparse-default refactor: ask for dense output so the legacy edge
+        # scalar helper (which reads E_feat / E_class on a dense carrier)
+        # has fields to read from.
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
         assert isinstance(result, GraphData)
         assert legacy_edge_scalar(result).shape == (1, 10, 10)
@@ -201,7 +204,7 @@ class TestIssue6EigenvaluePowerNormalization:
         A = (A + A.transpose(-1, -2)) / 2
         A = A * 10  # Scale up eigenvalues
 
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
         out_e = result.E_feat if result.E_feat is not None else result.E_class
         assert out_e is not None
@@ -251,7 +254,7 @@ class TestIssue8SigmoidConsistency:
         A = torch.randn(2, num_nodes, num_nodes)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
         assert isinstance(result, GraphData)
         logits = legacy_edge_scalar(result)
@@ -264,7 +267,7 @@ class TestIssue8SigmoidConsistency:
         )
         A = torch.eye(8).unsqueeze(0)
 
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
 
         assert isinstance(result, GraphData)
         assert legacy_edge_scalar(result).shape == (1, 8, 8)
@@ -320,7 +323,7 @@ class TestIssue10ResidualShapeAssertion:
         A = torch.eye(8).unsqueeze(0)
 
         # Should work without error
-        result = model(edge_scalar_graphdata(A))
+        result = model(edge_scalar_graphdata(A), output_dense=True)
         assert isinstance(result, GraphData)
         assert legacy_edge_scalar(result).shape == (1, 8, 8)
 
