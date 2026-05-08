@@ -343,10 +343,16 @@ def run_validation(cfg: ValidationConfig) -> ValidationResult:
         adjacency_to_networkx,
     )
 
+    # Sparse-default refactor (2026-05-07): the dataloader emits a sparse
+    # ``GraphState`` whose ``binarised_adjacency`` was removed; densify
+    # explicitly for the dense-indexed iteration below.
+    from tmgg.data.datasets.graph_types import state_to_dense_sample
+
     ref_graphs: list[nx.Graph[Any]] = []
     for batch in dm.val_dataloader():
-        adj_batch = batch.binarised_adjacency()
-        node_mask = batch.node_mask
+        dense_batch = state_to_dense_sample(batch)
+        adj_batch = dense_batch.dense_adjacency()
+        node_mask = dense_batch.node_mask
         for i in range(adj_batch.size(0)):
             n = int(node_mask[i].sum().item())
             adj_np = (adj_batch[i, :n, :n] > 0).cpu().numpy().astype("float32")

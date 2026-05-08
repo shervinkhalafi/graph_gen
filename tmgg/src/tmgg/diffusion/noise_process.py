@@ -323,10 +323,20 @@ def _read_categorical_x(data: GraphData, x_classes: int) -> Tensor:
 
     ``x_classes`` is required (no default): every caller passes its
     authoritative C_x explicitly. See spec §5.2.
+
+    Accepts any of the four concrete carriers (sparse / dense × state /
+    distribution). Sparse carriers densify on the fly so structure-only
+    synthesis can reach for ``data.node_mask`` (a dense-only cached
+    property) and the returned tensor matches the ``(B, n_max, C_x)``
+    dense layout every consumer of this helper expects.
     """
+    if isinstance(data, GraphState):
+        data = state_to_dense_sample(data)
+    elif isinstance(data, GraphDistribution):
+        data = data.to_dense()
     if data.X_class is not None:
         return data.X_class
-    return GraphData.synth_structure_only_x_class(data.node_mask, x_classes)
+    return DenseGraphState.synth_structure_only_x_class(data.node_mask, x_classes)
 
 
 def _read_categorical_e(data: GraphData, e_classes: int) -> Tensor:
@@ -338,7 +348,16 @@ def _read_categorical_e(data: GraphData, e_classes: int) -> Tensor:
     asymmetry. ``e_classes`` is required (no default) so the contract
     is explicit at every call site; see
     ``docs/specs/2026-04-27-x-class-synth-unification-spec.md §5.2``.
+
+    Accepts any of the four concrete carriers (sparse / dense × state /
+    distribution). Sparse carriers densify on the fly so the returned
+    tensor matches the ``(B, n_max, n_max, C_e)`` dense layout every
+    consumer of this helper expects.
     """
+    if isinstance(data, GraphState):
+        data = state_to_dense_sample(data)
+    elif isinstance(data, GraphDistribution):
+        data = data.to_dense()
     if data.E_class is None:
         raise ValueError(
             "_read_categorical_e: data.E_class is None; categorical edge "
@@ -1142,7 +1161,18 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         return t.float() / self.timesteps
 
     def model_output_to_posterior_parameter(self, model_output: GraphData) -> GraphData:
-        """Convert model logits into categorical probabilities."""
+        """Convert model logits into categorical probabilities.
+
+        Accepts any of the four concrete carriers; sparse inputs densify
+        on the fly so the trailing ``node_mask`` lookup (a dense-only
+        cached property) and the assembled ``DenseGraphState`` output
+        match the dense ``(B, n_max, ...)`` layout downstream callers
+        expect.
+        """
+        if isinstance(model_output, GraphState):
+            model_output = state_to_dense_sample(model_output)
+        elif isinstance(model_output, GraphDistribution):
+            model_output = model_output.to_dense()
         x_logits = _read_categorical_x(model_output, x_classes=self.x_classes)
         e_logits = _read_categorical_e(model_output, e_classes=self.e_classes)
         return _categorical_graphdata(
@@ -1286,7 +1316,15 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         Non-declared continuous fields (``X_feat`` / ``E_feat``) survive
         the call unchanged so composition with a Gaussian process on
         disjoint fields (Wave 2.4) does not drop their payload.
+
+        Accepts sparse (``GraphState``) or dense (``DenseGraphState``)
+        inputs; densifies at entry so the internal logic stays in the
+        dense ``(B, n_max, ...)`` layout DiGress was written against.
+        ``data.replace(X_class=..., E_class=...)`` and ``data.node_mask``
+        below are both dense-only operations.
         """
+        if isinstance(data, GraphState):
+            data = state_to_dense_sample(data)
         x_limit, e_limit, _ = self._stationary_distribution()
         x_class = _read_categorical_x(data, x_classes=self.x_classes)
         e_class = _read_categorical_e(data, e_classes=self.e_classes)
@@ -1333,6 +1371,13 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
             Posterior probability distributions with the same dense graph
             extents as ``z_t``.
         """
+        # The Bayes-rule body below operates in dense layout (the (B, n, K)
+        # / (B, n, n, K) tensors and ``z_t.node_mask`` are dense-only).
+        # Sparse callers densify at entry; dense inputs pass through.
+        if isinstance(z_t, GraphState):
+            z_t = state_to_dense_sample(z_t)
+        if isinstance(x0_param, GraphState):
+            x0_param = state_to_dense_sample(x0_param)
         x_limit, e_limit, _ = self._stationary_distribution()
 
         beta_t = self.noise_schedule(t_int=t)  # (bs,)
@@ -1424,6 +1469,13 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
         Returns posterior probability tensors over ``z_s`` with the same
         graph extents as ``z_t``.
         """
+        # The contraction below operates in dense layout (the (B, n, K)
+        # / (B, n, n, K) tensors and ``z_t.node_mask`` are dense-only).
+        # Sparse callers densify at entry; dense inputs pass through.
+        if isinstance(z_t, GraphState):
+            z_t = state_to_dense_sample(z_t)
+        if isinstance(x0_probs, GraphState):
+            x0_probs = state_to_dense_sample(x0_probs)
         x_limit, e_limit, _ = self._stationary_distribution()
 
         beta_t = self.noise_schedule(t_int=t)

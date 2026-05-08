@@ -35,9 +35,11 @@ from tmgg.data.datasets.graph_data_fields import (
     FieldName,
 )
 from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
     DenseGraphState,
     GraphData,
     GraphState,
+    state_to_dense_sample,
 )
 from tmgg.diffusion.collectors import DiffusionLikelihoodCollector, StepMetricCollector
 from tmgg.diffusion.noise_process import (
@@ -119,6 +121,55 @@ def _no_edge_fill_for(state: GraphState) -> torch.Tensor | None:
     return fill
 
 
+def _dense_to_edge_scalar(
+    data: GraphData, *, source: str
+) -> torch.Tensor:
+    """Return a dense ``(B, n_max, n_max)`` scalar adjacency from a dense carrier.
+
+    ``DenseGraphState`` exposes ``to_edge_scalar`` directly. The
+    distribution counterpart ``DenseGraphDistribution`` does not (its
+    type contract is "distribution-typed content"; ``to_edge_scalar``
+    lives only on the state side per ``graph_types.py``). The
+    distribution and state carriers however share identical edge tensor
+    shapes -- ``E_class: (B, n_max, n_max, d_ec)`` and
+    ``E_feat: (B, n_max, n_max, d_ef)`` -- so the channel-zero / squeeze
+    reduction is the same operation regardless of carrier semantics.
+
+    Sparse carriers raise: convert at the call site via
+    ``state_to_dense_sample`` or request ``output_dense=True`` from the
+    model.
+    """
+    if isinstance(data, DenseGraphState):
+        return data.to_edge_scalar(source="feat" if source == "feat" else "class")
+    if not isinstance(data, DenseGraphDistribution):
+        raise TypeError(
+            "_dense_to_edge_scalar() requires a dense carrier "
+            "(DenseGraphState or DenseGraphDistribution); "
+            f"got {type(data).__name__}. Convert at the call site."
+        )
+    if source == "feat":
+        if data.E_feat is None:
+            raise ValueError(
+                "_dense_to_edge_scalar(source='feat') requires E_feat to be "
+                "populated; got None."
+            )
+        e = data.E_feat
+        edge_scalar = e.squeeze(-1) if e.shape[-1] == 1 else e[..., 0]
+    else:
+        if data.E_class is None:
+            raise ValueError(
+                "_dense_to_edge_scalar(source='class') requires E_class to be "
+                "populated; got None."
+            )
+        if data.E_class.shape[-1] > 1:
+            edge_scalar = 1.0 - data.E_class[..., 0]
+        else:
+            edge_scalar = data.E_class[..., 0]
+    nm = data.node_mask
+    mask2d = nm.unsqueeze(-1) * nm.unsqueeze(-2)
+    return edge_scalar * mask2d.to(edge_scalar.dtype)
+
+
 def _normalize_visualization_config(
     visualization: dict[str, Any] | None,
 ) -> dict[str, bool | int]:
@@ -196,7 +247,7 @@ def _read_field(data: GraphData, field: FieldName, x_classes: int) -> torch.Tens
                 "DiffusionModule._read_field: neither E_feat nor E_class is "
                 "populated; cannot derive a continuous edge view."
             )
-        return data.to_edge_scalar(source="class").unsqueeze(-1)
+        return _dense_to_edge_scalar(data, source="class").unsqueeze(-1)
     if field in ("y_class", "y_feat"):
         # Graph-level fields share the underlying ``y`` tensor on
         # ``GraphData`` (shape ``(bs, dy)``). The split between
@@ -240,8 +291,8 @@ def _continuous_target_edge_state(data: GraphData) -> torch.Tensor:
     the loss compares semantically equivalent dense states.
     """
     if data.E_feat is not None:
-        return data.to_edge_scalar(source="feat")
-    return data.to_edge_scalar(source="class")
+        return _dense_to_edge_scalar(data, source="feat")
+    return _dense_to_edge_scalar(data, source="class")
 
 
 def _categorical_reconstruction_log_prob(
@@ -257,6 +308,13 @@ def _categorical_reconstruction_log_prob(
     callers pass ``x_classes`` / ``e_classes`` from the noise process so
     the synthesised side has compatible shapes with the populated side.
     """
+    # ``node_mask`` is a dense-only cached property; sparse callers
+    # densify here so the masking that follows operates on the
+    # ``(B, n_max, ...)`` layout the categorical helpers below return.
+    if isinstance(clean, GraphState):
+        clean = state_to_dense_sample(clean)
+    if isinstance(pred_probs, GraphState):
+        pred_probs = state_to_dense_sample(pred_probs)
     node_mask = clean.node_mask
     inv = ~node_mask
     inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)
@@ -761,9 +819,9 @@ class DiffusionModule(BaseGraphModule):
         if self._train_loss_discrete is None:
             # Continuous path: single ``edge_state`` field, dense MSE/BCE.
             if pred.E_feat is not None:
-                pred_edge_state = pred.to_edge_scalar(source="feat")
+                pred_edge_state = _dense_to_edge_scalar(pred, source="feat")
             else:
-                pred_edge_state = pred.to_edge_scalar(source="class")
+                pred_edge_state = _dense_to_edge_scalar(pred, source="class")
             target_edge_state = _continuous_target_edge_state(target).float()
             # Dense per-position squared error → per-graph mean over the
             # masked off-diagonal positions. Matches ``masked_edge_mse``
@@ -1433,9 +1491,9 @@ class DiffusionModule(BaseGraphModule):
         """
         if self._train_loss_discrete is None:
             if pred.E_feat is not None:
-                pred_edge_state = pred.to_edge_scalar(source="feat")
+                pred_edge_state = _dense_to_edge_scalar(pred, source="feat")
             else:
-                pred_edge_state = pred.to_edge_scalar(source="class")
+                pred_edge_state = _dense_to_edge_scalar(pred, source="class")
             target_edge_state = _continuous_target_edge_state(target)
             return {
                 "edge_state": self.criterion(pred_edge_state, target_edge_state.float())
@@ -1539,8 +1597,10 @@ class DiffusionModule(BaseGraphModule):
                 f"_compute_reconstruction requires CategoricalNoiseProcess, "
                 f"got {type(self.noise_process).__name__}"
             )
-        bs = int(batch.node_mask.shape[0])
-        device = batch.node_mask.device
+        # ``node_mask`` lives only on the dense carriers; ``num_nodes_per_graph``
+        # is on the abstract base and works for both sparse and dense.
+        bs = int(batch.num_nodes_per_graph.shape[0])
+        device = batch.num_nodes_per_graph.device
 
         t_int = torch.ones(bs, dtype=torch.long, device=device)
         s_int = torch.zeros_like(t_int)
@@ -1582,8 +1642,10 @@ class DiffusionModule(BaseGraphModule):
                 f"_compute_reconstruction_upstream_style requires "
                 f"CategoricalNoiseProcess, got {type(self.noise_process).__name__}"
             )
-        bs = int(batch.node_mask.shape[0])
-        device = batch.node_mask.device
+        # ``node_mask`` lives only on the dense carriers; ``num_nodes_per_graph``
+        # is on the abstract base and works for both sparse and dense.
+        bs = int(batch.num_nodes_per_graph.shape[0])
+        device = batch.num_nodes_per_graph.device
 
         # Upstream samples z_0 by drawing from x_0 @ Q_0; ``forward_sample``
         # at t=0 does exactly that (forward noising at t=0 is the Q_0
@@ -2030,9 +2092,14 @@ class DiffusionModule(BaseGraphModule):
                 # build_validation_visualizations is nx-native (spring
                 # layout, networkx draw helpers). Convert at the leaf
                 # via GraphData.to_networkx() — cheap and lossless.
+                # Both ``refs`` (per-graph batched ``DenseGraphState`` from
+                # ``get_reference_graphs``) and ``generated_graphs``
+                # (per-graph sparse ``GraphState`` from ``sampler.sample``)
+                # carry a leading batch dim of 1, so ``batch_index=0``
+                # selects the single graph in either carrier.
                 figures = build_validation_visualizations(
-                    refs=[g.to_networkx() for g in refs],
-                    generated=[g.to_networkx() for g in generated_graphs],
+                    refs=[g.to_networkx(batch_index=0) for g in refs],
+                    generated=[g.to_networkx(batch_index=0) for g in generated_graphs],
                     num_samples=int(self.visualization["num_samples"]),
                 )
                 log_figures(
