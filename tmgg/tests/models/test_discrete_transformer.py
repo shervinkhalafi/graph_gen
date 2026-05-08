@@ -303,7 +303,8 @@ class TestHiddenEdgeDiagonalParity:
         _ = model(data)
         assert isinstance(capture, _CaptureTransformerLayer)
         assert capture.captured_E is not None
-        n = int(data.E_class.shape[1])  # type: ignore[union-attr]
+        assert data.E_class is not None
+        n = int(data.E_class.shape[1])
         diag = torch.arange(n)
         assert torch.count_nonzero(capture.captured_E[:, diag, diag, :]) == 0
 
@@ -316,7 +317,8 @@ class TestHiddenEdgeDiagonalParity:
         _ = model(data)
         assert isinstance(capture, _CaptureTransformerLayer)
         assert capture.captured_E is not None
-        n = int(data.E_class.shape[1])  # type: ignore[union-attr]
+        assert data.E_class is not None
+        n = int(data.E_class.shape[1])
         diag = torch.arange(n)
         real_node_diag = capture.captured_E[:, diag, diag, :][data.node_mask]
         assert torch.count_nonzero(real_node_diag) > 0

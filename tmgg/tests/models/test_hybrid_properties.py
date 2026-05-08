@@ -143,9 +143,12 @@ class MockEmbeddingModel(nn.Module):
         self.weight = nn.Parameter(torch.randn(feature_dim, feature_dim))
 
     def embeddings(
-        self, data: DenseGraphState
+        self, data: GraphData
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute embeddings from graph data."""
+        # The hybrid model coerces to DenseGraphState before invoking
+        # the EmbeddingProvider protocol; assert the concrete type here.
+        assert isinstance(data, DenseGraphState)
         A = legacy_edge_scalar(data)
         batch_size, num_nodes, _ = A.shape
         # Use input A to maintain gradient connection
