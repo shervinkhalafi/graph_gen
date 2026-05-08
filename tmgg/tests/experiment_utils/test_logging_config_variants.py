@@ -97,8 +97,15 @@ class TestLoggerAndCallbackVariants:
         config_name: str,
         overrides: list[str],
     ) -> None:
-        """Critical configs should fully resolve without disabling logger."""
+        """Critical configs should fully resolve without disabling logger.
+
+        Some logger templates (notably ``discrete_wandb.yaml``) interpolate
+        ``${run_id}`` which the orchestrator injects at runtime; we set one
+        explicitly here so OmegaConf's eager resolve does not trip on it.
+        """
         cfg = _compose_config(tmp_path, config_name, overrides=overrides)
+        with open_dict(cfg):
+            cfg.run_id = "test-resolve-run-id"
         resolved = OmegaConf.to_container(cfg, resolve=True)
         assert isinstance(resolved, dict)
         assert "logger" in resolved
@@ -144,14 +151,13 @@ class TestLoggerAndCallbackVariants:
         assert len(cfg.logger) == 2
         assert list(cfg.logger[0].keys()) == ["wandb"]
         assert list(cfg.logger[1].keys()) == ["csv"]
-        # The wandb.name template at base/logger/discrete_wandb.yaml:6 reads
-        # ``${experiment_name}_T${model.noise_schedule.timesteps}_n${data.num_nodes}_${data.graph_type}``.
-        # ``base_config_discrete_diffusion_generative`` selects the
-        # ``discrete_default`` model variant whose ``noise_schedule.timesteps``
-        # is 500. The 2026-04-22 SBM-default flip in commit edf3c19a moved
-        # ``discrete_sbm_official.yaml`` to 1000 but left ``discrete_default``
-        # at 500, so this assertion still pins T500.
-        assert cfg.logger[0].wandb.name == "discrete_diffusion_T500_n20_sbm"
+        # The discrete wandb logger now sets ``name: ${run_id}`` (post the
+        # 2026-05-01 wandb-run-id sidecar refactor at commit 44c1d5fd) so
+        # the resolved name depends on a runtime-injected ``run_id``. We
+        # set one explicitly here to exercise the template.
+        with open_dict(cfg):
+            cfg.run_id = "discrete-smoke-test"
+        assert cfg.logger[0].wandb.name == "discrete-smoke-test"
 
     @pytest.mark.parametrize(
         "config_name",
@@ -323,8 +329,16 @@ class TestCreateLoggers:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """Missing W&B credentials should still leave the CSV mirror active."""
+        """Missing W&B credentials should still leave the CSV mirror active.
+
+        ``create_loggers`` now raises ``OSError`` when W&B credentials are
+        missing unless ``allow_no_wandb=true`` is set on the config. We
+        opt into the degrade-to-warning path explicitly so the CSV mirror
+        survives in environments without ``WANDB_API_KEY``.
+        """
         cfg = _compose_config(tmp_path, "base_config_spectral_arch")
+        with open_dict(cfg):
+            cfg.allow_no_wandb = True
         captured_csv: list[dict[str, Any]] = []
 
         class DummyCSVLogger:
