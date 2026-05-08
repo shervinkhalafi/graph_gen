@@ -77,7 +77,7 @@ class SpectralDenoiser(GraphModel, ABC):
     Positional Encoding." ICLR 2025. https://github.com/ehejin/Pearl-PE
     """
 
-    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_in: ClassVar[type] = DenseGraphDistribution
     _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
@@ -164,8 +164,8 @@ class SpectralDenoiser(GraphModel, ABC):
             Denoised graph distribution in the requested layout, with the
             prediction in the configured edge field.
         """
-        d = _coerce_input_to(data, target=DenseGraphState)
-        assert isinstance(d, DenseGraphState)
+        d = _coerce_input_to(data, target=DenseGraphDistribution)
+        assert isinstance(d, DenseGraphDistribution)
         A = read_edge_scalar(d, self.edge_source)
 
         if self.embedding_source == "eigenvector":
@@ -272,7 +272,8 @@ class SpectralDenoiser(GraphModel, ABC):
         torch.Tensor
             Node features of shape ``(batch, n, feature_dim)``.
         """
-        d = _coerce_input_to(data, target=DenseGraphState)
+        d = _coerce_input_to(data, target=DenseGraphDistribution)
+        assert isinstance(d, DenseGraphDistribution)
         A = read_edge_scalar(d, self.edge_source)
 
         if self.embedding_source == "eigenvector":

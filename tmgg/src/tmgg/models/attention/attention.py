@@ -25,7 +25,7 @@ from ..base import (
 class MultiLayerAttention(GraphModel):
     """Multi-layer attention model for graph denoising."""
 
-    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_in: ClassVar[type] = DenseGraphDistribution
     _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
@@ -137,8 +137,8 @@ class MultiLayerAttention(GraphModel):
         field. The state-typed output is then converted to a distribution
         and emitted in the requested layout via :func:`_coerce_output_to`.
         """
-        d = _coerce_input_to(data, target=DenseGraphState)
-        assert isinstance(d, DenseGraphState)
+        d = _coerce_input_to(data, target=DenseGraphDistribution)
+        assert isinstance(d, DenseGraphDistribution)
         A = read_edge_scalar(d, self.edge_source)
         out_adj = self.apply_attention(A)
         if self._output_target == "feat":

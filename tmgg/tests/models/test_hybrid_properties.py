@@ -129,8 +129,11 @@ class MockEmbeddingModel(nn.Module):
     """Mock embedding model for testing.
 
     Has embeddings() method compatible with SequentialDenoisingModel.
-    Accepts a DenseGraphState (the hybrid model's forward coerces its
-    GraphData input to that concrete type before calling embeddings()).
+    Accepts a DenseGraphDistribution (the hybrid model's forward coerces
+    its GraphData input to that concrete type before calling embeddings()
+    so the continuous-adjacency carrier flows losslessly through
+    ``_coerce_input_to``; legacy_edge_scalar handles both dense carriers
+    transparently).
     """
 
     feature_dim: int
@@ -146,9 +149,10 @@ class MockEmbeddingModel(nn.Module):
         self, data: GraphData
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute embeddings from graph data."""
-        # The hybrid model coerces to DenseGraphState before invoking
-        # the EmbeddingProvider protocol; assert the concrete type here.
-        assert isinstance(data, DenseGraphState)
+        # The hybrid model coerces to DenseGraphDistribution before
+        # invoking the EmbeddingProvider protocol; assert the concrete
+        # type here.
+        assert isinstance(data, DenseGraphDistribution)
         A = legacy_edge_scalar(data)
         batch_size, num_nodes, _ = A.shape
         # Use input A to maintain gradient connection
@@ -165,7 +169,7 @@ class MockEmbeddingModel(nn.Module):
         self, data: GraphData, t: torch.Tensor | None = None
     ) -> DenseGraphState:
         """Compute adjacency from graph data."""
-        assert isinstance(data, DenseGraphState)
+        assert isinstance(data, DenseGraphDistribution)
         X, Y = self.embeddings(data)
         A_recon = torch.bmm(X, Y.transpose(1, 2))
         return edge_scalar_graphdata(A_recon, node_mask=data.node_mask)

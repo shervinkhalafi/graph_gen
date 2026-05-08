@@ -24,17 +24,27 @@ architecture reads from. Defined here so every architecture family can
 import a single canonical literal type."""
 
 
-def read_edge_scalar(data: DenseGraphState, source: EdgeSource) -> Tensor:
+def read_edge_scalar(
+    data: DenseGraphState | DenseGraphDistribution, source: EdgeSource
+) -> Tensor:
     """Return a dense scalar adjacency from the requested split edge field.
 
-    Thin wrapper over :meth:`DenseGraphState.to_edge_scalar` that translates
-    the architecture-family ``EdgeSource`` literal into the split-field name.
+    Reads the same channel-zero / squeeze reduction applied by
+    :meth:`DenseGraphState.to_edge_scalar`, generalised to also accept
+    :class:`DenseGraphDistribution` (whose ``E_class`` / ``E_feat`` tensors
+    are RAM-for-RAM identical to the state-content carrier per spec §2.1
+    but whose type contract does not expose ``to_edge_scalar``). The
+    continuous-adjacency model families (GNN / spectral / baselines /
+    attention / hybrid) declare ``_internal_in=DenseGraphDistribution`` so
+    that ``ContinuousNoiseProcess`` outputs (which are distribution-typed)
+    flow through ``_coerce_input_to`` losslessly; this helper bridges the
+    method-availability gap.
 
     Parameters
     ----------
     data
-        Input dense state graph data. Callers must coerce upstream input
-        via :func:`_coerce_input_to(..., target=DenseGraphState)` before
+        Input dense graph data, either state-content or distribution-content.
+        Callers coerce upstream input via :func:`_coerce_input_to` before
         invoking this helper.
     source
         Which split edge field to prefer (``"class"`` reads ``E_class``;
@@ -45,11 +55,35 @@ def read_edge_scalar(data: DenseGraphState, source: EdgeSource) -> Tensor:
     Tensor
         Dense scalar adjacency, ``(bs, n, n)`` or ``(n, n)``.
     """
-    return data.to_edge_scalar(source=source)
+    if isinstance(data, DenseGraphState):
+        return data.to_edge_scalar(source=source)
+    # DenseGraphDistribution: mirror the to_edge_scalar body using direct
+    # field access. The two dense types share E_class / E_feat layouts
+    # exactly, so the reduction is identical.
+    if source == "feat":
+        if data.E_feat is None:
+            raise ValueError(
+                "read_edge_scalar(source='feat') requires E_feat to be "
+                "populated; got None."
+            )
+        e = data.E_feat
+        edge_scalar = e.squeeze(-1) if e.shape[-1] == 1 else e[..., 0]
+    else:  # source == "class"
+        if data.E_class is None:
+            raise ValueError(
+                "read_edge_scalar(source='class') requires E_class to be "
+                "populated; got None."
+            )
+        if data.E_class.shape[-1] > 1:
+            edge_scalar = 1.0 - data.E_class[..., 0]
+        else:
+            edge_scalar = data.E_class[..., 0]
+    mask2d = data.node_mask.unsqueeze(-1) * data.node_mask.unsqueeze(-2)
+    return edge_scalar * mask2d.to(edge_scalar.dtype)
 
 
 def write_edge_scalar(
-    data: DenseGraphState,
+    data: DenseGraphState | DenseGraphDistribution,
     *,
     edge_scalar: Tensor,
     target: EdgeSource,
@@ -60,14 +94,17 @@ def write_edge_scalar(
     the requested split edge field of a fresh :class:`DenseGraphState` that
     shares ``data.node_mask`` and carries ``data.y`` through unchanged.
     Unrelated split fields are left ``None``; downstream code reads
-    ``edge_source``-selected tensors via :func:`read_edge_scalar`.
+    ``edge_source``-selected tensors via :func:`read_edge_scalar`. Accepts
+    either dense carrier on the input side: ``node_mask`` is a
+    :class:`functools.cached_property` on both, and ``y`` lives on
+    :class:`GraphData` itself, so the helper treats them identically.
 
     Parameters
     ----------
     data
-        Input dense state graph; ``node_mask`` and ``y`` propagate
-        unchanged. Callers must coerce upstream input via
-        :func:`_coerce_input_to(..., target=DenseGraphState)`.
+        Input dense graph; ``node_mask`` and ``y`` propagate unchanged.
+        Callers coerce upstream input via :func:`_coerce_input_to` before
+        invoking this helper.
     edge_scalar
         Dense scalar adjacency, ``(bs, n, n)`` or ``(n, n)``.
     target
