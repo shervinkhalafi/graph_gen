@@ -420,7 +420,12 @@ class TestStageConfigComposition:
         assert cfg.scheduler_config.type == "none"
         assert list(cfg.noise_levels) == [0.1]
         assert list(cfg.eval_noise_levels) == [0.1]
-        assert cfg.model.k == expected_k
+        # ``k`` is a parameter on the inner spectral denoiser
+        # (``cfg.model.model.k``); see e.g. stage1_poc.yaml's
+        # ``model.model.k`` override and linear_pe.yaml's ``model.k``
+        # field. The earlier ``cfg.model.k`` path predated the
+        # inner-model nesting and never existed at runtime.
+        assert cfg.model.model.k == expected_k
 
     @pytest.mark.parametrize(
         ("data_config", "expected_num_nodes", "expected_max_block_size"),

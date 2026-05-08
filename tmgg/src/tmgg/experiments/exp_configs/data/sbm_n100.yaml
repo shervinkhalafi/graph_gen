@@ -7,7 +7,11 @@ defaults:
 
 graph_config:
   num_nodes: 100
-  max_block_size: 50
+  # ``max_block_size`` deliberately inherits the sbm_default value (15) so
+  # the n=100 variant only diverges on node count and the static node
+  # ceiling. The n=200 variant raises ``max_block_size`` because larger
+  # graphs benefit from larger block scales; n=100 stays in the default
+  # regime to keep the alias minimally invasive.
 
 # Override the inherited safe upper bound to track ``num_nodes`` here.
 num_nodes_max_static: 100
