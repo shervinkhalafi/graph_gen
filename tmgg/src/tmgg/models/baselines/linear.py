@@ -56,7 +56,7 @@ class LinearBaseline(GraphModel):
     >>> probs = model.predict(logits)  # Apply sigmoid for [0, 1]
     """
 
-    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_in: ClassVar[type] = DenseGraphDistribution
     _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
@@ -101,8 +101,8 @@ class LinearBaseline(GraphModel):
         to a distribution and emitted in the requested layout via
         :func:`_coerce_output_to`.
         """
-        d = _coerce_input_to(data, target=DenseGraphState)
-        assert isinstance(d, DenseGraphState)
+        d = _coerce_input_to(data, target=DenseGraphDistribution)
+        assert isinstance(d, DenseGraphDistribution)
         A = read_edge_scalar(d, self.edge_source)
         B, N, _ = A.shape
 
