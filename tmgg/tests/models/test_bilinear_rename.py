@@ -8,7 +8,7 @@ projection -- a scaled bilinear form, not self-attention.
 import torch
 
 from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphDistribution
 
 
 def test_bilinear_denoiser_importable():
@@ -41,15 +41,15 @@ def test_self_attention_denoiser_constructible():
 
 
 def test_bilinear_output_shape():
-    """BilinearDenoiser produces GraphData with correct adjacency shape."""
+    """BilinearDenoiser produces a DenseGraphDistribution with correct adjacency shape."""
     from tmgg.models.spectral_denoisers import BilinearDenoiser
 
     model = BilinearDenoiser(k=4, d_k=8)
     A = torch.randn(2, 10, 10)
     A = (A + A.transpose(-1, -2)) / 2
-    result = model(edge_scalar_graphdata(A))
-    assert isinstance(result, GraphData)
-    assert legacy_edge_scalar(result).shape == (2, 10, 10)
+    result = model(edge_scalar_graphdata(A), output_dense=True)
+    assert isinstance(result, DenseGraphDistribution)
+    assert legacy_edge_scalar(result.argmax()).shape == (2, 10, 10)
 
 
 def test_bilinear_has_no_softmax():
@@ -59,8 +59,12 @@ def test_bilinear_has_no_softmax():
     model = BilinearDenoiser(k=4, d_k=8)
     A = torch.randn(2, 10, 10)
     A = (A + A.transpose(-1, -2)) / 2
-    result = model(edge_scalar_graphdata(A))
-    raw_adj = legacy_edge_scalar(result)
+    result = model(edge_scalar_graphdata(A), output_dense=True)
+    assert isinstance(result, DenseGraphDistribution)
+    # Read the raw E_feat (continuous output) directly — argmax() would
+    # collapse to {0,1} and lose the "raw logits" property under test.
+    assert result.E_feat is not None
+    raw_adj = result.E_feat.squeeze(-1)
     # Raw logits can be negative and > 1 -- softmax output would be in [0,1]
     # with rows summing to 1. Bilinear should have neither property.
     assert raw_adj.min() < 0 or raw_adj.max() > 1, "Output looks softmax-bounded"
