@@ -31,17 +31,27 @@ class _TinyDataModule(MolecularDataModule):
 
 
 def test_dataloader_yields_graphdata(tmp_path: Path) -> None:
+    """Datamodule emits a sparse ``GraphState``; check sparse shapes.
+
+    Two molecules concatenated (PyG-flat layout): ``x_class`` has shape
+    ``(sum_n, d_xc)`` and ``edge_class`` has shape ``(sum_E, d_ec)``.
+    ``num_nodes_per_graph`` carries the per-graph node count and so its
+    leading dim is the batch size.
+    """
+    from tmgg.data.datasets.graph_types import GraphState
+
     dm = _TinyDataModule(batch_size=2, cache_root=str(tmp_path))
     dm.prepare_data()
     dm.setup()
     batch = next(iter(dm.train_dataloader()))
-    # batch should be a GraphData with per-batch shapes (bs, n, ...).
-    assert batch.X_class is not None
-    assert batch.E_class is not None
-    assert batch.node_mask is not None
-    assert batch.X_class.shape[0] == 2
-    assert batch.E_class.shape[0] == 2
-    assert batch.node_mask.shape[0] == 2
+    assert isinstance(batch, GraphState)
+    assert batch.x_class is not None
+    assert batch.edge_class is not None
+    assert batch.num_nodes_per_graph.shape == (2,)
+    # Sparse layout: every node row in batch.x_class corresponds to one
+    # real node across the two graphs, and its sum matches the
+    # per-graph node count.
+    assert batch.x_class.shape[0] == int(batch.num_nodes_per_graph.sum().item())
 
 
 def test_size_distribution_populated(tmp_path: Path) -> None:
