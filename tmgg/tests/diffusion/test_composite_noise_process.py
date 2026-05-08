@@ -24,7 +24,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     CompositeNoiseProcess,
@@ -41,7 +41,7 @@ def schedule() -> NoiseSchedule:
 
 
 @pytest.fixture()
-def hybrid_graph_data() -> GraphData:
+def hybrid_graph_data() -> DenseGraphState:
     """Batch with one-hot ``X_class`` / ``E_class`` and continuous ``E_feat``.
 
     Shapes: ``bs=2``, ``n=4``, ``x_classes=3``, ``e_classes=2``,
@@ -57,9 +57,10 @@ def hybrid_graph_data() -> GraphData:
     e_feat = 0.5 * (e_feat + e_feat.transpose(-2, -3))
     diag = torch.arange(n)
     e_feat[:, diag, diag, :] = 0.0
-    return GraphData(
+    num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
         y=torch.zeros(bs, 0),
-        node_mask=torch.ones(bs, n, dtype=torch.bool),
         X_class=x_class,
         E_class=e_class,
         E_feat=e_feat,
@@ -123,7 +124,7 @@ class TestCompositeForward:
 
     def test_forward_sample_noises_every_declared_field(
         self,
-        hybrid_graph_data: GraphData,
+        hybrid_graph_data: DenseGraphState,
         schedule: NoiseSchedule,
     ) -> None:
         """Composite ``forward_sample`` noises all three declared fields jointly.
@@ -203,7 +204,7 @@ class TestCompositeForward:
 
     def test_forward_log_prob_sums_per_sub_process(
         self,
-        hybrid_graph_data: GraphData,
+        hybrid_graph_data: DenseGraphState,
         schedule: NoiseSchedule,
     ) -> None:
         """Composite ``forward_log_prob`` equals the sum of sub-process densities.
@@ -249,7 +250,7 @@ class TestReverseSamplerDispatchHook:
 
     def test_gaussian_hook_matches_posterior_sample(
         self,
-        hybrid_graph_data: GraphData,
+        hybrid_graph_data: DenseGraphState,
         schedule: NoiseSchedule,
     ) -> None:
         """Gaussian hook returns the same distribution as ``posterior_sample``."""
@@ -270,7 +271,7 @@ class TestReverseSamplerDispatchHook:
 
     def test_categorical_hook_routes_to_marginalised_form(
         self,
-        hybrid_graph_data: GraphData,
+        hybrid_graph_data: DenseGraphState,
         schedule: NoiseSchedule,
     ) -> None:
         """Categorical hook matches the marginalised posterior, not the direct.
@@ -308,7 +309,7 @@ class TestReverseSamplerDispatchHook:
 
     def test_composite_hook_threads_sub_processes_in_order(
         self,
-        hybrid_graph_data: GraphData,
+        hybrid_graph_data: DenseGraphState,
         schedule: NoiseSchedule,
     ) -> None:
         """Composite hook equals iterating each sub-process's hook manually."""
