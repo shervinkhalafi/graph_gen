@@ -18,20 +18,43 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-from tmgg.data.datasets.graph_types import DenseGraphState
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+)
 
 
-def legacy_edge_scalar(data: DenseGraphState) -> Tensor:
+def legacy_edge_scalar(data: DenseGraphState | DenseGraphDistribution) -> Tensor:
     """Return a dense scalar adjacency regardless of which edge field is populated.
 
-    Replaces the removed ``GraphData.to_edge_state``. Delegates to
-    :meth:`DenseGraphState.to_edge_scalar` using whichever split edge field
-    is populated, preferring ``E_feat`` when both are present (matching the
-    legacy precedence).
+    Replaces the removed ``GraphData.to_edge_state``. ``DenseGraphState`` and
+    ``DenseGraphDistribution`` carry the edge fields with identical shapes
+    (the difference is purely the content interpretation). For
+    ``DenseGraphState`` we delegate to :meth:`DenseGraphState.to_edge_scalar`;
+    for ``DenseGraphDistribution`` (which lacks that method per the type
+    hierarchy) we replicate its body directly.
     """
+    if isinstance(data, DenseGraphState):
+        if data.E_feat is not None:
+            return data.to_edge_scalar(source="feat")
+        return data.to_edge_scalar(source="class")
+
+    # DenseGraphDistribution path: inline the edge-scalar reduction.
     if data.E_feat is not None:
-        return data.to_edge_scalar(source="feat")
-    return data.to_edge_scalar(source="class")
+        e = data.E_feat
+        edge_scalar = e.squeeze(-1) if e.shape[-1] == 1 else e[..., 0]
+    else:
+        if data.E_class is None:
+            raise ValueError(
+                "legacy_edge_scalar() requires E_feat or E_class to be populated."
+            )
+        if data.E_class.shape[-1] > 1:
+            edge_scalar = 1.0 - data.E_class[..., 0]
+        else:
+            edge_scalar = data.E_class[..., 0]
+    nm = data.node_mask
+    mask2d = nm.unsqueeze(-1) * nm.unsqueeze(-2)
+    return edge_scalar * mask2d.to(edge_scalar.dtype)
 
 
 def binary_graphdata(adj: Tensor) -> DenseGraphState:
