@@ -2,9 +2,10 @@
 
 Testing Strategy
 ----------------
-These tests verify the five frozen dataclasses that replace PlaceHolder
-and GraphFeatures, focusing on immutability, masking semantics,
-symmetry assertions, and the NoisyData conversion helper.
+These tests verify the frozen dataclasses (GraphState, GraphDistribution,
+DenseGraphState, DenseGraphDistribution) replacing the legacy
+PlaceHolder, focusing on immutability, masking semantics, symmetry
+assertions, and class-index collapse helpers.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import pytest
 import torch
 
 from tests._helpers.graph_builders import binary_graphdata, legacy_edge_scalar
-from tmgg.data.datasets.graph_types import GraphData, collapse_to_indices
+from tmgg.data.datasets.graph_types import DenseGraphState, collapse_to_indices
 
 
 def _make_symmetric_E(bs: int, n: int, de: int) -> torch.Tensor:
@@ -22,10 +23,32 @@ def _make_symmetric_E(bs: int, n: int, de: int) -> torch.Tensor:
     return (E_upper + E_upper.transpose(1, 2)) / 2
 
 
-# -- GraphData.mask() -------------------------------------------------------
+def _state(
+    *,
+    bs: int,
+    n: int,
+    X: torch.Tensor,
+    E: torch.Tensor,
+    num_nodes_per_graph: torch.Tensor | None = None,
+    y: torch.Tensor | None = None,
+) -> DenseGraphState:
+    """Helper: build DenseGraphState with default num_nodes_per_graph."""
+    if num_nodes_per_graph is None:
+        num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long)
+    if y is None:
+        y = torch.zeros(bs, 0)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
+        y=y,
+        X_class=X,
+        E_class=E,
+    )
 
 
-class TestGraphDataMask:
+# -- DenseGraphState.mask() -------------------------------------------------
+
+
+class TestDenseGraphStateMask:
     """Verify that mask() zeros masked positions and asserts E symmetry.
 
     Ported from the original PlaceHolder.mask() tests. Key difference:
@@ -37,10 +60,8 @@ class TestGraphDataMask:
         bs, n, dx, de = 2, 4, 3, 2
         X = torch.randn(bs, n, dx)
         E = _make_symmetric_E(bs, n, de)
-        y = torch.zeros(bs, 0)
-        node_mask = torch.ones(bs, n)
 
-        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+        data = _state(bs=bs, n=n, X=X, E=E)
         result = data.mask()
         assert result is not data  # frozen — returns new instance
 
@@ -49,11 +70,10 @@ class TestGraphDataMask:
         bs, n, dx, de = 2, 5, 3, 2
         X = torch.randn(bs, n, dx)
         E = _make_symmetric_E(bs, n, de)
-        y = torch.zeros(bs, 0)
-        node_mask = torch.ones(bs, n)
-        node_mask[:, -1] = 0
+        # Drop the trailing position.
+        num_nodes = torch.full((bs,), n - 1, dtype=torch.long)
 
-        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+        data = _state(bs=bs, n=n, X=X, E=E, num_nodes_per_graph=num_nodes)
         result = data.mask()
         assert result is not data
 
@@ -72,10 +92,8 @@ class TestGraphDataMask:
         E = torch.randn(bs, n, n, de)
         E[0, 0, 1, 0] = 10.0
         E[0, 1, 0, 0] = -10.0
-        y = torch.zeros(bs, 0)
-        node_mask = torch.ones(bs, n)
 
-        data = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+        data = _state(bs=bs, n=n, X=X, E=E)
         with pytest.raises(AssertionError, match="symmetric"):
             data.mask()
 
@@ -86,11 +104,12 @@ class TestGraphDataMask:
         E = _make_symmetric_E(bs, n, de).abs() + 0.1
         # Make E symmetric and positive
         E = (E + E.transpose(1, 2)) / 2
-        y = torch.zeros(bs, 0)
-        node_mask = torch.ones(bs, n)
-        node_mask[0, 2] = 0  # mask out node 2
+        # Drop node 2 (n_real = 2).
+        num_nodes = torch.tensor([2], dtype=torch.long)
 
-        result = GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E).mask()
+        result = _state(
+            bs=bs, n=n, X=X, E=E, num_nodes_per_graph=num_nodes
+        ).mask()
         assert result.X_class is not None
         assert result.E_class is not None
         assert result.X_class[0, 2].abs().sum() == 0
@@ -98,10 +117,10 @@ class TestGraphDataMask:
         assert result.E_class[0, :, 2, :].abs().sum() == 0
 
 
-# -- GraphData.mask_zero_diag() ---------------------------------------------
+# -- DenseGraphState.mask_zero_diag() ---------------------------------------
 
 
-class TestGraphDataMaskZeroDiag:
+class TestDenseGraphStateMaskZeroDiag:
     """Verify mask_zero_diag zeros both masked positions and the diagonal."""
 
     def test_diagonal_zeroed(self) -> None:
@@ -109,12 +128,8 @@ class TestGraphDataMaskZeroDiag:
         bs, n, dx, de = 2, 5, 3, 2
         X = torch.randn(bs, n, dx)
         E = torch.randn(bs, n, n, de)
-        y = torch.zeros(bs, 0)
-        node_mask = torch.ones(bs, n, dtype=torch.bool)
 
-        result = GraphData(
-            y=y, node_mask=node_mask, X_class=X, E_class=E
-        ).mask_zero_diag()
+        result = _state(bs=bs, n=n, X=X, E=E).mask_zero_diag()
         assert result.E_class is not None
         for b in range(bs):
             for i in range(n):
@@ -125,32 +140,26 @@ class TestGraphDataMaskZeroDiag:
         bs, n, dx, de = 1, 4, 2, 2
         X = torch.ones(bs, n, dx)
         E = torch.ones(bs, n, n, de)
-        y = torch.zeros(bs, 0)
-        node_mask = torch.ones(bs, n, dtype=torch.bool)
-        node_mask[0, 3] = False
+        # Drop node 3.
+        num_nodes = torch.tensor([3], dtype=torch.long)
 
-        result = GraphData(
-            y=y, node_mask=node_mask, X_class=X, E_class=E
+        result = _state(
+            bs=bs, n=n, X=X, E=E, num_nodes_per_graph=num_nodes
         ).mask_zero_diag()
         assert result.X_class is not None
         assert result.X_class[0, 3].abs().sum() == 0
 
 
-# -- GraphData.type_as() ----------------------------------------------------
+# -- DenseGraphState.type_as() ----------------------------------------------
 
 
-class TestGraphDataTypeAs:
+class TestDenseGraphStateTypeAs:
     """Verify type_as returns a new instance with correct dtype."""
 
     def test_dtype_changes(self) -> None:
         X = torch.randn(1, 3, 2)
         E = torch.randn(1, 3, 3, 2)
-        data = GraphData(
-            y=torch.zeros(1, 0),
-            node_mask=torch.ones(1, 3, dtype=torch.bool),
-            X_class=X,
-            E_class=E,
-        )
+        data = _state(bs=1, n=3, X=X, E=E)
         target = torch.zeros(1, dtype=torch.float64)
         result = data.type_as(target)
         assert result is not data
@@ -161,21 +170,16 @@ class TestGraphDataTypeAs:
         assert result.y.dtype == torch.float64
 
 
-# -- GraphData immutability -------------------------------------------------
+# -- DenseGraphState immutability -------------------------------------------
 
 
-class TestGraphDataFrozen:
+class TestDenseGraphStateFrozen:
     """Frozen dataclass prevents field assignment."""
 
     def test_cannot_assign_X(self) -> None:
         X = torch.randn(1, 3, 2)
         E = torch.randn(1, 3, 3, 2)
-        data = GraphData(
-            y=torch.zeros(1, 0),
-            node_mask=torch.ones(1, 3, dtype=torch.bool),
-            X_class=X,
-            E_class=E,
-        )
+        data = _state(bs=1, n=3, X=X, E=E)
         with pytest.raises(AttributeError):
             data.X_class = torch.zeros(1, 3, 2)  # type: ignore[misc]
 
@@ -198,12 +202,7 @@ class TestCollapseToIndices:
         E[0, 0, 1, 1] = 1.0  # edge (0,1) -> class 1
         E[0, 1, 0, 1] = 1.0  # symmetric
 
-        y = torch.zeros(bs, 0)
-        node_mask = torch.ones(bs, n)
-
-        E_idx, X_idx = collapse_to_indices(
-            GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
-        )
+        E_idx, X_idx = collapse_to_indices(_state(bs=bs, n=n, X=X, E=E))
         assert X_idx is not None
         assert X_idx[0, 0] == 2
         assert X_idx[0, 1] == 0
@@ -217,12 +216,11 @@ class TestCollapseToIndices:
         X[..., 0] = 1.0
         E = torch.zeros(bs, n, n, de)
         E[..., 0] = 1.0
-        y = torch.zeros(bs, 0)
-        node_mask = torch.ones(bs, n)
-        node_mask[0, 2] = 0
+        # Drop node 2.
+        num_nodes = torch.tensor([2], dtype=torch.long)
 
         E_idx, X_idx = collapse_to_indices(
-            GraphData(y=y, node_mask=node_mask, X_class=X, E_class=E)
+            _state(bs=bs, n=n, X=X, E=E, num_nodes_per_graph=num_nodes)
         )
         assert X_idx is not None
         assert X_idx[0, 2] == -1

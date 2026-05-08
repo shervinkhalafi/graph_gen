@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
+from tmgg.data.datasets.graph_types import DenseGraphDistribution
 from tmgg.models.layers import PEARLEmbedding, SpectralProjectionLayer
 from tmgg.models.spectral_denoisers import (
     GraphFilterBank,
@@ -184,9 +185,9 @@ class TestAsymmetricLinearPE:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(edge_scalar_graphdata(A))
-
-        assert legacy_edge_scalar(result).shape == (2, 20, 20)
+        result = model(edge_scalar_graphdata(A), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (2, 20, 20)
 
     def test_asymmetric_output_differs_from_symmetric(self):
         """Test asymmetric produces different output than symmetric."""
@@ -200,8 +201,10 @@ class TestAsymmetricLinearPE:
         A = (A + A.transpose(-1, -2)) / 2
         data = edge_scalar_graphdata(A)
 
-        out_sym = model_sym(data)
-        out_asym = model_asym(data)
+        out_sym = model_sym(data, output_dense=True)
+        out_asym = model_asym(data, output_dense=True)
+        assert isinstance(out_sym, DenseGraphDistribution)
+        assert isinstance(out_asym, DenseGraphDistribution)
 
         # Different parameterizations should give different raw edge features
         out_sym_e = out_sym.E_feat if out_sym.E_feat is not None else out_sym.E_class
@@ -238,9 +241,9 @@ class TestAsymmetricGraphFilterBank:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(edge_scalar_graphdata(A))
-
-        assert legacy_edge_scalar(result).shape == (2, 20, 20)
+        result = model(edge_scalar_graphdata(A), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (2, 20, 20)
 
 
 class TestPEARLIntegration:
@@ -253,9 +256,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(edge_scalar_graphdata(A))
-
-        assert legacy_edge_scalar(result).shape == (2, 20, 20)
+        result = model(edge_scalar_graphdata(A), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (2, 20, 20)
         assert model.embedding_source == "pearl_random"
 
     def test_filter_bank_with_pearl(self):
@@ -270,9 +273,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(edge_scalar_graphdata(A))
-
-        assert legacy_edge_scalar(result).shape == (2, 20, 20)
+        result = model(edge_scalar_graphdata(A), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (2, 20, 20)
 
     def test_self_attention_with_pearl(self):
         """Test SelfAttentionDenoiser with PEARL embeddings."""
@@ -283,9 +286,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 20, 20)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(edge_scalar_graphdata(A))
-
-        assert legacy_edge_scalar(result).shape == (2, 20, 20)
+        result = model(edge_scalar_graphdata(A), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (2, 20, 20)
 
     def test_pearl_basis_mode_integration(self):
         """Test B-PEARL integration."""
@@ -296,9 +299,9 @@ class TestPEARLIntegration:
         A = torch.randn(2, 30, 30)
         A = (A + A.transpose(-1, -2)) / 2
 
-        result = model(edge_scalar_graphdata(A))
-
-        assert legacy_edge_scalar(result).shape == (2, 30, 30)
+        result = model(edge_scalar_graphdata(A), output_dense=True)
+        assert isinstance(result, DenseGraphDistribution)
+        assert legacy_edge_scalar(result.argmax()).shape == (2, 30, 30)
 
     def test_invalid_embedding_source(self):
         """Test invalid embedding source raises error."""

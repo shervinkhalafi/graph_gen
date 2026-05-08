@@ -10,7 +10,7 @@ from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, composite
 
 from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphDistribution
 from tmgg.models.gnn import GNN, GNNSymmetric, NodeVarGNN
 from tmgg.models.layers import GraphConvolutionLayer
 from tmgg.models.layers.eigen_embedding import _EigenEmbedding as EigenEmbedding
@@ -181,11 +181,11 @@ class TestGNNProperties:
         model = GNN(**params)
 
         try:
-            result = model(edge_scalar_graphdata(A))
+            result = model(edge_scalar_graphdata(A), output_dense=True)
 
             batch_size, num_nodes, _ = A.shape
-            assert isinstance(result, GraphData)
-            assert legacy_edge_scalar(result).shape == (
+            assert isinstance(result, DenseGraphDistribution)
+            assert legacy_edge_scalar(result.argmax()).shape == (
                 batch_size,
                 num_nodes,
                 num_nodes,
@@ -200,14 +200,15 @@ class TestGNNProperties:
         model = GNNSymmetric(num_layers=2, feature_dim_out=5)
 
         try:
-            result = model(edge_scalar_graphdata(A))
+            result = model(edge_scalar_graphdata(A), output_dense=True)
 
             # Check shape
-            assert isinstance(result, GraphData)
-            assert legacy_edge_scalar(result).shape == A.shape
+            assert isinstance(result, DenseGraphDistribution)
+            collapsed = result.argmax()
+            assert legacy_edge_scalar(collapsed).shape == A.shape
 
             # Check symmetry of raw edge features
-            raw_adj = legacy_edge_scalar(result)
+            raw_adj = legacy_edge_scalar(collapsed)
             diff = torch.abs(raw_adj - raw_adj.transpose(-2, -1))
             assert torch.max(diff) < 0.1  # Allow some asymmetry
         except EigenDecompositionError:
@@ -223,14 +224,15 @@ class TestGNNProperties:
         model = NodeVarGNN(num_layers=num_layers, feature_dim=5)
 
         try:
-            result = model(edge_scalar_graphdata(A))
+            result = model(edge_scalar_graphdata(A), output_dense=True)
 
             # Check shape
-            assert isinstance(result, GraphData)
-            assert legacy_edge_scalar(result).shape == A.shape
+            assert isinstance(result, DenseGraphDistribution)
+            collapsed = result.argmax()
+            assert legacy_edge_scalar(collapsed).shape == A.shape
 
             # Check raw edge features are valid
-            raw_adj = legacy_edge_scalar(result)
+            raw_adj = legacy_edge_scalar(collapsed)
             assert not torch.isnan(raw_adj).any()
             assert not torch.isinf(raw_adj).any()
         except EigenDecompositionError:
@@ -325,9 +327,10 @@ class TestGNNErrorHandling:
         A = torch.eye(5).unsqueeze(0)
 
         try:
-            result = model(edge_scalar_graphdata(A))
+            result = model(edge_scalar_graphdata(A), output_dense=True)
             # Model should handle this by padding or truncating
-            assert legacy_edge_scalar(result).shape == (1, 5, 5)
+            assert isinstance(result, DenseGraphDistribution)
+            assert legacy_edge_scalar(result.argmax()).shape == (1, 5, 5)
         except EigenDecompositionError:
             pass  # Also acceptable
 

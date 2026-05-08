@@ -50,7 +50,11 @@ import pytest
 import torch
 from torch_geometric.data import Batch, Data
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    GraphData,
+    GraphState,
+)
 from tmgg.models.digress.transformer_model import GraphTransformer
 
 # ---------------------------------------------------------------------------
@@ -59,13 +63,14 @@ from tmgg.models.digress.transformer_model import GraphTransformer
 
 
 @pytest.fixture()
-def structure_only_batch() -> GraphData:
-    """A structure-only batch built via ``from_pyg_batch`` (B=2, N up to 4).
+def structure_only_batch() -> GraphState:
+    """A structure-only batch built via ``GraphState.from_pyg_batch`` (B=2, N up to 4).
 
-    Two graphs of differing sizes (triangle, square). ``X_class`` is
-    ``None`` and ``E_class`` is populated K=2 from the adjacency,
-    matching the data-layer convention codified by the 2026-04-15
-    unified-graph-features spec.
+    Two graphs of differing sizes (triangle, square). ``x_class`` is
+    ``None`` and ``edge_class`` is populated K=2 (one-hot) along the
+    actual edges, matching the data-layer convention codified by the
+    2026-04-15 unified-graph-features spec. Sparse output is the
+    canonical entry shape for production diffusion modules.
     """
     torch.manual_seed(0)
     triangle = Data(
@@ -81,11 +86,11 @@ def structure_only_batch() -> GraphData:
         num_nodes=4,
     )
     pyg_batch = Batch.from_data_list([triangle, square])
-    data = GraphData.from_pyg_batch(pyg_batch)
+    data = GraphState.from_pyg_batch(pyg_batch)
     # Sanity: confirm assumed starting state.
-    assert data.X_class is None
-    assert data.E_class is not None
-    assert data.E_class.shape[-1] == 2
+    assert data.x_class is None
+    assert data.edge_class is not None
+    assert data.edge_class.shape[-1] == 2
     return data
 
 
@@ -121,7 +126,7 @@ def _attach_y_column(data: GraphData) -> GraphData:
     shape ``(B, 0)``. Replace it so the inner ``mlp_in_y`` receives a
     well-shaped input.
     """
-    bs = data.node_mask.shape[0]
+    bs = int(data.num_nodes_per_graph.shape[0])
     return data.replace(y=torch.zeros(bs, 1))
 
 
@@ -133,7 +138,7 @@ def _attach_y_column(data: GraphData) -> GraphData:
 @pytest.mark.parametrize("c_x", [1, 2])
 def test_forward_handles_structure_only_input(
     c_x: int,
-    structure_only_batch: GraphData,
+    structure_only_batch: GraphState,
 ) -> None:
     """``forward`` runs on a structure-only batch with ``output_dims_x_class=c_x``.
 
@@ -147,7 +152,8 @@ def test_forward_handles_structure_only_input(
     torch.manual_seed(42)
     model = _build_transformer(c_x=c_x)
     data = _attach_y_column(structure_only_batch)
-    pred = model(data)
+    pred = model(data, output_dense=True)
+    assert isinstance(pred, DenseGraphDistribution)
     assert pred.X_class is not None
     assert pred.X_class.shape[-1] == c_x
     assert pred.E_class is not None
@@ -155,7 +161,7 @@ def test_forward_handles_structure_only_input(
 
 
 def test_forward_raises_for_c_x_geq_3(
-    structure_only_batch: GraphData,
+    structure_only_batch: GraphState,
 ) -> None:
     """``forward`` raises when ``output_dims_x_class >= 3`` and ``X_class is None``.
 
@@ -163,11 +169,6 @@ def test_forward_raises_for_c_x_geq_3(
     real categorical content (atom types, etc.). There is no canonical
     synthesis from ``node_mask`` alone for this regime; per spec §5.1
     + §5.5 the model's synth path MUST raise via the canonical helper.
-
-    Currently expected to fail because the inline synth at line 944
-    emits a hardcoded width-2 tensor regardless of ``output_dims_x_class``;
-    after Phase 4 lands the model fix the helper is invoked with
-    ``c_x = 3`` and raises ``ValueError``.
     """
     torch.manual_seed(42)
     model = _build_transformer(c_x=3)

@@ -346,10 +346,13 @@ def test_tiny_digress_with_pearl_compiles_clean() -> None:
     model.train()
     compiled = torch.compile(model)
 
-    from tmgg.data.datasets.graph_types import GraphData
+    from tmgg.data.datasets.graph_types import (
+        DenseGraphDistribution,
+        DenseGraphState,
+    )
 
     bs, n = 2, 12
-    node_mask = torch.ones(bs, n, dtype=torch.bool, device=device)
+    num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long, device=device)
     X_class = torch.zeros(bs, n, 1, device=device)
     E_class = torch.zeros(bs, n, n, 2, device=device)
     E_class[..., 1] = (torch.rand(bs, n, n, device=device) > 0.5).float()
@@ -358,11 +361,17 @@ def test_tiny_digress_with_pearl_compiles_clean() -> None:
     )
     E_class[..., 0] = 1.0 - E_class[..., 1]
     y = torch.zeros(bs, 0, device=device)
-    data = GraphData(y=y, node_mask=node_mask, X_class=X_class, E_class=E_class)
+    data = DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
+        y=y,
+        X_class=X_class,
+        E_class=E_class,
+    )
     t = torch.zeros(bs, device=device)
 
-    out = compiled(data, t=t)
-    # Output is a GraphData; confirm shapes are sensible
+    out = compiled(data, t=t, output_dense=True)
+    # Output is a DenseGraphDistribution; confirm shapes are sensible
+    assert isinstance(out, DenseGraphDistribution)
     assert out.X_class is not None and out.X_class.shape == (bs, n, 1)
     assert out.E_class is not None and out.E_class.shape == (bs, n, n, 2)
     _assert_no_graph_breaks("GraphTransformer + PEARLExtraFeatures")

@@ -10,7 +10,11 @@ import pytest
 import torch
 from torch import nn
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+)
+from tmgg.models.digress.data_types import DenseGraphTransformerData
 from tmgg.models.digress.extra_features import EigenvectorAugmentation
 from tmgg.models.digress.transformer_model import GraphTransformer, _GraphTransformer
 
@@ -39,13 +43,13 @@ def model() -> GraphTransformer:
 
 
 @pytest.fixture()
-def graph_data() -> GraphData:
-    """Random categorical input as GraphData."""
+def graph_data() -> DenseGraphState:
+    """Random categorical input as DenseGraphState."""
     X = torch.randn(BS, N, DX_IN)
     E = torch.randn(BS, N, N, DE_IN)
-    return GraphData(
+    return DenseGraphState(
+        num_nodes_per_graph=torch.full((BS,), N, dtype=torch.long),
         y=torch.randn(BS, DY_IN),
-        node_mask=torch.ones(BS, N),
         X_class=X,
         E_class=E,
     )
@@ -57,19 +61,22 @@ class TestForwardPass:
     def test_output_is_graph_data(
         self,
         model: GraphTransformer,
-        graph_data: GraphData,
+        graph_data: DenseGraphState,
     ) -> None:
-        """Forward should return a GraphData instance."""
-        out = model(graph_data)
-        assert isinstance(out, GraphData)
+        """Forward should return a DenseGraphDistribution under output_dense=True."""
+        out = model(graph_data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
 
     def test_output_shapes(
         self,
         model: GraphTransformer,
-        graph_data: GraphData,
+        graph_data: DenseGraphState,
     ) -> None:
         """X, E, y output shapes must match the configured output_dims."""
-        out = model(graph_data)
+        out = model(graph_data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
+        assert out.X_class is not None
+        assert out.E_class is not None
         assert out.X_class.shape == (BS, N, DX_OUT)
         assert out.E_class.shape == (BS, N, N, DE_OUT)
         assert out.y.shape == (BS, DY_OUT)
@@ -77,10 +84,13 @@ class TestForwardPass:
     def test_outputs_finite(
         self,
         model: GraphTransformer,
-        graph_data: GraphData,
+        graph_data: DenseGraphState,
     ) -> None:
         """All output tensors must contain finite values (no NaN or Inf)."""
-        out = model(graph_data)
+        out = model(graph_data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
+        assert out.X_class is not None
+        assert out.E_class is not None
         assert torch.isfinite(out.X_class).all(), "X contains NaN or Inf"
         assert torch.isfinite(out.E_class).all(), "E contains NaN or Inf"
         assert torch.isfinite(out.y).all(), "y contains NaN or Inf"
@@ -90,17 +100,19 @@ class TestForwardPass:
         model: GraphTransformer,
     ) -> None:
         """Forward pass works when some nodes are masked out."""
-        node_mask = torch.ones(BS, N)
-        node_mask[:, 7:] = 0  # mask out last 3 nodes
+        # 7 real nodes per graph, last 3 padded.
+        num_nodes_per_graph = torch.full((BS,), 7, dtype=torch.long)
         X = torch.randn(BS, N, DX_IN)
         E = torch.randn(BS, N, N, DE_IN)
-        data = GraphData(
+        data = DenseGraphState(
+            num_nodes_per_graph=num_nodes_per_graph,
             y=torch.randn(BS, DY_IN),
-            node_mask=node_mask,
             X_class=X,
             E_class=E,
         )
-        out = model(data)
+        out = model(data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
+        assert out.X_class is not None
         assert out.X_class.shape == (BS, N, DX_OUT)
         assert torch.isfinite(out.X_class).all()
 
@@ -160,13 +172,16 @@ class TestEigenvectorMode:
         """Eigenvector path produces correct output shapes."""
         X = torch.randn(BS, N, DX_IN)
         E = torch.randn(BS, N, N, DE_IN)
-        data = GraphData(
+        data = DenseGraphState(
+            num_nodes_per_graph=torch.full((BS,), N, dtype=torch.long),
             y=torch.randn(BS, DY_IN),
-            node_mask=torch.ones(BS, N),
             X_class=X,
             E_class=E,
         )
-        out = eigen_model(data)
+        out = eigen_model(data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
+        assert out.X_class is not None
+        assert out.E_class is not None
         assert out.X_class.shape == (BS, N, DX_OUT)
         assert out.E_class.shape == (BS, N, N, DE_OUT)
 
@@ -198,14 +213,16 @@ class TestTimestepMode:
         """Forward pass with a timestep tensor produces correct output shapes."""
         X = torch.randn(BS, N, DX_IN)
         E = torch.randn(BS, N, N, DE_IN)
-        data = GraphData(
+        data = DenseGraphState(
+            num_nodes_per_graph=torch.full((BS,), N, dtype=torch.long),
             y=torch.zeros(BS, 0),
-            node_mask=torch.ones(BS, N),
             X_class=X,
             E_class=E,
         )
         t = torch.rand(BS)
-        out = timestep_model(data, t=t)
+        out = timestep_model(data, t=t, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
+        assert out.X_class is not None
         assert out.X_class.shape == (BS, N, DX_OUT)
 
     def test_config_reports_timestep(self, timestep_model: GraphTransformer) -> None:
@@ -214,7 +231,12 @@ class TestTimestepMode:
 
 
 class _CaptureTransformerLayer(nn.Module):
-    """Record the hidden edge tensor passed into the transformer stack."""
+    """Record the hidden edge tensor passed into the transformer stack.
+
+    The post-refactor layer signature is ``forward(h: DenseGraphTransformerData)
+    -> DenseGraphTransformerData``; this stub captures ``h.E_class`` and
+    returns the input unchanged.
+    """
 
     captured_E: torch.Tensor | None
 
@@ -223,16 +245,11 @@ class _CaptureTransformerLayer(nn.Module):
         self.captured_E = None
 
     def forward(
-        self,
-        X: torch.Tensor,
-        E: torch.Tensor,
-        y: torch.Tensor,
-        node_mask: torch.Tensor,
-        structure: object,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        _ = node_mask, structure
-        self.captured_E = E.detach().clone()
-        return X, E, y
+        self, h: DenseGraphTransformerData
+    ) -> DenseGraphTransformerData:
+        assert h.E_class is not None
+        self.captured_E = h.E_class.detach().clone()
+        return h
 
 
 class TestHiddenEdgeDiagonalParity:
@@ -260,18 +277,19 @@ class TestHiddenEdgeDiagonalParity:
         return model
 
     @staticmethod
-    def _graph_data() -> GraphData:
+    def _graph_data() -> DenseGraphState:
         bs, n = 2, 4
-        node_mask = torch.tensor([[True, True, True, True], [True, True, True, False]])
+        # First graph keeps all 4 nodes; second has 3 real + 1 padded.
+        num_nodes_per_graph = torch.tensor([n, n - 1], dtype=torch.long)
         E = torch.zeros(bs, n, n, 2)
         E[..., 0] = 1.0
         E[:, 0, 1, :] = torch.tensor([0.0, 1.0])
         E[:, 1, 0, :] = torch.tensor([0.0, 1.0])
         diag = torch.arange(n)
         E[:, diag, diag, :] = 0.0
-        return GraphData(
+        return DenseGraphState(
+            num_nodes_per_graph=num_nodes_per_graph,
             y=torch.zeros(bs, 1),
-            node_mask=node_mask,
             X_class=torch.ones(bs, n, 2),
             E_class=E,
         )
@@ -285,7 +303,9 @@ class TestHiddenEdgeDiagonalParity:
         _ = model(data)
         assert isinstance(capture, _CaptureTransformerLayer)
         assert capture.captured_E is not None
-        diag = torch.arange(data.node_mask.shape[1])
+        assert data.E_class is not None
+        n = int(data.E_class.shape[1])
+        diag = torch.arange(n)
         assert torch.count_nonzero(capture.captured_E[:, diag, diag, :]) == 0
 
     def test_upstream_toggle_preserves_hidden_edge_diagonal(self) -> None:
@@ -297,6 +317,8 @@ class TestHiddenEdgeDiagonalParity:
         _ = model(data)
         assert isinstance(capture, _CaptureTransformerLayer)
         assert capture.captured_E is not None
-        diag = torch.arange(data.node_mask.shape[1])
+        assert data.E_class is not None
+        n = int(data.E_class.shape[1])
+        diag = torch.arange(n)
         real_node_diag = capture.captured_E[:, diag, diag, :][data.node_mask]
         assert torch.count_nonzero(real_node_diag) > 0
