@@ -277,7 +277,11 @@ class TestDiffusionModuleTrainingStep:
     @pytest.fixture
     def module_and_batch(self) -> tuple[DiffusionModule, GraphData]:
         module = _make_diffusion_module()
-        batch = binary_graphdata(_make_block_adjacency())
+        # Sparse-default refactor: DiffusionModule.training_step consumes a
+        # sparse GraphState (the dataloader emits sparse). The
+        # binary_graphdata helper produces a DenseGraphState; convert to
+        # sparse here at the fixture boundary.
+        batch = binary_graphdata(_make_block_adjacency()).to_sparse()
         return module, batch
 
     def test_training_step_finite_loss(
@@ -313,7 +317,8 @@ class TestDiffusionModuleValidation:
     @pytest.fixture
     def module_and_batch(self) -> tuple[DiffusionModule, GraphData]:
         module = _make_diffusion_module(eval_num_samples=4)
-        batch = binary_graphdata(_make_block_adjacency())
+        # Sparse-default refactor: see TestDiffusionModuleTrainingStep above.
+        batch = binary_graphdata(_make_block_adjacency()).to_sparse()
         return module, batch
 
     def test_validation_step_runs_without_accumulation(
