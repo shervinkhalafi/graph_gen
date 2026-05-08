@@ -6,8 +6,11 @@ instantiation, training_step, forward bridge, per-noise-level evaluation,
 the explicit noise-level contract, and both loss types.
 
 The tests use a GNN model instantiated directly, matching production usage.
-Batches are built with ``GraphData.from_binary_adjacency`` on random
-symmetrical binary matrices.
+Batches are built with the ``binary_graphdata`` helper on random symmetric
+binary matrices and then converted to the sparse ``GraphState`` carrier
+via ``DenseGraphState.to_sparse()``, which is what
+``SingleStepDenoisingModule.training_step`` consumes after the 2026-05-07
+sparse-default refactor.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import torch
 import torch.nn as nn
 from tests._helpers.graph_builders import binary_graphdata
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import GraphState
 
 # -----------------------------------------------------------------------
 # Shared constants and helpers
@@ -47,14 +50,18 @@ _NUM_NODES = 10
 _BATCH_SIZE = 2
 
 
-def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
-    """Create a synthetic GraphData batch with random symmetric binary adjacency."""
+def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphState:
+    """Create a synthetic sparse ``GraphState`` batch.
+
+    Builds the dense companion via ``binary_graphdata`` then converts to
+    the sparse layout that production datamodules now emit.
+    """
     adj = torch.zeros(bs, n, n)
     for i in range(bs):
         upper = (torch.rand(n, n) > 0.5).float()
         sym = upper.triu(diagonal=1)
         adj[i] = sym + sym.t()
-    return binary_graphdata(adj)
+    return binary_graphdata(adj).to_sparse()
 
 
 def _make_module(
