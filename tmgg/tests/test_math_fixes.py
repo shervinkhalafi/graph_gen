@@ -9,7 +9,7 @@ F18: RotationNoise must fail loudly when the skew matrix dimension
 import pytest
 import torch
 
-from tests._helpers.graph_builders import edge_scalar_graphdata, legacy_edge_scalar
+from tests._helpers.graph_builders import edge_scalar_graphdata
 
 
 def test_linear_pe_symmetric_output():
@@ -31,8 +31,11 @@ def test_linear_pe_symmetric_output():
 
     A = torch.randn(2, 10, 10)
     A = (A + A.transpose(-2, -1)) / 2  # symmetric input
-    result = model(edge_scalar_graphdata(A))
-    adj = legacy_edge_scalar(result)
+    result = model(edge_scalar_graphdata(A), output_dense=True)
+    # LinearPE writes its prediction to E_feat (single-channel scalar). The
+    # result is a DenseGraphDistribution, so we read the field directly.
+    assert result.E_feat is not None
+    adj = result.E_feat.squeeze(-1)
     diff = (adj - adj.transpose(-2, -1)).abs().max().item()
     assert diff < 1e-5, f"LinearPE output asymmetry: {diff}"
 

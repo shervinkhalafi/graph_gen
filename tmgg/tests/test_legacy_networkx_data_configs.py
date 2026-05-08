@@ -78,7 +78,8 @@ def test_legacy_networkx_presets_setup_successfully(
 
     train_loader = data_module.train_dataloader()
     batch = next(iter(train_loader))
-    # Wave 9.3: structure-only networkx presets emit X_class=None; node_mask
-    # is the authoritative source for batch size and node counts.
-    assert batch.X_class is None
-    assert batch.node_mask.shape[0] == 1
+    # Sparse-default refactor: the dataloader emits ``GraphState`` (sparse).
+    # Structure-only presets carry ``x_class is None``; per-graph node count
+    # is read directly off ``num_nodes_per_graph``.
+    assert batch.x_class is None
+    assert batch.num_nodes_per_graph.shape[0] == 1
