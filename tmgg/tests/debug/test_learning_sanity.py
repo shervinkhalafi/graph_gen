@@ -177,7 +177,7 @@ class TestLevel1ConstantNoiseMemorization:
         # BCE on edge-channel logit preserves the gradient scale these tests
         # were calibrated for.
         for _ in range(5000):
-            result = model(data_noisy)
+            result = model(data_noisy, output_dense=True)
             loss = F.binary_cross_entropy_with_logits(
                 legacy_edge_scalar(result), A_clean
             )
@@ -187,7 +187,7 @@ class TestLevel1ConstantNoiseMemorization:
 
         # Evaluate on the same A_noisy
         with torch.no_grad():
-            result = model(data_noisy)
+            result = model(data_noisy, output_dense=True)
             predictions = (torch.sigmoid(legacy_edge_scalar(result)) > 0.5).float()
             accuracy = (predictions == A_clean).float().mean().item()
 
@@ -282,7 +282,7 @@ class TestLevel2FreshNoiseGeneralization:
         # Train with FRESH noise each step
         for _ in range(2000):
             A_noisy = add_edge_flip_noise(A_clean, p=0.1)
-            result = model(edge_scalar_graphdata(A_noisy))
+            result = model(edge_scalar_graphdata(A_noisy), output_dense=True)
             loss = F.binary_cross_entropy_with_logits(
                 legacy_edge_scalar(result), A_clean
             )
@@ -295,7 +295,7 @@ class TestLevel2FreshNoiseGeneralization:
         A_noisy_eval = add_edge_flip_noise(A_clean, p=0.1)
 
         with torch.no_grad():
-            result = model(edge_scalar_graphdata(A_noisy_eval))
+            result = model(edge_scalar_graphdata(A_noisy_eval), output_dense=True)
             predictions = (torch.sigmoid(legacy_edge_scalar(result)) > 0.5).float()
             accuracy = (predictions == A_clean).float().mean().item()
 
@@ -350,7 +350,7 @@ class TestSingleStepLearning:
         data_noisy = edge_scalar_graphdata(A_noisy)
 
         # Initial forward pass
-        result_1 = model(data_noisy)
+        result_1 = model(data_noisy, output_dense=True)
         loss_1 = F.binary_cross_entropy_with_logits(
             legacy_edge_scalar(result_1), A_clean
         )
@@ -361,7 +361,7 @@ class TestSingleStepLearning:
         optimizer.zero_grad()
 
         # Second forward pass
-        result_2 = model(data_noisy)
+        result_2 = model(data_noisy, output_dense=True)
         loss_2 = F.binary_cross_entropy_with_logits(
             legacy_edge_scalar(result_2), A_clean
         )
@@ -403,7 +403,7 @@ class TestLossDecreasesCurve:
 
         losses = []
         for _ in range(100):
-            result = model(data_noisy)
+            result = model(data_noisy, output_dense=True)
             loss = F.binary_cross_entropy_with_logits(
                 legacy_edge_scalar(result), A_clean
             )

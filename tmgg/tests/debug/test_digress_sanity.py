@@ -116,14 +116,14 @@ class TestDigressLevel1ConstantNoiseMemorization:
         target_indices = (A_clean > 0.5).long()
 
         for _ in range(25000):
-            result = model(data_noisy)
+            result = model(data_noisy, output_dense=True)
             loss = F.cross_entropy(result.E_class.permute(0, 3, 1, 2), target_indices)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
         with torch.no_grad():
-            result = model(data_noisy)
+            result = model(data_noisy, output_dense=True)
             predictions = result.dense_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
@@ -147,14 +147,14 @@ class TestDigressLevel1ConstantNoiseMemorization:
         target_indices = (A_clean > 0.5).long()
 
         for _ in range(15000):
-            result = model(data_noisy)
+            result = model(data_noisy, output_dense=True)
             loss = F.cross_entropy(result.E_class.permute(0, 3, 1, 2), target_indices)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
         with torch.no_grad():
-            result = model(data_noisy)
+            result = model(data_noisy, output_dense=True)
             predictions = result.dense_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
@@ -200,7 +200,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
 
         for _ in range(2000):
             A_noisy = add_edge_flip_noise(A_clean, p=0.1)
-            result = model(binary_graphdata(A_noisy))
+            result = model(binary_graphdata(A_noisy), output_dense=True)
             loss = F.cross_entropy(result.E_class.permute(0, 3, 1, 2), target_indices)
             loss.backward()
             optimizer.step()
@@ -210,7 +210,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
         A_noisy_eval = add_edge_flip_noise(A_clean, p=0.1)
 
         with torch.no_grad():
-            result = model(binary_graphdata(A_noisy_eval))
+            result = model(binary_graphdata(A_noisy_eval), output_dense=True)
             predictions = result.dense_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
@@ -228,7 +228,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
 
         for _ in range(2000):
             A_noisy = add_edge_flip_noise(A_clean, p=0.1)
-            result = model(binary_graphdata(A_noisy))
+            result = model(binary_graphdata(A_noisy), output_dense=True)
             loss = F.cross_entropy(result.E_class.permute(0, 3, 1, 2), target_indices)
             loss.backward()
             optimizer.step()
@@ -238,7 +238,7 @@ class TestDigressLevel2FreshNoiseGeneralization:
         A_noisy_eval = add_edge_flip_noise(A_clean, p=0.1)
 
         with torch.no_grad():
-            result = model(binary_graphdata(A_noisy_eval))
+            result = model(binary_graphdata(A_noisy_eval), output_dense=True)
             predictions = result.dense_adjacency()
             accuracy = (predictions == A_clean).float().mean().item()
 
@@ -290,14 +290,14 @@ class TestDigressSingleStepLearning:
         # BCE on edge-channel logit: preserves the gradient scale this test was
         # calibrated for (cross-entropy has ~2x gradient magnitude, causing
         # overshoot at high LR on a single step).
-        result_1 = model(data_noisy)
+        result_1 = model(data_noisy, output_dense=True)
         loss_1 = F.binary_cross_entropy_with_logits(result_1.E_class[..., 1], A_clean)
 
         loss_1.backward()
         optimizer.step()
         optimizer.zero_grad()
 
-        result_2 = model(data_noisy)
+        result_2 = model(data_noisy, output_dense=True)
         loss_2 = F.binary_cross_entropy_with_logits(result_2.E_class[..., 1], A_clean)
 
         assert loss_2 <= loss_1 + 0.01, (
