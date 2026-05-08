@@ -27,7 +27,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+)
 from tmgg.models.attention.attention import MultiLayerAttention
 from tmgg.models.baselines.linear import LinearBaseline
 from tmgg.models.baselines.mlp import MLPBaseline
@@ -52,17 +55,17 @@ DE = 2
 DY = 1
 
 
-def _make_categorical_graphdata() -> GraphData:
-    """Construct a GraphData with X_class / E_class populated."""
+def _make_categorical_graphdata() -> DenseGraphState:
+    """Construct a DenseGraphState with X_class / E_class populated."""
     X = torch.randn(BS, N, DX)
     E = torch.randn(BS, N, N, DE)
     # Symmetrise edges to satisfy the GraphData symmetry contract.
     E = 0.5 * (E + E.transpose(1, 2))
     y = torch.randn(BS, DY)
-    node_mask = torch.ones(BS, N)
-    return GraphData(
+    num_nodes_per_graph = torch.full((BS,), N, dtype=torch.long)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
         y=y,
-        node_mask=node_mask,
         X_class=X,
         E_class=E,
     )
@@ -83,7 +86,8 @@ class TestDigressGraphTransformerParity:
     def test_categorical_input_yields_class_output(self) -> None:
         model = self._build()
         data = _make_categorical_graphdata()
-        out = model(data)
+        out = model(data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.X_class is not None
         assert out.E_class is not None
         assert out.X_class.shape == (BS, N, DX)
@@ -113,12 +117,13 @@ class TestDigressGraphTransformerParity:
         E = 0.5 * (E + E.transpose(1, 2))
         # GraphTransformer's extra_features is None here; synth yields
         # an X tensor of width ``c_x`` per the canonical helper.
-        data = GraphData(
+        data = DenseGraphState(
+            num_nodes_per_graph=torch.full((BS,), N, dtype=torch.long),
             E_class=E,
             y=torch.randn(BS, DY),
-            node_mask=torch.ones(BS, N, dtype=torch.bool),
         )
-        out = model(data)
+        out = model(data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.X_class is not None
         assert out.E_class is not None
         assert out.X_class.shape == (BS, N, c_x)
@@ -138,10 +143,10 @@ class TestDigressGraphTransformerParity:
         )
         E = torch.randn(BS, N, N, DE)
         E = 0.5 * (E + E.transpose(1, 2))
-        data = GraphData(
+        data = DenseGraphState(
+            num_nodes_per_graph=torch.full((BS,), N, dtype=torch.long),
             E_class=E,
             y=torch.randn(BS, DY),
-            node_mask=torch.ones(BS, N, dtype=torch.bool),
         )
         with pytest.raises(ValueError, match=r"C_x"):
             model(data)
@@ -165,16 +170,16 @@ class TestDigressGraphTransformerParity:
         assert model.output_dims_e_feat is None
 
 
-def _make_feat_populated_graphdata() -> GraphData:
-    """Construct a GraphData with ``E_feat`` populated (denoising-path input)."""
+def _make_feat_populated_graphdata() -> DenseGraphState:
+    """Construct a DenseGraphState with ``E_feat`` populated (denoising-path input)."""
     edge = torch.rand(BS, N, N)
     edge = 0.5 * (edge + edge.transpose(1, 2))  # symmetrise
     diag = torch.arange(N)
     edge[:, diag, diag] = 0.0
     e_feat = edge.unsqueeze(-1)
-    return GraphData(
+    return DenseGraphState(
+        num_nodes_per_graph=torch.full((BS,), N, dtype=torch.long),
         y=torch.zeros(BS, 0),
-        node_mask=torch.ones(BS, N, dtype=torch.bool),
         E_feat=e_feat,
     )
 
@@ -185,7 +190,8 @@ class TestGNNFamilyParity:
     def test_gnn_feat_input_yields_efeat_output(self) -> None:
         model = GNN(num_layers=2, num_terms=2, feature_dim_in=4, feature_dim_out=4)
         data = _make_feat_populated_graphdata()
-        out = model(data)
+        out = model(data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         # Default edge_source="feat" + output_dims_e_feat=1 → writes to E_feat.
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
@@ -196,14 +202,16 @@ class TestGNNFamilyParity:
         model = GNNSymmetric(
             num_layers=2, num_terms=2, feature_dim_in=4, feature_dim_out=4
         )
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
         assert out.E_class is None
 
     def test_node_var_gnn_runs_on_e_feat_input(self) -> None:
         model = NodeVarGNN(num_layers=2, num_terms=2, feature_dim=4)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
         assert out.E_class is None
@@ -224,12 +232,13 @@ class TestGNNFamilyParity:
         adj = torch.zeros(bs, n, n)
         adj[:, 0, 1] = adj[:, 1, 0] = 1.0
         e_class = torch.stack([1.0 - adj, adj], dim=-1)
-        data = GraphData(
+        data = DenseGraphState(
+            num_nodes_per_graph=torch.full((bs,), n, dtype=torch.long),
             y=torch.zeros(bs, 0),
-            node_mask=torch.ones(bs, n, dtype=torch.bool),
             E_class=e_class,
         )
-        out = model(data)
+        out = model(data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_class is not None
         assert out.E_class.shape == (bs, n, n, 2)
         assert out.E_feat is None
@@ -249,32 +258,37 @@ class TestSpectralFamilyParity:
 
     def test_linear_pe_feat_input_yields_efeat_output(self) -> None:
         model = LinearPE(k=4, max_nodes=N, use_bias=True)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
         assert out.E_class is None
 
     def test_graph_filter_bank_runs(self) -> None:
         model = GraphFilterBank(k=4, polynomial_degree=3)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
 
     def test_self_attention_runs(self) -> None:
         model = SelfAttentionDenoiser(k=4, d_k=8)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
 
     def test_bilinear_runs(self) -> None:
         model = BilinearDenoiser(k=4, d_k=8)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
 
     def test_bilinear_with_mlp_runs(self) -> None:
         model = BilinearDenoiserWithMLP(k=4, d_k=8, mlp_hidden_dim=16, mlp_num_layers=2)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
 
@@ -282,7 +296,8 @@ class TestSpectralFamilyParity:
         model = MultiLayerBilinearDenoiser(
             k=4, d_model=8, num_heads=2, num_layers=2, use_mlp=False
         )
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
 
@@ -306,12 +321,13 @@ class TestSpectralFamilyParity:
         adj = torch.zeros(bs, n, n)
         adj[:, 0, 1] = adj[:, 1, 0] = 1.0
         e_class = torch.stack([1.0 - adj, adj], dim=-1)
-        data = GraphData(
+        data = DenseGraphState(
+            num_nodes_per_graph=torch.full((bs,), n, dtype=torch.long),
             y=torch.zeros(bs, 0),
-            node_mask=torch.ones(bs, n, dtype=torch.bool),
             E_class=e_class,
         )
-        out = model(data)
+        out = model(data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_class is not None
         assert out.E_class.shape == (bs, n, n, 2)
         assert out.E_feat is None
@@ -322,27 +338,31 @@ class TestBaselinesHybridAttentionParity:
 
     def test_linear_baseline_runs(self) -> None:
         model = LinearBaseline(max_nodes=N)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
         assert out.E_class is None
 
     def test_mlp_baseline_runs(self) -> None:
         model = MLPBaseline(max_nodes=N, hidden_dim=16, num_layers=2)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
 
     def test_multilayer_attention_runs(self) -> None:
         model = MultiLayerAttention(d_model=N, num_heads=1, num_layers=2)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
 
     def test_sequential_denoiser_runs(self) -> None:
         embedding = GNN(num_layers=2, num_terms=2, feature_dim_in=4, feature_dim_out=4)
         model = SequentialDenoisingModel(embedding_model=embedding)
-        out = model(_make_feat_populated_graphdata())
+        out = model(_make_feat_populated_graphdata(), output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_feat is not None
         assert out.E_feat.shape == (BS, N, N, 1)
 
@@ -366,12 +386,13 @@ class TestBaselinesHybridAttentionParity:
         adj = torch.zeros(bs, n, n)
         adj[:, 0, 1] = adj[:, 1, 0] = 1.0
         e_class = torch.stack([1.0 - adj, adj], dim=-1)
-        data = GraphData(
+        data = DenseGraphState(
+            num_nodes_per_graph=torch.full((bs,), n, dtype=torch.long),
             y=torch.zeros(bs, 0),
-            node_mask=torch.ones(bs, n, dtype=torch.bool),
             E_class=e_class,
         )
-        out = model(data)
+        out = model(data, output_dense=True)
+        assert isinstance(out, DenseGraphDistribution)
         assert out.E_class is not None
         assert out.E_class.shape == (bs, n, n, 2)
         assert out.E_feat is None
