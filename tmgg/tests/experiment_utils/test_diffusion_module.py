@@ -25,7 +25,12 @@ from tests._helpers.graph_builders import (
     legacy_edge_scalar,
 )
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
+    DenseGraphState,
+    GraphData,
+    GraphState,
+)
 from tmgg.diffusion.noise_process import (
     CategoricalNoiseProcess,
     ContinuousNoiseProcess,
@@ -80,42 +85,64 @@ def _make_sampler() -> ContinuousSampler:
     return ContinuousSampler()
 
 
-def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
-    """Create a continuous edge-state batch from a binary topology."""
+def _make_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphState:
+    """Create a continuous edge-state sparse batch from a binary topology.
+
+    Production datamodules emit sparse ``GraphState`` post the
+    2026-05-07 sparse-default refactor; tests that drive
+    ``training_step`` / ``validation_step`` directly therefore must
+    feed sparse batches.
+    """
     adj = torch.zeros(bs, n, n)
     for i in range(bs):
         # Random symmetric adjacency with no self-loops
         upper = (torch.rand(n, n) > 0.5).float()
         sym = upper.triu(diagonal=1)
         adj[i] = sym + sym.t()
-    return edge_scalar_graphdata(adj)
+    return edge_scalar_graphdata(adj).to_sparse()
 
 
-def _make_categorical_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphData:
-    """Create a categorical binary-topology batch for discrete tests."""
-    adj = legacy_edge_scalar(_make_batch(bs=bs, n=n))
+def _make_dense_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> DenseGraphState:
+    """Dense companion of ``_make_batch`` for tests that operate on dense state."""
+    return _make_batch(bs=bs, n=n).to_dense()
+
+
+def _make_categorical_batch(bs: int = _BATCH_SIZE, n: int = _NUM_NODES) -> GraphState:
+    """Create a categorical binary-topology sparse batch for discrete tests."""
+    dense = _make_dense_batch(bs=bs, n=n)
+    adj = legacy_edge_scalar(dense)
+    return binary_graphdata(adj).to_sparse()
+
+
+def _make_dense_categorical_batch(
+    bs: int = _BATCH_SIZE, n: int = _NUM_NODES
+) -> DenseGraphState:
+    """Dense companion of ``_make_categorical_batch``."""
+    dense = _make_dense_batch(bs=bs, n=n)
+    adj = legacy_edge_scalar(dense)
     return binary_graphdata(adj)
 
 
-def _path_graph_data(n: int) -> GraphData:
-    """Build a single-graph GraphData representing a path graph on ``n`` nodes.
+def _path_graph_data(n: int) -> DenseGraphState:
+    """Build a single-graph ``DenseGraphState`` for a path graph on ``n`` nodes.
 
     Used by on_validation_epoch_end tests as the per-graph reference /
-    generated-sample shape post the 2026-05-01 universal-transport
-    refactor (was nx.path_graph(n); the refactor flipped the
-    public contract from list[nx.Graph] to list[GraphData]).
+    generated-sample shape per the 2026-05-01 universal-transport
+    refactor (was ``nx.path_graph(n)``; the refactor flipped the
+    public contract from ``list[nx.Graph]`` to per-graph
+    ``DenseGraphState`` carriers with leading batch dim 1).
     """
-    e_class = torch.zeros(n, n, 2)
+    e_class = torch.zeros(1, n, n, 2)
     e_class[..., 0] = 1.0  # default: no edge
     for i in range(n - 1):
-        e_class[i, i + 1, 0] = 0.0
-        e_class[i, i + 1, 1] = 1.0
-        e_class[i + 1, i, 0] = 0.0
-        e_class[i + 1, i, 1] = 1.0
-    return GraphData(
-        node_mask=torch.ones(n, dtype=torch.float32),
+        e_class[0, i, i + 1, 0] = 0.0
+        e_class[0, i, i + 1, 1] = 1.0
+        e_class[0, i + 1, i, 0] = 0.0
+        e_class[0, i + 1, i, 1] = 1.0
+    return DenseGraphState(
+        num_nodes_per_graph=torch.tensor([n], dtype=torch.long),
         E_class=e_class,
-        y=torch.zeros(0),
+        y=torch.zeros(1, 0),
     )
 
 
@@ -218,19 +245,28 @@ class TestForward:
     def test_forward_returns_graph_data(self) -> None:
         """forward() must return GraphData with the same batch shape.
 
-        It is a thin wrapper around self.model(data, t=t), so the
-        output shape should match what the GNN model produces.
+        It is a thin wrapper around ``self.model(data, t=t)`` and the
+        GNN model now returns the sparse :class:`GraphDistribution`
+        carrier by default; we read the populated sparse edge field
+        (``edge_feat`` or ``edge_class``).
         """
         module = _make_module()
         batch = _make_batch(bs=2, n=_NUM_NODES)
         result = module.forward(batch)
         assert isinstance(result, GraphData)
-        # Continuous GNN models write into E_feat (or, after Wave 7
-        # edge-source configuration, E_class). Accept whichever field
-        # is populated.
-        out_edge = result.E_feat if result.E_feat is not None else result.E_class
+        # Continuous GNN models write into edge_feat (or edge_class
+        # depending on edge-source config). Accept whichever sparse
+        # field is populated.
+        out_edge = (
+            result.edge_feat  # pyright: ignore[reportAttributeAccessIssue]
+            if getattr(result, "edge_feat", None) is not None
+            else result.edge_class  # pyright: ignore[reportAttributeAccessIssue]
+        )
         assert out_edge is not None
-        assert out_edge.shape[0] == 2
+        # Sparse layout: leading dim is sum_E (per-edge entries).
+        assert out_edge.dim() == 2
+        # Per-graph node count from the universal base.
+        assert int(result.num_nodes_per_graph.shape[0]) == 2
 
     def test_forward_passes_timestep(self) -> None:
         """forward() relays the ``t`` argument to the model.
@@ -342,17 +378,20 @@ class TestComputeLoss:
         """CrossEntropyLoss path: converts one-hot targets to class
         indices and computes edge + node loss. Both must contribute
         to a finite scalar.
+
+        ``_compute_loss`` operates on the dense carrier; we use the
+        dense companion fixtures for both prediction and target.
         """
         module = _make_module(loss_type="cross_entropy")
-        batch = _make_categorical_batch(bs=2, n=4)
+        batch = _make_dense_categorical_batch(bs=2, n=4)
         assert batch.X_class is not None
         assert batch.E_class is not None
         # Simulate model prediction: same shape but with logits
         pred_X = torch.randn_like(batch.X_class)
         pred_E = torch.randn_like(batch.E_class)
-        pred = GraphData(
+        pred = DenseGraphDistribution(
+            num_nodes_per_graph=batch.num_nodes_per_graph,
             y=batch.y,
-            node_mask=batch.node_mask,
             X_class=pred_X,
             E_class=pred_E,
         )
@@ -364,14 +403,14 @@ class TestComputeLoss:
         must be finite and non-negative.
         """
         module = _make_module(loss_type="mse")
-        batch = _make_batch(bs=2, n=4)
+        batch = _make_dense_batch(bs=2, n=4)
         assert batch.E_feat is not None
         pred_E = torch.randn_like(batch.E_feat)
         # Symmetrise to keep downstream invariants happy.
         pred_E = 0.5 * (pred_E + pred_E.transpose(-3, -2))
-        pred = GraphData(
+        pred = DenseGraphDistribution(
+            num_nodes_per_graph=batch.num_nodes_per_graph,
             y=batch.y,
-            node_mask=batch.node_mask,
             E_feat=pred_E,
         )
         loss = module._compute_loss(pred, batch)
@@ -399,12 +438,12 @@ class TestComputeLossYWiring:
         against an accidental bias toward y-CE on SBM runs.
         """
         module = _make_module(loss_type="cross_entropy")
-        batch = _make_categorical_batch(bs=2, n=4)
+        batch = _make_dense_categorical_batch(bs=2, n=4)
         assert batch.X_class is not None and batch.E_class is not None
 
-        pred = GraphData(
+        pred = DenseGraphDistribution(
+            num_nodes_per_graph=batch.num_nodes_per_graph,
             y=batch.y,
-            node_mask=batch.node_mask,
             X_class=torch.randn_like(batch.X_class),
             E_class=torch.randn_like(batch.E_class),
         )
@@ -450,9 +489,9 @@ class TestComputeLossYWiring:
         pred_X = torch.randn_like(batch.X_class)  # pyright: ignore[reportArgumentType]
         pred_E = torch.randn_like(batch.E_class)  # pyright: ignore[reportArgumentType]
         pred_y_logits = torch.randn(bs, dy)
-        pred = GraphData(
+        pred = DenseGraphDistribution(
+            num_nodes_per_graph=batch.num_nodes_per_graph,
             y=pred_y_logits,
-            node_mask=batch.node_mask,
             X_class=pred_X,
             E_class=pred_E,
         )
@@ -800,25 +839,50 @@ _DE = 2  # edge classes
 
 
 class _CategoricalLogitModel(GraphModel):
-    """Minimal categorical model stub for DiffusionModule tests."""
+    """Minimal categorical model stub for DiffusionModule tests.
 
-    def forward(self, data: GraphData, t: torch.Tensor | None = None) -> GraphData:
-        del t
-        assert data.X_class is not None
-        assert data.E_class is not None
+    Accepts any concrete GraphData carrier and returns a dense
+    distribution carrier (``DenseGraphDistribution``). Tests that drive
+    this stub through a sparse pipeline get the dense companion
+    materialised at the entry point. Honors ``output_dense`` per the
+    2026-05-07 sparse-default refactor; production calls into us with
+    ``output_dense=True`` from ``DiffusionModule._compute_loss_breakdown``.
+    """
+
+    def forward(
+        self,
+        data: GraphData,
+        t: torch.Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> GraphData:
+        del t, output_dense
+        # Densify if necessary so this stub can deal with sparse inputs
+        # produced by the post-2026-05-07 datamodule path.
+        if isinstance(data, DenseGraphState | DenseGraphDistribution):
+            dense: DenseGraphState | DenseGraphDistribution = data
+        else:
+            assert isinstance(data, GraphState)
+            dense = data.to_dense(
+                edge_class_fill=torch.tensor([1.0, 0.0])
+                if data.edge_class is not None
+                else None,
+            )
+        assert dense.X_class is not None
+        assert dense.E_class is not None
         node_logits = torch.where(
-            data.X_class > 0,
-            torch.full_like(data.X_class, 2.0),
-            torch.full_like(data.X_class, -2.0),
+            dense.X_class > 0,
+            torch.full_like(dense.X_class, 2.0),
+            torch.full_like(dense.X_class, -2.0),
         )
         edge_logits = torch.where(
-            data.E_class > 0,
-            torch.full_like(data.E_class, 2.0),
-            torch.full_like(data.E_class, -2.0),
+            dense.E_class > 0,
+            torch.full_like(dense.E_class, 2.0),
+            torch.full_like(dense.E_class, -2.0),
         )
-        return GraphData(
-            y=data.y,
-            node_mask=data.node_mask,
+        return DenseGraphDistribution(
+            num_nodes_per_graph=dense.num_nodes_per_graph,
+            y=dense.y,
             X_class=node_logits,
             E_class=edge_logits,
         )
@@ -888,11 +952,11 @@ class TestCategoricalKLPerGraph:
 
     def _make_pmf(
         self, prob_x: torch.Tensor, prob_e: torch.Tensor, mask: torch.Tensor
-    ) -> GraphData:
-        """Build a ``GraphData`` carrying per-position categorical PMFs."""
-        return GraphData(
+    ) -> DenseGraphDistribution:
+        """Build a ``DenseGraphDistribution`` carrying per-position categorical PMFs."""
+        return DenseGraphDistribution(
+            num_nodes_per_graph=mask.long().sum(dim=-1),
             y=torch.zeros(prob_x.shape[0], 0),
-            node_mask=mask,
             X_class=prob_x,
             E_class=prob_e,
         )
@@ -984,9 +1048,9 @@ class TestCategoricalKLPerGraph:
             # Convert one-hot output to soft probabilities (uniform + epsilon)
             soft_X = torch.ones_like(result.X_class) / _DX
             soft_E = torch.ones_like(result.E_class) / _DE
-            return GraphData(
+            return DenseGraphDistribution(
+                num_nodes_per_graph=result.num_nodes_per_graph,
                 y=result.y,
-                node_mask=result.node_mask,
                 X_class=soft_X,
                 E_class=soft_E,
             )
@@ -1092,14 +1156,14 @@ class TestCategoricalReconstructionLogProb:
     """Module-local categorical reconstruction helper stays finite and masked."""
 
     def test_output_shape(self) -> None:
-        batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        batch = _make_dense_categorical_batch(bs=_BATCH_SIZE)
         assert batch.X_class is not None
         assert batch.E_class is not None
         X_soft = torch.ones_like(batch.X_class) / _DX
         E_soft = torch.ones_like(batch.E_class) / _DE
-        pred_probs = GraphData(
+        pred_probs = DenseGraphDistribution(
+            num_nodes_per_graph=batch.num_nodes_per_graph,
             y=batch.y,
-            node_mask=batch.node_mask,
             X_class=X_soft,
             E_class=E_soft,
         )
@@ -1109,7 +1173,7 @@ class TestCategoricalReconstructionLogProb:
         assert result.shape == (_BATCH_SIZE,)
 
     def test_perfect_prediction_near_zero(self) -> None:
-        batch = _make_categorical_batch(bs=_BATCH_SIZE)
+        batch = _make_dense_categorical_batch(bs=_BATCH_SIZE)
         assert batch.X_class is not None
         assert batch.E_class is not None
         eps = 1e-7
@@ -1117,9 +1181,9 @@ class TestCategoricalReconstructionLogProb:
         x_safe = x_safe / x_safe.sum(dim=-1, keepdim=True)
         e_safe = batch.E_class + eps
         e_safe = e_safe / e_safe.sum(dim=-1, keepdim=True)
-        pred_probs = GraphData(
+        pred_probs = DenseGraphDistribution(
+            num_nodes_per_graph=batch.num_nodes_per_graph,
             y=batch.y,
-            node_mask=batch.node_mask,
             X_class=x_safe,
             E_class=e_safe,
         )
@@ -1141,30 +1205,47 @@ class TestReconstructionMasking:
         sets pred[invalid] = 1 (so log(1) = 0) and clean[invalid] = 0.
         """
         module = _make_categorical_module()
-        batch = _make_categorical_batch(bs=_BATCH_SIZE)
-        assert batch.X_class is not None
-        assert batch.E_class is not None
-
-        # Mask out the last node in each graph to simulate variable sizes
-        batch.node_mask[:, -1] = False
-        # Put garbage at invalid positions to ensure masking actually works
-        batch.X_class[:, -1] = torch.rand_like(batch.X_class[:, -1])
-        batch.E_class[:, -1, :] = torch.rand_like(batch.E_class[:, -1, :])
-        batch.E_class[:, :, -1] = torch.rand_like(batch.E_class[:, :, -1])
+        # Build a dense batch directly so we can mutate per-position
+        # garbage without needing to round-trip through the sparse
+        # carrier; ``_compute_reconstruction`` densifies internally
+        # anyway. We then rebuild the dense batch with one fewer real
+        # node per graph to simulate variable sizes.
+        original_dense = _make_dense_categorical_batch(bs=_BATCH_SIZE)
+        assert original_dense.X_class is not None
+        assert original_dense.E_class is not None
+        new_X = original_dense.X_class.clone()
+        new_E = original_dense.E_class.clone()
+        new_X[:, -1] = torch.rand_like(new_X[:, -1])
+        new_E[:, -1, :] = torch.rand_like(new_E[:, -1, :])
+        new_E[:, :, -1] = torch.rand_like(new_E[:, :, -1])
+        new_counts = (original_dense.num_nodes_per_graph - 1).clamp(min=0).long()
+        dense_batch = DenseGraphState(
+            num_nodes_per_graph=new_counts,
+            y=original_dense.y,
+            X_class=new_X,
+            E_class=new_E,
+        )
+        batch = dense_batch.to_sparse()
 
         # Patch model to return soft probabilities (uniform) so log-space
         # is well-defined at valid positions.
         original_forward = module.model.forward
 
-        def soft_forward(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        def soft_forward(
+            data: GraphData,
+            t: torch.Tensor | None = None,
+            *,
+            output_dense: bool = False,
+        ) -> GraphData:
+            del output_dense
             result = original_forward(data, t=t)
             assert result.X_class is not None
             assert result.E_class is not None
             soft_X = torch.ones_like(result.X_class) / _DX
             soft_E = torch.ones_like(result.E_class) / _DE
-            return GraphData(
+            return DenseGraphDistribution(
+                num_nodes_per_graph=result.num_nodes_per_graph,
                 y=result.y,
-                node_mask=result.node_mask,
                 X_class=soft_X,
                 E_class=soft_E,
             )
@@ -1194,15 +1275,21 @@ class TestUseMarginalisedVlbKlToggle:
         """
         original_forward = module.model.forward
 
-        def soft_forward(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        def soft_forward(
+            data: GraphData,
+            t: torch.Tensor | None = None,
+            *,
+            output_dense: bool = False,
+        ) -> GraphData:
+            del output_dense
             result = original_forward(data, t=t)
             assert result.X_class is not None
             assert result.E_class is not None
             soft_X = torch.ones_like(result.X_class) / _DX
             soft_E = torch.ones_like(result.E_class) / _DE
-            return GraphData(
+            return DenseGraphDistribution(
+                num_nodes_per_graph=result.num_nodes_per_graph,
                 y=result.y,
-                node_mask=result.node_mask,
                 X_class=soft_X,
                 E_class=soft_E,
             )
@@ -1280,15 +1367,21 @@ class TestUseUpstreamReconstructionToggle:
         """
         original_forward = module.model.forward
 
-        def soft_forward(data: GraphData, t: torch.Tensor | None = None) -> GraphData:
+        def soft_forward(
+            data: GraphData,
+            t: torch.Tensor | None = None,
+            *,
+            output_dense: bool = False,
+        ) -> GraphData:
+            del output_dense
             result = original_forward(data, t=t)
             assert result.X_class is not None
             assert result.E_class is not None
             soft_X = torch.ones_like(result.X_class) / _DX
             soft_E = torch.ones_like(result.E_class) / _DE
-            return GraphData(
+            return DenseGraphDistribution(
+                num_nodes_per_graph=result.num_nodes_per_graph,
                 y=result.y,
-                node_mask=result.node_mask,
                 X_class=soft_X,
                 E_class=soft_E,
             )
