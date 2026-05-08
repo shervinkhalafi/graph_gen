@@ -267,7 +267,13 @@ class TopKEigenLayer(nn.Module):
         # ``tmgg/modal/_lib/image._runtime_env``), so the compile trace
         # never sees the data-dependent branch.
         zero_eigenvector_mask = sign_multipliers == 0
-        if __debug__:  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
+        # Skip the warning emission under ``torch.compile`` —
+        # ``zero_eigenvector_mask.any()`` is a data-dependent bool branch
+        # that dynamo cannot trace. ``torch.compiler.is_compiling()``
+        # constant-folds at trace time so the dev path keeps the warning.
+        if (
+            __debug__ and not torch.compiler.is_compiling()
+        ):  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
             if zero_eigenvector_mask.any():
                 import warnings
 

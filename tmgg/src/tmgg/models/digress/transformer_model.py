@@ -38,10 +38,13 @@ def _assert_correctly_masked(variable: torch.Tensor, node_mask: torch.Tensor) ->
     layers) and each ``.item()`` syncs the GPU stream. Wrapped in
     ``if __debug__:`` so production runs (Python -O / PYTHONOPTIMIZE=1)
     elide the entire check at bytecode-compile time, removing the largest
-    sync source in the model body. See
+    sync source in the model body. Also skipped under ``torch.compile``
+    because the ``.item()`` would graph-break dynamo (data-dependent scalar);
+    ``torch.compiler.is_compiling()`` constant-folds at trace time so the
+    dev/test path keeps the assertion. See
     ``docs/reports/2026-04-28-sync-review/04-transformer_forward.md``.
     """
-    if __debug__:
+    if __debug__ and not torch.compiler.is_compiling():
         max_val = (variable * (1 - node_mask.long())).abs().max().item()
         if not max_val < 1e-4:
             raise AssertionError("Variables not masked properly.")

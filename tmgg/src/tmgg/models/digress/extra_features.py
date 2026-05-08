@@ -450,20 +450,26 @@ class KNodeCycles:
         # numerical noise from float32 matmuls (upstream DiGress uses the
         # same -0.1 floor). Guarded by ``__debug__`` so production runs
         # (Python -O / PYTHONOPTIMIZE=1) skip the four bool(.all()) syncs.
+        # Also skipped under ``torch.compile`` because dynamo cannot trace
+        # data-dependent ``bool(.all())`` branches and would graph-break.
+        # ``torch.compiler.is_compiling()`` constant-folds at trace time
+        # so the dev/test path keeps the assert.
+        _is_compiling = torch.compiler.is_compiling()
+
         k3x, k3y = self._k3_cycle(k3)
-        if __debug__:
+        if __debug__ and not _is_compiling:
             assert (k3x >= -0.1).all()
 
         k4x, k4y = self._k4_cycle(adj_matrix, d, k4)
-        if __debug__:
+        if __debug__ and not _is_compiling:
             assert (k4x >= -0.1).all()
 
         k5x, k5y = self._k5_cycle(adj_matrix, d, k3, k5)
-        if __debug__:
+        if __debug__ and not _is_compiling:
             assert (k5x >= -0.1).all(), k5x
 
         _, k6y = self._k6_cycle(adj_matrix, k2, k3, k4, k6)
-        if __debug__:
+        if __debug__ and not _is_compiling:
             assert (k6y >= -0.1).all()
 
         kcyclesx = torch.cat([k3x, k4x, k5x], dim=-1)
@@ -595,11 +601,13 @@ def get_eigenvalues_features(eigenvalues: Tensor, k: int = 5) -> tuple[Tensor, T
     ev = eigenvalues
     bs, n = ev.shape
     n_connected_components = (ev < 1e-5).sum(dim=-1)
-    if __debug__:
+    if __debug__ and not torch.compiler.is_compiling():
         # Sanity check: a Laplacian always has at least one zero eigenvalue
         # per connected component, plus one per padding row, so the count
         # is strictly positive on any valid input. Guarded by ``__debug__``
         # so production runs (Python -O) skip the bool(.all()) sync.
+        # Also skipped under ``torch.compile`` (dynamo cannot trace the
+        # ``bool(.all())`` and would graph-break).
         assert (n_connected_components > 0).all(), (n_connected_components, ev)
 
     # Always pad by k. Bounded sufficient (see Notes); removes the
