@@ -38,6 +38,7 @@ from loguru import logger as loguru
 
 from tmgg.data.datasets.graph_data_fields import FieldName
 from tmgg.data.datasets.graph_types import (
+    DenseGraphDistribution,
     DenseGraphState,
     GraphData,
     GraphState,
@@ -298,7 +299,24 @@ class SingleStepDenoisingModule(DiffusionModule):
                 x.shape[0], x.shape[1], dtype=torch.bool, device=x.device
             )
         data = DenseGraphState.from_structure_only(node_mask, x)
-        result: GraphData = self.model(data, t=t)  # pyright: ignore[reportUnknownVariableType]
+        # Wave 3 of the sparse-default refactor made ``output_dense`` opt-in;
+        # the bridge here needs the dense (B, N, N, *) layout so it can read
+        # the scalar adjacency back out via ``to_edge_scalar``. The model
+        # returns a ``DenseGraphDistribution`` whose tensors are the raw
+        # continuous logits (no thresholding); cast back to the matching
+        # ``DenseGraphState`` so the state-only ``to_edge_scalar`` helper
+        # can read them. Argmax is *not* appropriate here -- it would
+        # discretise continuous E_feat predictions and break the loss.
+        result_dist = self.model(data, t=t, output_dense=True)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        assert isinstance(result_dist, DenseGraphDistribution)
+        result = DenseGraphState(
+            num_nodes_per_graph=result_dist.num_nodes_per_graph,
+            y=result_dist.y,
+            X_class=result_dist.X_class,
+            X_feat=result_dist.X_feat,
+            E_class=result_dist.E_class,
+            E_feat=result_dist.E_feat,
+        )
         return result.to_edge_scalar(
             source="feat" if result.E_feat is not None else "class"
         )
