@@ -33,7 +33,7 @@ class GNN(GraphModel):
     the raw asymmetric product.
     """
 
-    _internal_in: ClassVar[type] = DenseGraphState
+    _internal_in: ClassVar[type] = DenseGraphDistribution
     _internal_out: ClassVar[type] = DenseGraphDistribution
 
     def __init__(
@@ -152,8 +152,8 @@ class GNN(GraphModel):
             Denoised graph distribution with the prediction in the
             configured edge field (default ``E_feat``).
         """
-        d = _coerce_input_to(data, target=DenseGraphState)
-        assert isinstance(d, DenseGraphState)
+        d = _coerce_input_to(data, target=DenseGraphDistribution)
+        assert isinstance(d, DenseGraphDistribution)
         A = read_edge_scalar(d, self.edge_source)
         emb_x, emb_y = self._embed(A)
         result_adj = torch.bmm(emb_x, emb_y.transpose(1, 2))
@@ -191,8 +191,8 @@ class GNN(GraphModel):
             Tuple of (X, Y) embeddings, each of shape
             ``(batch, n, feature_dim_out)``.
         """
-        d = _coerce_input_to(data, target=DenseGraphState)
-        assert isinstance(d, DenseGraphState)
+        d = _coerce_input_to(data, target=DenseGraphDistribution)
+        assert isinstance(d, DenseGraphDistribution)
         A = read_edge_scalar(d, self.edge_source)
         return self._embed(A)
 
