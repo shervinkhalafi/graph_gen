@@ -176,8 +176,27 @@ def _continuous_edge_state(data: GraphData) -> Tensor:
     Continuous states read from ``E_feat``; clean binary-topology
     graphs lift through ``to_edge_scalar(source="class")`` so the
     forward and reverse process stay in dense edge-state space without
-    binary-topology projections.
+    binary-topology projections. Sparse / distribution carriers
+    densify on the fly to a ``DenseGraphState`` view (the two dense
+    types share fields RAM-for-RAM per spec §2.1).
     """
+    if isinstance(data, GraphState):
+        data = state_to_dense_sample(data)
+    elif isinstance(data, GraphDistribution):
+        dd = data.to_dense()
+        data = DenseGraphState(
+            num_nodes_per_graph=dd.num_nodes_per_graph,
+            y=dd.y,
+            X_class=dd.X_class, X_feat=dd.X_feat,
+            E_class=dd.E_class, E_feat=dd.E_feat,
+        )
+    elif isinstance(data, DenseGraphDistribution):
+        data = DenseGraphState(
+            num_nodes_per_graph=data.num_nodes_per_graph,
+            y=data.y,
+            X_class=data.X_class, X_feat=data.X_feat,
+            E_class=data.E_class, E_feat=data.E_feat,
+        )
     if data.E_feat is not None:
         return data.to_edge_scalar(source="feat")
     return data.to_edge_scalar(source="class")
@@ -261,7 +280,16 @@ def _read_feature_field(data: GraphData, field: FieldName) -> Tensor:
     stay usable by Gaussian processes declared on ``E_feat``. For
     ``"X_feat"`` the split field MUST be populated; there is no
     canonical lift from ``X_class``.
+
+    Accepts any of the four concrete carriers (sparse / dense × state /
+    distribution). Sparse carriers densify on the fly so the returned
+    tensor matches the ``(B, n_max, ...)`` dense layout every consumer
+    expects.
     """
+    if isinstance(data, GraphState):
+        data = state_to_dense_sample(data)
+    elif isinstance(data, GraphDistribution):
+        data = data.to_dense()
     if field == "E_feat":
         if data.E_feat is not None:
             return data.E_feat
@@ -281,12 +309,38 @@ def _read_feature_field(data: GraphData, field: FieldName) -> Tensor:
     raise ValueError(f"_read_feature_field does not support field {field!r}.")
 
 
-def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> GraphData:
+def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> DenseGraphState:
     """Return ``data`` with the given Gaussian fields written.
 
     Writes each declared split field (``X_feat`` / ``E_feat``) onto a
     copy of ``data``. Non-Gaussian fields pass through unchanged.
+
+    Accepts any of the four concrete carriers; sparse inputs densify
+    and distribution-content reinterprets as ``DenseGraphState`` so
+    callers can read ``.node_mask`` / call ``.mask()`` immediately.
+    The two dense types share fields RAM-for-RAM (spec §2.1) so the
+    reinterpretation is structurally a no-op.
     """
+    if isinstance(data, GraphState):
+        dense_state: DenseGraphState = state_to_dense_sample(data)
+    elif isinstance(data, GraphDistribution):
+        dd = data.to_dense()
+        dense_state = DenseGraphState(
+            num_nodes_per_graph=dd.num_nodes_per_graph,
+            y=dd.y,
+            X_class=dd.X_class, X_feat=dd.X_feat,
+            E_class=dd.E_class, E_feat=dd.E_feat,
+        )
+    elif isinstance(data, DenseGraphDistribution):
+        dense_state = DenseGraphState(
+            num_nodes_per_graph=data.num_nodes_per_graph,
+            y=data.y,
+            X_class=data.X_class, X_feat=data.X_feat,
+            E_class=data.E_class, E_feat=data.E_feat,
+        )
+    else:
+        # Already DenseGraphState (or the abstract base, which we reject implicitly via the replace below).
+        dense_state = data  # type: ignore[assignment]
     replace_kwargs: dict[str, Tensor] = {}
     for field, value in updates.items():
         if field == "E_feat":
@@ -295,7 +349,7 @@ def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> Gr
             replace_kwargs["X_feat"] = value
         else:
             raise ValueError(f"_gaussian_graphdata: unsupported field {field!r}.")
-    return data.replace(**replace_kwargs)
+    return dense_state.replace(**replace_kwargs)
 
 
 def _read_categorical_x(data: GraphData, x_classes: int) -> Tensor:
@@ -887,7 +941,18 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
         ``eps ~ N(0, I)``; falls back to the mean when ``s <= 0`` so the
         final reverse step is deterministic. Edge-field outputs are
         symmetrised and diagonal-zeroed.
+
+        Accepts any concrete carrier for ``z_t`` and ``x0_param``;
+        sparse inputs densify on the fly so ``z_t.node_mask`` is valid.
         """
+        if isinstance(z_t, GraphState):
+            z_t = state_to_dense_sample(z_t)
+        elif isinstance(z_t, GraphDistribution):
+            z_t = z_t.to_dense()
+        if isinstance(x0_param, GraphState):
+            x0_param = state_to_dense_sample(x0_param)
+        elif isinstance(x0_param, GraphDistribution):
+            x0_param = x0_param.to_dense()
         if s.dim() == 0:
             s = s.unsqueeze(0)
         updates: dict[FieldName, Tensor] = {}
