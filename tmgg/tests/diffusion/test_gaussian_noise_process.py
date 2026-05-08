@@ -26,7 +26,7 @@ import math
 import pytest
 import torch
 
-from tmgg.data.datasets.graph_types import GraphData
+from tmgg.data.datasets.graph_types import DenseGraphState
 from tmgg.diffusion.noise_process import GaussianNoiseProcess
 from tmgg.diffusion.schedule import NoiseSchedule
 from tmgg.utils.noising.noise import GaussianNoise
@@ -44,13 +44,13 @@ def long_schedule() -> NoiseSchedule:
 
 
 @pytest.fixture()
-def continuous_graph_data() -> GraphData:
+def continuous_graph_data() -> DenseGraphState:
     """Small continuous-graph batch with populated ``X_feat`` / ``E_feat``.
 
     Shapes: ``bs=4``, ``n=6``, ``dx_feat=1``, ``de_feat=1``. Edge field is
     symmetric and zero-diagonal so the output symmetry check has a
     clean reference. Legacy ``X`` / ``E`` are populated with zeros to
-    satisfy the ``GraphData`` required fields during Wave 2.
+    satisfy the ``DenseGraphState`` required fields during Wave 2.
     """
     torch.manual_seed(0)
     bs, n = 4, 6
@@ -63,9 +63,10 @@ def continuous_graph_data() -> GraphData:
     x_class[..., 0] = 1.0
     e_class = torch.zeros(bs, n, n, 2)
     e_class[..., 0] = 1.0
-    return GraphData(
+    num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long)
+    return DenseGraphState(
+        num_nodes_per_graph=num_nodes_per_graph,
         y=torch.zeros(bs, 0),
-        node_mask=torch.ones(bs, n, dtype=torch.bool),
         X_feat=x_feat,
         E_feat=e_feat,
         X_class=x_class,
@@ -78,7 +79,7 @@ class TestGaussianForwardSample:
 
     def test_non_declared_fields_pass_through(
         self,
-        continuous_graph_data: GraphData,
+        continuous_graph_data: DenseGraphState,
         long_schedule: NoiseSchedule,
     ) -> None:
         """``forward_sample`` must leave non-declared fields untouched.
@@ -124,11 +125,12 @@ class TestGaussianForwardSample:
         e_feat = 0.5 * (e_feat + e_feat.transpose(-2, -3))
         diag = torch.arange(n)
         e_feat[:, diag, diag, :] = 0.0
-        data = GraphData(
+        num_nodes_per_graph = torch.full((bs,), n, dtype=torch.long)
+        data = DenseGraphState(
+            num_nodes_per_graph=num_nodes_per_graph,
             X_class=torch.zeros(bs, n, 1),
             E_class=torch.zeros(bs, n, n, 1),
             y=torch.zeros(bs, 0),
-            node_mask=torch.ones(bs, n, dtype=torch.bool),
             X_feat=x_feat,
             E_feat=e_feat,
         )
@@ -161,7 +163,7 @@ class TestGaussianForwardSample:
 
     def test_t_zero_near_identity(
         self,
-        continuous_graph_data: GraphData,
+        continuous_graph_data: DenseGraphState,
         long_schedule: NoiseSchedule,
     ) -> None:
         """Forward sample at ``t = 0`` stays within a few noise stds of the input.
@@ -182,7 +184,7 @@ class TestGaussianForwardSample:
 
     def test_edge_field_output_is_symmetric(
         self,
-        continuous_graph_data: GraphData,
+        continuous_graph_data: DenseGraphState,
         long_schedule: NoiseSchedule,
     ) -> None:
         """``E_feat`` output is symmetric across the node-pair axes.
@@ -207,7 +209,7 @@ class TestGaussianPosterior:
 
     def test_posterior_sample_deterministic_at_s_zero(
         self,
-        continuous_graph_data: GraphData,
+        continuous_graph_data: DenseGraphState,
         long_schedule: NoiseSchedule,
     ) -> None:
         """When ``s <= 0`` the posterior sample collapses to the mean.
@@ -233,7 +235,7 @@ class TestGaussianPosterior:
 
     def test_posterior_sample_symmetric(
         self,
-        continuous_graph_data: GraphData,
+        continuous_graph_data: DenseGraphState,
         long_schedule: NoiseSchedule,
     ) -> None:
         """Reverse-posterior ``E_feat`` output remains symmetric.
@@ -254,7 +256,7 @@ class TestGaussianPosterior:
 
     def test_forward_log_prob_matches_analytic(
         self,
-        continuous_graph_data: GraphData,
+        continuous_graph_data: DenseGraphState,
         long_schedule: NoiseSchedule,
     ) -> None:
         """``forward_log_prob`` returns a finite per-sample vector.
@@ -276,7 +278,7 @@ class TestGaussianPosterior:
 
     def test_prior_log_prob_matches_standard_normal(
         self,
-        continuous_graph_data: GraphData,
+        continuous_graph_data: DenseGraphState,
         long_schedule: NoiseSchedule,
     ) -> None:
         """``prior_log_prob`` equals ``sum_field N(0,1)`` log-density.
@@ -300,7 +302,7 @@ class TestGaussianPosterior:
 
     def test_posterior_log_prob_finite(
         self,
-        continuous_graph_data: GraphData,
+        continuous_graph_data: DenseGraphState,
         long_schedule: NoiseSchedule,
     ) -> None:
         """``posterior_log_prob`` yields finite per-sample log-density.
