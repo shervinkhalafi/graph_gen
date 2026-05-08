@@ -313,7 +313,15 @@ class _StubEvaluator:
 
 
 class _UniformCategoricalModel(GraphModel):
-    """Trivial model returning uniform PMFs for the reverse-loop test."""
+    """Trivial model returning uniform PMFs for the reverse-loop test.
+
+    Sparse-default refactor: the production sampler passes
+    ``output_dense=True``, so this stub returns a
+    :class:`DenseGraphDistribution` (per-position probability content)
+    over ``(B, n_max, *)``. The forward also accepts the universal
+    :class:`GraphData` base — the categorical sampler hands it a
+    ``DenseGraphState`` after coercion at the model boundary.
+    """
 
     def __init__(self, dx: int, de: int) -> None:
         super().__init__()
@@ -323,21 +331,38 @@ class _UniformCategoricalModel(GraphModel):
     def get_config(self) -> dict[str, Any]:
         return {"dx": self.dx, "de": self.de}
 
-    def forward(self, data: Any, t: Tensor | None = None) -> Any:
-        from tmgg.data.datasets.graph_types import GraphData
+    def forward(
+        self,
+        data: Any,
+        t: Tensor | None = None,
+        *,
+        output_dense: bool = False,
+    ) -> Any:
+        from tmgg.data.datasets.graph_types import (
+            DenseGraphDistribution,
+            DenseGraphState,
+        )
+        from tmgg.models.base import _coerce_input_to
 
         _ = t
-        assert data.X_class is not None
-        assert data.E_class is not None
-        bs, n, _ = data.X_class.shape
-        X = torch.ones(bs, n, self.dx, device=data.X_class.device) / self.dx
-        E = torch.ones(bs, n, n, self.de, device=data.E_class.device) / self.de
-        return GraphData(
-            y=data.y,
-            node_mask=data.node_mask,
+        # The sampler hands us either a sparse or dense state; coerce to
+        # a dense state so the body math reads (B, n_max, …) directly.
+        d = _coerce_input_to(data, target=DenseGraphState)
+        assert isinstance(d, DenseGraphState)
+        assert d.X_class is not None
+        assert d.E_class is not None
+        bs, n, _ = d.X_class.shape
+        X = torch.ones(bs, n, self.dx, device=d.X_class.device) / self.dx
+        E = torch.ones(bs, n, n, self.de, device=d.E_class.device) / self.de
+        out_dense = DenseGraphDistribution(
+            num_nodes_per_graph=d.num_nodes_per_graph,
+            y=d.y,
             X_class=X,
             E_class=E,
         )
+        if output_dense:
+            return out_dense
+        return out_dense.to_sparse()
 
 
 class _StubDiffusionModule(pl.LightningModule):
