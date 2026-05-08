@@ -256,7 +256,12 @@ class TestSingleGraphBaseConfig:
         ):
             cfg = compose(config_name="base_config_spectral_arch", overrides=overrides)
 
-        # Required fields from single_graph_base
+        # Required fields from single_graph_base. ``noise_type`` was
+        # removed in commit 80142202 ("fix(denoising): align config noise
+        # ownership and digress edge state") — the noise contract belongs
+        # to the LightningModule, not the datamodule, and
+        # ``test_denoising_task_does_not_copy_noise_config_into_data_module``
+        # in test_config_composition.py guards that invariant.
         required_fields = [
             "same_graph_all_splits",
             "train_seed",
@@ -265,7 +270,6 @@ class TestSingleGraphBaseConfig:
             "num_test_samples",
             "batch_size",
             "num_workers",
-            "noise_type",
         ]
 
         for field in required_fields:
