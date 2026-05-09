@@ -84,6 +84,15 @@ from tmgg.utils.noising.size_distribution import SizeDistribution
 _VALID_LOSS_TYPES = frozenset({"cross_entropy", "mse", "bce_logits"})
 _DEFAULT_VISUALIZATION = {"enabled": True, "num_samples": 8}
 
+#: Type alias for the dense carrier union. Both leaves expose the
+#: uppercase split fields (``X_class`` / ``X_feat`` / ``E_class`` /
+#: ``E_feat``) and the cached ``node_mask`` derived from
+#: ``num_nodes_per_graph``; the only difference is content-semantics
+#: (state vs. distribution). The training-loop helpers operate on
+#: either kind, so we type them against the union rather than the
+#: abstract ``GraphData`` base.
+DenseGraphData = DenseGraphState | DenseGraphDistribution
+
 #: Default per-field loss weights for the unified per-field training loop.
 #: Edge-side fields carry a 5x weight to reproduce the DiGress (Vignac et al.
 #: 2023, Eq. 3) ``lambda_E`` convention; node-side and continuous node fields
@@ -123,7 +132,7 @@ def _no_edge_fill_for(state: GraphState) -> torch.Tensor | None:
     return fill
 
 
-def _dense_to_edge_scalar(data: GraphData, *, source: str) -> torch.Tensor:
+def _dense_to_edge_scalar(data: DenseGraphData, *, source: str) -> torch.Tensor:
     """Return a dense ``(B, n_max, n_max)`` scalar adjacency from a dense carrier.
 
     ``DenseGraphState`` exposes ``to_edge_scalar`` directly. The
@@ -199,7 +208,7 @@ def _normalize_visualization_config(
     return {"enabled": enabled, "num_samples": num_samples}
 
 
-def _read_field(data: GraphData, field: FieldName, x_classes: int) -> torch.Tensor:
+def _read_field(data: DenseGraphData, field: FieldName, x_classes: int) -> torch.Tensor:
     """Read a split field from ``data`` or raise if unpopulated.
 
     Called from the per-field training / validation loop to fetch the
@@ -261,7 +270,7 @@ def _read_field(data: GraphData, field: FieldName, x_classes: int) -> torch.Tens
 
 
 def _resolve_x_classes_for_loss(
-    noise_process: NoiseProcess, pred: GraphData, target: GraphData
+    noise_process: NoiseProcess, pred: DenseGraphData, target: DenseGraphData
 ) -> int:
     """Resolve C_x for the CE-loss path.
 
@@ -283,7 +292,7 @@ def _resolve_x_classes_for_loss(
     )
 
 
-def _continuous_target_edge_state(data: GraphData) -> torch.Tensor:
+def _continuous_target_edge_state(data: DenseGraphData) -> torch.Tensor:
     """Extract the dense target state for continuous losses.
 
     Continuous predictions are one-channel edge states. For
@@ -338,7 +347,9 @@ def _categorical_reconstruction_log_prob(
     return log_prob_x + log_prob_e
 
 
-def _categorical_kl_per_graph(p_pmf: GraphData, q_pmf: GraphData) -> torch.Tensor:
+def _categorical_kl_per_graph(
+    p_pmf: DenseGraphData, q_pmf: DenseGraphData
+) -> torch.Tensor:
     """Sum analytic categorical KL(p || q) over all node + edge positions per graph.
 
     Both inputs carry per-position PMFs over the same support
