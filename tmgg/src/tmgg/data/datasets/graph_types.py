@@ -1312,7 +1312,10 @@ class DenseGraphState(_StateGraph):
         if self.X_class is not None:
             x_class_idx = (
                 self.X_class[batch_index][:n_valid]
-                .argmax(dim=-1).detach().cpu().tolist()
+                .argmax(dim=-1)
+                .detach()
+                .cpu()
+                .tolist()
             )
             for node, idx in enumerate(x_class_idx):
                 graph.nodes[node]["x_class"] = int(idx)
@@ -1320,7 +1323,10 @@ class DenseGraphState(_StateGraph):
         if self.E_class is not None:
             e_class_idx = (
                 self.E_class[batch_index][:n_valid, :n_valid]
-                .argmax(dim=-1).detach().cpu().tolist()
+                .argmax(dim=-1)
+                .detach()
+                .cpu()
+                .tolist()
             )
             for u, v in graph.edges():
                 graph.edges[u, v]["e_class"] = int(e_class_idx[u][v])

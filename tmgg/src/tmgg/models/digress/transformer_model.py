@@ -173,9 +173,7 @@ class XEyTransformerLayer(nn.Module):
         self.dropout_y2 = Dropout(dropout)
         self.dropout_y3 = Dropout(dropout)
 
-    def forward(
-        self, h: DenseGraphTransformerData
-    ) -> DenseGraphTransformerData:
+    def forward(self, h: DenseGraphTransformerData) -> DenseGraphTransformerData:
         """Pass the hidden graph state through one encoder layer.
 
         Parameters
@@ -428,9 +426,7 @@ class NodeEdgeBlock(nn.Module):
             nn.Linear(dy, dy, device=device, dtype=dtype),
         )
 
-    def forward(
-        self, h: DenseGraphTransformerData
-    ) -> DenseGraphTransformerData:
+    def forward(self, h: DenseGraphTransformerData) -> DenseGraphTransformerData:
         """Compute attention update for node and edge features.
 
         Parameters
@@ -849,7 +845,9 @@ class _GraphTransformer(nn.Module):
         E = E.masked_fill(diag, 0.0)
         return X, E, y
 
-    def forward(self, dense_in: DenseGraphState | DenseGraphDistribution) -> DenseGraphDistribution:
+    def forward(
+        self, dense_in: DenseGraphState | DenseGraphDistribution
+    ) -> DenseGraphDistribution:
         """Process dense graph features through the transformer stack.
 
         Parameters

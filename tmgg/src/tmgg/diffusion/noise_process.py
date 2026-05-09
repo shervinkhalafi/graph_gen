@@ -187,15 +187,19 @@ def _continuous_edge_state(data: GraphData) -> Tensor:
         data = DenseGraphState(
             num_nodes_per_graph=dd.num_nodes_per_graph,
             y=dd.y,
-            X_class=dd.X_class, X_feat=dd.X_feat,
-            E_class=dd.E_class, E_feat=dd.E_feat,
+            X_class=dd.X_class,
+            X_feat=dd.X_feat,
+            E_class=dd.E_class,
+            E_feat=dd.E_feat,
         )
     elif isinstance(data, DenseGraphDistribution):
         data = DenseGraphState(
             num_nodes_per_graph=data.num_nodes_per_graph,
             y=data.y,
-            X_class=data.X_class, X_feat=data.X_feat,
-            E_class=data.E_class, E_feat=data.E_feat,
+            X_class=data.X_class,
+            X_feat=data.X_feat,
+            E_class=data.E_class,
+            E_feat=data.E_feat,
         )
     if data.E_feat is not None:
         return data.to_edge_scalar(source="feat")
@@ -309,7 +313,9 @@ def _read_feature_field(data: GraphData, field: FieldName) -> Tensor:
     raise ValueError(f"_read_feature_field does not support field {field!r}.")
 
 
-def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> DenseGraphState:
+def _gaussian_graphdata(
+    data: GraphData, updates: dict[FieldName, Tensor]
+) -> DenseGraphState:
     """Return ``data`` with the given Gaussian fields written.
 
     Writes each declared split field (``X_feat`` / ``E_feat``) onto a
@@ -328,15 +334,19 @@ def _gaussian_graphdata(data: GraphData, updates: dict[FieldName, Tensor]) -> De
         dense_state = DenseGraphState(
             num_nodes_per_graph=dd.num_nodes_per_graph,
             y=dd.y,
-            X_class=dd.X_class, X_feat=dd.X_feat,
-            E_class=dd.E_class, E_feat=dd.E_feat,
+            X_class=dd.X_class,
+            X_feat=dd.X_feat,
+            E_class=dd.E_class,
+            E_feat=dd.E_feat,
         )
     elif isinstance(data, DenseGraphDistribution):
         dense_state = DenseGraphState(
             num_nodes_per_graph=data.num_nodes_per_graph,
             y=data.y,
-            X_class=data.X_class, X_feat=data.X_feat,
-            E_class=data.E_class, E_feat=data.E_feat,
+            X_class=data.X_class,
+            X_feat=data.X_feat,
+            E_class=data.E_class,
+            E_feat=data.E_feat,
         )
     else:
         # Already DenseGraphState (or the abstract base, which we reject implicitly via the replace below).
@@ -1031,9 +1041,7 @@ class GaussianNoiseProcess(ExactDensityNoiseProcess):
 
     # -- 4-type GraphData grid: state-content forward sampling ---------------
 
-    def sample_dense(
-        self, z_0: DenseGraphState, t: Tensor
-    ) -> DenseGraphDistribution:
+    def sample_dense(self, z_0: DenseGraphState, t: Tensor) -> DenseGraphDistribution:
         """DDPM forward sample on a dense state, returned as a distribution.
 
         Mirrors :meth:`forward_sample`'s math but stops short of the
@@ -1756,9 +1764,7 @@ class CategoricalNoiseProcess(ExactDensityNoiseProcess):
 
     # -- 4-type GraphData grid: state-content forward sampling and marginal --
 
-    def sample_dense(
-        self, z_0: DenseGraphState, t: Tensor
-    ) -> DenseGraphState:
+    def sample_dense(self, z_0: DenseGraphState, t: Tensor) -> DenseGraphState:
         """Categorical forward sample on a dense state.
 
         Returns a freshly drawn one-hot per position (state content) at

@@ -235,9 +235,7 @@ class MolecularGraphDataset(Dataset[Data], abc.ABC):
         shard_dir = self._shard_dir()
         graphs: list[DenseGraphState] = []
         for shard_path in sorted(shard_dir.glob("*.pt")):
-            shard: list[DenseGraphState] = torch.load(
-                shard_path, weights_only=False
-            )
+            shard: list[DenseGraphState] = torch.load(shard_path, weights_only=False)
             graphs.extend(shard)
         return graphs
 

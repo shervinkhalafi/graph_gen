@@ -40,7 +40,6 @@ from tmgg.data.datasets.graph_data_fields import FieldName
 from tmgg.data.datasets.graph_types import (
     DenseGraphDistribution,
     DenseGraphState,
-    GraphData,
     GraphState,
 )
 from tmgg.diffusion.noise_process import GaussianNoiseProcess
@@ -86,7 +85,9 @@ def _no_edge_fill_for_denoising(state: GraphState) -> torch.Tensor | None:
     if state.edge_class is None:
         return None
     d_ec = int(state.edge_class.shape[-1])
-    fill = torch.zeros(d_ec, dtype=state.edge_class.dtype, device=state.edge_class.device)
+    fill = torch.zeros(
+        d_ec, dtype=state.edge_class.dtype, device=state.edge_class.device
+    )
     fill[0] = 1.0
     return fill
 

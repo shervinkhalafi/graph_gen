@@ -267,22 +267,24 @@ class TopKEigenLayer(nn.Module):
         # ``tmgg/modal/_lib/image._runtime_env``), so the compile trace
         # never sees the data-dependent branch.
         zero_eigenvector_mask = sign_multipliers == 0
-        # Skip the warning emission under ``torch.compile`` —
+        # Skip the warning emission under ``-O`` AND under ``torch.compile``.
         # ``zero_eigenvector_mask.any()`` is a data-dependent bool branch
-        # that dynamo cannot trace. ``torch.compiler.is_compiling()``
-        # constant-folds at trace time so the dev path keeps the warning.
+        # that dynamo cannot trace; ``torch.compiler.is_compiling()`` and
+        # ``__debug__`` both constant-fold so the dev path keeps the warning
+        # while production-fast (-O or compiled) skips the GPU sync.
         if (
-            __debug__ and not torch.compiler.is_compiling()
-        ):  # noqa: SIM102 - nested ``if __debug__:`` must stay nested
-            if zero_eigenvector_mask.any():
-                import warnings
+            __debug__
+            and not torch.compiler.is_compiling()
+            and zero_eigenvector_mask.any()
+        ):
+            import warnings
 
-                warnings.warn(
-                    "Zero eigenvector detected in sign normalization; may indicate k > rank(A) "
-                    "or numerical issues in eigendecomposition.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
+            warnings.warn(
+                "Zero eigenvector detected in sign normalization; may indicate k > rank(A) "
+                "or numerical issues in eigendecomposition.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         sign_multipliers = torch.where(
             zero_eigenvector_mask, torch.ones_like(sign_multipliers), sign_multipliers
         )

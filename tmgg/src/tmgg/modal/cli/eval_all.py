@@ -112,8 +112,7 @@ def _print_report(report: dict[str, Any]) -> None:
     default=32,
     show_default=True,
     help=(
-        "Per-side viz PNG count under each ckpt's eval_all/<run>/<ckpt>/viz/ "
-        "subfolder."
+        "Per-side viz PNG count under each ckpt's eval_all/<run>/<ckpt>/viz/ subfolder."
     ),
 )
 @click.option(

@@ -27,7 +27,7 @@ from tmgg.data.datasets.molecular.vocabulary import AtomBondVocabulary
 # The tar.gz mirror is the *raw* QM9 archive without the same layout
 # and was the source of the silent zero-row bug we fixed here.
 _QM9_ZIP_URL = (
-    "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/" "molnet_publish/qm9.zip"
+    "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/molnet_publish/qm9.zip"
 )
 # Indices of QM9 molecules flagged uncharacterized by Ramakrishnan
 # et al. (2014). Mirrors upstream DiGress's ``raw_url2`` retrieval.

@@ -6,7 +6,6 @@ import torch
 
 from tmgg.data.datasets.graph_types import (
     DenseGraphDistribution,
-    DenseGraphState,
     GraphData,
     GraphDistribution,
 )

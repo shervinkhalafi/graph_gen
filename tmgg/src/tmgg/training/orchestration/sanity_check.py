@@ -491,9 +491,9 @@ def maybe_run_sanity_check(
                 f"NoiseDefinition, got {type(noise_gen).__name__}"
             )
         crit = model.criterion
-        assert isinstance(
-            model, nn.Module
-        ), f"SanityCheckableModel must also be an nn.Module, got {type(model)}"
+        assert isinstance(model, nn.Module), (
+            f"SanityCheckableModel must also be an nn.Module, got {type(model)}"
+        )
         sanity_results: dict[str, Any] = _run_experiment_sanity_check(
             model=model,
             noise_generator=noise_gen,

@@ -202,9 +202,9 @@ class ExtraFeatures:
         else:
             # "all" mode
             eigenfeatures = self.eigenfeatures(E, node_mask)
-            assert (
-                len(eigenfeatures) == 4
-            ), f"Expected 4 eigenfeatures, got {len(eigenfeatures)}"
+            assert len(eigenfeatures) == 4, (
+                f"Expected 4 eigenfeatures, got {len(eigenfeatures)}"
+            )
             n_components, batched_eigenvalues = eigenfeatures[0], eigenfeatures[1]
             nonlcc_indicator, k_lowest_eigvec = eigenfeatures[2], eigenfeatures[3]
             return (

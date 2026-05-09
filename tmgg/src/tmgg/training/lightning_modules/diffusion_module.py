@@ -62,7 +62,6 @@ from tmgg.models.base import GraphModel
 from tmgg.training.lightning_modules.base_graph_module import (
     BaseGraphModule,
 )
-from tmgg.training.losses import masked_ce_loss, masked_mse_loss  # noqa: F401
 from tmgg.training.lightning_modules.train_loss_discrete import (
     TrainLossDiscrete,
     masked_edge_ce,
@@ -79,6 +78,7 @@ from tmgg.training.lightning_modules.train_loss_discrete import (
     per_graph_y_mse,
 )
 from tmgg.training.logging import log_figures
+from tmgg.training.losses import masked_ce_loss, masked_mse_loss  # noqa: F401
 from tmgg.utils.noising.size_distribution import SizeDistribution
 
 _VALID_LOSS_TYPES = frozenset({"cross_entropy", "mse", "bce_logits"})
@@ -116,14 +116,14 @@ def _no_edge_fill_for(state: GraphState) -> torch.Tensor | None:
     if state.edge_class is None:
         return None
     d_ec = int(state.edge_class.shape[-1])
-    fill = torch.zeros(d_ec, dtype=state.edge_class.dtype, device=state.edge_class.device)
+    fill = torch.zeros(
+        d_ec, dtype=state.edge_class.dtype, device=state.edge_class.device
+    )
     fill[0] = 1.0
     return fill
 
 
-def _dense_to_edge_scalar(
-    data: GraphData, *, source: str
-) -> torch.Tensor:
+def _dense_to_edge_scalar(data: GraphData, *, source: str) -> torch.Tensor:
     """Return a dense ``(B, n_max, n_max)`` scalar adjacency from a dense carrier.
 
     ``DenseGraphState`` exposes ``to_edge_scalar`` directly. The
@@ -1784,7 +1784,9 @@ class DiffusionModule(BaseGraphModule):
             # (D-7). Default True selects the upstream-style z_0 + raw
             # softmax form; False keeps the marginalised z_1 form.
             if self.use_upstream_reconstruction:
-                reconstruction = self._compute_reconstruction_upstream_style(target_dense)
+                reconstruction = self._compute_reconstruction_upstream_style(
+                    target_dense
+                )
             else:
                 reconstruction = self._compute_reconstruction(target_dense)
 

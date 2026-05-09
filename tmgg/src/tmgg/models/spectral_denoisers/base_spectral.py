@@ -135,7 +135,7 @@ class SpectralDenoiser(GraphModel, ABC):
         t: torch.Tensor | None = None,
         *,
         output_dense: bool = False,
-    ) -> "GraphDistribution | DenseGraphDistribution":
+    ) -> GraphDistribution | DenseGraphDistribution:
         """Denoise graph via spectral transformation.
 
         Coerces the input to a :class:`DenseGraphState` (lossless lifts are

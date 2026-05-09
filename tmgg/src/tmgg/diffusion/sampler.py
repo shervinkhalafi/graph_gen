@@ -44,6 +44,7 @@ from tmgg.diffusion.noise_process import (
     GaussianNoiseProcess,
     NoiseProcess,
 )
+
 # ``GraphModel`` resolves at runtime via the project's editable install,
 # but basedpyright fails to surface symbols added through that path
 # until a fresh `uv pip install -e .` plus an editor / language-server
@@ -212,9 +213,7 @@ class Sampler:
         results: list[GraphState] = []
         for i, n_tensor in enumerate(n_nodes, start=0):
             n = int(n_tensor.item())
-            num_nodes_per_graph_i = torch.tensor(
-                [n], dtype=torch.long, device="cpu"
-            )
+            num_nodes_per_graph_i = torch.tensor([n], dtype=torch.long, device="cpu")
             y_i = final.y[i : i + 1].cpu()
             x_class_i = (
                 final.X_class[i : i + 1, :n].cpu()
@@ -222,9 +221,7 @@ class Sampler:
                 else None
             )
             x_feat_i = (
-                final.X_feat[i : i + 1, :n].cpu()
-                if final.X_feat is not None
-                else None
+                final.X_feat[i : i + 1, :n].cpu() if final.X_feat is not None else None
             )
             e_class_i = (
                 final.E_class[i : i + 1, :n, :n].cpu()
@@ -505,10 +502,7 @@ class Sampler:
             # cleanup will retype the noise-process return so the cast
             # disappears.
             z_t_dense_post = cast(DenseGraphState, z_t)
-            if (
-                self._assert_symmetric_e
-                and z_t_dense_post.E_class is not None
-            ):
+            if self._assert_symmetric_e and z_t_dense_post.E_class is not None:
                 e = z_t_dense_post.E_class
                 if not torch.allclose(e, e.transpose(-3, -2)):
                     raise AssertionError(
