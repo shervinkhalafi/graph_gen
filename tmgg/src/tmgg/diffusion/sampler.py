@@ -520,10 +520,10 @@ class Sampler:
             # own field_prefix namespace at finalise.
             if chain_recorder is not None:
                 if isinstance(chain_recorder, ChainRecorder):
-                    chain_recorder.maybe_record(step_index, z_t)
+                    chain_recorder.maybe_record(step_index, z_t_dense_post)
                 else:
                     for sub_recorder in chain_recorder.values():
-                        sub_recorder.maybe_record(step_index, z_t)
+                        sub_recorder.maybe_record(step_index, z_t_dense_post)
 
         # ``finalize_sample`` returns the dense-carrier state from the
         # legacy noise-process API; narrow to ``DenseGraphState`` so the
