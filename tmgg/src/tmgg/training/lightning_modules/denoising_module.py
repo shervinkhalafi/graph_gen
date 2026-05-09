@@ -367,6 +367,10 @@ class SingleStepDenoisingModule(DiffusionModule):
         noisy_gd = cast(GaussianNoiseProcess, self.noise_process).sample_at_level(
             clean_state, eps
         )
+        # ``GaussianNoiseProcess.sample_at_level`` is typed against the
+        # abstract GraphData base but always returns a DenseGraphState
+        # via ``DenseGraphState.from_structure_only`` in ``_apply_noise``.
+        assert isinstance(noisy_gd, DenseGraphState)
 
         # Forward pass: returns edge-state logits via GraphData bridge
         output: torch.Tensor = self.forward(noisy_gd.to_edge_scalar(source="feat"))
@@ -465,6 +469,7 @@ class SingleStepDenoisingModule(DiffusionModule):
             noisy_gd = cast(GaussianNoiseProcess, self.noise_process).sample_at_level(
                 clean_state, eps
             )
+            assert isinstance(noisy_gd, DenseGraphState)
             batch_noisy: torch.Tensor = noisy_gd.to_edge_scalar(source="feat")
             output: torch.Tensor = self.forward(batch_noisy)
             mode_loss: torch.Tensor = self._per_field_edge_loss(output, target)
@@ -726,6 +731,7 @@ class SingleStepDenoisingModule(DiffusionModule):
                 noisy_gd = cast(
                     GaussianNoiseProcess, self.noise_process
                 ).sample_at_level(ref_gd, eps)
+                assert isinstance(noisy_gd, DenseGraphState)
                 output = self.forward(noisy_gd.to_edge_scalar(source="feat"))
                 predictions = (output > 0).float()
                 predictions = self._zero_diagonal(predictions)
