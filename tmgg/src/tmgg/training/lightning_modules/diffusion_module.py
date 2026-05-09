@@ -100,30 +100,28 @@ def _noise_process_sample(
 ) -> GraphData:
     """Dispatch the sparse forward-sample entry point on a noise process.
 
-    Only the leaf processes :class:`GaussianNoiseProcess` and
-    :class:`CategoricalNoiseProcess` own the sparse-default
-    ``sample(z_0, t) -> GraphData`` entry point. The abstract
-    :class:`NoiseProcess` base, :class:`ExactDensityNoiseProcess` ABC,
-    and :class:`CompositeNoiseProcess` do not declare it -- pyright
-    resolves the bare attribute access to ``nn.Module.__getattr__``
-    which returns ``Module | Tensor``, hence the spurious ``Tensor not
-    callable`` warning at the call site. Routing through this helper
-    isolates the narrowing to a single place; a non-leaf process
-    raises a clear TypeError rather than masquerading as a callable.
+    The sparse-default ``sample(z_0, t) -> GraphData`` entry point is
+    declared only on leaf processes (``GaussianNoiseProcess`` /
+    ``CategoricalNoiseProcess`` and test-side subclasses of
+    :class:`NoiseProcess` that mimic the same contract); the abstract
+    base and :class:`CompositeNoiseProcess` do not. Looking the method
+    up via ``getattr`` would still trip pyright because
+    ``nn.Module.__getattr__`` returns ``Module | Tensor`` for unknown
+    attributes -- hence the spurious ``Tensor not callable`` warning at
+    the call sites. Routing through this helper centralises the
+    duck-typed dispatch; an absent ``sample`` raises ``TypeError`` here
+    rather than masquerading as a callable.
     """
-    from tmgg.diffusion.noise_process import (
-        GaussianNoiseProcess,
-    )
-
-    if isinstance(proc, GaussianNoiseProcess):
-        return proc.sample(batch, t_int)
-    if isinstance(proc, CategoricalNoiseProcess):
-        return proc.sample(batch, t_int)
-    raise TypeError(
-        f"_noise_process_sample requires a leaf process with the sparse "
-        f"sample() entry point (GaussianNoiseProcess or "
-        f"CategoricalNoiseProcess); got {type(proc).__name__}."
-    )
+    sample_fn = getattr(proc, "sample", None)
+    if not callable(sample_fn):
+        raise TypeError(
+            f"_noise_process_sample requires a noise process with a "
+            f"callable sparse sample(z_0, t) entry point; "
+            f"{type(proc).__name__} has no such attribute."
+        )
+    result = sample_fn(batch, t_int)
+    assert isinstance(result, GraphData)
+    return result
 
 #: Default per-field loss weights for the unified per-field training loop.
 #: Edge-side fields carry a 5x weight to reproduce the DiGress (Vignac et al.
