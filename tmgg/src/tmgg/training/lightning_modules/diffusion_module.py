@@ -23,7 +23,8 @@ and a :class:`~tmgg.training.graph_evaluator.GraphEvaluator`
 from __future__ import annotations
 
 import time
-from typing import Any, override
+from collections.abc import Sequence
+from typing import Any, cast, override
 
 import torch
 import torch.nn as nn
@@ -92,6 +93,37 @@ _DEFAULT_VISUALIZATION = {"enabled": True, "num_samples": 8}
 #: either kind, so we type them against the union rather than the
 #: abstract ``GraphData`` base.
 DenseGraphData = DenseGraphState | DenseGraphDistribution
+
+
+def _noise_process_sample(
+    proc: NoiseProcess, batch: GraphState, t_int: torch.Tensor
+) -> GraphData:
+    """Dispatch the sparse forward-sample entry point on a noise process.
+
+    Only the leaf processes :class:`GaussianNoiseProcess` and
+    :class:`CategoricalNoiseProcess` own the sparse-default
+    ``sample(z_0, t) -> GraphData`` entry point. The abstract
+    :class:`NoiseProcess` base, :class:`ExactDensityNoiseProcess` ABC,
+    and :class:`CompositeNoiseProcess` do not declare it -- pyright
+    resolves the bare attribute access to ``nn.Module.__getattr__``
+    which returns ``Module | Tensor``, hence the spurious ``Tensor not
+    callable`` warning at the call site. Routing through this helper
+    isolates the narrowing to a single place; a non-leaf process
+    raises a clear TypeError rather than masquerading as a callable.
+    """
+    from tmgg.diffusion.noise_process import (
+        GaussianNoiseProcess,
+    )
+
+    if isinstance(proc, GaussianNoiseProcess):
+        return proc.sample(batch, t_int)
+    if isinstance(proc, CategoricalNoiseProcess):
+        return proc.sample(batch, t_int)
+    raise TypeError(
+        f"_noise_process_sample requires a leaf process with the sparse "
+        f"sample() entry point (GaussianNoiseProcess or "
+        f"CategoricalNoiseProcess); got {type(proc).__name__}."
+    )
 
 #: Default per-field loss weights for the unified per-field training loop.
 #: Edge-side fields carry a 5x weight to reproduce the DiGress (Vignac et al.
@@ -305,8 +337,8 @@ def _continuous_target_edge_state(data: DenseGraphData) -> torch.Tensor:
 
 
 def _categorical_reconstruction_log_prob(
-    clean: GraphData,
-    pred_probs: GraphData,
+    clean: GraphState | DenseGraphData,
+    pred_probs: GraphState | DenseGraphData,
     x_classes: int,
     e_classes: int,
 ) -> torch.Tensor:
@@ -320,18 +352,22 @@ def _categorical_reconstruction_log_prob(
     # ``node_mask`` is a dense-only cached property; sparse callers
     # densify here so the masking that follows operates on the
     # ``(B, n_max, ...)`` layout the categorical helpers below return.
-    if isinstance(clean, GraphState):
-        clean = state_to_dense_sample(clean)
-    if isinstance(pred_probs, GraphState):
-        pred_probs = state_to_dense_sample(pred_probs)
-    node_mask = clean.node_mask
+    dense_clean: DenseGraphData = (
+        state_to_dense_sample(clean) if isinstance(clean, GraphState) else clean
+    )
+    dense_pred_probs: DenseGraphData = (
+        state_to_dense_sample(pred_probs)
+        if isinstance(pred_probs, GraphState)
+        else pred_probs
+    )
+    node_mask = dense_clean.node_mask
     inv = ~node_mask
     inv_edge = inv.unsqueeze(1) | inv.unsqueeze(2)
 
-    clean_x = _read_categorical_x(clean, x_classes=x_classes).clone()
-    clean_e = _read_categorical_e(clean, e_classes=e_classes).clone()
-    pred_x = _read_categorical_x(pred_probs, x_classes=x_classes).clone()
-    pred_e = _read_categorical_e(pred_probs, e_classes=e_classes).clone()
+    clean_x = _read_categorical_x(dense_clean, x_classes=x_classes).clone()
+    clean_e = _read_categorical_e(dense_clean, e_classes=e_classes).clone()
+    pred_x = _read_categorical_x(dense_pred_probs, x_classes=x_classes).clone()
+    pred_e = _read_categorical_e(dense_pred_probs, e_classes=e_classes).clone()
 
     clean_x[inv] = 0.0
     clean_e[inv_edge] = 0.0
@@ -813,7 +849,9 @@ class DiffusionModule(BaseGraphModule):
         bin_idx = (t_int.detach() * self.n_t_bins) // (self.T + 1)
         return bin_idx.clamp_(max=self.n_t_bins - 1).long()
 
-    def _per_graph_loss(self, pred: GraphData, target: GraphData) -> torch.Tensor:
+    def _per_graph_loss(
+        self, pred: DenseGraphData, target: DenseGraphState
+    ) -> torch.Tensor:
         """Per-graph total loss matching ``_compute_loss`` semantics.
 
         Returns ``(bs,)`` so the per-step / per-validation scatter into
@@ -943,7 +981,7 @@ class DiffusionModule(BaseGraphModule):
         # ``GraphState``; the model accepts both carriers via the
         # input-coercion helpers (Phase 6.1) and produces the requested
         # output type when called with ``output_dense=True``.
-        z_t = self.noise_process.sample(batch, t_int)
+        z_t = _noise_process_sample(self.noise_process, batch, t_int)
 
         condition = self.noise_process.process_state_condition_vector(t_int)
 
@@ -1484,7 +1522,7 @@ class DiffusionModule(BaseGraphModule):
         return torch.stack(ratios).mean()
 
     def _compute_loss_breakdown(
-        self, pred: GraphData, target: GraphData
+        self, pred: DenseGraphData, target: DenseGraphState
     ) -> dict[str, torch.Tensor]:
         """Per-field unweighted losses keyed by field name.
 
@@ -1580,7 +1618,9 @@ class DiffusionModule(BaseGraphModule):
             )
         return total
 
-    def _compute_loss(self, pred: GraphData, target: GraphData) -> torch.Tensor:
+    def _compute_loss(
+        self, pred: DenseGraphData, target: DenseGraphState
+    ) -> torch.Tensor:
         """Compute the combined per-field loss for backprop.
 
         Calls :meth:`_compute_loss_breakdown` to get unweighted per-field
@@ -1590,7 +1630,7 @@ class DiffusionModule(BaseGraphModule):
         """
         return self._combine_breakdown(self._compute_loss_breakdown(pred, target))
 
-    def _compute_reconstruction(self, batch: GraphData) -> torch.Tensor:
+    def _compute_reconstruction(self, batch: DenseGraphState) -> torch.Tensor:
         """Reconstruction log-probability ``log p(x_0 | z_1)``.
 
         Aligns with upstream DiGress's ``reconstruction_logp``: noise the
@@ -1627,6 +1667,10 @@ class DiffusionModule(BaseGraphModule):
         recon_pmf = self.noise_process._posterior_probabilities_marginalised(  # pyright: ignore[reportPrivateUsage]
             z_1, x0_param, t_int, s_int
         )
+        # The categorical posterior helper returns GraphData but always
+        # produces a dense distribution carrier in practice; assert so
+        # pyright narrows for the dense-only reconstruction helper.
+        assert isinstance(recon_pmf, GraphState | DenseGraphState | DenseGraphDistribution)
         return _categorical_reconstruction_log_prob(
             batch,
             recon_pmf,
@@ -1634,7 +1678,9 @@ class DiffusionModule(BaseGraphModule):
             e_classes=self.noise_process.e_classes,
         )
 
-    def _compute_reconstruction_upstream_style(self, batch: GraphData) -> torch.Tensor:
+    def _compute_reconstruction_upstream_style(
+        self, batch: DenseGraphState
+    ) -> torch.Tensor:
         """Reconstruction log-probability in upstream DiGress's form.
 
         Direct port of
@@ -1668,6 +1714,10 @@ class DiffusionModule(BaseGraphModule):
         # ``model_output_to_posterior_parameter`` already applies softmax
         # along the class axis on both X_class and E_class.
         pred_probs = self.noise_process.model_output_to_posterior_parameter(pred_logits)
+        # ``model_output_to_posterior_parameter`` is typed against the
+        # abstract GraphData; categorical configs always emit a dense
+        # carrier in practice, so narrow for the dense-only helper.
+        assert isinstance(pred_probs, GraphState | DenseGraphState | DenseGraphDistribution)
         return _categorical_reconstruction_log_prob(
             batch,
             pred_probs,
@@ -1704,7 +1754,7 @@ class DiffusionModule(BaseGraphModule):
 
         # Validation loss at a random timestep
         t_int = torch.randint(1, self.T + 1, (bs,), device=device)
-        z_t = self.noise_process.sample(batch, t_int)
+        z_t = _noise_process_sample(self.noise_process, batch, t_int)
         condition = self.noise_process.process_state_condition_vector(t_int)
         pred = self.model(z_t, t=condition, output_dense=True)
         breakdown = self._compute_loss_breakdown(pred, target_dense)
@@ -1777,6 +1827,16 @@ class DiffusionModule(BaseGraphModule):
                 pred_posterior = cat_process._posterior_probabilities(  # pyright: ignore[reportPrivateUsage]
                     z_t, x0_param, t_int, s_int
                 )
+            # CategoricalNoiseProcess posterior helpers return GraphData but
+            # always emit a dense distribution carrier in practice (the
+            # categorical reverse kernel works on (B, n_max, n_max, K)
+            # tensors). Assert so pyright narrows for the dense-only KL helper.
+            assert isinstance(
+                true_posterior, DenseGraphState | DenseGraphDistribution
+            )
+            assert isinstance(
+                pred_posterior, DenseGraphState | DenseGraphDistribution
+            )
             kl_diffusion = self.T * _categorical_kl_per_graph(
                 true_posterior, pred_posterior
             )
@@ -1789,6 +1849,10 @@ class DiffusionModule(BaseGraphModule):
             t_T = torch.full((bs,), self.T, device=device, dtype=torch.long)
             forward_pmf_T = cat_process.forward_pmf(target_dense, t_T)
             prior_pmf = cat_process.prior_pmf(target_dense.node_mask)
+            assert isinstance(
+                forward_pmf_T, DenseGraphState | DenseGraphDistribution
+            )
+            assert isinstance(prior_pmf, DenseGraphState | DenseGraphDistribution)
             kl_prior = _categorical_kl_per_graph(forward_pmf_T, prior_pmf)
 
             # Reconstruction term selection follows ``use_upstream_reconstruction``
@@ -1900,7 +1964,7 @@ class DiffusionModule(BaseGraphModule):
 
     @staticmethod
     def _batch_edge_counts(
-        batch: GraphData,
+        batch: DenseGraphState,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Sum-over-batch (edge_count, potential_edge_count) as scalar tensors.
 
@@ -2087,7 +2151,17 @@ class DiffusionModule(BaseGraphModule):
 
         generated_graphs = self.generate_graphs(len(refs))
 
-        results = self.evaluator.evaluate(refs=refs, generated=generated_graphs)
+        # Both evaluators accept ``GraphData`` at runtime per the
+        # universal-transport refactor (spec
+        # ``2026-05-01-graphdata-eval-pipeline-minispec.md``); the static
+        # signature on :class:`MolecularEvaluator` still carries the
+        # narrower ``Sequence[DenseGraphState]`` from before that refactor.
+        # The cast-through-Sequence keeps the call site honest without
+        # forcing a redundant per-graph densification on every eval cycle.
+        results = self.evaluator.evaluate(
+            refs=refs,
+            generated=cast(Sequence[DenseGraphState], generated_graphs),
+        )
         if results is not None:
             # All sample-quality metrics — including the new block-structure
             # ones (modularity_q, spectral_gap_l2, empirical_p_in/p_out) —
@@ -2139,8 +2213,8 @@ class DiffusionModule(BaseGraphModule):
         *,
         collector: StepMetricCollector | None = None,
         chunk_size: int | None = None,
-    ) -> list[GraphData]:
-        """Generate graphs using the sampler and return as ``GraphData``.
+    ) -> list[GraphState]:
+        """Generate graphs using the sampler and return as ``GraphState``.
 
         Parameters
         ----------
@@ -2151,11 +2225,12 @@ class DiffusionModule(BaseGraphModule):
 
         Returns
         -------
-        list[GraphData]
-            Generated graphs as per-graph ``GraphData``. Callers that
-            need a NetworkX view convert at the consumption site via
-            :meth:`GraphData.to_networkx` (cheap, lossless, attaches
-            ``x_class`` / ``e_class`` per spec
+        list[GraphState]
+            Generated graphs as per-graph sparse ``GraphState`` (the
+            sampler output type post the sparse-default refactor).
+            Callers that need a NetworkX view convert at the consumption
+            site via :meth:`GraphState.to_networkx` (cheap, lossless,
+            attaches ``x_class`` / ``e_class`` per spec
             ``2026-05-01-graphdata-eval-pipeline-minispec.md``).
 
         Notes
@@ -2211,7 +2286,7 @@ class DiffusionModule(BaseGraphModule):
                 chain_recorder=chain_recorder,
             )
 
-        graph_data_list: list[GraphData] = []
+        graph_data_list: list[GraphState] = []
         n_remaining = num_graphs
         nodes_offset = 0
         while n_remaining > 0:
