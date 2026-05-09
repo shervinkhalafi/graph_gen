@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false
 """Tests for BaseGraphModule shared Lightning infrastructure.
 
 BaseGraphModule provides common plumbing for all graph learning experiments:

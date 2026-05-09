@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Tests for the GraphModel abstract base class.
 
 Testing Strategy

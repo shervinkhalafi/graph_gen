@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Tests for the DDPM ``GaussianNoiseProcess`` implementation (Wave 2.3).
 
 Test rationale

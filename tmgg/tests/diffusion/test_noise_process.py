@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Tests for the NoiseProcess hierarchy.
 
 Test rationale

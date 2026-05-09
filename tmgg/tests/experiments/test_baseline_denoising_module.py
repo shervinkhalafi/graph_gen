@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false
 """Single-step and full-flow tests for baseline denoising via SingleStepDenoisingModule.
 
 Test rationale

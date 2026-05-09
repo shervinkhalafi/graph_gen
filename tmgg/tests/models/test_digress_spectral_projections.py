@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Tests for spectral Q/K/V projections in DiGress NodeEdgeBlock.
 
 Test Rationale

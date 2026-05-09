@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Tests for ``CompositeNoiseProcess`` (Wave 2.4).
 
 Test rationale

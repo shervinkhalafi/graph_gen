@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Tests for GNN-based Q/K/V projections in DiGress NodeEdgeBlock.
 
 Test Rationale

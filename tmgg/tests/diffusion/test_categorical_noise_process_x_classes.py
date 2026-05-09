@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Parametrized tests for ``CategoricalNoiseProcess`` over ``C_x`` regimes.
 
 Test rationale

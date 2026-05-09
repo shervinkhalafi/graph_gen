@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Integration tests for the absorbing :class:`CategoricalNoiseProcess` variant (D-12).
 
 Test rationale

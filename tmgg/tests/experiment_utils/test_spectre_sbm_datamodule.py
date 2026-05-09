@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Tests for the SPECTRE SBM datamodule.
 
 Covers:

@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false, reportCallIssue=false
 """Tests for DiffusionModule multi-step diffusion training loop.
 
 DiffusionModule extends BaseGraphModule with forward/reverse diffusion
