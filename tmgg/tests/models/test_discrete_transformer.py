@@ -139,11 +139,11 @@ class TestGetConfig:
         assert config["n_layers"] == 2
 
     def test_augmentation_defaults(self, model: GraphTransformer) -> None:
-        """Vanilla model reports no extras and keeps parity toggles disabled."""
+        """Vanilla model defaults: no extras, no timestep, upstream-parity edge diagonal."""
         config = model.get_config()
         assert config["extra_features"] is None
         assert config["use_timestep"] is False
-        assert config["use_upstream_hidden_edge_diagonal"] is False
+        assert config["use_upstream_hidden_edge_diagonal"] is True
 
 
 class TestEigenvectorMode:

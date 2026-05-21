@@ -607,9 +607,11 @@ class _GraphTransformer(nn.Module):
     output_dims
         Output dimensions dict with keys "X", "E", "y".
     use_upstream_hidden_edge_diagonal
-        If True, use upstream DiGress's padding-only mask for hidden edge
-        states after ``mlp_in_E``. The default keeps TMGG's existing behavior
-        and zeros the hidden edge diagonal before the transformer stack.
+        If True (the default), use upstream DiGress's padding-only mask for
+        hidden edge states after ``mlp_in_E``, preserving the hidden edge
+        diagonal until the final residual output. Set to False to restore
+        the prior TMGG behaviour that zeros the hidden edge diagonal before
+        the transformer stack.
     act_fn_in
         Activation function for input MLPs. Defaults to ReLU.
     act_fn_out
@@ -671,7 +673,7 @@ class _GraphTransformer(nn.Module):
         act_fn_in: nn.Module | None = None,
         act_fn_out: nn.Module | None = None,
         projection_config: dict[str, bool | int] | None = None,
-        use_upstream_hidden_edge_diagonal: bool = False,
+        use_upstream_hidden_edge_diagonal: bool = True,
     ) -> None:
         super().__init__()
         self.n_layers = n_layers
@@ -835,8 +837,9 @@ class _GraphTransformer(nn.Module):
 
         Mirrors :meth:`DenseGraphState.mask_zero_diag` for the categorical
         fields. Used when ``use_upstream_hidden_edge_diagonal`` is False
-        (the TMGG default), which excludes self-loops from the hidden edge
-        state before the transformer stack.
+        (the legacy TMGG opt-in), which excludes self-loops from the hidden
+        edge state before the transformer stack. The current default uses
+        :meth:`_zero_pad_features` instead, matching upstream DiGress.
         """
         X, E, y = _GraphTransformer._zero_pad_features(X, E, y, node_mask)
         n_max = E.shape[1]
@@ -1013,8 +1016,10 @@ class GraphTransformer(GraphModel):
         If True, append the normalised diffusion timestep ``t`` to ``y``
         before the inner transformer, adding one dimension to ``y``.
     use_upstream_hidden_edge_diagonal
-        If True, preserve hidden edge diagonal values after ``mlp_in_E`` to
-        match live upstream DiGress. The default remains False.
+        If True (the default), preserve hidden edge diagonal values after
+        ``mlp_in_E`` to match live upstream DiGress. Set to False to restore
+        the legacy TMGG behaviour that zeros the hidden edge diagonal before
+        the transformer stack.
     """
 
     n_layers: int
@@ -1041,7 +1046,7 @@ class GraphTransformer(GraphModel):
         output_dims_x_feat: int | None = None,
         output_dims_e_class: int | None = None,
         output_dims_e_feat: int | None = None,
-        use_upstream_hidden_edge_diagonal: bool = False,
+        use_upstream_hidden_edge_diagonal: bool = True,
     ) -> None:
         super().__init__()
         self.n_layers = n_layers
