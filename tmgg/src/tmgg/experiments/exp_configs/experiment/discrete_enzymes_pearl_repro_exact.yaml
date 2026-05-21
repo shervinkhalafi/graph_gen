@@ -8,8 +8,9 @@
 # ``use_upstream_hidden_edge_diagonal=true``.
 #
 # Replaces ``ExtraFeatures(extra_features_type=all)`` with R-PEARL via
-# :class:`PEARLExtraFeatures`. ENZYMES counterpart to
-# ``discrete_sbm_pearl_repro_exact``.
+# :class:`PEARLExtraFeatures`, with ``use_cycles: false`` so PEARL is
+# the *sole* extra-feature signal — no cycle counts, no spectral
+# channels. ENZYMES counterpart to ``discrete_sbm_pearl_repro_exact``.
 
 defaults:
   - discrete_enzymes_vignac_repro_exact
@@ -29,3 +30,8 @@ model:
       pearl_hidden_dim: 64
       pearl_input_samples: 32
       pearl_max_nodes: ${data.num_nodes_max_static}
+      # PEARL-only contract: drop the 3 per-node cycle channels and the 4
+      # per-graph cycle-global channels that PEARLExtraFeatures emits by
+      # default. With this off, ``extra_X = pearl_dim`` and ``extra_y = 1``
+      # (only the normalised node count survives on the per-graph side).
+      use_cycles: false

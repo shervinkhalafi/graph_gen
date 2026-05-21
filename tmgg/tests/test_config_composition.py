@@ -200,6 +200,51 @@ class TestConfigComposition:
         assert cfg.model.model.use_upstream_hidden_edge_diagonal is True
         assert cfg.model.model.hidden_dims.dim_ffy == 2048
 
+    @pytest.mark.parametrize(
+        "experiment_name",
+        [
+            "discrete_sbm_pearl_repro_exact",
+            "discrete_sbm_pearl_spectral_repro_exact",
+            "discrete_sbm_pearl_gnnconv_norm_repro_exact",
+            "discrete_enzymes_pearl_repro_exact",
+            "discrete_enzymes_pearl_spectral_repro_exact",
+            "discrete_enzymes_pearl_gnnconv_norm_repro_exact",
+        ],
+    )
+    def test_pearl_exact_panel_disables_cycle_features(
+        self, experiment_name: str, exp_config_path: Path
+    ) -> None:
+        """PEARL-only exact-panel configs must disable cycle channels.
+
+        Rationale: the four ``*_pearl_*_repro_exact`` panel configs are
+        meant to isolate R-PEARL as the sole structural augmentation. They
+        inherit from ``discrete_{sbm,enzymes}_pearl_repro_exact``, which
+        sets ``use_cycles: false`` on the ``PEARLExtraFeatures`` block.
+        The default ``PEARLExtraFeatures`` keeps cycles on for backward
+        compatibility with prior runs; this test guards against future
+        edits to either the parent configs or the class default that
+        would silently re-enable cycle features and contaminate the
+        "PEARL-only" intent.
+        """
+        with initialize_config_dir(
+            version_base=None,
+            config_dir=str(exp_config_path),
+        ):
+            cfg = compose(
+                config_name="base_config_discrete_diffusion_generative",
+                overrides=[f"+experiment={experiment_name}"],
+            )
+
+        extra = cfg.model.model.extra_features
+        assert (
+            extra._target_
+            == "tmgg.models.digress.pearl_extra_features.PEARLExtraFeatures"
+        ), f"{experiment_name} should use PEARLExtraFeatures, got {extra._target_}"
+        assert extra.use_cycles is False, (
+            f"{experiment_name} must set PEARLExtraFeatures.use_cycles=False to "
+            f"realise the 'PEARL-only' contract; got {extra.use_cycles!r}"
+        )
+
 
 # Configs that use standard adjacency matrix input
 ADJACENCY_INPUT_CONFIGS = [

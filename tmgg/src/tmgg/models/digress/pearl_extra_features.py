@@ -39,18 +39,32 @@ from tmgg.models.digress.extra_features import NodeCycleFeatures
 from tmgg.models.layers.pearl_embedding import PEARLEmbedding
 
 
-def pearl_extra_features_dims(pearl_dim: int) -> tuple[int, int, int]:
+def pearl_extra_features_dims(
+    pearl_dim: int, use_cycles: bool = True
+) -> tuple[int, int, int]:
     """Return the extra feature dimensions ``(extra_X, extra_E, extra_y)``.
 
     Sibling of :func:`extra_features.extra_features_dims`; used by the
     transformer to size the input projection.
+
+    Parameters
+    ----------
+    pearl_dim
+        Per-node PEARL embedding width.
+    use_cycles
+        If True (default), include the 3 per-node cycle channels and 4
+        per-graph cycle-global channels alongside PEARL. If False, return
+        a PEARL-only contract: ``(pearl_dim, 0, 1)`` (only the normalised
+        node count survives on the per-graph side).
     """
-    # 3 cycle node features (k3, k4, k5) + PEARL per-node embedding (k channels)
-    extra_x = 3 + pearl_dim
-    # PEARL is a node-only PE; no edge features added
+    cycle_x = 3 if use_cycles else 0
+    cycle_y = 4 if use_cycles else 0
+    # cycle_x channels (k3, k4, k5 per-node) + PEARL k channels.
+    extra_x = cycle_x + pearl_dim
+    # PEARL is a node-only PE; no edge features added.
     extra_e = 0
-    # 1 normalised node count + 4 cycle global features (k4, k5, k6, k7)
-    extra_y = 5
+    # 1 normalised node count + cycle_y per-graph cycle globals (k4..k7).
+    extra_y = 1 + cycle_y
     return extra_x, extra_e, extra_y
 
 
@@ -101,6 +115,7 @@ class PEARLExtraFeatures(nn.Module):
         pearl_hidden_dim: int = 64,
         pearl_input_samples: int = 32,
         pearl_max_nodes: int = 200,
+        use_cycles: bool = True,
         **_extra: object,
     ) -> None:
         # ``**_extra`` absorbs leftover kwargs that survive Hydra's
@@ -114,7 +129,10 @@ class PEARLExtraFeatures(nn.Module):
         super().__init__()
         self.max_n_nodes = max_n_nodes
         self.pearl_output_dim = pearl_output_dim
-        self.ncycles = NodeCycleFeatures()
+        self.use_cycles = use_cycles
+        self.ncycles: NodeCycleFeatures | None = (
+            NodeCycleFeatures() if use_cycles else None
+        )
         self.pearl = PEARLEmbedding(
             output_dim=pearl_output_dim,
             num_layers=pearl_num_layers,
@@ -131,9 +149,6 @@ class PEARLExtraFeatures(nn.Module):
         # Normalised node count: n_valid / max_n_nodes, shape (bs, 1)
         n = node_mask.sum(dim=1).unsqueeze(1).float() / self.max_n_nodes
 
-        # Cycle features (cheap; powers of A, no eigendecomposition).
-        x_cycles, y_cycles = self.ncycles(E, node_mask)
-
         # PEARL positional encoding from the binary adjacency. ``E[..., 1:]``
         # collapses the per-class one-hot into "any non-no-edge" presence;
         # ``mask_2d`` zeros padded positions before the GNN propagation so
@@ -144,18 +159,29 @@ class PEARLExtraFeatures(nn.Module):
         # Re-mask the embedding to zero on padded positions so downstream
         # consumers see the canonical "padded → 0" invariant.
         pearl_emb = pearl_emb * node_mask.unsqueeze(-1).float()
-        pearl_emb = pearl_emb.type_as(x_cycles)
+        pearl_emb = pearl_emb.type_as(E)
 
-        # Concat node-side features. extra_E stays empty (PEARL is node-only).
-        extra_x = torch.cat([x_cycles, pearl_emb], dim=-1)
+        if self.ncycles is not None:
+            # Cycle features (cheap; powers of A, no eigendecomposition).
+            x_cycles, y_cycles = self.ncycles(E, node_mask)
+            extra_x = torch.cat([x_cycles, pearl_emb], dim=-1)
+            extra_y = torch.hstack([n, y_cycles])
+        else:
+            extra_x = pearl_emb
+            # ``n`` is already float (see ``.float()`` above); kept as float
+            # to match the model's ``torch.cat([y, extra_y], dim=-1)`` site,
+            # which asserts ``y.is_floating_point()`` and expects the canonical
+            # Float-cast convention from ``diffusion_sampling.py``.
+            extra_y = n
+
         extra_edge_attr = torch.zeros((*E.shape[:-1], 0), device=E.device).type_as(E)
-        extra_y = torch.hstack([n, y_cycles])
-
         return extra_x, extra_edge_attr, extra_y
 
     def adjust_dims(self, input_dims: dict[str, int]) -> dict[str, int]:
         """Return *input_dims* with PEARL extra-feature widths added."""
-        dx, de, dy = pearl_extra_features_dims(self.pearl_output_dim)
+        dx, de, dy = pearl_extra_features_dims(
+            self.pearl_output_dim, use_cycles=self.use_cycles
+        )
         return {
             "X": input_dims["X"] + dx,
             "E": input_dims["E"] + de,
