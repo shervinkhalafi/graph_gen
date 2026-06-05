@@ -24,7 +24,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, override
 
-import pytorch_lightning as pl
 import torch
 
 from tmgg.data.datasets.graph_types import GraphState
@@ -34,17 +33,24 @@ from tmgg.training.lightning_modules.optimizer_config import (
     SchedulerInfo,
     configure_optimizers_from_config,
 )
+from tmgg.training.lightning_modules.write_through_logging import (
+    WriteThroughLogMixin,
+)
 from tmgg.training.logging import (
     log_parameter_count as _log_parameter_count,
 )
 
 
-class BaseGraphModule(pl.LightningModule, ABC):
+class BaseGraphModule(WriteThroughLogMixin, ABC):
     """Shared infrastructure for all graph learning experiments.
 
     Handles optimizer and scheduler construction, ``GraphState`` batch
     transfer, and parameter-count logging. Subclasses only need to
-    supply ``training_step`` and ``forward``.
+    supply ``training_step`` and ``forward``. ``WriteThroughLogMixin``
+    provides ``self.log(..., write_through=True)`` for cadence-gated
+    diagnostics that must bypass Lightning's sampled/wipeable result
+    collection; subclasses overriding ``on_train_batch_end`` or
+    ``on_fit_end`` must call ``super()`` to keep its flush running.
 
     The ``model`` parameter receives an already-instantiated
     ``GraphModel``, constructed by Hydra's recursive ``_target_``
