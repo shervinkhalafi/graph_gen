@@ -123,6 +123,7 @@ def _noise_process_sample(
     assert isinstance(result, GraphData)
     return result
 
+
 #: Default per-field loss weights for the unified per-field training loop.
 #: Edge-side fields carry a 5x weight to reproduce the DiGress (Vignac et al.
 #: 2023, Eq. 3) ``lambda_E`` convention; node-side and continuous node fields
@@ -1668,7 +1669,9 @@ class DiffusionModule(BaseGraphModule):
         # The categorical posterior helper returns GraphData but always
         # produces a dense distribution carrier in practice; assert so
         # pyright narrows for the dense-only reconstruction helper.
-        assert isinstance(recon_pmf, GraphState | DenseGraphState | DenseGraphDistribution)
+        assert isinstance(
+            recon_pmf, GraphState | DenseGraphState | DenseGraphDistribution
+        )
         return _categorical_reconstruction_log_prob(
             batch,
             recon_pmf,
@@ -1715,7 +1718,9 @@ class DiffusionModule(BaseGraphModule):
         # ``model_output_to_posterior_parameter`` is typed against the
         # abstract GraphData; categorical configs always emit a dense
         # carrier in practice, so narrow for the dense-only helper.
-        assert isinstance(pred_probs, GraphState | DenseGraphState | DenseGraphDistribution)
+        assert isinstance(
+            pred_probs, GraphState | DenseGraphState | DenseGraphDistribution
+        )
         return _categorical_reconstruction_log_prob(
             batch,
             pred_probs,
@@ -1829,12 +1834,8 @@ class DiffusionModule(BaseGraphModule):
             # always emit a dense distribution carrier in practice (the
             # categorical reverse kernel works on (B, n_max, n_max, K)
             # tensors). Assert so pyright narrows for the dense-only KL helper.
-            assert isinstance(
-                true_posterior, DenseGraphState | DenseGraphDistribution
-            )
-            assert isinstance(
-                pred_posterior, DenseGraphState | DenseGraphDistribution
-            )
+            assert isinstance(true_posterior, DenseGraphState | DenseGraphDistribution)
+            assert isinstance(pred_posterior, DenseGraphState | DenseGraphDistribution)
             kl_diffusion = self.T * _categorical_kl_per_graph(
                 true_posterior, pred_posterior
             )
@@ -1847,9 +1848,7 @@ class DiffusionModule(BaseGraphModule):
             t_T = torch.full((bs,), self.T, device=device, dtype=torch.long)
             forward_pmf_T = cat_process.forward_pmf(target_dense, t_T)
             prior_pmf = cat_process.prior_pmf(target_dense.node_mask)
-            assert isinstance(
-                forward_pmf_T, DenseGraphState | DenseGraphDistribution
-            )
+            assert isinstance(forward_pmf_T, DenseGraphState | DenseGraphDistribution)
             assert isinstance(prior_pmf, DenseGraphState | DenseGraphDistribution)
             kl_prior = _categorical_kl_per_graph(forward_pmf_T, prior_pmf)
 
