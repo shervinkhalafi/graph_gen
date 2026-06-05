@@ -1,12 +1,15 @@
 """Stage 2 telemetry: cheap optimizer-health metrics.
 
-The ``DiffusionModule._log_grad_health_by_block`` method bundles four
+``DiffusionModule._compute_grad_health_by_block`` bundles four
 calculations: per-block grad cosine vs the previous step, per-block
 grad SNR ``mean²/var``, global ``effective_lr = lr × ‖∇‖ / ‖θ‖``, and
-the trailing update-to-weight ratio. These tests pin the *math* in
-isolation; full integration with the Lightning hook ordering is
-covered by the existing ``DiffusionModule`` tests when they exercise
-``on_before_optimizer_step`` / ``on_train_batch_end`` end-to-end.
+the trailing update-to-weight ratio. The first eight tests pin the
+*math* in isolation. Delivery — every cadence hit reaching the logger
+exactly once, regardless of ``log_every_n_steps`` alignment — is pinned
+end-to-end by ``test_diffusion_module_opt_health_delivery_is_cadence_exact``
+(production module, via ``write_through=True``); the mechanism itself is
+covered in ``test_write_through_logging.py``. The remaining test pins the
+upstream Lightning flush/wipe behavior that motivated write-through.
 """
 
 from __future__ import annotations
@@ -98,23 +101,24 @@ def test_effective_lr_formula_matches_documented_definition() -> None:
 
 
 def test_optimizer_health_metrics_survive_short_epochs() -> None:
-    """End-to-end: short epochs (11 batches) + cadence=5 + log_every_n_steps=2.
+    """Historical contract: the aligned stash/drain pattern does deliver.
 
-    Regression test for the bug where logs written from
-    ``on_before_optimizer_step`` got wiped by ``reset_results()`` at
-    every epoch boundary because the cadence iter (one past the
-    flush boundary) never coincided with a flush before the next reset.
+    Documents the Lightning behavior that motivated write-through
+    logging: logs written from ``on_before_optimizer_step`` get wiped by
+    ``reset_results()`` at every epoch boundary unless drained from
+    ``on_train_batch_end`` on an iteration that coincides with a
+    ``log_every_n_steps`` flush boundary (here cadence=5 is *not* a
+    multiple of log_every_n_steps=2, but lcm coincidences within 33
+    steps still deliver — the pattern only works when the alignment
+    holds, which is exactly the fragility that write-through removes).
 
-    Fix: ``DiffusionModule`` computes grad-derived stats in
-    ``on_before_optimizer_step`` but stashes them in
-    ``_opt_health_payload``; ``on_train_batch_end`` (whose cadence iter
-    *does* coincide with a flush boundary) drains the payload via
-    ``self.log``.
-
-    This test instantiates a minimal ``LightningModule`` that mirrors
-    the same stash/drain pattern and verifies that all expected keys
-    show up in the logger's records across at least one cadence
-    boundary that crosses an epoch end.
+    Production no longer uses this pattern: ``DiffusionModule`` logs
+    cadence-gated diagnostics with ``self.log(..., write_through=True)``
+    (see ``WriteThroughLogMixin`` and
+    ``test_diffusion_module_opt_health_delivery_is_cadence_exact``
+    below). This test keeps the upstream behavioral assumption pinned so
+    a Lightning upgrade that changes the flush/reset semantics is
+    noticed here, not on a dashboard.
     """
     import pytorch_lightning as pl
 
@@ -217,3 +221,95 @@ def test_optimizer_health_metrics_survive_short_epochs() -> None:
         "regression: effective_lr metric was wiped by reset_results "
         "between the cadence trigger and the next log_every_n_steps flush"
     )
+
+
+def test_diffusion_module_opt_health_delivery_is_cadence_exact() -> None:
+    """End-to-end: every opt-health cadence hit reaches the logger, exactly
+    once, stamped with the step it was computed at — independent of
+    ``log_every_n_steps`` alignment.
+
+    Rationale: the stash/drain workaround (ce5cc52c) only delivered
+    cadence-gated diagnostics when the drain iteration coincided with a
+    ``log_every_n_steps`` flush boundary; otherwise the epoch-end
+    ``reset_results()`` wiped them. Here cadence (5) and
+    ``log_every_n_steps`` (7) are coprime, so under the workaround
+    delivery is at best incidental (lcm coincidences, Lightning-stamped);
+    under write-through it is exact. This is the production-module
+    counterpart of the mechanism tests in
+    ``test_write_through_logging.py``.
+
+    Expected stamps with cadence C=5 over 24 steps:
+
+    * pre-step family (``effective_lr``, ``grad_snr/*``,
+      ``grad_norm/{block}``) computed in ``on_before_optimizer_step``
+      when ``(global_step + 1) % C == 0`` → stamped {4, 9, 14, 19};
+    * post-step family (``weight_norm_total``, ``update_to_weight/*``)
+      computed in ``on_train_batch_end`` when ``global_step % C == 0``
+      → stamped {5, 10, 15, 20}.
+    """
+    import pytorch_lightning as pl
+
+    from tmgg.data.data_modules.multigraph_data_module import MultiGraphDataModule
+    from tmgg.diffusion.noise_process import ContinuousNoiseProcess
+    from tmgg.diffusion.sampler import ContinuousSampler
+    from tmgg.diffusion.schedule import NoiseSchedule
+    from tmgg.evaluation.graph_evaluator import GraphEvaluator
+    from tmgg.models.spectral_denoisers.self_attention import SelfAttentionDenoiser
+    from tmgg.training.lightning_modules.diffusion_module import DiffusionModule
+    from tmgg.utils.noising.noise import DigressNoise
+
+    from .test_write_through_logging import _Capture
+
+    torch.manual_seed(0)
+    schedule = NoiseSchedule(schedule_type="cosine_iddpm", timesteps=10)
+    module = DiffusionModule(
+        model=SelfAttentionDenoiser(k=8, d_k=16),
+        noise_process=ContinuousNoiseProcess(
+            definition=DigressNoise(), schedule=schedule
+        ),
+        sampler=ContinuousSampler(),
+        noise_schedule=schedule,
+        evaluator=GraphEvaluator(eval_num_samples=4, kernel="gaussian", sigma=1.0),
+        loss_type="mse",
+        num_nodes=16,
+        eval_every_n_steps=1000,  # > max_steps: keeps loss_per_t bins out of the way
+        log_optimizer_health_every_n_steps=5,
+    )
+    datamodule = MultiGraphDataModule(
+        graph_type="sbm",
+        num_nodes=16,
+        num_graphs=20,
+        batch_size=4,
+        graph_config={"num_blocks": 2, "p_in": 0.7, "p_out": 0.1},
+        seed=42,
+    )
+    cap = _Capture()
+    trainer = pl.Trainer(
+        max_steps=24,
+        log_every_n_steps=7,  # coprime with the opt-health cadence of 5
+        logger=cap,
+        accelerator="cpu",
+        limit_val_batches=0,  # plumbing test: skip sampling-heavy validation
+        num_sanity_val_steps=0,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    trainer.fit(module, datamodule)
+
+    def stamps(key_prefix: str) -> list[int]:
+        out: list[int] = []
+        for step, metrics in cap.records:
+            if any(k.startswith(key_prefix) for k in metrics):
+                assert step is not None
+                out.append(step)
+        return out
+
+    pre_step_hits = [s for s in range(24) if (s + 1) % 5 == 0]  # {4, 9, 14, 19}
+    post_step_hits = [s + 1 for s in pre_step_hits]  # {5, 10, 15, 20}
+
+    assert stamps("diagnostics-train/opt-health/effective_lr") == pre_step_hits
+    assert stamps("diagnostics-train/opt-health/grad_snr/") == pre_step_hits
+    assert stamps("diagnostics-train/opt-health/grad_norm/") == pre_step_hits
+    assert stamps("diagnostics-train/opt-health/weight_norm_total") == post_step_hits
+    assert stamps("diagnostics-train/opt-health/update_to_weight/") == post_step_hits

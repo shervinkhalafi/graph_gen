@@ -725,21 +725,14 @@ class DiffusionModule(BaseGraphModule):
         # Optimizer-health state (Stage 2 telemetry). Allocated lazily on
         # the every-Nth-step cadence and freed in the trailing
         # ``on_train_batch_end`` hook so memory peak ≈ 2× params only on
-        # logging steps.
+        # logging steps. ``_prev_weights_snapshot`` doubles as the marker
+        # that ``on_train_batch_end`` should compute Δθ this iteration —
+        # the math needs θ_before against post-optimizer weights. The
+        # cadence-gated diagnostics themselves are logged via
+        # ``write_through=True`` (see ``WriteThroughLogMixin``), so no
+        # cross-hook payload stashing is needed for delivery anymore.
         self._prev_grad_by_block: dict[str, torch.Tensor] | None = None
         self._prev_weights_snapshot: dict[str, torch.Tensor] | None = None
-        # Computed in ``on_before_optimizer_step`` (gradients alive), drained
-        # by ``on_train_batch_end`` (logger flush boundary). Keys are the
-        # final ``train/...`` metric names; values are scalar Tensors or
-        # Python floats. ``self.log`` is intentionally NOT called from
-        # ``on_before_optimizer_step`` because Lightning's per-epoch
-        # ``reset_results()`` wipes that hook's cache before
-        # ``log_every_n_steps`` reaches a flush boundary in our regime
-        # (~11 batches per epoch). See ``tests/training/test_optimizer_health.py``.
-        self._opt_health_payload: dict[str, torch.Tensor | float] | None = None
-        # Marker set in ``on_before_optimizer_step`` so the trailing
-        # ``on_train_batch_end`` knows to compute Δθ on this step.
-        self._opt_health_pending: bool = False
 
     @property
     def T(self) -> int:
@@ -1149,6 +1142,10 @@ class DiffusionModule(BaseGraphModule):
         # validation cadence so the train and val per-t panels share the
         # same x-axis and so the train accumulator covers a meaningful
         # window (eval_every_n_steps × bs samples ≫ n_t_bins).
+        # ``write_through=True``: cadence-gated values logged via plain
+        # ``self.log`` only reach the logger when the cadence iteration
+        # happens to coincide with a ``log_every_n_steps`` flush boundary
+        # — otherwise the epoch-end ``reset_results()`` wipes them.
         if self.global_step > 0 and self.global_step % self.eval_every_n_steps == 0:
             # Single GPU→CPU sync via ``.tolist()`` for both buffers,
             # then iterate Python-side. Was N small ``.item()`` calls
@@ -1161,9 +1158,7 @@ class DiffusionModule(BaseGraphModule):
                 self.log(
                     f"diagnostics-train/progress/loss_per_t/bin_{i}",
                     sums[i] / float(count),
-                    on_step=True,
-                    on_epoch=False,
-                    batch_size=self._cur_bs,
+                    write_through=True,
                 )
             self._train_loss_t_sum.zero_()
             self._train_loss_t_count.zero_()
@@ -1176,15 +1171,13 @@ class DiffusionModule(BaseGraphModule):
                 self.log(
                     "diagnostics-train/opt-health/weight_norm_total",
                     weight_norms.pop("__total__"),
-                    on_step=True,
-                    batch_size=self._cur_bs,
+                    write_through=True,
                 )
                 for block_name, val in weight_norms.items():
                     self.log(
                         f"diagnostics-train/opt-health/weight_norm/{block_name}",
                         val,
-                        on_step=True,
-                        batch_size=self._cur_bs,
+                        write_through=True,
                     )
 
             # Stage 2: optimizer-health update-to-weight ratio. Computed
@@ -1194,24 +1187,11 @@ class DiffusionModule(BaseGraphModule):
             # ``train/weight_norm/{block}``.
             self._log_update_to_weight(weight_norms)
 
-            # Drain the grad-derived payload that ``on_before_optimizer_step``
-            # stashed for this iter. Logging from this hook (post-step,
-            # iter aligned with the ``log_every_n_steps`` flush boundary)
-            # avoids the epoch-reset wipeout that drops calls made from
-            # ``on_before_optimizer_step``.
-            if self._opt_health_payload is not None:
-                for key, value in self._opt_health_payload.items():
-                    self.log(
-                        key,
-                        value,
-                        on_step=True,
-                        on_epoch=False,
-                        batch_size=self._cur_bs,
-                    )
-                self._opt_health_payload = None
-
             self._prev_weights_snapshot = None  # free
-            self._opt_health_pending = False
+
+        # Flush write-through diagnostics collected this iteration
+        # (``WriteThroughLogMixin.on_train_batch_end``).
+        super().on_train_batch_end(outputs, batch, batch_idx)
 
     def _log_val_t_bins(
         self,
@@ -1266,32 +1246,26 @@ class DiffusionModule(BaseGraphModule):
                 batch_size=self._cur_bs,
             )
 
-        # Cadence: trigger so that the *next* hook in the same iteration
-        # (``on_train_batch_end``) sees ``global_step`` divisible by the
-        # cadence — i.e. fire here when ``global_step + 1`` is divisible.
-        # Lightning increments ``global_step`` between ``on_before_optimizer_step``
-        # and ``on_train_batch_end`` (the optimizer step runs in between).
-        # Our paired ``on_train_batch_end`` cadence is ``% N == 0``, so this
-        # one is ``(N) % N == 0`` after the step. This alignment matters
-        # because Lightning's ``log_every_n_steps`` flush boundary coincides
-        # with the cadence iter on the post-step side; logs written from
-        # ``on_before_optimizer_step`` at any other iter would be wiped by
-        # the next ``reset_results()`` (called on every epoch boundary,
-        # which fires every ~11 iters in our SBM regime). See bug repro
-        # at ``2026-04-28`` smoke-run analysis.
-        #
-        # Strategy: compute grad-derived stats here (gradients are alive),
-        # stash them in ``_opt_health_payload``, and let
-        # ``on_train_batch_end`` drain + ``self.log(...)`` them on the iter
-        # that *does* flush.
+        # Cadence: fire when ``global_step + 1`` is divisible so the paired
+        # post-step computation in ``on_train_batch_end`` (Δθ needs the
+        # post-optimizer weights) sees ``global_step % N == 0`` — Lightning
+        # increments ``global_step`` between the two hooks. Grad-derived
+        # stats are computed here (gradients are alive) and logged with
+        # ``write_through=True``: delivery no longer depends on this
+        # iteration coinciding with a ``log_every_n_steps`` flush boundary,
+        # which it generally does not in our short-epoch regime (the
+        # ``2026-04-28`` smoke-run wipe bug; see
+        # ``tests/training/test_optimizer_health.py``).
         if (self.global_step + 1) % self.log_optimizer_health_every_n_steps == 0:
             block_norms = self._aggregate_grad_norms_by_block(norms)
-            grad_health = self._compute_grad_health_by_block(optimizer)
-            payload: dict[str, torch.Tensor | float] = {}
             for block_name, val in block_norms.items():
-                payload[f"diagnostics-train/opt-health/grad_norm/{block_name}"] = val
-            payload.update(grad_health)
-            self._opt_health_payload = payload
+                self.log(
+                    f"diagnostics-train/opt-health/grad_norm/{block_name}",
+                    val,
+                    write_through=True,
+                )
+            for key, value in self._compute_grad_health_by_block(optimizer).items():
+                self.log(key, value, write_through=True)
             # Stash θ_before so ``on_train_batch_end`` can subtract it
             # from the live (post-step) weights to recover Δθ.
             self._prev_weights_snapshot = {
@@ -1299,7 +1273,6 @@ class DiffusionModule(BaseGraphModule):
                 for name, p in self.named_parameters()
                 if p.requires_grad
             }
-            self._opt_health_pending = True
 
         if self.global_step % 5000 == 0 and self.global_step > 0:
             ratio = self._compute_adam_moment_ratio(optimizer)
@@ -1307,8 +1280,7 @@ class DiffusionModule(BaseGraphModule):
                 self.log(
                     "diagnostics-train/opt-health/adam_moment_ratio_mean",
                     ratio,
-                    on_step=True,
-                    batch_size=self._cur_bs,
+                    write_through=True,
                 )
 
     def _compute_grad_health_by_block(
@@ -1316,11 +1288,9 @@ class DiffusionModule(BaseGraphModule):
     ) -> dict[str, torch.Tensor | float]:
         """Per-block grad cosine, grad SNR, and global effective LR.
 
-        Returns a dict ``{"diagnostics-train/opt-health/grad_snr/<block>": Tensor, ...}`` so
-        the caller (``on_before_optimizer_step``) can stash it for the
-        post-step ``on_train_batch_end`` hook to drain. ``self.log`` is
-        deliberately NOT called from here — see
-        ``_opt_health_payload`` rationale.
+        Returns a dict ``{"diagnostics-train/opt-health/grad_snr/<block>": Tensor, ...}``
+        for the caller (``on_before_optimizer_step``) to log with
+        ``write_through=True``.
 
         * ``train/grad_snr/{block}`` — first/second-moment SNR of the
           gradient elements in the block, ``mean(g)² / var(g)``.
@@ -1402,7 +1372,7 @@ class DiffusionModule(BaseGraphModule):
         the snapshot is missing (covers the very first step on a fresh
         module and any path that bypassed the cadence guard).
         """
-        if not self._opt_health_pending or self._prev_weights_snapshot is None:
+        if self._prev_weights_snapshot is None:
             return
         prev = self._prev_weights_snapshot
         update_sq: dict[str, torch.Tensor] = {}
@@ -1422,8 +1392,7 @@ class DiffusionModule(BaseGraphModule):
             self.log(
                 f"diagnostics-train/opt-health/update_to_weight/{block}",
                 ratio.detach(),
-                on_step=True,
-                batch_size=self._cur_bs,
+                write_through=True,
             )
 
     # ------------------------------------------------------------------
