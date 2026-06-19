@@ -70,6 +70,7 @@ uv run analyze.py
 ```
 inference-time-analysis/
 ├── README.md                       # this file
+├── BACKGROUND.md                   # investigation history + evidence (root cause, compile)
 ├── export_from_wandb.py            # W&B  -> data/perf.csv   (refresh step)
 ├── analyze.py                      # data -> tables/ + figures/
 ├── data/
@@ -172,7 +173,8 @@ The run IDs live in one place only: the `RUNS` list at the top of
 `export_from_wandb.py`. To change the panel, edit that list and re-run both
 scripts.
 
-Background on the root cause and the compile evidence:
-`docs/reports/2026-05-21-pearl-perf-investigation.md` and
+Background on the root cause and the `torch.compile` evidence is in
+`BACKGROUND.md` (next to this file). The `torch.compile` profiling itself is
+also written up in
 `docs/experiments/sweep/smallest-config-2026-04-29/profile-greedy-2026-05-04.md`
-in the main repo.
+and `PICKUP-PROFILING-2026-05-01.md` in the main repo.
